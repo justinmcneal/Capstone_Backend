@@ -1,0 +1,17 @@
+asgiref==3.11.0
+bcrypt==5.0.0
+celery==5.4.0
+Django==4.2.26
+django-celery-beat==2.7.0
+django-cors-headers==4.9.0
+djangorestframework==3.16.1
+djangorestframework_simplejwt==5.5.1
+dnspython==2.7.0
+mongoengine==0.29.1
+PyJWT==2.10.1
+pymongo==4.15.4
+python-dotenv==1.2.1
+pytz==2025.2
+redis==5.2.1
+sqlparse==0.5.4
+typing_extensions==4.15.0
