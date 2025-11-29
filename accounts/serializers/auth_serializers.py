@@ -1,16 +1,6 @@
 from rest_framework import serializers
-from django.contrib.auth.password_validation import validate_password
-from django.core.exceptions import ValidationError
 from accounts.utils.email_utils import EmailUtils
-import re
-
-class PasswordValidationMixin:
-    def validate_password(self, value):
-        try:
-            validate_password(value)
-        except ValidationError as e:
-            raise serializers.ValidationError(e.messages)
-        return value
+from .base_serializers import PasswordValidationMixin
 
 
 class SignUpSerializer(PasswordValidationMixin, serializers.Serializer):

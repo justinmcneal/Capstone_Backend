@@ -2,6 +2,7 @@ from accounts.models import Customer
 from accounts.utils.token_utils import TokenUtils
 from mongoengine.errors import NotUniqueError
 from accounts.utils.email_utils import EmailUtils
+from accounts.services.otp_service import OTPService
 from datetime import datetime, timedelta
 
 class AuthService:
@@ -31,16 +32,12 @@ class AuthService:
     @staticmethod
     def verify_customer_otp(customer):
         customer.verified = True
-        customer.verification_token = None
-        customer.verification_token_expires = None
-        customer.save()
+        OTPService.clear_otp(customer, 'verification_token', 'verification_token_expires')
         return customer
     
     @staticmethod
     def resend_customer_otp(customer):
-        otp = EmailUtils.generate_otp()
-        customer.verification_token = otp
-        customer.verification_token_expires = EmailUtils.get_otp_expiry()
+        otp = OTPService.set_otp(customer, 'verification_token', 'verification_token_expires')
         customer.verification_resend_count += 1
         customer.save()
         
@@ -57,17 +54,17 @@ class AuthService:
             # Use centralized customer lookup
             if AuthService.get_customer_by_email(validated_data['email']):
                 raise ValueError('An account with this email already exists')
-            otp = EmailUtils.generate_otp()
 
             customer = Customer(
                 first_name=validated_data['first_name'],
                 middle_name=validated_data.get('middle_name', ''),
                 last_name=validated_data['last_name'],
                 email=validated_data['email'],
-                verified=False,
-                verification_token=otp,
-                verification_token_expires=EmailUtils.get_otp_expiry()
+                verified=False
             )
+            
+            # Use centralized OTP service
+            otp = OTPService.set_otp(customer, 'verification_token', 'verification_token_expires')
             
             customer.set_password(validated_data['password'])            
             customer.save()
@@ -116,32 +113,12 @@ class AuthService:
     
     @staticmethod
     def check_otp_rate_limit(customer):
-        """Check if customer has exceeded OTP verification attempts (max 5)"""
-        if customer.otp_attempt_count >= 5:
-            if customer.otp_last_attempt:
-                time_since_last = datetime.utcnow() - customer.otp_last_attempt
-                # Reset after 10 minutes
-                if time_since_last.total_seconds() < 600:
-                    seconds_remaining = 600 - int(time_since_last.total_seconds())
-                    return (False, seconds_remaining)
-                else:
-                    # Reset counter after cooldown
-                    customer.otp_attempt_count = 0
-                    customer.save()
-                    return (True, 0)
-            return (False, 0)
-        return (True, 0)
+        return OTPService.check_otp_rate_limit(customer, 'otp_attempt_count', 'otp_last_attempt')
     
     @staticmethod
     def increment_otp_attempt(customer):
-        """Increment OTP verification attempt counter"""
-        customer.otp_attempt_count += 1
-        customer.otp_last_attempt = datetime.utcnow()
-        customer.save()
+        OTPService.increment_otp_attempt(customer, 'otp_attempt_count', 'otp_last_attempt')
     
     @staticmethod
     def reset_otp_attempts(customer):
-        """Reset OTP attempts after successful verification"""
-        customer.otp_attempt_count = 0
-        customer.otp_last_attempt = None
-        customer.save()
+        OTPService.reset_otp_attempts(customer, 'otp_attempt_count', 'otp_last_attempt')

@@ -129,7 +129,6 @@ class VerifyOTP(APIView):
             return APIResponseHelper.validation_error_response('Email and OTP are required')
         
         try:
-            # Use centralized customer lookup
             customer = AuthService.get_customer_by_email(email)
             if not customer:
                 logger.warning(f"OTP verification for non-existent account: {email} from IP {request.META.get('REMOTE_ADDR')}")
@@ -138,7 +137,6 @@ class VerifyOTP(APIView):
             if customer.verified:
                 return APIResponseHelper.success_response('Account already verified')
             
-            # Check OTP attempt rate limit
             allowed, seconds_remaining = AuthService.check_otp_rate_limit(customer)
             if not allowed:
                 logger.warning(f"OTP rate limit exceeded for {email} from IP {request.META.get('REMOTE_ADDR')}")
@@ -151,14 +149,12 @@ class VerifyOTP(APIView):
                 logger.warning(f"Expired OTP verification attempt for {email} from IP {request.META.get('REMOTE_ADDR')}")
                 return APIResponseHelper.error_response('OTP has expired')
             
-            # Increment attempt counter
             AuthService.increment_otp_attempt(customer)
             
             if customer.verification_token != otp:
                 logger.warning(f"Invalid OTP attempt for {email} from IP {request.META.get('REMOTE_ADDR')}")
                 return APIResponseHelper.error_response('Invalid OTP')
             
-            # Use centralized verification method
             customer = AuthService.verify_customer_otp(customer)
             AuthService.reset_otp_attempts(customer)
             tokens = AuthService.create_customer_tokens(customer)
@@ -191,7 +187,6 @@ class ResendOTP(APIView):
             return APIResponseHelper.error_response('Email is required')
         
         try:
-            # Use centralized customer lookup
             customer = AuthService.get_customer_by_email(email)
             
             if not customer:
@@ -208,7 +203,6 @@ class ResendOTP(APIView):
                     'Maximum resend limit reached. Please contact support.'
                 )
             
-            # Use centralized resend method
             customer = AuthService.resend_customer_otp(customer)
             
             logger.info(f"OTP resent for {email} from IP {request.META.get('REMOTE_ADDR')}")
@@ -283,7 +277,6 @@ class LogoutView(APIView):
             return APIResponseHelper.error_response('Refresh token is required')
         
         try:
-            # Blacklist the token
             if TokenUtils.blacklist_token(refresh_token):
                 logger.info(f"User logged out from IP {request.META.get('REMOTE_ADDR')}")
                 return APIResponseHelper.success_response(
