@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Verify Your Email</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background-color: #f4f4f4;
+            margin: 0;
+            padding: 20px;
+        }
+        .container {
+            background-color: #ffffff;
+            max-width: 600px;
+            margin: 0 auto;
+            padding: 40px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        }
+        .header {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        .header h1 {
+            color: #333;
+            margin: 0;
+            font-size: 24px;
+        }
+        .content {
+            color: #555;
+            line-height: 1.6;
+        }
+        .otp-box {
+            background-color: #f8f9fa;
+            border: 2px dashed #007bff;
+            border-radius: 8px;
+            padding: 20px;
+            text-align: center;
+            margin: 30px 0;
+        }
+        .otp-code {
+            font-size: 32px;
+            font-weight: bold;
+            color: #007bff;
+            letter-spacing: 8px;
+            font-family: 'Courier New', monospace;
+        }
+        .expiry-notice {
+            background-color: #fff3cd;
+            border-left: 4px solid #ffc107;
+            padding: 12px;
+            margin: 20px 0;
+            color: #856404;
+        }
+        .footer {
+            margin-top: 30px;
+            padding-top: 20px;
+            border-top: 1px solid #e0e0e0;
+            text-align: center;
+            color: #888;
+            font-size: 12px;
+        }
+        .button {
+            display: inline-block;
+            padding: 12px 30px;
+            background-color: #007bff;
+            color: #ffffff;
+            text-decoration: none;
+            border-radius: 5px;
+            margin: 20px 0;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🔐 Email Verification</h1>
+        </div>
+        
+        <div class="content">
+            <p>Hi <strong>{{ first_name }}</strong>,</p>
+            
+            <p>Thank you for signing up! Please use the following One-Time Password (OTP) to verify your email address:</p>
+            
+            <div class="otp-box">
+                <div class="otp-code">{{ otp }}</div>
+            </div>
+            
+            <div class="expiry-notice">
+                <strong>⏰ Important:</strong> This OTP will expire in <strong>12 hours</strong>.
+            </div>
+            
+            <p>If you didn't create an account, please ignore this email.</p>
+        </div>
+        
+        <div class="footer">
+            <p>This is an automated message. Please do not reply to this email.</p>
+            <p>&copy; 2025 Capstone Backend. All rights reserved.</p>
+        </div>
+    </div>
+</body>
+</html>
