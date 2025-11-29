@@ -113,3 +113,35 @@ class AuthService:
     def update_login_attempt(customer):
         customer.last_login_attempt = datetime.utcnow()
         customer.save()
+    
+    @staticmethod
+    def check_otp_rate_limit(customer):
+        """Check if customer has exceeded OTP verification attempts (max 5)"""
+        if customer.otp_attempt_count >= 5:
+            if customer.otp_last_attempt:
+                time_since_last = datetime.utcnow() - customer.otp_last_attempt
+                # Reset after 10 minutes
+                if time_since_last.total_seconds() < 600:
+                    seconds_remaining = 600 - int(time_since_last.total_seconds())
+                    return (False, seconds_remaining)
+                else:
+                    # Reset counter after cooldown
+                    customer.otp_attempt_count = 0
+                    customer.save()
+                    return (True, 0)
+            return (False, 0)
+        return (True, 0)
+    
+    @staticmethod
+    def increment_otp_attempt(customer):
+        """Increment OTP verification attempt counter"""
+        customer.otp_attempt_count += 1
+        customer.otp_last_attempt = datetime.utcnow()
+        customer.save()
+    
+    @staticmethod
+    def reset_otp_attempts(customer):
+        """Reset OTP attempts after successful verification"""
+        customer.otp_attempt_count = 0
+        customer.otp_last_attempt = None
+        customer.save()

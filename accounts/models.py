@@ -18,6 +18,8 @@ class Customer(Document):
     verification_token = StringField()
     verification_token_expires = DateTimeField()
     verification_resend_count = IntField(default=0)
+    otp_attempt_count = IntField(default=0)
+    otp_last_attempt = DateTimeField()
 
     # login rate limiting
     last_login_attempt = DateTimeField()

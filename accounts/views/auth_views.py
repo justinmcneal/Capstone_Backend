@@ -10,17 +10,24 @@ from accounts.utils.email_utils import EmailUtils
 from accounts.utils.response_helpers import APIResponseHelper
 from accounts.utils.token_utils import TokenUtils
 from accounts.serializers.auth_serializers import LoginSerializer
+from accounts.utils.throttles import SignUpRateThrottle, LoginRateThrottle, OTPVerificationRateThrottle, OTPResendRateThrottle
+import logging
+
+logger = logging.getLogger('authentication')
 
 class SignUpView(APIView):
     permission_classes = [AllowAny]
+    throttle_classes = [SignUpRateThrottle]
     
     def post(self, request):
         serializer = SignUpSerializer(data=request.data)        
         if not serializer.is_valid():
+            logger.warning(f"Signup validation failed from IP {request.META.get('REMOTE_ADDR')}")
             return APIResponseHelper.validation_error_response(serializer.errors)
         
         try:
             customer = AuthService.register_customer(serializer.validated_data)
+            logger.info(f"New user registered: {customer.email} from IP {request.META.get('REMOTE_ADDR')}")
             
             response_data = {
                 'user': AuthService.serialize_customer_data(customer),
@@ -34,17 +41,21 @@ class SignUpView(APIView):
             )
             
         except ValueError as e:
+            logger.warning(f"Signup failed for email {serializer.validated_data.get('email')}: {str(e)}")
             return APIResponseHelper.error_response(str(e))
             
         except Exception as e:
+            logger.error(f"Signup error from IP {request.META.get('REMOTE_ADDR')}: {str(e)}")
             return APIResponseHelper.server_error_response('An error occurred during registration')
 
 class LoginView(APIView):
     permission_classes = [AllowAny]
+    throttle_classes = [LoginRateThrottle]
     
     def post(self, request):
         serializer = LoginSerializer(data=request.data)
         if not serializer.is_valid():
+            logger.warning(f"Login validation failed from IP {request.META.get('REMOTE_ADDR')}")
             return APIResponseHelper.validation_error_response(serializer.errors)
         
         email = serializer.validated_data['email']
@@ -54,6 +65,7 @@ class LoginView(APIView):
         try:
             customer = AuthService.get_customer_by_email(email)
             if not customer:
+                logger.warning(f"Login attempt for non-existent email: {email} from IP {request.META.get('REMOTE_ADDR')}")
                 return APIResponseHelper.error_response(
                     'Invalid email or password',
                     status.HTTP_401_UNAUTHORIZED
@@ -61,6 +73,7 @@ class LoginView(APIView):
             
             allowed, seconds_remaining = AuthService.check_login_rate_limit(customer)
             if not allowed:
+                logger.warning(f"Rate limit exceeded for user {email} from IP {request.META.get('REMOTE_ADDR')}")
                 return APIResponseHelper.error_response(
                     f'Too many login attempts. Please try again in {seconds_remaining} seconds.',
                     status.HTTP_429_TOO_MANY_REQUESTS
@@ -69,11 +82,13 @@ class LoginView(APIView):
             AuthService.update_login_attempt(customer)
             
             if not customer.verified:
+                logger.warning(f"Login attempt for unverified account: {email} from IP {request.META.get('REMOTE_ADDR')}")
                 return APIResponseHelper.error_response(
                     'Please verify your email before logging in'
                 )
             
             if not customer.check_password(password):
+                logger.warning(f"Failed login attempt for {email} from IP {request.META.get('REMOTE_ADDR')}")
                 return APIResponseHelper.error_response(
                     'Invalid email or password',
                     status.HTTP_401_UNAUTHORIZED
@@ -81,6 +96,8 @@ class LoginView(APIView):
             
             token_type = 'remember_me' if remember_me else 'no_remember_me'
             tokens = AuthService.create_customer_tokens(customer, token_type=token_type)
+            
+            logger.info(f"Successful login for user {email} from IP {request.META.get('REMOTE_ADDR')}")
             
             response_data = {
                 'user': AuthService.serialize_customer_data(customer, include_last_name=True),
@@ -95,37 +112,58 @@ class LoginView(APIView):
             )
             
         except Exception as e:
+            logger.error(f"Login error for {email} from IP {request.META.get('REMOTE_ADDR')}: {str(e)}")
             return APIResponseHelper.server_error_response('Login failed')
 
 
 class VerifyOTP(APIView):
     permission_classes = [AllowAny]
+    throttle_classes = [OTPVerificationRateThrottle]
     
     def post(self, request):
         email = request.data.get('email')
         otp = request.data.get('otp')
 
         if not email or not otp:
+            logger.warning(f"OTP verification missing required fields from IP {request.META.get('REMOTE_ADDR')}")
             return APIResponseHelper.validation_error_response('Email and OTP are required')
         
         try:
             # Use centralized customer lookup
             customer = AuthService.get_customer_by_email(email)
             if not customer:
+                logger.warning(f"OTP verification for non-existent account: {email} from IP {request.META.get('REMOTE_ADDR')}")
                 return APIResponseHelper.error_response('Account not found')
             
             if customer.verified:
                 return APIResponseHelper.success_response('Account already verified')
             
+            # Check OTP attempt rate limit
+            allowed, seconds_remaining = AuthService.check_otp_rate_limit(customer)
+            if not allowed:
+                logger.warning(f"OTP rate limit exceeded for {email} from IP {request.META.get('REMOTE_ADDR')}")
+                return APIResponseHelper.error_response(
+                    f'Too many OTP attempts. Please try again in {seconds_remaining} seconds.',
+                    status.HTTP_429_TOO_MANY_REQUESTS
+                )
+            
             if EmailUtils.is_otp_expired(customer.verification_token_expires):
+                logger.warning(f"Expired OTP verification attempt for {email} from IP {request.META.get('REMOTE_ADDR')}")
                 return APIResponseHelper.error_response('OTP has expired')
             
+            # Increment attempt counter
+            AuthService.increment_otp_attempt(customer)
+            
             if customer.verification_token != otp:
+                logger.warning(f"Invalid OTP attempt for {email} from IP {request.META.get('REMOTE_ADDR')}")
                 return APIResponseHelper.error_response('Invalid OTP')
             
             # Use centralized verification method
             customer = AuthService.verify_customer_otp(customer)
+            AuthService.reset_otp_attempts(customer)
             tokens = AuthService.create_customer_tokens(customer)
+
+            logger.info(f"OTP verified successfully for {email} from IP {request.META.get('REMOTE_ADDR')}")
 
             response = {
                 'user': AuthService.serialize_customer_data(customer),
@@ -138,15 +176,18 @@ class VerifyOTP(APIView):
                 message='Account verified successfully'
             )
         except Exception as e:
+            logger.error(f"OTP verification error for {email} from IP {request.META.get('REMOTE_ADDR')}: {str(e)}")
             return APIResponseHelper.server_error_response('Verification failed')
         
 class ResendOTP(APIView):
     permission_classes = [AllowAny]
+    throttle_classes = [OTPResendRateThrottle]
 
     def post(self, request):
         email = request.data.get('email')
         
         if not email:
+            logger.warning(f"OTP resend missing email from IP {request.META.get('REMOTE_ADDR')}")
             return APIResponseHelper.error_response('Email is required')
         
         try:
@@ -154,6 +195,7 @@ class ResendOTP(APIView):
             customer = AuthService.get_customer_by_email(email)
             
             if not customer:
+                logger.warning(f"OTP resend for non-existent account: {email} from IP {request.META.get('REMOTE_ADDR')}")
                 return APIResponseHelper.error_response('Account not found')
             
             if customer.verified:
@@ -161,6 +203,7 @@ class ResendOTP(APIView):
             
             # Check resend limit (max 2 times)
             if customer.verification_resend_count >= 2:
+                logger.warning(f"OTP resend limit exceeded for {email} from IP {request.META.get('REMOTE_ADDR')}")
                 return APIResponseHelper.error_response(
                     'Maximum resend limit reached. Please contact support.'
                 )
@@ -168,11 +211,14 @@ class ResendOTP(APIView):
             # Use centralized resend method
             customer = AuthService.resend_customer_otp(customer)
             
+            logger.info(f"OTP resent for {email} from IP {request.META.get('REMOTE_ADDR')}")
+            
             return APIResponseHelper.success_response(
                 message=f'OTP resent successfully. {2 - customer.verification_resend_count} attempts remaining.'
             )
             
         except Exception as e:
+            logger.error(f"OTP resend error for {email} from IP {request.META.get('REMOTE_ADDR')}: {str(e)}")
             return APIResponseHelper.server_error_response('Failed to resend OTP')
         
 
@@ -184,10 +230,12 @@ class RefreshTokenView(APIView):
         refresh_token = request.data.get('refresh')
         
         if not refresh_token:
+            logger.warning(f"Token refresh missing token from IP {request.META.get('REMOTE_ADDR')}")
             return APIResponseHelper.error_response('Refresh token is required')
         
         try:
             if TokenUtils.is_token_blacklisted(refresh_token):
+                logger.warning(f"Attempt to use blacklisted token from IP {request.META.get('REMOTE_ADDR')}")
                 return APIResponseHelper.error_response(
                     'Token has been revoked',
                     status.HTTP_401_UNAUTHORIZED
@@ -201,9 +249,12 @@ class RefreshTokenView(APIView):
             customer = AuthService.get_customer_by_id(customer_id)
             
             if not customer:
+                logger.warning(f"Token refresh for non-existent user {customer_id} from IP {request.META.get('REMOTE_ADDR')}")
                 return APIResponseHelper.error_response('User not found')
             
             new_tokens = AuthService.create_customer_tokens(customer, token_type='no_remember_me')
+            
+            logger.info(f"Token refreshed for user {customer.email} from IP {request.META.get('REMOTE_ADDR')}")
             
             return APIResponseHelper.success_response(
                 data=new_tokens,
@@ -211,11 +262,13 @@ class RefreshTokenView(APIView):
             )
             
         except TokenError as e:
+            logger.warning(f"Invalid token refresh attempt from IP {request.META.get('REMOTE_ADDR')}")
             return APIResponseHelper.error_response(
                 'Invalid or expired token',
                 status.HTTP_401_UNAUTHORIZED
             )
         except Exception as e:
+            logger.error(f"Token refresh error from IP {request.META.get('REMOTE_ADDR')}: {str(e)}")
             return APIResponseHelper.server_error_response('Token refresh failed')
         
 class LogoutView(APIView):
@@ -226,16 +279,20 @@ class LogoutView(APIView):
         refresh_token = request.data.get('refresh')
         
         if not refresh_token:
+            logger.warning(f"Logout attempt missing token from IP {request.META.get('REMOTE_ADDR')}")
             return APIResponseHelper.error_response('Refresh token is required')
         
         try:
             # Blacklist the token
             if TokenUtils.blacklist_token(refresh_token):
+                logger.info(f"User logged out from IP {request.META.get('REMOTE_ADDR')}")
                 return APIResponseHelper.success_response(
                     message='Logged out successfully'
                 )
             else:
+                logger.warning(f"Logout failed from IP {request.META.get('REMOTE_ADDR')}")
                 return APIResponseHelper.error_response('Logout failed')
                 
         except Exception as e:
+            logger.error(f"Logout error from IP {request.META.get('REMOTE_ADDR')}: {str(e)}")
             return APIResponseHelper.server_error_response('Logout failed')
