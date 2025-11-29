@@ -38,4 +38,18 @@ class EmailUtils:
             template_name='verification',
             context=context
         )
+    
+    @staticmethod
+    def send_password_reset_email(email, first_name, otp):
+        context = {
+            'first_name': first_name,
+            'otp': otp
+        }
+        
+        return email_service.send_template_email(
+            to_emails=[email],
+            subject='Password Reset OTP',
+            template_name='password_reset',
+            context=context
+        )
 

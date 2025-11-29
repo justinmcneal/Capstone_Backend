@@ -18,7 +18,7 @@ class APIResponseHelper:
     def error_response(message, error_code=status.HTTP_400_BAD_REQUEST):
         return Response({
             'success': False,
-            'error': message
+            'message': message
         }, status=error_code)
     
     @staticmethod

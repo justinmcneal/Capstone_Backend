@@ -24,6 +24,12 @@ class Customer(Document):
     # login rate limiting
     last_login_attempt = DateTimeField()
     login_attempt_count = IntField(default=0)
+
+    # passwrord reset fields
+    password_reset_otp = StringField()
+    password_reset_otp_expires = DateTimeField()
+    password_reset_attempt_count = IntField(default=0)
+    password_reset_last_attempt = DateTimeField()
     
     meta = {
         'collection': 'customer',
@@ -31,20 +37,16 @@ class Customer(Document):
     }
     
     def set_password(self, raw_password):
-        """Hash and set the password"""
         self.password = bcrypt.hashpw(raw_password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
     
     def check_password(self, raw_password):
-        """Verify password"""
         return bcrypt.checkpw(raw_password.encode('utf-8'), self.password.encode('utf-8'))
     
     def save(self, *args, **kwargs):
-        """Override save to update timestamp"""
         self.updated_at = datetime.utcnow()
         return super(Customer, self).save(*args, **kwargs)
 
 class BlacklistedToken(Document):
-    """Store blacklisted refresh tokens"""
     token = StringField(required=True, unique=True)
     blacklisted_at = DateTimeField(default=datetime.utcnow)
     expires_at = DateTimeField(required=True)
@@ -59,7 +61,6 @@ class BlacklistedToken(Document):
 
 
 class RefreshTokenEntry(Document):
-    """Store issued refresh tokens or their hashes per customer"""
     customer = StringField(required=True)  # Store customer ID as string
     token_hash = StringField(required=True)
     issued_at = DateTimeField(default=datetime.utcnow)
