@@ -1,7 +1,7 @@
 import secrets
 import string
 from datetime import datetime, timedelta
-from core.email_service import email_service
+from accounts.services.email_service import email_service
 
 
 class EmailUtils:

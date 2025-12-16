@@ -3,7 +3,9 @@ from accounts.utils.token_utils import TokenUtils
 from mongoengine.errors import NotUniqueError
 from accounts.utils.email_utils import EmailUtils
 from accounts.services.otp_service import OTPService
+from rest_framework_simplejwt.tokens import RefreshToken
 from datetime import datetime, timedelta
+
 
 class AuthService:
     
@@ -23,7 +25,9 @@ class AuthService:
             'id': str(customer.id),
             'first_name': customer.first_name,
             'email': customer.email,
-            'verified': customer.verified
+            'verified': customer.verified,
+            'role': customer.role,
+            'two_factor_enabled': customer.two_factor_enabled
         }
         if include_last_name:
             data['last_name'] = customer.last_name
@@ -84,6 +88,19 @@ class AuthService:
     @staticmethod
     def create_customer_tokens(customer, token_type='signup'):
         return TokenUtils.generate_jwt_tokens(customer, token_type=token_type)
+    
+    @staticmethod
+    def create_temp_token(customer):
+        """
+        Create a temporary token for 2FA verification.
+        This token is short-lived (5 minutes) and only valid for 2FA flow.
+        """
+        refresh = RefreshToken()
+        refresh['customer_id'] = str(customer.id)
+        refresh['email'] = customer.email
+        refresh['temp_2fa'] = True  # Mark as temporary 2FA token
+        refresh.set_exp(lifetime=timedelta(minutes=5))
+        return str(refresh)
     
     @staticmethod
     def authenticate_customer(email, password):
