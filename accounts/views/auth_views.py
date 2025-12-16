@@ -6,6 +6,7 @@ from rest_framework_simplejwt.exceptions import TokenError
 from accounts.models import Customer
 from accounts.serializers import SignUpSerializer
 from accounts.services import AuthService
+from accounts.services.lockout_service import LockoutService
 from accounts.utils.email_utils import EmailUtils
 from accounts.utils.response_helpers import APIResponseHelper
 from accounts.utils.token_utils import TokenUtils
@@ -71,6 +72,16 @@ class LoginView(APIView):
                     status.HTTP_401_UNAUTHORIZED
                 )
             
+            # Check account lockout
+            is_locked, lockout_seconds = LockoutService.is_account_locked(customer)
+            if is_locked:
+                logger.warning(f"Login attempt for locked account: {email} from IP {request.META.get('REMOTE_ADDR')}")
+                return APIResponseHelper.error_response(
+                    f'Account is locked. Please try again in {lockout_seconds // 60} minutes.',
+                    status.HTTP_423_LOCKED
+                )
+            
+            # Check rate limiting
             allowed, seconds_remaining = AuthService.check_login_rate_limit(customer)
             if not allowed:
                 logger.warning(f"Rate limit exceeded for user {email} from IP {request.META.get('REMOTE_ADDR')}")
@@ -87,13 +98,42 @@ class LoginView(APIView):
                     'Please verify your email before logging in'
                 )
             
+            # Verify password
             if not customer.check_password(password):
+                # Record failed attempt for lockout
+                is_now_locked, attempts_remaining = LockoutService.record_failed_attempt(customer)
                 logger.warning(f"Failed login attempt for {email} from IP {request.META.get('REMOTE_ADDR')}")
+                
+                if is_now_locked:
+                    return APIResponseHelper.error_response(
+                        'Account locked due to too many failed attempts. Please try again in 15 minutes.',
+                        status.HTTP_423_LOCKED
+                    )
+                
                 return APIResponseHelper.error_response(
-                    'Invalid email or password',
+                    f'Invalid email or password. {attempts_remaining} attempts remaining.',
                     status.HTTP_401_UNAUTHORIZED
                 )
             
+            # Reset lockout on successful password verification
+            LockoutService.reset_lockout(customer)
+            
+            # Check if 2FA is enabled
+            if customer.two_factor_enabled:
+                # Create temporary token for 2FA verification
+                temp_token = AuthService.create_temp_token(customer)
+                logger.info(f"2FA required for {email} from IP {request.META.get('REMOTE_ADDR')}")
+                
+                return APIResponseHelper.success_response(
+                    data={
+                        'requires_2fa': True,
+                        'temp_token': temp_token,
+                        'message': 'Please enter your 2FA code'
+                    },
+                    message='2FA verification required'
+                )
+            
+            # No 2FA, issue tokens directly
             token_type = 'remember_me' if remember_me else 'no_remember_me'
             tokens = AuthService.create_customer_tokens(customer, token_type=token_type)
             
@@ -269,15 +309,23 @@ class LogoutView(APIView):
     permission_classes = [AllowAny]
     
     def post(self, request):
-        """Logout by blacklisting refresh token"""
+        """Logout by blacklisting both access and refresh tokens"""
         refresh_token = request.data.get('refresh')
+        access_token = request.data.get('access')
+        
+        # Also try to get access token from Authorization header
+        if not access_token:
+            auth_header = request.META.get('HTTP_AUTHORIZATION', '')
+            if auth_header.startswith('Bearer '):
+                access_token = auth_header[7:]
         
         if not refresh_token:
-            logger.warning(f"Logout attempt missing token from IP {request.META.get('REMOTE_ADDR')}")
+            logger.warning(f"Logout attempt missing refresh token from IP {request.META.get('REMOTE_ADDR')}")
             return APIResponseHelper.error_response('Refresh token is required')
         
         try:
-            if TokenUtils.blacklist_token(refresh_token):
+            # Blacklist both tokens
+            if TokenUtils.blacklist_tokens_on_logout(access_token, refresh_token):
                 logger.info(f"User logged out from IP {request.META.get('REMOTE_ADDR')}")
                 return APIResponseHelper.success_response(
                     message='Logged out successfully'
@@ -288,4 +336,5 @@ class LogoutView(APIView):
                 
         except Exception as e:
             logger.error(f"Logout error from IP {request.META.get('REMOTE_ADDR')}: {str(e)}")
+            return APIResponseHelper.server_error_response('Logout failed')
             return APIResponseHelper.server_error_response('Logout failed')

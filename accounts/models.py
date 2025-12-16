@@ -1,4 +1,4 @@
-from mongoengine import Document, StringField, EmailField, BooleanField, DateTimeField, IntField
+from mongoengine import Document, StringField, EmailField, BooleanField, DateTimeField, IntField, ListField
 from datetime import datetime
 import bcrypt
 
@@ -9,27 +9,36 @@ class Customer(Document):
     last_name = StringField(required=True, max_length=100)
     email = EmailField(required=True, unique=True)
     password = StringField(required=True)
+    role = StringField(default='customer', choices=['customer', 'admin'])
     verified = BooleanField(default=False)
-    # two_factor_enabled = BooleanField(default=False) (wait muna)
     created_at = DateTimeField(default=datetime.utcnow)
     updated_at = DateTimeField(default=datetime.utcnow)
     
-    #email verification
+    # Email verification
     verification_token = StringField()
     verification_token_expires = DateTimeField()
     verification_resend_count = IntField(default=0)
     otp_attempt_count = IntField(default=0)
     otp_last_attempt = DateTimeField()
 
-    # login rate limiting
+    # Login rate limiting
     last_login_attempt = DateTimeField()
     login_attempt_count = IntField(default=0)
 
-    # passwrord reset fields
+    # Account lockout protection
+    failed_login_attempts = IntField(default=0)
+    locked_until = DateTimeField()
+
+    # Password reset fields
     password_reset_otp = StringField()
     password_reset_otp_expires = DateTimeField()
     password_reset_attempt_count = IntField(default=0)
     password_reset_last_attempt = DateTimeField()
+
+    # Two-Factor Authentication (2FA)
+    two_factor_enabled = BooleanField(default=False)
+    two_factor_secret = StringField()  # Encrypted TOTP secret
+    backup_codes = ListField(StringField())  # Hashed backup codes
     
     meta = {
         'collection': 'customer',
@@ -48,6 +57,7 @@ class Customer(Document):
 
 class BlacklistedToken(Document):
     token = StringField(required=True, unique=True)
+    token_type = StringField(choices=['access', 'refresh'], default='refresh')
     blacklisted_at = DateTimeField(default=datetime.utcnow)
     expires_at = DateTimeField(required=True)
     
@@ -55,6 +65,7 @@ class BlacklistedToken(Document):
         'collection': 'blacklisted_tokens',
         'indexes': [
             'token',
+            'token_type',
             {'fields': ['expires_at'], 'expireAfterSeconds': 0}
         ]
     }

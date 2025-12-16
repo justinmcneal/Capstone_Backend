@@ -12,10 +12,20 @@ class LoginRateThrottle(AnonRateThrottle):
 
 
 class OTPVerificationRateThrottle(AnonRateThrottle):
-    """IP-based throttling for OTP verification: 100 requests per hour for testing"""
-    rate = '100/hour'  # Increased for testing
+    """IP-based throttling for OTP verification: 5 requests per hour (production)"""
+    rate = '5/hour'
 
 
 class OTPResendRateThrottle(AnonRateThrottle):
-    """IP-based throttling for OTP resend: 100 requests per hour for testing"""
-    rate = '100/hour'  # Increased for testing
+    """IP-based throttling for OTP resend: 3 requests per hour (production)"""
+    rate = '3/hour'
+
+
+class TwoFactorRateThrottle(AnonRateThrottle):
+    """IP-based throttling for 2FA verification: 5 requests per hour"""
+    rate = '5/hour'
+
+
+class PasswordResetRateThrottle(AnonRateThrottle):
+    """IP-based throttling for password reset: 3 requests per hour"""
+    rate = '3/hour'

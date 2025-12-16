@@ -48,7 +48,7 @@ INSTALLED_APPS = [
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
-    'capstone_backend.middleware.SecurityHeadersMiddleware',
+    'config.middleware.SecurityHeadersMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'corsheaders.middleware.CorsMiddleware',  
     'django.middleware.common.CommonMiddleware',
@@ -58,7 +58,7 @@ MIDDLEWARE = [
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
 ]
 
-ROOT_URLCONF = 'capstone_backend.urls'
+ROOT_URLCONF = 'config.urls'
 
 TEMPLATES = [
     {
@@ -76,7 +76,7 @@ TEMPLATES = [
     },
 ]
 
-WSGI_APPLICATION = 'capstone_backend.wsgi.application'
+WSGI_APPLICATION = 'config.wsgi.application'
 
 # Database - MongoDB only (via MongoEngine)
 # Dummy database config required by Django
