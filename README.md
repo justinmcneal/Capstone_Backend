@@ -23,17 +23,7 @@ Django REST API backend for the Capstone project.
    - Copy `.env.example` to `.env`
    - Update the values in `.env` as needed
 
-5. **Run migrations**:
-   ```bash
-   python manage.py migrate
-   ```
-
-6. **Create a superuser** (optional):
-   ```bash
-   python manage.py createsuperuser
-   ```
-
-7. **Run the development server**:
+5. **Run the development server**:
    ```bash
    python manage.py runserver
    ```

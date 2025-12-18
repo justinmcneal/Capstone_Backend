@@ -1,7 +1,6 @@
 import secrets
 import string
 from datetime import datetime, timedelta
-from accounts.services.email_service import email_service
 
 
 class EmailUtils:
@@ -27,6 +26,8 @@ class EmailUtils:
 
     @staticmethod
     def send_verification_email(email, first_name, token):
+        from accounts.services.email_service import email_service
+        
         context = {
             'first_name': first_name,
             'otp': token
@@ -41,6 +42,8 @@ class EmailUtils:
     
     @staticmethod
     def send_password_reset_email(email, first_name, otp):
+        from accounts.services.email_service import email_service
+        
         context = {
             'first_name': first_name,
             'otp': otp
