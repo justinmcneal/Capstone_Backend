@@ -13,7 +13,7 @@ https://docs.djangoproject.com/en/4.2/ref/settings/
 from pathlib import Path
 import os
 from dotenv import load_dotenv
-import mongoengine
+from pymongo import MongoClient
 
 load_dotenv()
 
@@ -42,7 +42,6 @@ INSTALLED_APPS = [
     'rest_framework',
     # 'rest_framework_simplejwt.token_blacklist',  # Removed - using custom MongoDB blacklist
     'corsheaders',
-    'mongoengine',
     'accounts',
 ]
 
@@ -78,7 +77,7 @@ TEMPLATES = [
 
 WSGI_APPLICATION = 'config.wsgi.application'
 
-# Database - MongoDB only (via MongoEngine)
+# Database - MongoDB only (via PyMongo)
 # Dummy database config required by Django
 DATABASES = {
     'default': {
@@ -90,12 +89,13 @@ DATABASES = {
 MONGODB_URI = os.getenv('MONGODB_URI', '')
 MONGODB_NAME = os.getenv('MONGODB_NAME', 'capstone_db')
 
+# Initialize PyMongo client
 if MONGODB_URI:
-    mongoengine.connect(
-        db=MONGODB_NAME,
-        host=MONGODB_URI,
-        alias='default'
-    )
+    MONGO_CLIENT = MongoClient(MONGODB_URI)
+    MONGODB = MONGO_CLIENT[MONGODB_NAME]
+else:
+    MONGO_CLIENT = None
+    MONGODB = None
 
 
 # Password validation

@@ -78,7 +78,7 @@ class LockoutService:
         Returns:
             bool: True if account was unlocked, False if not found
         """
-        customer = Customer.objects(email=customer_email).first()
+        customer = Customer.find_one({'email': customer_email})
         if not customer:
             return False
         

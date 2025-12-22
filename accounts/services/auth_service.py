@@ -1,10 +1,10 @@
 from accounts.models import Customer
 from accounts.utils.token_utils import TokenUtils
-from mongoengine.errors import NotUniqueError
 from accounts.utils.email_utils import EmailUtils
 from accounts.services.otp_service import OTPService
 from rest_framework_simplejwt.tokens import RefreshToken
 from datetime import datetime, timedelta
+from pymongo.errors import DuplicateKeyError
 
 
 class AuthService:
@@ -13,11 +13,15 @@ class AuthService:
     def get_customer_by_email(email, normalize=True):
         if normalize:
             email = EmailUtils.normalize_email(email)
-        return Customer.objects(email=email).first()
+        return Customer.find_one({'email': email})
     
     @staticmethod
     def get_customer_by_id(customer_id):
-        return Customer.objects(id=customer_id).first()
+        from bson import ObjectId
+        try:
+            return Customer.find_one({'_id': ObjectId(customer_id)})
+        except:
+            return None
     
     @staticmethod
     def serialize_customer_data(customer, include_last_name=False):
@@ -80,7 +84,7 @@ class AuthService:
             )
             return customer
             
-        except NotUniqueError:
+        except DuplicateKeyError:
             raise ValueError('An account with this email already exists')
         except Exception as e:
             raise Exception(f'Registration failed: {str(e)}')
