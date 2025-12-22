@@ -19,11 +19,16 @@ Django REST API backend for the Capstone project.
    pip install -r requirements.txt
    ```
 
-4. **Set up environment variables**:
+4. **Initialize MongoDB indexes**:
+   ```bash
+   python init_db.py
+   ```
+
+5. **Set up environment variables**:
    - Copy `.env.example` to `.env`
    - Update the values in `.env` as needed
 
-5. **Run the development server**:
+6. **Run the development server**:
    ```bash
    python manage.py runserver
    ```
@@ -53,5 +58,10 @@ Add your API endpoints documentation here as you build them.
 
 - Django
 - Django REST Framework
+- **PyMongo** (MongoDB driver - migrated from MongoEngine)
 - django-cors-headers (for CORS support)
 - python-dotenv (for environment variables)
+
+## Database Migration
+
+This project was migrated from MongoEngine to PyMongo for better performance and direct MongoDB control. See [PYMONGO_MIGRATION.md](docs/PYMONGO_MIGRATION.md) for details.

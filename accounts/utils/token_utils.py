@@ -34,10 +34,10 @@ class TokenUtils:
         lifetimes = settings.TOKEN_LIFETIMES.get(token_type, settings.TOKEN_LIFETIMES['no_remember_me'])
         
         # Single-device enforcement: Invalidate all existing refresh tokens for this customer
-        existing_tokens = RefreshTokenEntry.objects(customer=str(customer.id))
-        invalidated_count = existing_tokens.count()
+        existing_tokens = RefreshTokenEntry.find({'customer': str(customer.id)})
+        invalidated_count = len(existing_tokens)
         if invalidated_count > 0:
-            existing_tokens.delete()
+            RefreshTokenEntry.delete_many({'customer': str(customer.id)})
             logger.info(f"Invalidated {invalidated_count} existing refresh token(s) for {customer.email}")
         
         # Create refresh token
@@ -53,12 +53,13 @@ class TokenUtils:
         access.set_exp(lifetime=lifetimes['access'])
         
         # Store new refresh token hash in DB
-        RefreshTokenEntry.objects.create(
+        refresh_entry = RefreshTokenEntry(
             customer=str(customer.id),
             token_hash=TokenUtils._hash_token(str(refresh)),
             issued_at=datetime.utcnow(),
             expires_at=datetime.fromtimestamp(refresh['exp'])
         )
+        refresh_entry.save()
         
         return {
             'access': str(access),
@@ -84,15 +85,16 @@ class TokenUtils:
             
             expires_at = datetime.fromtimestamp(parsed_token['exp'])
             
-            BlacklistedToken.objects.create(
+            blacklisted_token = BlacklistedToken(
                 token=TokenUtils._hash_token(token),
                 token_type=token_type,
                 expires_at=expires_at
             )
+            blacklisted_token.save()
             
             # Remove from refresh token history if it's a refresh token
             if token_type == 'refresh':
-                RefreshTokenEntry.objects(token_hash=TokenUtils._hash_token(token)).delete()
+                RefreshTokenEntry.delete_many({'token_hash': TokenUtils._hash_token(token)})
             
             logger.info(f"Blacklisted {token_type} token")
             return True
@@ -123,7 +125,7 @@ class TokenUtils:
     def is_token_blacklisted(token, token_type='refresh'):
         """Check if a token is blacklisted."""
         token_hash = TokenUtils._hash_token(token)
-        return BlacklistedToken.objects(token=token_hash, token_type=token_type).first() is not None
+        return BlacklistedToken.find_one({'token': token_hash, 'token_type': token_type}) is not None
     
     @staticmethod
     def is_refresh_token_valid(customer_id, token):
@@ -132,8 +134,8 @@ class TokenUtils:
         Used for single-device token validation.
         """
         token_hash = TokenUtils._hash_token(token)
-        entry = RefreshTokenEntry.objects(
-            customer=customer_id,
-            token_hash=token_hash
-        ).first()
+        entry = RefreshTokenEntry.find_one({
+            'customer': customer_id,
+            'token_hash': token_hash
+        })
         return entry is not None

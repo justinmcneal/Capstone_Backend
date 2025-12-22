@@ -7,7 +7,6 @@ django-cors-headers==4.9.0
 djangorestframework==3.16.1
 djangorestframework_simplejwt==5.5.1
 dnspython==2.7.0
-mongoengine==0.29.1
 PyJWT==2.10.1
 pymongo==4.15.4
 python-dotenv==1.2.1
