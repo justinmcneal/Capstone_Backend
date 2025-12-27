@@ -24,8 +24,6 @@ class Customer:
         self.verified = kwargs.get('verified', False)
         self.created_at = kwargs.get('created_at', datetime.utcnow())
         self.updated_at = kwargs.get('updated_at', datetime.utcnow())
-        
-        # New fields for project requirements
         self.phone = kwargs.get('phone', '')  # Phone number (records only)
         self.language = kwargs.get('language', 'en')  # Language preference (en, tl)
         

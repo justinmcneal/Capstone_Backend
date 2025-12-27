@@ -68,6 +68,8 @@ class AuthService:
                 middle_name=validated_data.get('middle_name', ''),
                 last_name=validated_data['last_name'],
                 email=validated_data['email'],
+                phone=validated_data.get('phone', ''),
+                language=validated_data.get('language', 'en'),
                 verified=False
             )
             
