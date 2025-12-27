@@ -6,6 +6,12 @@ from .password_serializers import (
     ChangePasswordSerializer
 )
 from .base_serializers import PasswordValidationMixin, OTPValidationMixin, PasswordConfirmationMixin
+from .consent_serializers import (
+    ConsentSerializer,
+    ConsentCreateSerializer,
+    ConsentUpdateSerializer,
+    ConsentResponseSerializer
+)
 
 __all__ = [
     'SignUpSerializer', 
@@ -16,5 +22,9 @@ __all__ = [
     'ChangePasswordSerializer',
     'PasswordValidationMixin',
     'OTPValidationMixin',
-    'PasswordConfirmationMixin'
+    'PasswordConfirmationMixin',
+    'ConsentSerializer',
+    'ConsentCreateSerializer',
+    'ConsentUpdateSerializer',
+    'ConsentResponseSerializer'
 ]

@@ -5,5 +5,15 @@ from .password_views import (
     ResetPasswordView,
     ChangePasswordView
 )
+from .consent_views import ConsentView, ConsentRequiredMixin
 
-__all__ = ['SignUpView', 'LoginView', 'VerifyOTP', 'ResendOTP', 'RefreshTokenView', 'LogoutView']
+__all__ = [
+    'SignUpView', 
+    'LoginView', 
+    'VerifyOTP', 
+    'ResendOTP', 
+    'RefreshTokenView', 
+    'LogoutView',
+    'ConsentView',
+    'ConsentRequiredMixin'
+]

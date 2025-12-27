@@ -11,7 +11,13 @@ class PasswordService:
         if not customer:
             return (False, 'No account found with this email')
 
-        otp = OTPService.set_otp(customer, 'password_reset_otp', 'password_reset_otp_expires')
+        # Use password reset expiry (15 minutes) instead of default (10 minutes)
+        otp = OTPService.set_otp(
+            customer, 
+            'password_reset_otp', 
+            'password_reset_otp_expires',
+            expiry_minutes=OTPService.PASSWORD_RESET_EXPIRY_MINUTES
+        )
         customer.password_reset_attempt_count = 0
         customer.password_reset_last_attempt = None
         customer.save()

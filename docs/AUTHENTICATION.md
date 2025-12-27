@@ -1,4 +1,4 @@
-# Customer Authentication System Documentation
+# Authentication System Documentation
 
 > A comprehensive guide to the authentication and security mechanisms implemented in the Capstone Backend.
 
@@ -7,22 +7,29 @@
 ## Table of Contents
 
 1. [Overview](#overview)
-2. [Authentication Flow](#authentication-flow)
-3. [Security Mechanisms](#security-mechanisms)
-4. [API Endpoints](#api-endpoints)
-5. [Production Best Practices](#production-best-practices)
+2. [User Roles](#user-roles)
+3. [Authentication Flow](#authentication-flow)
+4. [Security Mechanisms](#security-mechanisms)
+5. [API Endpoints](#api-endpoints)
+6. [Production Best Practices](#production-best-practices)
 
 ---
 
 ## Overview
 
-This authentication system provides enterprise-grade security for customer accounts, featuring:
+This authentication system provides enterprise-grade security for **three user types**, featuring:
 
-- **Email-verified registration** with OTP confirmation
+- **Multi-user role support**: Customers, Loan Officers, and Admins
+- **Email-verified registration** with OTP confirmation (customers)
 - **Secure login** with rate limiting and account lockout
 - **Two-Factor Authentication (2FA)** using TOTP (Time-based One-Time Password)
 - **Token-based sessions** with automatic invalidation
+- **Consent management** for data and AI feature access
 - **Production-ready throttling** to prevent abuse
+
+> **Related Documentation:**
+> - [User Roles](./ROLES.md) — Detailed role permissions and capabilities
+> - [Consent Management](./CONSENT.md) — Data and AI consent requirements
 
 ---
 
@@ -240,6 +247,33 @@ These limits are per-IP address. Attackers cannot flood endpoints even with auto
 | POST | `/api/auth/2fa/disable/` | Disable 2FA | Yes |
 | POST | `/api/auth/2fa/backup-codes/` | Regenerate backup codes | Yes |
 | GET | `/api/auth/2fa/status/` | Get 2FA status | Yes |
+
+### Consent Management
+
+| Method | Endpoint | Description | Auth Required |
+|--------|----------|-------------|---------------|
+| GET | `/api/auth/consent/` | Get consent status | Yes |
+| POST | `/api/auth/consent/` | Record initial consent | Yes |
+| PUT | `/api/auth/consent/` | Update consent preferences | Yes |
+
+### Loan Officer Authentication
+
+| Method | Endpoint | Description | Auth Required |
+|--------|----------|-------------|---------------|
+| POST | `/api/auth/loan-officer/login/` | Loan officer login | No |
+| POST | `/api/auth/loan-officer/logout/` | End loan officer session | No |
+
+### Admin Authentication & Management
+
+| Method | Endpoint | Description | Auth Required |
+|--------|----------|-------------|---------------|
+| POST | `/api/auth/admin/login/` | Admin login | No |
+| POST | `/api/auth/admin/logout/` | End admin session | No |
+| GET | `/api/auth/admin/loan-officers/` | List all loan officers | Admin |
+| POST | `/api/auth/admin/loan-officers/` | Create new loan officer | Admin |
+| GET | `/api/auth/admin/loan-officers/<id>/` | Get loan officer details | Admin |
+| PUT | `/api/auth/admin/loan-officers/<id>/` | Update loan officer | Admin |
+| DELETE | `/api/auth/admin/loan-officers/<id>/` | Deactivate loan officer | Admin |
 
 ---
 

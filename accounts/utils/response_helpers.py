@@ -34,3 +34,27 @@ class APIResponseHelper:
             'success': False,
             'error': message
         }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+# Standalone functions for easier imports
+def success_response(data=None, message=None, status_code=status.HTTP_200_OK):
+    """Return a success response with consistent structure"""
+    response_data = {'status': 'success'}
+    if message:
+        response_data['message'] = message
+    if data:
+        response_data['data'] = data
+    return Response(response_data, status=status_code)
+
+
+def error_response(message, errors=None, code=None, status_code=status.HTTP_400_BAD_REQUEST):
+    """Return an error response with consistent structure"""
+    response_data = {
+        'status': 'error',
+        'message': message
+    }
+    if code:
+        response_data['code'] = code
+    if errors:
+        response_data['errors'] = errors
+    return Response(response_data, status=status_code)
