@@ -10,7 +10,7 @@ def get_db():
 
 
 class Customer:
-    """Customer model using PyMongo"""
+    """Customer model using PyMongo - represents MSME users"""
     collection_name = 'customer'
     
     def __init__(self, **kwargs):
@@ -24,6 +24,10 @@ class Customer:
         self.verified = kwargs.get('verified', False)
         self.created_at = kwargs.get('created_at', datetime.utcnow())
         self.updated_at = kwargs.get('updated_at', datetime.utcnow())
+        
+        # New fields for project requirements
+        self.phone = kwargs.get('phone', '')  # Phone number (records only)
+        self.language = kwargs.get('language', 'en')  # Language preference (en, tl)
         
         # Email verification
         self.verification_token = kwargs.get('verification_token')
@@ -56,6 +60,15 @@ class Customer:
         """Get string representation of _id"""
         return str(self._id) if self._id else None
     
+    @property
+    def full_name(self):
+        """Get full name combining first, middle (if exists), and last name"""
+        parts = [self.first_name]
+        if self.middle_name:
+            parts.append(self.middle_name)
+        parts.append(self.last_name)
+        return ' '.join(filter(None, parts))
+    
     def to_dict(self):
         """Convert instance to dictionary for MongoDB operations"""
         data = {
@@ -68,6 +81,8 @@ class Customer:
             'verified': self.verified,
             'created_at': self.created_at,
             'updated_at': self.updated_at,
+            'phone': self.phone,
+            'language': self.language,
             'verification_token': self.verification_token,
             'verification_token_expires': self.verification_token_expires,
             'verification_resend_count': self.verification_resend_count,
@@ -154,161 +169,3 @@ class Customer:
         db = get_db()
         collection = db[cls.collection_name]
         collection.create_index('email', unique=True)
-
-
-class BlacklistedToken:
-    """BlacklistedToken model using PyMongo"""
-    collection_name = 'blacklisted_tokens'
-    
-    def __init__(self, **kwargs):
-        self._id = kwargs.get('_id')
-        self.token = kwargs.get('token')
-        self.token_type = kwargs.get('token_type', 'refresh')
-        self.blacklisted_at = kwargs.get('blacklisted_at', datetime.utcnow())
-        self.expires_at = kwargs.get('expires_at')
-    
-    @property
-    def id(self):
-        return str(self._id) if self._id else None
-    
-    def to_dict(self):
-        data = {
-            'token': self.token,
-            'token_type': self.token_type,
-            'blacklisted_at': self.blacklisted_at,
-            'expires_at': self.expires_at,
-        }
-        if self._id:
-            data['_id'] = self._id
-        return data
-    
-    @classmethod
-    def from_dict(cls, data):
-        if not data:
-            return None
-        return cls(**data)
-    
-    def save(self):
-        db = get_db()
-        collection = db[self.collection_name]
-        
-        data = self.to_dict()
-        
-        if self._id:
-            collection.update_one(
-                {'_id': self._id},
-                {'$set': data}
-            )
-        else:
-            result = collection.insert_one(data)
-            self._id = result.inserted_id
-        
-        return self
-    
-    @classmethod
-    def find_one(cls, query):
-        db = get_db()
-        collection = db[cls.collection_name]
-        doc = collection.find_one(query)
-        return cls.from_dict(doc)
-    
-    @classmethod
-    def find(cls, query, **kwargs):
-        db = get_db()
-        collection = db[cls.collection_name]
-        docs = collection.find(query, **kwargs)
-        return [cls.from_dict(doc) for doc in docs]
-    
-    @classmethod
-    def create_indexes(cls):
-        db = get_db()
-        collection = db[cls.collection_name]
-        collection.create_index('token', unique=True)
-        collection.create_index('token_type')
-        collection.create_index('expires_at', expireAfterSeconds=0)
-
-
-class RefreshTokenEntry:
-    """RefreshTokenEntry model using PyMongo"""
-    collection_name = 'refresh_tokens'
-    
-    def __init__(self, **kwargs):
-        self._id = kwargs.get('_id')
-        self.customer = kwargs.get('customer')
-        self.token_hash = kwargs.get('token_hash')
-        self.issued_at = kwargs.get('issued_at', datetime.utcnow())
-        self.expires_at = kwargs.get('expires_at')
-    
-    @property
-    def id(self):
-        return str(self._id) if self._id else None
-    
-    def to_dict(self):
-        data = {
-            'customer': self.customer,
-            'token_hash': self.token_hash,
-            'issued_at': self.issued_at,
-            'expires_at': self.expires_at,
-        }
-        if self._id:
-            data['_id'] = self._id
-        return data
-    
-    @classmethod
-    def from_dict(cls, data):
-        if not data:
-            return None
-        return cls(**data)
-    
-    def save(self):
-        db = get_db()
-        collection = db[self.collection_name]
-        
-        data = self.to_dict()
-        
-        if self._id:
-            collection.update_one(
-                {'_id': self._id},
-                {'$set': data}
-            )
-        else:
-            result = collection.insert_one(data)
-            self._id = result.inserted_id
-        
-        return self
-    
-    def delete(self):
-        if self._id:
-            db = get_db()
-            collection = db[self.collection_name]
-            collection.delete_one({'_id': self._id})
-    
-    @classmethod
-    def find_one(cls, query):
-        db = get_db()
-        collection = db[cls.collection_name]
-        doc = collection.find_one(query)
-        return cls.from_dict(doc)
-    
-    @classmethod
-    def find(cls, query, **kwargs):
-        db = get_db()
-        collection = db[cls.collection_name]
-        docs = collection.find(query, **kwargs)
-        return [cls.from_dict(doc) for doc in docs]
-    
-    @classmethod
-    def delete_many(cls, query):
-        db = get_db()
-        collection = db[cls.collection_name]
-        return collection.delete_many(query)
-    
-    @classmethod
-    def create_indexes(cls):
-        db = get_db()
-        collection = db[cls.collection_name]
-        collection.create_index('customer')
-        collection.create_index('token_hash')
-        collection.create_index('expires_at', expireAfterSeconds=0)
-
-

@@ -4,6 +4,7 @@ from .otp_service import OTPService
 from .email_service import email_service, CentralizedEmailService
 from .lockout_service import LockoutService
 from .two_factor_service import TwoFactorService
+from .consent_service import ConsentService
 
 __all__ = [
     'AuthService', 
@@ -12,5 +13,6 @@ __all__ = [
     'email_service', 
     'CentralizedEmailService',
     'LockoutService',
-    'TwoFactorService'
+    'TwoFactorService',
+    'ConsentService'
 ]
