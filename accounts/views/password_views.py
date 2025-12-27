@@ -11,7 +11,7 @@ from accounts.services.password_service import PasswordService
 from accounts.utils.response_helpers import APIResponseHelper
 from accounts.utils.throttles import (
     OTPVerificationRateThrottle,
-    OTPResendRateThrottle
+    ForgotPasswordRateThrottle
 )
 import logging
 
@@ -19,7 +19,7 @@ logger = logging.getLogger('authentication')
 
 class ForgotPasswordView(APIView):
     permission_classes = [AllowAny]
-    throttle_classes = [OTPResendRateThrottle]
+    throttle_classes = [ForgotPasswordRateThrottle]
     
     def post(self, request):
         serializer = ForgotPasswordSerializer(data=request.data)

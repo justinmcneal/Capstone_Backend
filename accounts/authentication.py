@@ -7,10 +7,17 @@ logger = logging.getLogger('authentication')
 
 
 class AuthenticatedUser:
-    """User object representing an authenticated customer."""
+    """
+    User object representing an authenticated user.
+    
+    Supports three user types:
+    - customer: MSME microentrepreneurs
+    - loan_officer: Bank/microfinance staff
+    - admin: System administrators
+    """
     
     def __init__(self, customer_id, email, verified, role='customer'):
-        self.customer_id = customer_id
+        self.customer_id = customer_id  # User ID (works for all user types)
         self.email = email
         self.verified = verified
         self.role = role
@@ -18,14 +25,28 @@ class AuthenticatedUser:
         self.is_active = True
     
     def __str__(self):
-        return f"Customer: {self.email}"
+        role_display = self.role.replace('_', ' ').title()
+        return f"{role_display}: {self.email}"
     
     def get(self, key, default=None):
         return getattr(self, key, default)
     
     @property
+    def user_id(self):
+        """Alias for customer_id for clearer semantics"""
+        return self.customer_id
+    
+    @property
     def is_admin(self):
         return self.role == 'admin'
+    
+    @property
+    def is_loan_officer(self):
+        return self.role == 'loan_officer'
+    
+    @property
+    def is_customer(self):
+        return self.role == 'customer'
 
 
 class CustomJWTAuthentication(JWTAuthentication):

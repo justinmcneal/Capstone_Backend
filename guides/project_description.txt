@@ -1,0 +1,155 @@
+CAPSTONE PROJECT TITLE APPROVAL FORM
+Proponents:
+	{Student Name}				{Role}
+Caronongan Justin Mc Neal			Project Manager
+Soriano, Eli Gabriel					System Developer
+Pimentel, John Loyd					Researcher
+Barte, Feniel						Document Writer
+Co, Joshua						System Designer
+
+
+Capstone Project Title: MSME Pathways: Smart Loan Support for the Informal Sector
+
+Project Type:
+System Development
+Mobile Application
+Game Development
+Cybersecurity Framework
+Network Infrastructure
+
+Evaluation
+{For completion by Dean Aris Liwanag}
+
+
+Approved
+Disapproved
+Feasibility
+
+
+
+
+Relevance to the Program
+
+
+
+
+Originality and Innovation
+
+
+
+
+Alignment with SDGs
+
+
+
+
+
+
+Overall Recommendation
+       ☐ Approved
+       ☐ Disapproved
+
+Instructions for re-submission (if disapproved)
+
+____________________________________________________________________________
+
+____________________________________________________________________________
+
+____________________________________________________________________________
+
+
+
+
+Recommending Approval:						Approved by:
+
+______________________						______________________
+									Dean Aristotle B. Liwanag
+PROJECT INFORMATION
+RESEARCH TITLE
+MSME Pathways: Smart Loan Support for the Informal Sector
+TECHNICAL DESCRIPTION
+RATIONALE
+Millions of Filipino microentrepreneurs—such as sari-sari store owners, market vendors, home-based sellers, and informal workers—remain financially excluded due to a lack of financial literacy, distrust of formal institutions, and minimal access to bank services. Traditional microfinance outreach is labor-intensive and difficult to scale, leaving many potential borrowers unaware of safer, responsible alternatives to informal lending.
+This project addresses the gap by developing an AI-enabled system that guides microentrepreneurs through loan education, pre-screening, and alternative data profiling to help them understand and access formal financial support. The problem persists due to digital barriers, low literacy levels, and outdated outreach models, making an intelligent and scalable solution necessary today.
+This project aligns with:
+SDG 1: No Poverty (promoting financial resilience)
+
+
+SDG 8: Decent Work and Economic Growth (supporting MSME growth and access to capital)
+
+
+SDG 9: Industry, Innovation, and Infrastructure (building inclusive financial technology solutions)
+OBJECTIVES
+To develop an AI-driven financial guidance system that explains loan concepts in simple, culturally relevant language for microentrepreneurs.
+
+
+To design a smart pre-qualification and alternative data profiling engine that supports ethical lending decisions for users with little to no credit history.
+
+
+To evaluate the system’s effectiveness in improving user financial understanding, loan readiness, and confidence in formal lending processes.
+METHODOLOGY
+Data Gathering
+ Conduct interviews, surveys, and small-group discussions with microentrepreneurs to understand financial behavior, pain points, and user needs.
+
+
+System Design
+ Create UI/UX wireframes, flow diagrams, and system architecture covering mobile interfaces and web interfaces.
+
+
+Development
+Implement AI chatbot features, document recognition models, and profiling modules using related technologies.
+
+
+Testing & Evaluation
+ Conduct usability testing, debugging, and refinement based on user feedback and system performance metrics.
+REFERENCES
+ [1]
+
+
+
+Asian Development Bank. (2023). Financial inclusion of MSMEs in Southeast Asia: Barriers and opportunities.
+ [2]
+
+
+
+World Bank. (2022). Philippines: Financial inclusion overview.
+[3]
+
+
+Bangko Sentral ng Pilipinas. (2023). Financial Inclusion Survey
+[4]
+
+
+International Finance Corporation. (2021). MSME Finance Gap: Assessment of shortfalls and opportunities in financing MSMEs.
+EXPECTED OUTPUT
+A functional prototype of the Smart Loan Support System
+
+
+System documentation detailing design, architecture, and implementation
+
+
+A user guide/manual for microentrepreneurs and loan officers
+
+
+Testing results showing usability performance and model accuracy
+POTENTIAL IMPACT
+Expands access to responsible loan information and safe financial pathways for underserved microentrepreneurs.
+
+
+Strengthens financial literacy and confidence among users, reducing dependence on informal lenders.
+USERS OR BENEFICIARIES
+Sari-sari store owners
+
+
+Market vendors and stallholders
+
+
+Home-based and informal sellers
+
+
+Microentrepreneurs with limited or no access to formal credit
+
+
+Loan officers who need automated screening and profiling support
+
+
