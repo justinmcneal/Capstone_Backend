@@ -146,7 +146,7 @@ POST /api/auth/refresh-token/
 **Body:**
 ```json
 {
-    "refresh_token": "eyJ..."
+    "refresh": "eyJ..."
 }
 ```
 

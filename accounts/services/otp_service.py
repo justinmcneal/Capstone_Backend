@@ -5,19 +5,22 @@ from accounts.utils.email_utils import EmailUtils
 class OTPService:
     """Centralized service for all OTP-related operations"""
     
-    # OTP Configuration
+    # OTP Configuration - Security Best Practices
     OTP_LENGTH = 6
-    OTP_EXPIRY_HOURS = 12
-    MAX_OTP_ATTEMPTS = 5
-    OTP_COOLDOWN_SECONDS = 600  # 10 minutes
+    OTP_EXPIRY_MINUTES = 10          # Email verification OTP: 10 minutes (was 12 hours!)
+    PASSWORD_RESET_EXPIRY_MINUTES = 15  # Password reset OTP: 15 minutes
+    MAX_OTP_ATTEMPTS = 5             # Max wrong attempts before cooldown
+    OTP_COOLDOWN_SECONDS = 600       # 10 minutes cooldown after max attempts
     
     @staticmethod
     def generate_otp(length=None):
         return EmailUtils.generate_otp(length or OTPService.OTP_LENGTH)
     
     @staticmethod
-    def get_otp_expiry():
-        return datetime.utcnow() + timedelta(hours=OTPService.OTP_EXPIRY_HOURS)
+    def get_otp_expiry(minutes=None):
+        """Get OTP expiry time. Default is OTP_EXPIRY_MINUTES (10 min)."""
+        expiry_minutes = minutes or OTPService.OTP_EXPIRY_MINUTES
+        return datetime.utcnow() + timedelta(minutes=expiry_minutes)
     
     @staticmethod
     def is_otp_expired(expiry_time):
@@ -74,10 +77,11 @@ class OTPService:
         return (True, 'OTP is valid')
     
     @staticmethod
-    def set_otp(customer, otp_field='verification_token', expiry_field='verification_token_expires'):
+    def set_otp(customer, otp_field='verification_token', expiry_field='verification_token_expires', expiry_minutes=None):
+        """Set OTP for customer with optional custom expiry time."""
         otp = OTPService.generate_otp()
         setattr(customer, otp_field, otp)
-        setattr(customer, expiry_field, OTPService.get_otp_expiry())
+        setattr(customer, expiry_field, OTPService.get_otp_expiry(expiry_minutes))
         return otp
     
     @staticmethod
