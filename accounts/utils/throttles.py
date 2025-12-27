@@ -29,3 +29,8 @@ class TwoFactorRateThrottle(AnonRateThrottle):
 class PasswordResetRateThrottle(AnonRateThrottle):
     """IP-based throttling for password reset: 3 requests per hour"""
     rate = '3/hour'
+
+
+class ForgotPasswordRateThrottle(AnonRateThrottle):
+    """IP-based throttling for forgot password: 5 requests per hour"""
+    rate = '5/hour'
