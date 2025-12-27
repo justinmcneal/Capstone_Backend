@@ -217,7 +217,7 @@ POST /api/auth/reset-password/
     "email": "juan@example.com",
     "otp": "123456",
     "new_password": "NewSecurePass123!",
-    "new_password_confirm": "NewSecurePass123!"
+    "confirm_password": "NewSecurePass123!"
 }
 ```
 
@@ -234,9 +234,9 @@ POST /api/auth/change-password/
 **Body:**
 ```json
 {
-    "current_password": "SecurePass123!",
+    "old_password": "SecurePass123!",
     "new_password": "NewSecurePass123!",
-    "new_password_confirm": "NewSecurePass123!"
+    "confirm_password": "NewSecurePass123!"
 }
 ```
 
