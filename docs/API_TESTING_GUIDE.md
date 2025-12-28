@@ -375,10 +375,6 @@ GET /api/auth/consent/
 }
 ```
 
-
-#### NOT TESTED YET
-
-
 ---
 
 ### 18. Record Consent
