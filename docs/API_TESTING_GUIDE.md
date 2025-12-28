@@ -643,6 +643,147 @@ DELETE /api/auth/admin/loan-officers/<officer_id>/
 
 ---
 
+
+
+
+
+
+
+
+
+
+### NOT TESTED
+
+## Admin - Admin Management (Super Admin Only)
+
+> ⚠️ These endpoints require **Super Admin** access. Regular admins cannot manage other admins.
+
+### 29. List Admins
+
+```
+GET /api/auth/admin/admins/
+```
+
+**Headers:** `Authorization: Bearer <super_admin_access_token>`
+
+**Query Params (optional):**
+- `active=true` (default) or `active=false`
+
+---
+
+### 30. Create Admin
+
+```
+POST /api/auth/admin/admins/
+```
+
+**Headers:** `Authorization: Bearer <super_admin_access_token>`
+
+**Body:**
+```json
+{
+    "username": "newadmin",
+    "email": "newadmin@system.com",
+    "first_name": "New",
+    "last_name": "Admin",
+    "super_admin": false,
+    "permissions": ["create_loan_officer", "view_logs"]
+}
+```
+
+**Response (201):**
+```json
+{
+    "status": "success",
+    "message": "Admin created successfully",
+    "data": {
+        "admin": {
+            "id": "...",
+            "username": "newadmin",
+            "email": "newadmin@system.com",
+            "full_name": "New Admin",
+            "super_admin": false,
+            "permissions": ["create_loan_officer", "view_logs"]
+        },
+        "temporary_password": "xK9#mP2$qL5!",
+        "message": "Send this temporary password to the admin securely."
+    }
+}
+```
+
+**Available Permissions:**
+- `create_loan_officer` - Can create loan officer accounts
+- `manage_loan_officers` - Can edit/deactivate loan officers
+- `manage_users` - Can lock/unlock user accounts
+- `view_analytics` - Can access analytics
+- `view_logs` - Can access audit logs
+- `manage_system` - Can modify system settings
+
+---
+
+### 31. Get Admin Details
+
+```
+GET /api/auth/admin/admins/<admin_id>/
+```
+
+**Headers:** `Authorization: Bearer <super_admin_access_token>`
+
+---
+
+### 32. Update Admin
+
+```
+PUT /api/auth/admin/admins/<admin_id>/
+```
+
+**Headers:** `Authorization: Bearer <super_admin_access_token>`
+
+**Body:**
+```json
+{
+    "first_name": "Updated",
+    "last_name": "Name",
+    "active": true
+}
+```
+
+---
+
+### 33. Update Admin Permissions
+
+```
+PUT /api/auth/admin/admins/<admin_id>/permissions/
+```
+
+**Headers:** `Authorization: Bearer <super_admin_access_token>`
+
+**Body (grant specific permissions):**
+```json
+{
+    "permissions": ["create_loan_officer", "manage_loan_officers", "view_analytics"]
+}
+```
+
+**Body (make super admin):**
+```json
+{
+    "super_admin": true
+}
+```
+
+---
+
+### 34. Deactivate Admin
+
+```
+DELETE /api/auth/admin/admins/<admin_id>/
+```
+
+**Headers:** `Authorization: Bearer <super_admin_access_token>`
+
+---
+
 ## Error Responses
 
 ### 400 Bad Request

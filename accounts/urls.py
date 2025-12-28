@@ -14,7 +14,11 @@ from accounts.views.admin_views import (
     AdminLoginView,
     AdminLogoutView,
     LoanOfficerManagementView,
-    LoanOfficerDetailView
+    LoanOfficerDetailView,
+    # Admin Management (Super Admin Only)
+    AdminManagementView,
+    AdminDetailView,
+    AdminPermissionsView
 )
 
 
@@ -57,4 +61,10 @@ urlpatterns = [
     # Admin - Loan Officer Management
     path('admin/loan-officers/', LoanOfficerManagementView.as_view(), name='admin-loan-officers'),
     path('admin/loan-officers/<str:officer_id>/', LoanOfficerDetailView.as_view(), name='admin-loan-officer-detail'),
+
+    # Admin - Admin Management (Super Admin Only)
+    path('admin/admins/', AdminManagementView.as_view(), name='admin-admins'),
+    path('admin/admins/<str:admin_id>/', AdminDetailView.as_view(), name='admin-detail'),
+    path('admin/admins/<str:admin_id>/permissions/', AdminPermissionsView.as_view(), name='admin-permissions'),
 ]
+
