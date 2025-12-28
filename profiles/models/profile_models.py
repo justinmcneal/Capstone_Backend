@@ -1,0 +1,427 @@
+"""
+Profile Models for MSME Pathways
+
+Collections:
+- customer_profiles: Extended customer profile data
+- business_profiles: Business/MSME information
+- alternative_data: Alternative credit scoring data
+"""
+from datetime import datetime
+from bson import ObjectId
+from django.conf import settings
+
+
+def get_db():
+    """Helper function to get the MongoDB database instance"""
+    return settings.MONGODB
+
+
+# Business Type Options
+BUSINESS_TYPES = [
+    'sari_sari_store',      # Sari-sari store
+    'market_vendor',        # Market vendor/stallholder
+    'home_based_seller',    # Home-based seller
+    'food_vendor',          # Food vendor/eatery
+    'transport_service',    # Tricycle/jeepney operator
+    'freelancer',           # Freelance services
+    'agriculture',          # Small-scale farming
+    'manufacturing',        # Small manufacturing
+    'retail_trade',         # Retail trade
+    'other'                 # Other
+]
+
+# Education Level Options
+EDUCATION_LEVELS = [
+    'no_formal',            # No formal education
+    'elementary',           # Elementary
+    'high_school',          # High school
+    'vocational',           # Vocational/Technical
+    'college_undergraduate', # Some college
+    'college_graduate',     # College graduate
+    'postgraduate'          # Postgraduate
+]
+
+# Income Range Options (Monthly in PHP)
+INCOME_RANGES = [
+    'below_10000',          # Below ₱10,000
+    '10000_20000',          # ₱10,000 - ₱20,000
+    '20000_30000',          # ₱20,000 - ₱30,000
+    '30000_50000',          # ₱30,000 - ₱50,000
+    '50000_100000',         # ₱50,000 - ₱100,000
+    'above_100000'          # Above ₱100,000
+]
+
+
+class CustomerProfile:
+    """
+    Extended customer profile data.
+    
+    Stores additional personal information for loan pre-qualification.
+    """
+    collection_name = 'customer_profiles'
+    
+    def __init__(self, **kwargs):
+        self._id = kwargs.get('_id')
+        self.customer_id = kwargs.get('customer_id')  # Reference to Customer
+        
+        # Personal Information
+        self.date_of_birth = kwargs.get('date_of_birth')
+        self.gender = kwargs.get('gender')  # male, female, other, prefer_not_to_say
+        self.civil_status = kwargs.get('civil_status')  # single, married, widowed, separated
+        self.nationality = kwargs.get('nationality', 'Filipino')
+        
+        # Address Information
+        self.address_line1 = kwargs.get('address_line1', '')
+        self.address_line2 = kwargs.get('address_line2', '')
+        self.barangay = kwargs.get('barangay', '')
+        self.city_municipality = kwargs.get('city_municipality', '')
+        self.province = kwargs.get('province', '')
+        self.zip_code = kwargs.get('zip_code', '')
+        
+        # Emergency Contact
+        self.emergency_contact_name = kwargs.get('emergency_contact_name', '')
+        self.emergency_contact_phone = kwargs.get('emergency_contact_phone', '')
+        self.emergency_contact_relationship = kwargs.get('emergency_contact_relationship', '')
+        
+        # Profile Completion
+        self.profile_completed = kwargs.get('profile_completed', False)
+        self.completion_percentage = kwargs.get('completion_percentage', 0)
+        
+        # Timestamps
+        self.created_at = kwargs.get('created_at', datetime.utcnow())
+        self.updated_at = kwargs.get('updated_at', datetime.utcnow())
+    
+    @property
+    def id(self):
+        return str(self._id) if self._id else None
+    
+    def to_dict(self):
+        data = {
+            'customer_id': self.customer_id,
+            'date_of_birth': self.date_of_birth,
+            'gender': self.gender,
+            'civil_status': self.civil_status,
+            'nationality': self.nationality,
+            'address_line1': self.address_line1,
+            'address_line2': self.address_line2,
+            'barangay': self.barangay,
+            'city_municipality': self.city_municipality,
+            'province': self.province,
+            'zip_code': self.zip_code,
+            'emergency_contact_name': self.emergency_contact_name,
+            'emergency_contact_phone': self.emergency_contact_phone,
+            'emergency_contact_relationship': self.emergency_contact_relationship,
+            'profile_completed': self.profile_completed,
+            'completion_percentage': self.completion_percentage,
+            'created_at': self.created_at,
+            'updated_at': self.updated_at,
+        }
+        if self._id:
+            data['_id'] = self._id
+        return data
+    
+    @classmethod
+    def from_dict(cls, data):
+        if not data:
+            return None
+        return cls(**data)
+    
+    def calculate_completion(self):
+        """Calculate profile completion percentage"""
+        fields = [
+            self.date_of_birth,
+            self.gender,
+            self.civil_status,
+            self.address_line1,
+            self.barangay,
+            self.city_municipality,
+            self.province,
+        ]
+        filled = sum(1 for f in fields if f)
+        self.completion_percentage = int((filled / len(fields)) * 100)
+        self.profile_completed = self.completion_percentage == 100
+        return self.completion_percentage
+    
+    def save(self):
+        db = get_db()
+        collection = db[self.collection_name]
+        
+        self.updated_at = datetime.utcnow()
+        self.calculate_completion()
+        data = self.to_dict()
+        
+        if self._id:
+            collection.update_one({'_id': self._id}, {'$set': data})
+        else:
+            result = collection.insert_one(data)
+            self._id = result.inserted_id
+        
+        return self
+    
+    @classmethod
+    def find_one(cls, query):
+        db = get_db()
+        collection = db[cls.collection_name]
+        doc = collection.find_one(query)
+        return cls.from_dict(doc)
+    
+    @classmethod
+    def find_by_customer(cls, customer_id):
+        return cls.find_one({'customer_id': str(customer_id)})
+    
+    @classmethod
+    def get_or_create(cls, customer_id):
+        profile = cls.find_by_customer(customer_id)
+        if not profile:
+            profile = cls(customer_id=str(customer_id))
+            profile.save()
+        return profile
+
+
+class BusinessProfile:
+    """
+    Business/MSME information for loan pre-qualification.
+    """
+    collection_name = 'business_profiles'
+    
+    def __init__(self, **kwargs):
+        self._id = kwargs.get('_id')
+        self.customer_id = kwargs.get('customer_id')
+        
+        # Business Information
+        self.business_name = kwargs.get('business_name', '')
+        self.business_type = kwargs.get('business_type')  # From BUSINESS_TYPES
+        self.business_type_other = kwargs.get('business_type_other', '')  # If type is 'other'
+        self.business_description = kwargs.get('business_description', '')
+        
+        # Location
+        self.business_address = kwargs.get('business_address', '')
+        self.business_barangay = kwargs.get('business_barangay', '')
+        self.business_city = kwargs.get('business_city', '')
+        self.business_province = kwargs.get('business_province', '')
+        
+        # Operations
+        self.years_in_operation = kwargs.get('years_in_operation')  # Float/int
+        self.is_registered = kwargs.get('is_registered', False)  # DTI/SEC registered
+        self.registration_type = kwargs.get('registration_type')  # DTI, SEC, BIR
+        self.registration_number = kwargs.get('registration_number', '')
+        
+        # Financial
+        self.estimated_monthly_income = kwargs.get('estimated_monthly_income')  # Float
+        self.income_range = kwargs.get('income_range')  # From INCOME_RANGES
+        self.estimated_monthly_expenses = kwargs.get('estimated_monthly_expenses')
+        self.number_of_employees = kwargs.get('number_of_employees', 0)
+        
+        # Timestamps
+        self.created_at = kwargs.get('created_at', datetime.utcnow())
+        self.updated_at = kwargs.get('updated_at', datetime.utcnow())
+    
+    @property
+    def id(self):
+        return str(self._id) if self._id else None
+    
+    def to_dict(self):
+        data = {
+            'customer_id': self.customer_id,
+            'business_name': self.business_name,
+            'business_type': self.business_type,
+            'business_type_other': self.business_type_other,
+            'business_description': self.business_description,
+            'business_address': self.business_address,
+            'business_barangay': self.business_barangay,
+            'business_city': self.business_city,
+            'business_province': self.business_province,
+            'years_in_operation': self.years_in_operation,
+            'is_registered': self.is_registered,
+            'registration_type': self.registration_type,
+            'registration_number': self.registration_number,
+            'estimated_monthly_income': self.estimated_monthly_income,
+            'income_range': self.income_range,
+            'estimated_monthly_expenses': self.estimated_monthly_expenses,
+            'number_of_employees': self.number_of_employees,
+            'created_at': self.created_at,
+            'updated_at': self.updated_at,
+        }
+        if self._id:
+            data['_id'] = self._id
+        return data
+    
+    @classmethod
+    def from_dict(cls, data):
+        if not data:
+            return None
+        return cls(**data)
+    
+    def save(self):
+        db = get_db()
+        collection = db[self.collection_name]
+        
+        self.updated_at = datetime.utcnow()
+        data = self.to_dict()
+        
+        if self._id:
+            collection.update_one({'_id': self._id}, {'$set': data})
+        else:
+            result = collection.insert_one(data)
+            self._id = result.inserted_id
+        
+        return self
+    
+    @classmethod
+    def find_one(cls, query):
+        db = get_db()
+        collection = db[cls.collection_name]
+        doc = collection.find_one(query)
+        return cls.from_dict(doc)
+    
+    @classmethod
+    def find_by_customer(cls, customer_id):
+        return cls.find_one({'customer_id': str(customer_id)})
+    
+    @classmethod
+    def get_or_create(cls, customer_id):
+        profile = cls.find_by_customer(customer_id)
+        if not profile:
+            profile = cls(customer_id=str(customer_id))
+            profile.save()
+        return profile
+
+
+class AlternativeData:
+    """
+    Alternative credit data for users with no formal credit history.
+    
+    This data is used for AI-driven credit scoring and loan pre-qualification.
+    """
+    collection_name = 'alternative_data'
+    
+    def __init__(self, **kwargs):
+        self._id = kwargs.get('_id')
+        self.customer_id = kwargs.get('customer_id')
+        
+        # Education & Employment
+        self.education_level = kwargs.get('education_level')  # From EDUCATION_LEVELS
+        self.employment_status = kwargs.get('employment_status')  # employed, self_employed, unemployed
+        self.years_of_experience = kwargs.get('years_of_experience')
+        
+        # Housing
+        self.housing_status = kwargs.get('housing_status')  # owned, rented, living_with_family
+        self.years_at_current_address = kwargs.get('years_at_current_address')
+        self.monthly_rent = kwargs.get('monthly_rent')  # If renting
+        
+        # Dependents & Family
+        self.number_of_dependents = kwargs.get('number_of_dependents', 0)
+        self.household_income = kwargs.get('household_income')
+        
+        # Existing Credit
+        self.has_existing_loans = kwargs.get('has_existing_loans', False)
+        self.existing_loan_amount = kwargs.get('existing_loan_amount')
+        self.existing_loan_source = kwargs.get('existing_loan_source')  # bank, cooperative, informal
+        self.loan_payment_history = kwargs.get('loan_payment_history')  # on_time, late, defaulted
+        
+        # Digital Footprint (optional)
+        self.has_bank_account = kwargs.get('has_bank_account', False)
+        self.bank_account_duration = kwargs.get('bank_account_duration')  # Years
+        self.has_ewallet = kwargs.get('has_ewallet', False)  # GCash, Maya, etc.
+        self.ewallet_usage = kwargs.get('ewallet_usage')  # daily, weekly, monthly, rarely
+        
+        # Utility Payments
+        self.pays_utilities = kwargs.get('pays_utilities', False)
+        self.utility_payment_history = kwargs.get('utility_payment_history')  # on_time, late
+        
+        # Social Capital
+        self.is_coop_member = kwargs.get('is_coop_member', False)
+        self.community_involvement = kwargs.get('community_involvement', [])  # List of orgs
+        
+        # Risk Score (calculated by AI)
+        self.risk_score = kwargs.get('risk_score')  # 0-100, higher = lower risk
+        self.risk_category = kwargs.get('risk_category')  # low, medium, high
+        self.score_calculated_at = kwargs.get('score_calculated_at')
+        
+        # Timestamps
+        self.created_at = kwargs.get('created_at', datetime.utcnow())
+        self.updated_at = kwargs.get('updated_at', datetime.utcnow())
+    
+    @property
+    def id(self):
+        return str(self._id) if self._id else None
+    
+    def to_dict(self):
+        data = {
+            'customer_id': self.customer_id,
+            'education_level': self.education_level,
+            'employment_status': self.employment_status,
+            'years_of_experience': self.years_of_experience,
+            'housing_status': self.housing_status,
+            'years_at_current_address': self.years_at_current_address,
+            'monthly_rent': self.monthly_rent,
+            'number_of_dependents': self.number_of_dependents,
+            'household_income': self.household_income,
+            'has_existing_loans': self.has_existing_loans,
+            'existing_loan_amount': self.existing_loan_amount,
+            'existing_loan_source': self.existing_loan_source,
+            'loan_payment_history': self.loan_payment_history,
+            'has_bank_account': self.has_bank_account,
+            'bank_account_duration': self.bank_account_duration,
+            'has_ewallet': self.has_ewallet,
+            'ewallet_usage': self.ewallet_usage,
+            'pays_utilities': self.pays_utilities,
+            'utility_payment_history': self.utility_payment_history,
+            'is_coop_member': self.is_coop_member,
+            'community_involvement': self.community_involvement,
+            'risk_score': self.risk_score,
+            'risk_category': self.risk_category,
+            'score_calculated_at': self.score_calculated_at,
+            'created_at': self.created_at,
+            'updated_at': self.updated_at,
+        }
+        if self._id:
+            data['_id'] = self._id
+        return data
+    
+    @classmethod
+    def from_dict(cls, data):
+        if not data:
+            return None
+        return cls(**data)
+    
+    def save(self):
+        db = get_db()
+        collection = db[self.collection_name]
+        
+        self.updated_at = datetime.utcnow()
+        data = self.to_dict()
+        
+        if self._id:
+            collection.update_one({'_id': self._id}, {'$set': data})
+        else:
+            result = collection.insert_one(data)
+            self._id = result.inserted_id
+        
+        return self
+    
+    @classmethod
+    def find_one(cls, query):
+        db = get_db()
+        collection = db[cls.collection_name]
+        doc = collection.find_one(query)
+        return cls.from_dict(doc)
+    
+    @classmethod
+    def find_by_customer(cls, customer_id):
+        return cls.find_one({'customer_id': str(customer_id)})
+    
+    @classmethod
+    def get_or_create(cls, customer_id):
+        profile = cls.find_by_customer(customer_id)
+        if not profile:
+            profile = cls(customer_id=str(customer_id))
+            profile.save()
+        return profile
+    
+    @classmethod
+    def create_indexes(cls):
+        db = get_db()
+        collection = db[cls.collection_name]
+        collection.create_index('customer_id', unique=True)
+        collection.create_index('risk_score')

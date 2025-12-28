@@ -43,6 +43,7 @@ INSTALLED_APPS = [
     # 'rest_framework_simplejwt.token_blacklist',  # Removed - using custom MongoDB blacklist
     'corsheaders',
     'accounts',
+    'profiles',
 ]
 
 MIDDLEWARE = [
