@@ -16,6 +16,36 @@ Content-Type: application/json
 
 ---
 
+## Creating Test Users
+
+Before testing the API, you need to create the appropriate user accounts:
+
+### 1. Create Admin (CLI - Required First)
+```bash
+# Activate virtual environment first
+source venv/bin/activate
+
+# Interactive mode
+python manage.py create_admin
+
+# Or with all options (super admin)
+python manage.py create_admin --username admin --email admin@system.com --password AdminPass123! --super-admin
+```
+
+### 2. Create Loan Officer (API - Requires Admin)
+Use the Admin token to create loan officers via API:
+```
+POST /api/auth/admin/loan-officers/
+```
+
+### 3. Create Customer (Self-Registration)
+Customers register themselves via:
+```
+POST /api/auth/signup/
+```
+
+---
+
 ## Customer Authentication
 
 ### 1. Sign Up
