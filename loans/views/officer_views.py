@@ -1,0 +1,188 @@
+from rest_framework.views import APIView
+from rest_framework import status
+from rest_framework.permissions import IsAuthenticated
+from bson import ObjectId
+from datetime import datetime
+
+from accounts.authentication import CustomJWTAuthentication
+from accounts.utils.response_helpers import success_response, error_response
+from loans.models import LoanProduct, LoanApplication
+from loans.serializers import LoanReviewSerializer
+import logging
+
+logger = logging.getLogger('loans')
+
+
+class LoanOfficerRequiredMixin:
+    """Mixin to require loan officer or admin role"""
+    
+    def check_officer_permission(self, request):
+        user = request.user
+        if not hasattr(user, 'role') or user.role not in ['loan_officer', 'admin']:
+            return False, error_response(
+                message="Loan officer access required",
+                status_code=status.HTTP_403_FORBIDDEN
+            )
+        return True, user
+
+
+class OfficerApplicationListView(LoanOfficerRequiredMixin, APIView):
+    """
+    Loan Officer: List pending applications.
+    
+    GET /api/loans/officer/applications/
+    """
+    authentication_classes = [CustomJWTAuthentication]
+    permission_classes = [IsAuthenticated]
+    
+    def get(self, request):
+        has_permission, result = self.check_officer_permission(request)
+        if not has_permission:
+            return result
+        
+        # Filter by status
+        status_filter = request.query_params.get('status', 'pending')
+        
+        if status_filter == 'pending':
+            applications = LoanApplication.find_pending()
+        elif status_filter == 'mine':
+            applications = LoanApplication.find_by_officer(result.customer_id)
+        else:
+            applications = LoanApplication.find({'status': status_filter})
+        
+        apps_data = []
+        for app in applications:
+            product = LoanProduct.find_by_id(app.product_id)
+            apps_data.append({
+                'id': app.id,
+                'customer_id': app.customer_id,
+                'product_name': product.name if product else 'Unknown',
+                'requested_amount': app.requested_amount,
+                'recommended_amount': app.recommended_amount,
+                'term_months': app.term_months,
+                'status': app.status,
+                'eligibility_score': app.eligibility_score,
+                'risk_category': app.risk_category,
+                'submitted_at': app.submitted_at.isoformat() if app.submitted_at else None
+            })
+        
+        return success_response(
+            data={'applications': apps_data, 'total': len(apps_data)},
+            message="Applications retrieved"
+        )
+
+
+class OfficerApplicationDetailView(LoanOfficerRequiredMixin, APIView):
+    """
+    Loan Officer: View application details.
+    
+    GET /api/loans/officer/applications/<id>/
+    """
+    authentication_classes = [CustomJWTAuthentication]
+    permission_classes = [IsAuthenticated]
+    
+    def get(self, request, application_id):
+        has_permission, result = self.check_officer_permission(request)
+        if not has_permission:
+            return result
+        
+        app = LoanApplication.find_by_id(application_id)
+        if not app:
+            return error_response(
+                message="Application not found",
+                status_code=status.HTTP_404_NOT_FOUND
+            )
+        
+        product = LoanProduct.find_by_id(app.product_id)
+        
+        return success_response(
+            data={
+                'id': app.id,
+                'customer_id': app.customer_id,
+                'product': {
+                    'id': product.id if product else None,
+                    'name': product.name if product else 'Unknown',
+                    'code': product.code if product else None
+                },
+                'requested_amount': app.requested_amount,
+                'recommended_amount': app.recommended_amount,
+                'term_months': app.term_months,
+                'purpose': app.purpose,
+                'status': app.status,
+                'eligibility_score': app.eligibility_score,
+                'risk_category': app.risk_category,
+                'ai_recommendation': app.ai_recommendation,
+                'assigned_officer': app.assigned_officer,
+                'officer_notes': app.officer_notes,
+                'rejection_reason': app.rejection_reason,
+                'submitted_at': app.submitted_at.isoformat() if app.submitted_at else None,
+                'decision_date': app.decision_date.isoformat() if app.decision_date else None
+            },
+            message="Application details retrieved"
+        )
+
+
+class OfficerReviewView(LoanOfficerRequiredMixin, APIView):
+    """
+    Loan Officer: Approve or reject application.
+    
+    PUT /api/loans/officer/applications/<id>/review/
+    """
+    authentication_classes = [CustomJWTAuthentication]
+    permission_classes = [IsAuthenticated]
+    
+    def put(self, request, application_id):
+        has_permission, user = self.check_officer_permission(request)
+        if not has_permission:
+            return user  # This is the error response
+        
+        app = LoanApplication.find_by_id(application_id)
+        if not app:
+            return error_response(
+                message="Application not found",
+                status_code=status.HTTP_404_NOT_FOUND
+            )
+        
+        # Can only review submitted/under_review applications
+        if app.status not in ['submitted', 'under_review']:
+            return error_response(
+                message=f"Cannot review application with status: {app.status}",
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+        
+        serializer = LoanReviewSerializer(data=request.data)
+        if not serializer.is_valid():
+            return error_response(
+                message="Invalid review data",
+                errors=serializer.errors,
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+        
+        data = serializer.validated_data
+        officer_id = user.customer_id
+        
+        if data['action'] == 'approve':
+            app.approve(
+                officer_id=officer_id,
+                approved_amount=data['approved_amount'],
+                notes=data.get('notes', '')
+            )
+            logger.info(f"Application approved: {app.id} by {officer_id}")
+            message = "Application approved"
+        else:
+            app.reject(
+                officer_id=officer_id,
+                reason=data['rejection_reason'],
+                notes=data.get('notes', '')
+            )
+            logger.info(f"Application rejected: {app.id} by {officer_id}")
+            message = "Application rejected"
+        
+        return success_response(
+            data={
+                'id': app.id,
+                'status': app.status,
+                'approved_amount': app.approved_amount
+            },
+            message=message
+        )

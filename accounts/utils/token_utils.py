@@ -67,6 +67,69 @@ class TokenUtils:
         }
     
     @staticmethod
+    def generate_tokens(user_id, email, verified=True, role='customer', refresh_token_days=1):
+        """
+        Generate JWT tokens for non-customer users (admin, loan officer).
+        
+        Args:
+            user_id: User's ID
+            email: User's email
+            verified: Whether user is verified
+            role: User role (admin, loan_officer)
+            refresh_token_days: How many days the refresh token should last
+        
+        Returns:
+            dict with access and refresh tokens
+        """
+        from datetime import timedelta
+        
+        # Create refresh token
+        refresh = RefreshToken()
+        refresh['customer_id'] = str(user_id)  # Using same claim name for consistency
+        refresh['email'] = email
+        refresh['verified'] = verified
+        refresh['role'] = role
+        
+        # Set expiration
+        refresh.set_exp(lifetime=timedelta(days=refresh_token_days))
+        
+        access = refresh.access_token
+        access.set_exp(lifetime=timedelta(minutes=15))  # Shorter access for admins
+        
+        return {
+            'access': str(access),
+            'refresh': str(refresh)
+        }
+    
+    @staticmethod
+    def generate_2fa_temp_token(user_id, email, role='customer'):
+        """
+        Generate a temporary token for 2FA verification.
+        This token is short-lived and only valid for completing 2FA.
+        
+        Args:
+            user_id: User's ID
+            email: User's email
+            role: User role
+        
+        Returns:
+            str: Temporary JWT token
+        """
+        from datetime import timedelta
+        
+        # Create a short-lived token for 2FA verification
+        refresh = RefreshToken()
+        refresh['customer_id'] = str(user_id)
+        refresh['email'] = email
+        refresh['role'] = role
+        refresh['is_2fa_temp'] = True  # Flag to identify this as a temp 2FA token
+        
+        # Very short expiration - just enough to complete 2FA
+        refresh.set_exp(lifetime=timedelta(minutes=5))
+        
+        return str(refresh.access_token)
+    
+    @staticmethod
     def blacklist_token(token, token_type='refresh'):
         """
         Add a token to the blacklist.
