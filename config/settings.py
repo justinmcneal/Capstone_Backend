@@ -44,6 +44,7 @@ INSTALLED_APPS = [
     'corsheaders',
     'accounts',
     'profiles',
+    'documents',
 ]
 
 MIDDLEWARE = [
@@ -134,6 +135,14 @@ USE_TZ = True
 # https://docs.djangoproject.com/en/4.2/howto/static-files/
 
 STATIC_URL = 'static/'
+
+# Media files (user uploads)
+MEDIA_URL = '/media/'
+MEDIA_ROOT = BASE_DIR / 'media'
+
+# Document Storage Configuration
+# Options: 'local', 's3', 'gcs' (cloud backends to be implemented)
+DOCUMENT_STORAGE_BACKEND = 'local'
 
 # Default primary key field type
 # https://docs.djangoproject.com/en/4.2/ref/settings/#default-auto-field
