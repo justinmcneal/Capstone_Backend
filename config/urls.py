@@ -23,6 +23,7 @@ urlpatterns = [
     path('api/profile/', include('profiles.urls')),
     path('api/documents/', include('documents.urls')),
     path('api/ai/', include('ai_assistant.urls')),
+    path('api/loans/', include('loans.urls')),
 ]
 
 # Serve media files in development
