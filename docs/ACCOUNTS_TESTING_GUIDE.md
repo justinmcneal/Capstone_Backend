@@ -643,17 +643,6 @@ DELETE /api/auth/admin/loan-officers/<officer_id>/
 
 ---
 
-
-
-
-
-
-
-
-
-
-### NOT TESTED
-
 ## Admin - Admin Management (Super Admin Only)
 
 > ⚠️ These endpoints require **Super Admin** access. Regular admins cannot manage other admins.
