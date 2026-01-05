@@ -467,3 +467,402 @@ class LoanOfficerDetailView(AdminRequiredMixin, APIView):
                 message="Failed to deactivate loan officer",
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+
+
+# =============================================================================
+# ADMIN MANAGEMENT (Super Admin Only)
+# =============================================================================
+
+class SuperAdminRequiredMixin:
+    """Mixin to require super admin access"""
+    
+    def check_super_admin(self, request):
+        """Check if authenticated user is a super admin"""
+        user = request.user
+        
+        if not hasattr(user, 'role') or user.role != 'admin':
+            return False, error_response(
+                message="Admin access required",
+                status_code=status.HTTP_403_FORBIDDEN
+            )
+        
+        admin = Admin.find_one({'_id': ObjectId(user.customer_id)})
+        
+        if not admin:
+            return False, error_response(
+                message="Admin not found",
+                status_code=status.HTTP_404_NOT_FOUND
+            )
+        
+        if not admin.active:
+            return False, error_response(
+                message="Admin account is deactivated",
+                status_code=status.HTTP_403_FORBIDDEN
+            )
+        
+        if not admin.super_admin:
+            return False, error_response(
+                message="Super admin access required",
+                status_code=status.HTTP_403_FORBIDDEN
+            )
+        
+        return True, admin
+
+
+class AdminManagementView(SuperAdminRequiredMixin, APIView):
+    """
+    Super Admin endpoints for managing other admins.
+    
+    GET /api/auth/admin/admins/ - List all admins
+    POST /api/auth/admin/admins/ - Create new admin
+    """
+    authentication_classes = [CustomJWTAuthentication]
+    permission_classes = [IsAuthenticated]
+    
+    def get(self, request):
+        """List all admins"""
+        try:
+            has_perm, result = self.check_super_admin(request)
+            if not has_perm:
+                return result
+            
+            current_admin = result
+            
+            # Get query parameters
+            active_only = request.query_params.get('active', 'true').lower() == 'true'
+            
+            query = {}
+            if active_only:
+                query['active'] = True
+            
+            admins = Admin.find(query)
+            
+            admins_data = [{
+                'id': a.id,
+                'username': a.username,
+                'email': a.email,
+                'full_name': a.full_name,
+                'super_admin': a.super_admin,
+                'permissions': a.permissions if not a.super_admin else ['*'],
+                'active': a.active,
+                'two_factor_enabled': a.two_factor_enabled,
+                'created_at': a.created_at.isoformat() if a.created_at else None
+            } for a in admins]
+            
+            return success_response(
+                data={
+                    'admins': admins_data,
+                    'total': len(admins_data)
+                },
+                message="Admins retrieved successfully"
+            )
+            
+        except Exception as e:
+            logger.error(f"List admins error: {str(e)}")
+            return error_response(
+                message="Failed to retrieve admins",
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    def post(self, request):
+        """Create a new admin (super admin only)"""
+        from accounts.serializers.admin_serializers import AdminCreateSerializer
+        
+        try:
+            has_perm, result = self.check_super_admin(request)
+            if not has_perm:
+                return result
+            
+            current_admin = result
+            
+            serializer = AdminCreateSerializer(data=request.data)
+            if not serializer.is_valid():
+                return error_response(
+                    message="Invalid admin data",
+                    errors=serializer.errors,
+                    status_code=status.HTTP_400_BAD_REQUEST
+                )
+            
+            data = serializer.validated_data
+            username = data['username'].strip()
+            email = data['email'].lower().strip()
+            
+            # Check if username already exists
+            if Admin.find_one({'username': username}):
+                return error_response(
+                    message="An admin with this username already exists",
+                    status_code=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Check if email already exists
+            if Admin.find_one({'email': email}):
+                return error_response(
+                    message="An admin with this email already exists",
+                    status_code=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Generate temporary password
+            temp_password = generate_temp_password()
+            
+            # Create admin
+            new_admin = Admin(
+                username=username,
+                email=email,
+                first_name=data.get('first_name', ''),
+                last_name=data.get('last_name', ''),
+                super_admin=data.get('super_admin', False),
+                permissions=data.get('permissions', []) if not data.get('super_admin') else ['*']
+            )
+            new_admin.set_password(temp_password)
+            new_admin.save()
+            
+            logger.info(f"Admin created: {username} by super admin {current_admin.username}")
+            
+            return success_response(
+                data={
+                    'admin': {
+                        'id': new_admin.id,
+                        'username': new_admin.username,
+                        'email': new_admin.email,
+                        'full_name': new_admin.full_name,
+                        'super_admin': new_admin.super_admin,
+                        'permissions': new_admin.permissions
+                    },
+                    'temporary_password': temp_password,
+                    'message': 'Send this temporary password to the admin securely.'
+                },
+                message="Admin created successfully",
+                status_code=status.HTTP_201_CREATED
+            )
+            
+        except Exception as e:
+            logger.error(f"Create admin error: {str(e)}")
+            return error_response(
+                message="Failed to create admin",
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+class AdminDetailView(SuperAdminRequiredMixin, APIView):
+    """
+    Super Admin endpoints for managing a specific admin.
+    
+    GET /api/auth/admin/admins/<id>/ - Get admin details
+    PUT /api/auth/admin/admins/<id>/ - Update admin
+    DELETE /api/auth/admin/admins/<id>/ - Deactivate admin
+    """
+    authentication_classes = [CustomJWTAuthentication]
+    permission_classes = [IsAuthenticated]
+    
+    def get(self, request, admin_id):
+        """Get admin details"""
+        try:
+            has_perm, result = self.check_super_admin(request)
+            if not has_perm:
+                return result
+            
+            target_admin = Admin.find_one({'_id': ObjectId(admin_id)})
+            
+            if not target_admin:
+                return error_response(
+                    message="Admin not found",
+                    status_code=status.HTTP_404_NOT_FOUND
+                )
+            
+            return success_response(
+                data={
+                    'id': target_admin.id,
+                    'username': target_admin.username,
+                    'email': target_admin.email,
+                    'first_name': target_admin.first_name,
+                    'last_name': target_admin.last_name,
+                    'full_name': target_admin.full_name,
+                    'super_admin': target_admin.super_admin,
+                    'permissions': target_admin.permissions if not target_admin.super_admin else ['*'],
+                    'active': target_admin.active,
+                    'two_factor_enabled': target_admin.two_factor_enabled,
+                    'created_at': target_admin.created_at.isoformat() if target_admin.created_at else None
+                },
+                message="Admin retrieved successfully"
+            )
+            
+        except Exception as e:
+            logger.error(f"Get admin error: {str(e)}")
+            return error_response(
+                message="Failed to retrieve admin",
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    def put(self, request, admin_id):
+        """Update admin details"""
+        from accounts.serializers.admin_serializers import AdminUpdateSerializer
+        
+        try:
+            has_perm, result = self.check_super_admin(request)
+            if not has_perm:
+                return result
+            
+            current_admin = result
+            
+            target_admin = Admin.find_one({'_id': ObjectId(admin_id)})
+            
+            if not target_admin:
+                return error_response(
+                    message="Admin not found",
+                    status_code=status.HTTP_404_NOT_FOUND
+                )
+            
+            # Prevent self-deactivation
+            if str(current_admin.id) == str(target_admin.id) and request.data.get('active') is False:
+                return error_response(
+                    message="Cannot deactivate your own account",
+                    status_code=status.HTTP_400_BAD_REQUEST
+                )
+            
+            serializer = AdminUpdateSerializer(data=request.data)
+            if not serializer.is_valid():
+                return error_response(
+                    message="Invalid data",
+                    errors=serializer.errors,
+                    status_code=status.HTTP_400_BAD_REQUEST
+                )
+            
+            data = serializer.validated_data
+            
+            if 'first_name' in data:
+                target_admin.first_name = data['first_name']
+            if 'last_name' in data:
+                target_admin.last_name = data['last_name']
+            if 'active' in data:
+                target_admin.active = data['active']
+            
+            target_admin.save()
+            
+            logger.info(f"Admin updated: {target_admin.username} by {current_admin.username}")
+            
+            return success_response(
+                data={
+                    'id': target_admin.id,
+                    'username': target_admin.username,
+                    'email': target_admin.email,
+                    'full_name': target_admin.full_name,
+                    'active': target_admin.active
+                },
+                message="Admin updated successfully"
+            )
+            
+        except Exception as e:
+            logger.error(f"Update admin error: {str(e)}")
+            return error_response(
+                message="Failed to update admin",
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    def delete(self, request, admin_id):
+        """Deactivate admin (soft delete)"""
+        try:
+            has_perm, result = self.check_super_admin(request)
+            if not has_perm:
+                return result
+            
+            current_admin = result
+            
+            target_admin = Admin.find_one({'_id': ObjectId(admin_id)})
+            
+            if not target_admin:
+                return error_response(
+                    message="Admin not found",
+                    status_code=status.HTTP_404_NOT_FOUND
+                )
+            
+            # Prevent self-deactivation
+            if str(current_admin.id) == str(target_admin.id):
+                return error_response(
+                    message="Cannot deactivate your own account",
+                    status_code=status.HTTP_400_BAD_REQUEST
+                )
+            
+            target_admin.active = False
+            target_admin.save()
+            
+            logger.info(f"Admin deactivated: {target_admin.username} by {current_admin.username}")
+            
+            return success_response(message="Admin deactivated successfully")
+            
+        except Exception as e:
+            logger.error(f"Deactivate admin error: {str(e)}")
+            return error_response(
+                message="Failed to deactivate admin",
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+class AdminPermissionsView(SuperAdminRequiredMixin, APIView):
+    """
+    Super Admin endpoint for updating admin permissions.
+    
+    PUT /api/auth/admin/admins/<id>/permissions/ - Update permissions
+    """
+    authentication_classes = [CustomJWTAuthentication]
+    permission_classes = [IsAuthenticated]
+    
+    def put(self, request, admin_id):
+        """Update admin permissions"""
+        from accounts.serializers.admin_serializers import AdminPermissionsSerializer
+        
+        try:
+            has_perm, result = self.check_super_admin(request)
+            if not has_perm:
+                return result
+            
+            current_admin = result
+            
+            target_admin = Admin.find_one({'_id': ObjectId(admin_id)})
+            
+            if not target_admin:
+                return error_response(
+                    message="Admin not found",
+                    status_code=status.HTTP_404_NOT_FOUND
+                )
+            
+            serializer = AdminPermissionsSerializer(data=request.data)
+            if not serializer.is_valid():
+                return error_response(
+                    message="Invalid permissions data",
+                    errors=serializer.errors,
+                    status_code=status.HTTP_400_BAD_REQUEST
+                )
+            
+            data = serializer.validated_data
+            
+            # Update super_admin status
+            if 'super_admin' in data:
+                target_admin.super_admin = data['super_admin']
+                if data['super_admin']:
+                    target_admin.permissions = ['*']
+            
+            # Update specific permissions (only if not super_admin)
+            if 'permissions' in data and not target_admin.super_admin:
+                target_admin.permissions = data['permissions']
+            
+            target_admin.save()
+            
+            logger.info(f"Permissions updated for {target_admin.username} by {current_admin.username}")
+            
+            return success_response(
+                data={
+                    'id': target_admin.id,
+                    'username': target_admin.username,
+                    'super_admin': target_admin.super_admin,
+                    'permissions': target_admin.permissions if not target_admin.super_admin else ['*']
+                },
+                message="Permissions updated successfully"
+            )
+            
+        except Exception as e:
+            logger.error(f"Update permissions error: {str(e)}")
+            return error_response(
+                message="Failed to update permissions",
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+

@@ -81,23 +81,37 @@ The system supports three distinct user roles, each with specific capabilities a
 
 **Target Users:** IT administrators, system managers
 
-### Capabilities
-| Feature | Access |
-|---------|--------|
-| Login | ✅ Username + password |
-| Create Loan Officers | ✅ Full CRUD |
-| View System Logs | ✅ Audit trail access |
-| Manage Configurations | ✅ System settings |
-| View Analytics | ✅ Full system metrics |
-| User Management | ✅ Lock/unlock accounts |
+### Admin Types
 
-### Permissions System
-Admins have granular permissions:
-- `create_loan_officer` — Can create new loan officer accounts
-- `manage_users` — Can lock/unlock any user account
-- `view_analytics` — Can access system-wide analytics
-- `view_logs` — Can access audit logs
-- `super_admin` — Full system access
+| Type | Description | Permissions |
+|------|-------------|-------------|
+| **Admin** | Regular administrator | Only has specifically assigned permissions |
+| **Super Admin** | Full system administrator | Has ALL permissions automatically |
+
+> **When to use which?**
+> - Use **Super Admin** for the primary system administrator
+> - Use **Admin** with specific permissions for limited access (e.g., an admin who can only view logs)
+
+### Available Permissions
+
+```
+create_loan_officer   → Can create new loan officer accounts
+manage_loan_officers  → Can edit/deactivate loan officers
+manage_users          → Can lock/unlock any user account
+view_analytics        → Can access system-wide analytics
+view_logs             → Can access audit logs
+manage_system         → Can modify system configurations
+```
+
+### Capabilities
+| Feature | Admin | Super Admin |
+|---------|-------|-------------|
+| Login | ✅ Username + password | ✅ Username + password |
+| Create Loan Officers | ⚠️ Requires permission | ✅ Always |
+| View System Logs | ⚠️ Requires permission | ✅ Always |
+| Manage Configurations | ⚠️ Requires permission | ✅ Always |
+| View Analytics | ⚠️ Requires permission | ✅ Always |
+| User Management | ⚠️ Requires permission | ✅ Always |
 
 ### API Prefix
 ```
@@ -105,6 +119,45 @@ Admins have granular permissions:
 /api/auth/admin/logout/
 /api/auth/admin/loan-officers/
 ```
+
+---
+
+## How to Create Users
+
+### Customers
+Customers **self-register** via the mobile app or kiosk:
+```
+POST /api/auth/signup/
+```
+
+### Loan Officers
+Loan officers are **created by admins only**:
+```
+POST /api/auth/admin/loan-officers/
+```
+- Requires admin authentication
+- Returns a temporary password for the new loan officer
+- Loan officer must change password on first login
+
+### Admins
+Admins are **created via CLI command only** (no API endpoint):
+```bash
+# Interactive mode
+python manage.py create_admin
+
+# With options
+python manage.py create_admin --username admin --email admin@system.com --password YourPass123! --super-admin
+```
+
+| Option | Description |
+|--------|-------------|
+| `--username` | Admin username |
+| `--email` | Admin email |
+| `--password` | Admin password |
+| `--first-name` | First name (optional) |
+| `--last-name` | Last name (optional) |
+| `--super-admin` | Grant all permissions |
+| `--noinput` | Non-interactive mode |
 
 ---
 
