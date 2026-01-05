@@ -45,6 +45,7 @@ INSTALLED_APPS = [
     'accounts',
     'profiles',
     'documents',
+    'ai_assistant',
 ]
 
 MIDDLEWARE = [
