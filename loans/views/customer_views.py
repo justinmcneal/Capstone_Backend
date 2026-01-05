@@ -1,0 +1,347 @@
+from rest_framework.views import APIView
+from rest_framework import status
+from rest_framework.permissions import IsAuthenticated
+from bson import ObjectId
+
+from accounts.authentication import CustomJWTAuthentication
+from accounts.utils.response_helpers import success_response, error_response
+from loans.models import LoanProduct, LoanApplication
+from loans.serializers import LoanApplicationSerializer
+from loans.services import qualify_customer, check_basic_eligibility
+import logging
+
+logger = logging.getLogger('loans')
+
+
+class LoanProductListView(APIView):
+    """
+    List available loan products.
+    
+    GET /api/loans/products/
+    """
+    authentication_classes = [CustomJWTAuthentication]
+    permission_classes = [IsAuthenticated]
+    
+    def get(self, request):
+        """Get all active loan products"""
+        products = LoanProduct.find(active_only=True)
+        
+        products_data = [{
+            'id': p.id,
+            'name': p.name,
+            'code': p.code,
+            'description': p.description,
+            'min_amount': p.min_amount,
+            'max_amount': p.max_amount,
+            'interest_rate': p.interest_rate,
+            'interest_rate_display': f"{p.interest_rate * 100:.1f}% monthly",
+            'min_term_months': p.min_term_months,
+            'max_term_months': p.max_term_months,
+            'required_documents': p.required_documents,
+            'target_description': p.target_description
+        } for p in products]
+        
+        return success_response(
+            data={'products': products_data, 'total': len(products_data)},
+            message="Loan products retrieved successfully"
+        )
+
+
+class LoanProductDetailView(APIView):
+    """
+    Get loan product details.
+    
+    GET /api/loans/products/<id>/
+    """
+    authentication_classes = [CustomJWTAuthentication]
+    permission_classes = [IsAuthenticated]
+    
+    def get(self, request, product_id):
+        product = LoanProduct.find_by_id(product_id)
+        
+        if not product or not product.active:
+            return error_response(
+                message="Loan product not found",
+                status_code=status.HTTP_404_NOT_FOUND
+            )
+        
+        return success_response(
+            data={
+                'id': product.id,
+                'name': product.name,
+                'code': product.code,
+                'description': product.description,
+                'min_amount': product.min_amount,
+                'max_amount': product.max_amount,
+                'interest_rate': product.interest_rate,
+                'min_term_months': product.min_term_months,
+                'max_term_months': product.max_term_months,
+                'required_documents': product.required_documents,
+                'min_business_months': product.min_business_months,
+                'min_monthly_income': product.min_monthly_income,
+                'target_description': product.target_description
+            },
+            message="Product details retrieved"
+        )
+
+
+class PreQualifyView(APIView):
+    """
+    Check customer eligibility for a loan product.
+    Uses AI to analyze profile and provide recommendations.
+    
+    POST /api/loans/pre-qualify/
+    """
+    authentication_classes = [CustomJWTAuthentication]
+    permission_classes = [IsAuthenticated]
+    
+    def post(self, request):
+        """Check eligibility for a loan"""
+        try:
+            user = request.user
+            customer_id = user.customer_id
+            
+            product_id = request.data.get('product_id')
+            requested_amount = request.data.get('amount', 0)
+            term_months = request.data.get('term_months', 12)
+            purpose = request.data.get('purpose', '')
+            
+            if not product_id:
+                return error_response(
+                    message="product_id is required",
+                    status_code=status.HTTP_400_BAD_REQUEST
+                )
+            
+            product = LoanProduct.find_by_id(product_id)
+            if not product or not product.active:
+                return error_response(
+                    message="Loan product not found",
+                    status_code=status.HTTP_404_NOT_FOUND
+                )
+            
+            # Validate amount
+            if requested_amount < product.min_amount or requested_amount > product.max_amount:
+                return error_response(
+                    message=f"Amount must be between ₱{product.min_amount:,.0f} and ₱{product.max_amount:,.0f}",
+                    status_code=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Quick eligibility check
+            basic = check_basic_eligibility(customer_id, product)
+            if not basic['can_apply']:
+                return success_response(
+                    data={
+                        'eligible': False,
+                        'can_apply': False,
+                        'missing_requirements': basic['missing_requirements'],
+                        'message': 'Please complete requirements before applying'
+                    },
+                    message="Eligibility check complete"
+                )
+            
+            # AI Qualification
+            qualification = qualify_customer(
+                customer_id=customer_id,
+                product=product,
+                requested_amount=requested_amount,
+                term_months=term_months,
+                purpose=purpose
+            )
+            
+            return success_response(
+                data={
+                    'product': {
+                        'id': product.id,
+                        'name': product.name
+                    },
+                    'requested_amount': requested_amount,
+                    'eligible': qualification.get('eligible', False),
+                    'eligibility_score': qualification.get('eligibility_score'),
+                    'risk_category': qualification.get('risk_category'),
+                    'recommended_amount': qualification.get('recommended_amount'),
+                    'reasoning': qualification.get('reasoning'),
+                    'strengths': qualification.get('strengths', []),
+                    'concerns': qualification.get('concerns', []),
+                    'missing_requirements': qualification.get('missing_requirements', []),
+                    'can_apply': qualification.get('eligible', False)
+                },
+                message="Pre-qualification complete"
+            )
+            
+        except Exception as e:
+            logger.error(f"Pre-qualify error: {str(e)}")
+            return error_response(
+                message="Failed to check eligibility",
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+class LoanApplyView(APIView):
+    """
+    Submit a loan application.
+    
+    POST /api/loans/apply/
+    """
+    authentication_classes = [CustomJWTAuthentication]
+    permission_classes = [IsAuthenticated]
+    
+    def post(self, request):
+        """Submit loan application"""
+        try:
+            user = request.user
+            customer_id = user.customer_id
+            
+            serializer = LoanApplicationSerializer(data=request.data)
+            if not serializer.is_valid():
+                return error_response(
+                    message="Invalid application data",
+                    errors=serializer.errors,
+                    status_code=status.HTTP_400_BAD_REQUEST
+                )
+            
+            data = serializer.validated_data
+            product = LoanProduct.find_by_id(data['product_id'])
+            
+            if not product or not product.active:
+                return error_response(
+                    message="Loan product not found",
+                    status_code=status.HTTP_404_NOT_FOUND
+                )
+            
+            # Check basic eligibility
+            basic = check_basic_eligibility(customer_id, product)
+            if not basic['can_apply']:
+                return error_response(
+                    message="Cannot apply - requirements not met",
+                    errors={'missing': basic['missing_requirements']},
+                    status_code=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Run AI qualification
+            qualification = qualify_customer(
+                customer_id=customer_id,
+                product=product,
+                requested_amount=data['requested_amount'],
+                term_months=data['term_months'],
+                purpose=data.get('purpose', '')
+            )
+            
+            # Create application
+            application = LoanApplication(
+                customer_id=customer_id,
+                product_id=data['product_id'],
+                requested_amount=data['requested_amount'],
+                recommended_amount=qualification.get('recommended_amount'),
+                term_months=data['term_months'],
+                purpose=data.get('purpose', ''),
+                eligibility_score=qualification.get('eligibility_score'),
+                ai_recommendation=qualification,
+                risk_category=qualification.get('risk_category')
+            )
+            application.submit()
+            
+            logger.info(f"Loan application submitted: {application.id} by {customer_id}")
+            
+            return success_response(
+                data={
+                    'application_id': application.id,
+                    'status': application.status,
+                    'eligibility_score': application.eligibility_score,
+                    'recommended_amount': application.recommended_amount,
+                    'message': 'Your application has been submitted for review'
+                },
+                message="Application submitted successfully",
+                status_code=status.HTTP_201_CREATED
+            )
+            
+        except Exception as e:
+            logger.error(f"Apply error: {str(e)}")
+            return error_response(
+                message="Failed to submit application",
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+class MyApplicationsView(APIView):
+    """
+    List customer's loan applications.
+    
+    GET /api/loans/applications/
+    """
+    authentication_classes = [CustomJWTAuthentication]
+    permission_classes = [IsAuthenticated]
+    
+    def get(self, request):
+        """Get all applications for current customer"""
+        user = request.user
+        customer_id = user.customer_id
+        
+        applications = LoanApplication.find_by_customer(customer_id)
+        
+        apps_data = []
+        for app in applications:
+            product = LoanProduct.find_by_id(app.product_id)
+            apps_data.append({
+                'id': app.id,
+                'product_name': product.name if product else 'Unknown',
+                'requested_amount': app.requested_amount,
+                'recommended_amount': app.recommended_amount,
+                'approved_amount': app.approved_amount,
+                'term_months': app.term_months,
+                'status': app.status,
+                'eligibility_score': app.eligibility_score,
+                'submitted_at': app.submitted_at.isoformat() if app.submitted_at else None,
+                'created_at': app.created_at.isoformat()
+            })
+        
+        return success_response(
+            data={'applications': apps_data, 'total': len(apps_data)},
+            message="Applications retrieved"
+        )
+
+
+class ApplicationDetailView(APIView):
+    """
+    Get application details.
+    
+    GET /api/loans/applications/<id>/
+    """
+    authentication_classes = [CustomJWTAuthentication]
+    permission_classes = [IsAuthenticated]
+    
+    def get(self, request, application_id):
+        user = request.user
+        customer_id = user.customer_id
+        
+        app = LoanApplication.find_by_id(application_id)
+        
+        if not app or app.customer_id != customer_id:
+            return error_response(
+                message="Application not found",
+                status_code=status.HTTP_404_NOT_FOUND
+            )
+        
+        product = LoanProduct.find_by_id(app.product_id)
+        
+        return success_response(
+            data={
+                'id': app.id,
+                'product': {
+                    'id': product.id if product else None,
+                    'name': product.name if product else 'Unknown'
+                },
+                'requested_amount': app.requested_amount,
+                'recommended_amount': app.recommended_amount,
+                'approved_amount': app.approved_amount,
+                'term_months': app.term_months,
+                'purpose': app.purpose,
+                'status': app.status,
+                'eligibility_score': app.eligibility_score,
+                'risk_category': app.risk_category,
+                'rejection_reason': app.rejection_reason,
+                'submitted_at': app.submitted_at.isoformat() if app.submitted_at else None,
+                'decision_date': app.decision_date.isoformat() if app.decision_date else None,
+                'created_at': app.created_at.isoformat()
+            },
+            message="Application details retrieved"
+        )
