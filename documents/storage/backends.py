@@ -106,6 +106,10 @@ class LocalStorageBackend(StorageBackend):
     def get_url(self, file_path):
         """Get URL for the file"""
         return f"{self.base_url}{file_path}"
+    
+    def get_full_path(self, file_path):
+        """Get full filesystem path for internal use (e.g., CNN analysis)"""
+        return os.path.join(self.base_path, file_path)
 
 
 # Future cloud storage backends can be added here:
