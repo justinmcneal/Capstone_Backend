@@ -27,6 +27,7 @@ DOCUMENT_TYPES = [
 # Document statuses
 DOCUMENT_STATUSES = [
     'pending',      # Uploaded, awaiting review
+    'needs_review', # Flagged by AI for quality issues
     'approved',     # Verified by loan officer
     'rejected',     # Rejected by loan officer
     'expired'       # Document has expired

@@ -1,20 +1,41 @@
-asgiref==3.11.0
-bcrypt==5.0.0
-celery==5.4.0
-Django==4.2.26
-django-celery-beat==2.7.0
-django-cors-headers==4.9.0
-djangorestframework==3.16.1
-djangorestframework_simplejwt==5.5.1
-dnspython==2.7.0
-PyJWT==2.10.1
-pymongo==4.15.4
-python-dotenv==1.2.1
-pytz==2025.2
-redis==5.2.1
-sqlparse==0.5.4
-typing_extensions==4.15.0
+# Core Django
+Django>=4.2.0
+djangorestframework>=3.14.0
+django-cors-headers>=4.0.0
+
+# Database
+pymongo>=4.5.0
+dnspython>=2.4.0
+
+# Authentication & Security
+djangorestframework-simplejwt>=5.3.0
+PyJWT>=2.8.0
+bcrypt>=4.0.0
+
+# 2FA / OTP
 pyotp>=2.9.0
 qrcode>=7.4.2
 Pillow>=10.0.0
+
+# HTTP Requests (for Ollama)
+requests>=2.31.0
+
+# ML / CNN Document Analysis (optional - install when training)
+torch>=2.0.0
+torchvision>=0.15.0
+opencv-python>=4.8.0
+
+# Background Tasks (optional)
+celery>=5.3.0
+django-celery-beat>=2.5.0
+redis>=5.0.0
+
+# Environment
+python-dotenv>=1.0.0
+
+# Utilities
+pytz>=2023.3
 certifi>=2023.7.22
+
+# ASGI Server
+asgiref>=3.7.0

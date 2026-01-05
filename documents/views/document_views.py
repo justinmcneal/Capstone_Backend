@@ -83,6 +83,20 @@ class DocumentUploadView(APIView):
                 original_filename=file.name
             )
             
+            # Run AI analysis on the document
+            ai_analysis = None
+            try:
+                from documents.services import analyze_document
+                
+                # Get the full file path for analysis
+                full_path = storage.get_full_path(file_info['file_path'])
+                ai_analysis = analyze_document(full_path, expected_type=document_type)
+                
+                logger.info(f"AI analysis complete: quality={ai_analysis.get('quality_score', 0):.2f}")
+            except Exception as e:
+                logger.warning(f"AI analysis failed (continuing anyway): {e}")
+                ai_analysis = {'error': str(e), 'is_valid': True}
+            
             # Create document record
             document = Document(
                 customer_id=customer_id,
@@ -93,20 +107,41 @@ class DocumentUploadView(APIView):
                 mime_type=file.content_type,
                 description=data.get('description', '')
             )
+            
+            # Add AI analysis results if available
+            if ai_analysis:
+                document.confidence_score = ai_analysis.get('quality_score', 0)
+                document.ai_analysis = ai_analysis
+                
+                # Auto-flag low quality for review
+                if ai_analysis.get('quality_score', 1) < 0.5:
+                    document.status = 'needs_review'
+            
             document.save()
             
             logger.info(f"Document uploaded: {document.id} by customer {customer_id}")
             
+            response_data = {
+                'id': document.id,
+                'document_type': document.document_type,
+                'original_filename': document.original_filename,
+                'file_size': document.file_size,
+                'file_size_display': document.file_size_display,
+                'status': document.status,
+                'uploaded_at': document.uploaded_at.isoformat()
+            }
+            
+            # Include AI analysis in response
+            if ai_analysis and 'error' not in ai_analysis:
+                response_data['ai_analysis'] = {
+                    'quality_score': ai_analysis.get('quality_score'),
+                    'is_valid': ai_analysis.get('is_valid', True),
+                    'quality_issues': ai_analysis.get('quality_issues', []),
+                    'analysis_mode': ai_analysis.get('analysis_mode', 'quality_check')
+                }
+            
             return success_response(
-                data={
-                    'id': document.id,
-                    'document_type': document.document_type,
-                    'original_filename': document.original_filename,
-                    'file_size': document.file_size,
-                    'file_size_display': document.file_size_display,
-                    'status': document.status,
-                    'uploaded_at': document.uploaded_at.isoformat()
-                },
+                data=response_data,
                 message="Document uploaded successfully",
                 status_code=status.HTTP_201_CREATED
             )
@@ -117,6 +152,7 @@ class DocumentUploadView(APIView):
                 message="Failed to upload document",
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+
 
 
 class DocumentListView(APIView):
