@@ -146,6 +146,12 @@ DELETE /api/documents/<document_id>/
 
 ---
 
+
+
+
+
+
+
 ## Loan Officer Endpoints
 
 ### 6. Verify Document
