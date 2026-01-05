@@ -6,7 +6,7 @@ Collections:
 - business_profiles: Business/MSME information
 - alternative_data: Alternative credit scoring data
 """
-from datetime import datetime
+from datetime import datetime, date, time
 from bson import ObjectId
 from django.conf import settings
 
@@ -96,9 +96,14 @@ class CustomerProfile:
         return str(self._id) if self._id else None
     
     def to_dict(self):
+        # Convert date_of_birth to datetime for MongoDB compatibility
+        dob = self.date_of_birth
+        if isinstance(dob, date) and not isinstance(dob, datetime):
+            dob = datetime.combine(dob, time.min)
+        
         data = {
             'customer_id': self.customer_id,
-            'date_of_birth': self.date_of_birth,
+            'date_of_birth': dob,
             'gender': self.gender,
             'civil_status': self.civil_status,
             'nationality': self.nationality,
