@@ -1,0 +1,18 @@
+Action Required: Document Quality Issue
+
+Hello {{ name }},
+
+We noticed an issue with your uploaded document that needs your attention.
+
+Document: {{ document_type }}
+
+Issues detected:
+{% for issue in issues %}- {{ issue }}
+{% endfor %}
+
+What to do:
+1. Log in to your account
+2. Delete the flagged document
+3. Upload a new, clear image
+
+This helps ensure smooth processing of your application.

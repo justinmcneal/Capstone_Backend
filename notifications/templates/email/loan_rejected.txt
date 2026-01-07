@@ -1,0 +1,17 @@
+Loan Application Update
+
+Hello {{ name }},
+
+We have reviewed your loan application and unfortunately, we are unable to approve it at this time.
+
+Reason:
+{{ reason }}
+
+What can you do?
+1. Review your profile information for accuracy
+2. Ensure all documents are clear and valid
+3. You may apply again after addressing the concerns
+
+If you have questions, please contact our support team.
+
+We appreciate your interest and hope to assist you in the future.
