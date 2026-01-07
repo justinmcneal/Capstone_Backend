@@ -10,10 +10,13 @@ from loans.views import (
     # Admin
     AdminProductListView,
     AdminProductDetailView,
+    AssignApplicationView,
+    OfficerWorkloadView,
     # Officer
     OfficerApplicationListView,
     OfficerApplicationDetailView,
-    OfficerReviewView
+    OfficerReviewView,
+    DisburseView
 )
 
 app_name = 'loans'
@@ -31,8 +34,15 @@ urlpatterns = [
     path('admin/products/', AdminProductListView.as_view(), name='admin-products'),
     path('admin/products/<str:product_id>/', AdminProductDetailView.as_view(), name='admin-product-detail'),
     
+    # Admin endpoints (assignment)
+    path('admin/applications/<str:application_id>/assign/', AssignApplicationView.as_view(), name='admin-assign'),
+    path('admin/officers/workload/', OfficerWorkloadView.as_view(), name='admin-workload'),
+    
     # Loan officer endpoints
     path('officer/applications/', OfficerApplicationListView.as_view(), name='officer-applications'),
     path('officer/applications/<str:application_id>/', OfficerApplicationDetailView.as_view(), name='officer-application-detail'),
     path('officer/applications/<str:application_id>/review/', OfficerReviewView.as_view(), name='officer-review'),
+    path('officer/applications/<str:application_id>/disburse/', DisburseView.as_view(), name='officer-disburse'),
 ]
+
+

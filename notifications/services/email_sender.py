@@ -185,6 +185,32 @@ class EmailSender:
             },
             notification=notification
         )
+    
+    def send_loan_disbursed(self, customer_email, customer_name, loan_id, amount, method, reference):
+        """Send loan disbursement notification"""
+        notification = Notification(
+            recipient_email=customer_email,
+            recipient_name=customer_name,
+            notification_type='loan_disbursed',
+            subject='Loan Disbursed!',
+            related_type='loan',
+            related_id=loan_id
+        )
+        notification.save()
+        
+        return self.send(
+            to_email=customer_email,
+            subject='Your Loan Has Been Disbursed!',
+            template_name='loan_disbursed',
+            context={
+                'name': customer_name,
+                'amount': amount,
+                'method': method,
+                'reference': reference,
+                'loan_id': loan_id
+            },
+            notification=notification
+        )
 
 
 # Singleton
@@ -195,3 +221,4 @@ def get_email_sender():
     if _sender is None:
         _sender = EmailSender()
     return _sender
+

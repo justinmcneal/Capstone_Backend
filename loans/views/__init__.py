@@ -6,9 +6,15 @@ from .customer_views import (
     MyApplicationsView,
     ApplicationDetailView
 )
-from .admin_views import AdminProductListView, AdminProductDetailView
+from .admin_views import (
+    AdminProductListView,
+    AdminProductDetailView,
+    AssignApplicationView,
+    OfficerWorkloadView
+)
 from .officer_views import (
     OfficerApplicationListView,
     OfficerApplicationDetailView,
-    OfficerReviewView
+    OfficerReviewView,
+    DisburseView
 )
