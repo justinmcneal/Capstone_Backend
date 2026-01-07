@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta charset="UTF-8">
+    <title>New Loan Application</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            max-width: 600px;
+            margin: 0 auto;
+        }
+
+        .header {
+            background: #7c3aed;
+            color: white;
+            padding: 20px;
+            text-align: center;
+        }
+
+        .content {
+            padding: 30px;
+        }
+
+        .highlight {
+            background: #f5f3ff;
+            padding: 20px;
+            border-radius: 8px;
+            margin: 20px 0;
+        }
+
+        .footer {
+            background: #f3f4f6;
+            padding: 15px;
+            text-align: center;
+            font-size: 12px;
+            color: #666;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="header">
+        <h1>📋 New Application</h1>
+    </div>
+    <div class="content">
+        <p>Hello {{ officer_name }},</p>
+
+        <p>A new loan application has been submitted and is awaiting your review.</p>
+
+        <div class="highlight">
+            <strong>Application Details:</strong><br>
+            Customer: {{ customer_name }}<br>
+            Amount: ₱{{ amount|floatformat:2 }}<br>
+            Reference: {{ loan_id }}
+        </div>
+
+        <p>Please log in to the officer dashboard to review this application.</p>
+    </div>
+    <div class="footer">
+        This is an automated message for loan officers.
+    </div>
+</body>
+
+</html>

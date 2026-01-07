@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta charset="UTF-8">
+    <title>Loan Approved!</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            max-width: 600px;
+            margin: 0 auto;
+        }
+
+        .header {
+            background: #16a34a;
+            color: white;
+            padding: 20px;
+            text-align: center;
+        }
+
+        .content {
+            padding: 30px;
+        }
+
+        .highlight {
+            background: #f0fdf4;
+            padding: 20px;
+            border-radius: 8px;
+            margin: 20px 0;
+            border: 2px solid #16a34a;
+        }
+
+        .amount {
+            font-size: 28px;
+            color: #16a34a;
+            font-weight: bold;
+        }
+
+        .footer {
+            background: #f3f4f6;
+            padding: 15px;
+            text-align: center;
+            font-size: 12px;
+            color: #666;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="header">
+        <h1>🎉 Congratulations!</h1>
+    </div>
+    <div class="content">
+        <p>Hello {{ name }},</p>
+
+        <p>Great news! Your loan application has been <strong>approved</strong>!</p>
+
+        <div class="highlight">
+            <strong>Approved Amount:</strong><br>
+            <span class="amount">₱{{ approved_amount|floatformat:2 }}</span><br><br>
+            Reference ID: {{ loan_id }}
+        </div>
+
+        <p><strong>Next Steps:</strong></p>
+        <ul>
+            <li>You will be contacted for loan disbursement details</li>
+            <li>Please prepare 1 valid ID for verification</li>
+            <li>Funds will be released within 1-2 business days</li>
+        </ul>
+
+        <p>Thank you for choosing us for your financial needs!</p>
+    </div>
+    <div class="footer">
+        This is an automated message. Please do not reply directly to this email.
+    </div>
+</body>
+
+</html>
