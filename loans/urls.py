@@ -13,7 +13,8 @@ from loans.views import (
     # Officer
     OfficerApplicationListView,
     OfficerApplicationDetailView,
-    OfficerReviewView
+    OfficerReviewView,
+    DisburseView
 )
 
 app_name = 'loans'
@@ -35,4 +36,6 @@ urlpatterns = [
     path('officer/applications/', OfficerApplicationListView.as_view(), name='officer-applications'),
     path('officer/applications/<str:application_id>/', OfficerApplicationDetailView.as_view(), name='officer-application-detail'),
     path('officer/applications/<str:application_id>/review/', OfficerReviewView.as_view(), name='officer-review'),
+    path('officer/applications/<str:application_id>/disburse/', DisburseView.as_view(), name='officer-disburse'),
 ]
+

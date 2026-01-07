@@ -54,6 +54,13 @@ class LoanApplication:
         self.rejection_reason = kwargs.get('rejection_reason', '')
         self.decision_date = kwargs.get('decision_date')
         
+        # Disbursement tracking
+        self.disbursed_amount = kwargs.get('disbursed_amount')
+        self.disbursed_at = kwargs.get('disbursed_at')
+        self.disbursement_method = kwargs.get('disbursement_method')  # bank_transfer, cash, etc.
+        self.disbursement_reference = kwargs.get('disbursement_reference', '')
+        self.disbursed_by = kwargs.get('disbursed_by')  # Officer/Admin who processed
+        
         # Timestamps
         self.submitted_at = kwargs.get('submitted_at')
         self.created_at = kwargs.get('created_at', datetime.utcnow())
@@ -80,6 +87,11 @@ class LoanApplication:
             'officer_notes': self.officer_notes,
             'rejection_reason': self.rejection_reason,
             'decision_date': self.decision_date,
+            'disbursed_amount': self.disbursed_amount,
+            'disbursed_at': self.disbursed_at,
+            'disbursement_method': self.disbursement_method,
+            'disbursement_reference': self.disbursement_reference,
+            'disbursed_by': self.disbursed_by,
             'submitted_at': self.submitted_at,
             'created_at': self.created_at,
             'updated_at': self.updated_at,
@@ -135,6 +147,19 @@ class LoanApplication:
         self.rejection_reason = reason
         self.officer_notes = notes
         self.decision_date = datetime.utcnow()
+        return self.save()
+    
+    def disburse(self, amount, method, reference, processed_by):
+        """Mark loan as disbursed"""
+        if self.status != 'approved':
+            raise ValueError("Only approved loans can be disbursed")
+        
+        self.status = 'disbursed'
+        self.disbursed_amount = amount
+        self.disbursed_at = datetime.utcnow()
+        self.disbursement_method = method
+        self.disbursement_reference = reference
+        self.disbursed_by = processed_by
         return self.save()
     
     @classmethod
