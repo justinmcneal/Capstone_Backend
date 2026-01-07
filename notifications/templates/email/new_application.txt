@@ -1,0 +1,12 @@
+New Loan Application for Review
+
+Hello {{ officer_name }},
+
+A new loan application has been submitted and is awaiting your review.
+
+Application Details:
+- Customer: {{ customer_name }}
+- Amount: ₱{{ amount }}
+- Reference: {{ loan_id }}
+
+Please log in to the officer dashboard to review this application.

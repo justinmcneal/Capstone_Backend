@@ -161,6 +161,12 @@ class OfficerReviewView(LoanOfficerRequiredMixin, APIView):
         data = serializer.validated_data
         officer_id = user.customer_id
         
+        # Get customer email for notification
+        from accounts.models import Customer
+        customer = Customer.find_one({'customer_id': app.customer_id})
+        customer_email = customer.email if customer else None
+        customer_name = f"{customer.first_name} {customer.last_name}" if customer else "Customer"
+        
         if data['action'] == 'approve':
             app.approve(
                 officer_id=officer_id,
@@ -169,6 +175,20 @@ class OfficerReviewView(LoanOfficerRequiredMixin, APIView):
             )
             logger.info(f"Application approved: {app.id} by {officer_id}")
             message = "Application approved"
+            
+            # Send approval email
+            if customer_email:
+                try:
+                    from notifications.services import get_email_sender
+                    sender = get_email_sender()
+                    sender.send_loan_approved(
+                        customer_email=customer_email,
+                        customer_name=customer_name,
+                        loan_id=app.id,
+                        approved_amount=data['approved_amount']
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to send approval email: {e}")
         else:
             app.reject(
                 officer_id=officer_id,
@@ -177,6 +197,20 @@ class OfficerReviewView(LoanOfficerRequiredMixin, APIView):
             )
             logger.info(f"Application rejected: {app.id} by {officer_id}")
             message = "Application rejected"
+            
+            # Send rejection email
+            if customer_email:
+                try:
+                    from notifications.services import get_email_sender
+                    sender = get_email_sender()
+                    sender.send_loan_rejected(
+                        customer_email=customer_email,
+                        customer_name=customer_name,
+                        loan_id=app.id,
+                        reason=data['rejection_reason']
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to send rejection email: {e}")
         
         return success_response(
             data={
@@ -186,3 +220,4 @@ class OfficerReviewView(LoanOfficerRequiredMixin, APIView):
             },
             message=message
         )
+
