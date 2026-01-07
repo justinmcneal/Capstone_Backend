@@ -221,3 +221,88 @@ class OfficerReviewView(LoanOfficerRequiredMixin, APIView):
             message=message
         )
 
+
+class DisburseView(LoanOfficerRequiredMixin, APIView):
+    """
+    Loan Officer: Mark approved loan as disbursed.
+    
+    POST /api/loans/officer/applications/<id>/disburse/
+    """
+    authentication_classes = [CustomJWTAuthentication]
+    permission_classes = [IsAuthenticated]
+    
+    def post(self, request, application_id):
+        has_permission, user = self.check_officer_permission(request)
+        if not has_permission:
+            return user  # This is the error response
+        
+        app = LoanApplication.find_by_id(application_id)
+        if not app:
+            return error_response(
+                message="Application not found",
+                status_code=status.HTTP_404_NOT_FOUND
+            )
+        
+        # Can only disburse approved applications
+        if app.status != 'approved':
+            return error_response(
+                message=f"Cannot disburse application with status: {app.status}. Must be 'approved'.",
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Get disbursement data
+        amount = request.data.get('amount', app.approved_amount)
+        method = request.data.get('method', 'bank_transfer')
+        reference = request.data.get('reference', '')
+        
+        if not reference:
+            return error_response(
+                message="Disbursement reference is required",
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+        
+        try:
+            app.disburse(
+                amount=amount,
+                method=method,
+                reference=reference,
+                processed_by=user.customer_id
+            )
+            
+            logger.info(f"Loan disbursed: {app.id} by {user.customer_id}")
+            
+            # Send disbursement email
+            from accounts.models import Customer
+            customer = Customer.find_one({'customer_id': app.customer_id})
+            if customer and customer.email:
+                try:
+                    from notifications.services import get_email_sender
+                    sender = get_email_sender()
+                    sender.send_loan_disbursed(
+                        customer_email=customer.email,
+                        customer_name=f"{customer.first_name} {customer.last_name}",
+                        loan_id=app.id,
+                        amount=amount,
+                        method=method,
+                        reference=reference
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to send disbursement email: {e}")
+            
+            return success_response(
+                data={
+                    'id': app.id,
+                    'status': app.status,
+                    'disbursed_amount': app.disbursed_amount,
+                    'disbursement_method': app.disbursement_method,
+                    'disbursement_reference': app.disbursement_reference,
+                    'disbursed_at': app.disbursed_at.isoformat() if app.disbursed_at else None
+                },
+                message="Loan disbursed successfully"
+            )
+            
+        except ValueError as e:
+            return error_response(
+                message=str(e),
+                status_code=status.HTTP_400_BAD_REQUEST
+            )

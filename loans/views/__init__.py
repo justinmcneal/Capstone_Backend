@@ -10,5 +10,6 @@ from .admin_views import AdminProductListView, AdminProductDetailView
 from .officer_views import (
     OfficerApplicationListView,
     OfficerApplicationDetailView,
-    OfficerReviewView
+    OfficerReviewView,
+    DisburseView
 )
