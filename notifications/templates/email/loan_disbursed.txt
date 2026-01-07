@@ -1,0 +1,18 @@
+Loan Disbursed!
+
+Hello {{ name }},
+
+Great news! Your loan has been disbursed and the funds are on their way!
+
+Disbursement Details:
+- Amount: ₱{{ amount }}
+- Method: {{ method }}
+- Reference: {{ reference }}
+- Loan ID: {{ loan_id }}
+
+What's Next:
+1. Bank transfers typically take 1-2 business days
+2. Keep your reference number for tracking
+3. Your repayment schedule will be sent separately
+
+Thank you for choosing us!

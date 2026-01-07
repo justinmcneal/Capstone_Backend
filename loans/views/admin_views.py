@@ -146,3 +146,77 @@ class AdminProductDetailView(AdminRequiredMixin, APIView):
         logger.info(f"Product deactivated: {product.code}")
         
         return success_response(message="Product deactivated")
+
+
+class AssignApplicationView(AdminRequiredMixin, APIView):
+    """
+    Admin: Manually assign application to officer.
+    
+    POST /api/loans/admin/applications/<id>/assign/
+    """
+    authentication_classes = [CustomJWTAuthentication]
+    permission_classes = [IsAuthenticated]
+    
+    def post(self, request, application_id):
+        app = LoanApplication.find_by_id(application_id)
+        if not app:
+            return error_response(
+                message="Application not found",
+                status_code=status.HTTP_404_NOT_FOUND
+            )
+        
+        officer_id = request.data.get('officer_id')
+        if not officer_id:
+            return error_response(
+                message="officer_id is required",
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+        
+        from loans.services import manual_assign_application
+        
+        try:
+            officer = manual_assign_application(app, officer_id)
+            if not officer:
+                return error_response(
+                    message="Officer not found",
+                    status_code=status.HTTP_404_NOT_FOUND
+                )
+            
+            return success_response(
+                data={
+                    'application_id': app.id,
+                    'assigned_officer': officer.id,
+                    'officer_name': officer.full_name,
+                    'status': app.status
+                },
+                message="Application assigned successfully"
+            )
+        except ValueError as e:
+            return error_response(
+                message=str(e),
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+
+
+class OfficerWorkloadView(AdminRequiredMixin, APIView):
+    """
+    Admin: View officer workloads.
+    
+    GET /api/loans/admin/officers/workload/
+    """
+    authentication_classes = [CustomJWTAuthentication]
+    permission_classes = [IsAuthenticated]
+    
+    def get(self, request):
+        from loans.services import get_officers_workload
+        
+        workload = get_officers_workload()
+        
+        return success_response(
+            data={
+                'officers': workload,
+                'total': len(workload)
+            },
+            message="Officer workload retrieved"
+        )
+
