@@ -166,3 +166,36 @@ class LoanOfficer:
         collection.create_index('employee_id', unique=True)
         collection.create_index('department')
         collection.create_index('active')
+    
+    def get_pending_count(self):
+        """Get count of pending applications assigned to this officer"""
+        db = get_db()
+        return db['loan_applications'].count_documents({
+            'assigned_officer': self.id,
+            'status': {'$in': ['submitted', 'under_review']}
+        })
+    
+    @classmethod
+    def find_active(cls):
+        """Find all active loan officers"""
+        return cls.find({'active': True})
+    
+    @classmethod
+    def find_with_least_workload(cls):
+        """Find active officer with least pending applications"""
+        officers = cls.find_active()
+        if not officers:
+            return None
+        
+        # Find officer with minimum pending count
+        min_officer = None
+        min_count = float('inf')
+        
+        for officer in officers:
+            count = officer.get_pending_count()
+            if count < min_count:
+                min_count = count
+                min_officer = officer
+        
+        return min_officer
+
