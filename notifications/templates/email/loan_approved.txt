@@ -1,0 +1,15 @@
+Congratulations! Your Loan Has Been Approved
+
+Hello {{ name }},
+
+Great news! Your loan application has been APPROVED!
+
+Approved Amount: ₱{{ approved_amount }}
+Reference ID: {{ loan_id }}
+
+Next Steps:
+1. You will be contacted for loan disbursement details
+2. Please prepare 1 valid ID for verification
+3. Funds will be released within 1-2 business days
+
+Thank you for choosing us for your financial needs!
