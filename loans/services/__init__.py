@@ -3,3 +3,8 @@ from .assignment import (
     manual_assign_application,
     get_officers_workload
 )
+
+from .qualification import (
+    qualify_customer,
+    check_basic_eligibility
+)

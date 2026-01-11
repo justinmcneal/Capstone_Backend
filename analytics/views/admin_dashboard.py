@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 
 from accounts.authentication import CustomJWTAuthentication
 from accounts.utils.response_helpers import success_response, error_response
-from accounts.mixins import AdminRequiredMixin
+from accounts.views.admin_views import AdminRequiredMixin
 from analytics.models import AuditLog
 import logging
 
