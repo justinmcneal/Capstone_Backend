@@ -6,7 +6,7 @@ from datetime import datetime
 
 from accounts.authentication import CustomJWTAuthentication
 from accounts.utils.response_helpers import success_response, error_response
-from accounts.mixins import AdminRequiredMixin
+from accounts.views.admin_views import AdminRequiredMixin
 from loans.models import LoanProduct, LoanApplication
 from loans.serializers import LoanProductSerializer
 import logging
