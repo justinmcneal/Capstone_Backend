@@ -327,3 +327,117 @@ class DisburseView(LoanOfficerRequiredMixin, APIView):
                 status_code=status.HTTP_400_BAD_REQUEST
             )
 
+
+class RecordPaymentView(LoanOfficerRequiredMixin, APIView):
+    """
+    Loan Officer: Record a payment for a loan.
+    
+    POST /api/loans/officer/payments/
+    """
+    authentication_classes = [CustomJWTAuthentication]
+    permission_classes = [IsAuthenticated]
+    
+    def post(self, request):
+        has_permission, user = self.check_officer_permission(request)
+        if not has_permission:
+            return user
+        
+        # Required fields
+        loan_id = request.data.get('loan_id')
+        installment_number = request.data.get('installment_number')
+        amount = request.data.get('amount', 0)
+        payment_method = request.data.get('payment_method', 'cash')
+        reference = request.data.get('reference', '')
+        notes = request.data.get('notes', '')
+        
+        # Validation
+        if not loan_id:
+            return error_response(
+                message="loan_id is required",
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+        
+        if not installment_number:
+            return error_response(
+                message="installment_number is required",
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+        
+        if amount <= 0:
+            return error_response(
+                message="amount must be greater than 0",
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+        
+        if not reference:
+            return error_response(
+                message="reference is required",
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Find schedule
+        from loans.models import RepaymentSchedule, LoanPayment
+        schedule = RepaymentSchedule.find_by_loan(loan_id)
+        
+        if not schedule:
+            return error_response(
+                message="Repayment schedule not found",
+                status_code=status.HTTP_404_NOT_FOUND
+            )
+        
+        # Record payment in schedule
+        updated_installment = schedule.record_payment(installment_number, amount)
+        
+        if not updated_installment:
+            return error_response(
+                message="Installment not found",
+                status_code=status.HTTP_404_NOT_FOUND
+            )
+        
+        # Create payment record
+        payment = LoanPayment(
+            loan_id=loan_id,
+            schedule_id=schedule.id,
+            customer_id=schedule.customer_id,
+            installment_number=installment_number,
+            amount=amount,
+            payment_method=payment_method,
+            reference=reference,
+            notes=notes,
+            recorded_by=user.customer_id
+        )
+        payment.save()
+        
+        logger.info(f"Payment recorded: {amount} for loan {loan_id} installment {installment_number}")
+        
+        # Send notification email
+        try:
+            from accounts.models import Customer
+            from notifications.services import get_email_sender
+            
+            customer = Customer.find_one({'customer_id': schedule.customer_id})
+            if customer and customer.email:
+                sender = get_email_sender()
+                sender.send_payment_received(
+                    customer_email=customer.email,
+                    customer_name=f"{customer.first_name} {customer.last_name}",
+                    loan_id=loan_id,
+                    amount=amount,
+                    installment=installment_number,
+                    remaining=schedule.get_remaining_balance()
+                )
+        except Exception as e:
+            logger.warning(f"Failed to send payment email: {e}")
+        
+        return success_response(
+            data={
+                'payment_id': payment.id,
+                'loan_id': loan_id,
+                'installment_number': installment_number,
+                'amount': amount,
+                'installment_status': updated_installment['status'],
+                'remaining_balance': schedule.get_remaining_balance()
+            },
+            message="Payment recorded successfully",
+            status_code=status.HTTP_201_CREATED
+        )

@@ -211,6 +211,32 @@ class EmailSender:
             },
             notification=notification
         )
+    
+    def send_payment_received(self, customer_email, customer_name, loan_id, amount, installment, remaining):
+        """Send payment received notification"""
+        notification = Notification(
+            recipient_email=customer_email,
+            recipient_name=customer_name,
+            notification_type='payment_received',
+            subject='Payment Received',
+            related_type='loan',
+            related_id=loan_id
+        )
+        notification.save()
+        
+        return self.send(
+            to_email=customer_email,
+            subject='Payment Received - Thank You!',
+            template_name='payment_received',
+            context={
+                'name': customer_name,
+                'amount': amount,
+                'installment': installment,
+                'remaining': remaining,
+                'loan_id': loan_id
+            },
+            notification=notification
+        )
 
 
 # Singleton
@@ -221,4 +247,3 @@ def get_email_sender():
     if _sender is None:
         _sender = EmailSender()
     return _sender
-

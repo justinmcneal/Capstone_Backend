@@ -5,7 +5,8 @@ from .customer_views import (
     LoanApplyView,
     MyApplicationsView,
     ApplicationDetailView,
-    RepaymentScheduleView
+    RepaymentScheduleView,
+    PaymentHistoryView
 )
 from .admin_views import (
     AdminProductListView,
@@ -17,5 +18,6 @@ from .officer_views import (
     OfficerApplicationListView,
     OfficerApplicationDetailView,
     OfficerReviewView,
-    DisburseView
+    DisburseView,
+    RecordPaymentView
 )
