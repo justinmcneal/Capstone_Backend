@@ -4,7 +4,8 @@ from .customer_views import (
     PreQualifyView,
     LoanApplyView,
     MyApplicationsView,
-    ApplicationDetailView
+    ApplicationDetailView,
+    RepaymentScheduleView
 )
 from .admin_views import (
     AdminProductListView,

@@ -7,6 +7,7 @@ from loans.views import (
     LoanApplyView,
     MyApplicationsView,
     ApplicationDetailView,
+    RepaymentScheduleView,
     # Admin
     AdminProductListView,
     AdminProductDetailView,
@@ -29,6 +30,7 @@ urlpatterns = [
     path('apply/', LoanApplyView.as_view(), name='apply'),
     path('applications/', MyApplicationsView.as_view(), name='my-applications'),
     path('applications/<str:application_id>/', ApplicationDetailView.as_view(), name='application-detail'),
+    path('applications/<str:application_id>/schedule/', RepaymentScheduleView.as_view(), name='application-schedule'),
     
     # Admin endpoints (product management)
     path('admin/products/', AdminProductListView.as_view(), name='admin-products'),
@@ -44,5 +46,3 @@ urlpatterns = [
     path('officer/applications/<str:application_id>/review/', OfficerReviewView.as_view(), name='officer-review'),
     path('officer/applications/<str:application_id>/disburse/', DisburseView.as_view(), name='officer-disburse'),
 ]
-
-
