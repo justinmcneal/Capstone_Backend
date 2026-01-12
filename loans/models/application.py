@@ -162,6 +162,24 @@ class LoanApplication:
         self.disbursed_by = processed_by
         return self.save()
     
+    def can_resubmit(self):
+        """Check if application can be resubmitted"""
+        return self.status == 'rejected'
+    
+    def resubmit(self):
+        """Resubmit a rejected application"""
+        if not self.can_resubmit():
+            raise ValueError("Only rejected applications can be resubmitted")
+        
+        # Reset to draft status
+        self.status = 'draft'
+        self.rejection_reason = None
+        self.officer_notes = None
+        self.decision_date = None
+        self.assigned_officer = None
+        self.updated_at = datetime.utcnow()
+        return self.save()
+    
     @classmethod
     def find_one(cls, query):
         db = get_db()

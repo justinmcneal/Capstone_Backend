@@ -347,3 +347,73 @@ class ProfileSummaryView(APIView):
                 message="Failed to retrieve profile summary",
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+
+
+class NotificationPreferencesView(APIView):
+    """
+    Manage notification preferences.
+    
+    GET /api/profile/notifications/
+    PUT /api/profile/notifications/
+    """
+    authentication_classes = [CustomJWTAuthentication]
+    permission_classes = [IsAuthenticated]
+    
+    def get(self, request):
+        """Get notification preferences"""
+        from accounts.models import Customer
+        
+        user = request.user
+        customer = Customer.find_one({'customer_id': user.customer_id})
+        
+        if not customer:
+            return error_response(
+                message="Customer not found",
+                status_code=status.HTTP_404_NOT_FOUND
+            )
+        
+        prefs = getattr(customer, 'notification_preferences', {
+            'email_loan_updates': True,
+            'email_payment_reminders': True,
+            'email_promotions': False
+        })
+        
+        return success_response(
+            data={'preferences': prefs},
+            message="Notification preferences retrieved"
+        )
+    
+    def put(self, request):
+        """Update notification preferences"""
+        from accounts.models import Customer
+        
+        user = request.user
+        customer = Customer.find_one({'customer_id': user.customer_id})
+        
+        if not customer:
+            return error_response(
+                message="Customer not found",
+                status_code=status.HTTP_404_NOT_FOUND
+            )
+        
+        # Get preferences from request
+        prefs = request.data.get('preferences', {})
+        
+        # Validate and update
+        valid_keys = ['email_loan_updates', 'email_payment_reminders', 'email_promotions']
+        current_prefs = getattr(customer, 'notification_preferences', {})
+        
+        for key in valid_keys:
+            if key in prefs:
+                current_prefs[key] = bool(prefs[key])
+        
+        customer.notification_preferences = current_prefs
+        customer.save()
+        
+        logger.info(f"Notification preferences updated for {user.customer_id}")
+        
+        return success_response(
+            data={'preferences': current_prefs},
+            message="Notification preferences updated"
+        )
+
