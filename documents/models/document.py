@@ -78,6 +78,12 @@ class Document:
         self.notes = kwargs.get('notes', '')  # Officer notes
         self.description = kwargs.get('description', '')  # User description
         
+        # Re-upload request
+        self.reupload_requested = kwargs.get('reupload_requested', False)
+        self.reupload_reason = kwargs.get('reupload_reason', '')
+        self.reupload_requested_by = kwargs.get('reupload_requested_by')
+        self.reupload_requested_at = kwargs.get('reupload_requested_at')
+        
         # Timestamps
         self.uploaded_at = kwargs.get('uploaded_at', datetime.utcnow())
         self.updated_at = kwargs.get('updated_at', datetime.utcnow())
@@ -114,12 +120,25 @@ class Document:
             'ai_analyzed_at': self.ai_analyzed_at,
             'notes': self.notes,
             'description': self.description,
+            'reupload_requested': self.reupload_requested,
+            'reupload_reason': self.reupload_reason,
+            'reupload_requested_by': self.reupload_requested_by,
+            'reupload_requested_at': self.reupload_requested_at,
             'uploaded_at': self.uploaded_at,
             'updated_at': self.updated_at,
         }
         if self._id:
             data['_id'] = self._id
         return data
+    
+    def request_reupload(self, officer_id, reason):
+        """Officer requests customer to re-upload this document"""
+        self.reupload_requested = True
+        self.reupload_reason = reason
+        self.reupload_requested_by = officer_id
+        self.reupload_requested_at = datetime.utcnow()
+        self.status = 'needs_review'
+        return self.save()
     
     @classmethod
     def from_dict(cls, data):

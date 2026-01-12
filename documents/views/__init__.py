@@ -3,5 +3,6 @@ from .document_views import (
     DocumentListView,
     DocumentDetailView,
     DocumentVerifyView,
-    DocumentTypesView
+    DocumentTypesView,
+    RequestReuploadView
 )

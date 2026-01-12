@@ -460,3 +460,111 @@ class PaymentHistoryView(APIView):
             },
             message="Payment history retrieved"
         )
+
+
+class ResubmitApplicationView(APIView):
+    """
+    Resubmit a rejected application.
+    
+    POST /api/loans/applications/<id>/resubmit/
+    """
+    authentication_classes = [CustomJWTAuthentication]
+    permission_classes = [IsAuthenticated]
+    
+    def post(self, request, application_id):
+        user = request.user
+        customer_id = user.customer_id
+        
+        app = LoanApplication.find_by_id(application_id)
+        
+        if not app or app.customer_id != customer_id:
+            return error_response(
+                message="Application not found",
+                status_code=status.HTTP_404_NOT_FOUND
+            )
+        
+        if not app.can_resubmit():
+            return error_response(
+                message="Only rejected applications can be resubmitted",
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+        
+        app.resubmit()
+        
+        return success_response(
+            data={
+                'id': app.id,
+                'status': app.status,
+                'message': 'Application reset to draft. Please update and resubmit.'
+            },
+            message="Application ready for resubmission"
+        )
+
+
+class RejectionFeedbackView(APIView):
+    """
+    Get AI-powered friendly feedback about why application was rejected.
+    
+    GET /api/loans/applications/<id>/feedback/
+    """
+    authentication_classes = [CustomJWTAuthentication]
+    permission_classes = [IsAuthenticated]
+    
+    def get(self, request, application_id):
+        user = request.user
+        customer_id = user.customer_id
+        
+        app = LoanApplication.find_by_id(application_id)
+        
+        if not app or app.customer_id != customer_id:
+            return error_response(
+                message="Application not found",
+                status_code=status.HTTP_404_NOT_FOUND
+            )
+        
+        if app.status != 'rejected':
+            return error_response(
+                message="Feedback is only available for rejected applications",
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Generate AI feedback
+        try:
+            from ai_assistant.services import get_llm_service
+            llm = get_llm_service()
+            
+            prompt = f"""A loan application was rejected. Please explain this to the customer in a friendly, empathetic way.
+
+Rejection reason: {app.rejection_reason or 'Not specified'}
+Officer notes: {app.officer_notes or 'None provided'}
+
+Provide:
+1. A simple explanation of why it was rejected
+2. What they can do to improve their chances
+3. Encouragement to try again
+
+Keep the response under 200 words and use a warm, supportive tone."""
+
+            feedback = llm.generate(prompt)
+            
+        except Exception:
+            # Fallback if AI unavailable
+            feedback = f"""We understand this isn't the news you were hoping for.
+
+Your application was not approved because: {app.rejection_reason or 'The requirements were not fully met.'}
+
+What you can do:
+• Review and update your profile information
+• Ensure all documents are clear and valid
+• Consider applying for a smaller amount
+
+Don't give up! Many successful borrowers were approved on their second try."""
+        
+        return success_response(
+            data={
+                'rejection_reason': app.rejection_reason,
+                'feedback': feedback,
+                'can_resubmit': app.can_resubmit()
+            },
+            message="Feedback retrieved"
+        )

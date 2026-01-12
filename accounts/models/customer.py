@@ -52,6 +52,13 @@ class Customer:
         self.two_factor_enabled = kwargs.get('two_factor_enabled', False)
         self.two_factor_secret = kwargs.get('two_factor_secret')
         self.backup_codes = kwargs.get('backup_codes', [])
+        
+        # Notification preferences
+        self.notification_preferences = kwargs.get('notification_preferences', {
+            'email_loan_updates': True,
+            'email_payment_reminders': True,
+            'email_promotions': False
+        })
     
     @property
     def id(self):

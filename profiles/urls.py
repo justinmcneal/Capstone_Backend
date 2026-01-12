@@ -3,7 +3,8 @@ from profiles.views import (
     CustomerProfileView,
     BusinessProfileView,
     AlternativeDataView,
-    ProfileSummaryView
+    ProfileSummaryView,
+    NotificationPreferencesView
 )
 
 app_name = 'profiles'
@@ -20,4 +21,7 @@ urlpatterns = [
     
     # Profile Summary
     path('summary/', ProfileSummaryView.as_view(), name='profile-summary'),
+    
+    # Notification Preferences
+    path('notifications/', NotificationPreferencesView.as_view(), name='notifications'),
 ]

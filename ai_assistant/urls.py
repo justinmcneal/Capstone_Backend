@@ -3,7 +3,9 @@ from ai_assistant.views import (
     ChatView,
     ChatHistoryView,
     SuggestionsView,
-    AIStatusView
+    AIStatusView,
+    EducationView,
+    FAQsView
 )
 
 app_name = 'ai_assistant'
@@ -20,4 +22,11 @@ urlpatterns = [
     
     # AI service status
     path('status/', AIStatusView.as_view(), name='status'),
+    
+    # Education content
+    path('education/', EducationView.as_view(), name='education'),
+    path('education/<str:topic>/', EducationView.as_view(), name='education-topic'),
+    
+    # FAQs
+    path('faqs/', FAQsView.as_view(), name='faqs'),
 ]

@@ -288,3 +288,131 @@ class AIStatusView(APIView):
             },
             message="AI status retrieved"
         )
+
+
+class EducationView(APIView):
+    """
+    Get loan education content.
+    
+    GET /api/ai/education/
+    GET /api/ai/education/<topic>/
+    """
+    authentication_classes = [CustomJWTAuthentication]
+    permission_classes = [IsAuthenticated]
+    
+    def get(self, request, topic=None):
+        """Get education content on loan topics"""
+        
+        topics = {
+            'what_is_a_loan': {
+                'title': 'What is a Loan?',
+                'content': 'A loan is money you borrow and agree to pay back with interest. Think of it as a tool to help your business grow when you need funds.',
+                'key_points': [
+                    'You receive money upfront',
+                    'You pay it back in installments',
+                    'Interest is the cost of borrowing'
+                ]
+            },
+            'interest_rates': {
+                'title': 'Understanding Interest Rates',
+                'content': 'Interest is what you pay for borrowing money. Lower rates mean lower total cost.',
+                'key_points': [
+                    'Monthly rate: Applied each month',
+                    'Annual rate: Total yearly percentage',
+                    'Compare rates before choosing a loan'
+                ]
+            },
+            'loan_process': {
+                'title': 'The Loan Process',
+                'content': 'Applying for a loan is simple with our AI-assisted process.',
+                'key_points': [
+                    'Step 1: Complete your profile',
+                    'Step 2: Upload required documents',
+                    'Step 3: Get AI pre-qualification',
+                    'Step 4: Submit application',
+                    'Step 5: Wait for approval'
+                ]
+            },
+            'documents_needed': {
+                'title': 'Documents You Need',
+                'content': 'We keep requirements simple for MSMEs.',
+                'key_points': [
+                    'Valid government ID (required)',
+                    'Proof of address',
+                    'Business permit (if available)',
+                    'Photo of your business'
+                ]
+            },
+            'improving_chances': {
+                'title': 'Improving Your Approval Chances',
+                'content': 'Tips to increase your likelihood of getting approved.',
+                'key_points': [
+                    'Complete your profile fully',
+                    'Upload clear, valid documents',
+                    'Start with a smaller loan amount',
+                    'Show consistent business activity'
+                ]
+            }
+        }
+        
+        if topic:
+            if topic in topics:
+                return success_response(data=topics[topic])
+            else:
+                return error_response(
+                    message="Topic not found",
+                    status_code=status.HTTP_404_NOT_FOUND
+                )
+        
+        # Return list of available topics
+        topic_list = [{'id': k, 'title': v['title']} for k, v in topics.items()]
+        return success_response(
+            data={'topics': topic_list},
+            message="Education topics retrieved"
+        )
+
+
+class FAQsView(APIView):
+    """
+    Get frequently asked questions.
+    
+    GET /api/ai/faqs/
+    """
+    authentication_classes = [CustomJWTAuthentication]
+    permission_classes = [IsAuthenticated]
+    
+    def get(self, request):
+        """Get FAQs"""
+        
+        faqs = [
+            {
+                'question': 'How much can I borrow?',
+                'answer': 'Loan amounts range from ₱5,000 to ₱500,000 depending on your profile and business needs.'
+            },
+            {
+                'question': 'How long does approval take?',
+                'answer': 'Most applications are reviewed within 1-3 business days with our AI-assisted process.'
+            },
+            {
+                'question': 'What if I get rejected?',
+                'answer': 'You can reapply after improving your profile or try a smaller loan amount. Our AI will explain what to improve.'
+            },
+            {
+                'question': 'Do I need a business permit?',
+                'answer': 'Not necessarily! We understand many MSMEs operate informally. A valid ID is the main requirement.'
+            },
+            {
+                'question': 'How do I make payments?',
+                'answer': 'Payments can be made via bank transfer, GCash, Maya, or cash at partner locations.'
+            },
+            {
+                'question': 'What happens if I miss a payment?',
+                'answer': 'Contact us immediately. We offer flexible arrangements for genuine difficulties.'
+            }
+        ]
+        
+        return success_response(
+            data={'faqs': faqs, 'total': len(faqs)},
+            message="FAQs retrieved"
+        )
+

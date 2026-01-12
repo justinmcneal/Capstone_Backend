@@ -6,7 +6,9 @@ from .customer_views import (
     MyApplicationsView,
     ApplicationDetailView,
     RepaymentScheduleView,
-    PaymentHistoryView
+    PaymentHistoryView,
+    ResubmitApplicationView,
+    RejectionFeedbackView
 )
 from .admin_views import (
     AdminProductListView,

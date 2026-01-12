@@ -412,3 +412,71 @@ class DocumentTypesView(APIView):
             data={'document_types': types_info},
             message="Document types retrieved successfully"
         )
+
+
+class RequestReuploadView(APIView):
+    """
+    Officer requests customer to re-upload a document.
+    
+    POST /api/documents/<id>/request-reupload/
+    """
+    authentication_classes = [CustomJWTAuthentication]
+    permission_classes = [IsAuthenticated]
+    
+    def post(self, request, document_id):
+        user = request.user
+        
+        # Only officers/admins can request re-upload
+        if not hasattr(user, 'role') or user.role not in ['loan_officer', 'admin']:
+            return error_response(
+                message="Only officers can request document re-upload",
+                status_code=status.HTTP_403_FORBIDDEN
+            )
+        
+        doc = Document.find_by_id(document_id)
+        if not doc:
+            return error_response(
+                message="Document not found",
+                status_code=status.HTTP_404_NOT_FOUND
+            )
+        
+        reason = request.data.get('reason', '')
+        if not reason:
+            return error_response(
+                message="reason is required",
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+        
+        doc.request_reupload(
+            officer_id=user.customer_id if hasattr(user, 'customer_id') else str(user._id),
+            reason=reason
+        )
+        
+        logger.info(f"Re-upload requested for document {doc.id}")
+        
+        # Send email notification to customer
+        try:
+            from accounts.models import Customer
+            from notifications.services import get_email_sender
+            
+            customer = Customer.find_one({'customer_id': doc.customer_id})
+            if customer and customer.email:
+                sender = get_email_sender()
+                sender.send_document_flagged(
+                    customer_email=customer.email,
+                    customer_name=f"{customer.first_name} {customer.last_name}",
+                    document_type=doc.document_type,
+                    reason=reason
+                )
+        except Exception as e:
+            logger.warning(f"Failed to send re-upload email: {e}")
+        
+        return success_response(
+            data={
+                'document_id': doc.id,
+                'status': doc.status,
+                'reupload_requested': doc.reupload_requested
+            },
+            message="Re-upload request sent"
+        )
+
