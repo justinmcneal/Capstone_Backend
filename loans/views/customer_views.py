@@ -345,3 +345,73 @@ class ApplicationDetailView(APIView):
             },
             message="Application details retrieved"
         )
+
+
+class RepaymentScheduleView(APIView):
+    """
+    Get repayment schedule for a loan application.
+    
+    GET /api/loans/applications/<id>/schedule/
+    """
+    authentication_classes = [CustomJWTAuthentication]
+    permission_classes = [IsAuthenticated]
+    
+    def get(self, request, application_id):
+        user = request.user
+        customer_id = user.customer_id
+        
+        # Verify application belongs to customer
+        app = LoanApplication.find_by_id(application_id)
+        
+        if not app or app.customer_id != customer_id:
+            return error_response(
+                message="Application not found",
+                status_code=status.HTTP_404_NOT_FOUND
+            )
+        
+        # Only disbursed loans have schedules
+        if app.status != 'disbursed':
+            return error_response(
+                message="Repayment schedule is only available for disbursed loans",
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+        
+        from loans.models import RepaymentSchedule
+        schedule = RepaymentSchedule.find_by_loan(application_id)
+        
+        if not schedule:
+            return error_response(
+                message="Repayment schedule not found",
+                status_code=status.HTTP_404_NOT_FOUND
+            )
+        
+        # Format installments
+        installments = []
+        for inst in schedule.installments:
+            installments.append({
+                'number': inst['number'],
+                'due_date': inst['due_date'].isoformat() if inst.get('due_date') else None,
+                'principal': inst['principal'],
+                'interest': inst['interest'],
+                'total_amount': inst['total_amount'],
+                'status': inst['status'],
+                'paid_amount': inst.get('paid_amount', 0)
+            })
+        
+        return success_response(
+            data={
+                'loan_id': schedule.loan_id,
+                'principal': schedule.principal,
+                'interest_rate': schedule.interest_rate,
+                'term_months': schedule.term_months,
+                'monthly_payment': schedule.monthly_payment,
+                'total_amount': schedule.total_amount,
+                'total_interest': schedule.total_interest,
+                'paid_count': schedule.get_paid_count(),
+                'remaining_balance': schedule.get_remaining_balance(),
+                'next_payment': schedule.get_next_payment(),
+                'installments': installments
+            },
+            message="Repayment schedule retrieved"
+        )
+

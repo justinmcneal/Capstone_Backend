@@ -271,6 +271,17 @@ class DisburseView(LoanOfficerRequiredMixin, APIView):
             
             logger.info(f"Loan disbursed: {app.id} by {user.customer_id}")
             
+            # Generate repayment schedule
+            schedule = None
+            try:
+                from loans.models import LoanProduct, RepaymentSchedule
+                product = LoanProduct.find_by_id(app.product_id)
+                if product:
+                    schedule = RepaymentSchedule.generate_for_loan(app, product)
+                    logger.info(f"Repayment schedule generated for loan {app.id}")
+            except Exception as e:
+                logger.warning(f"Failed to generate repayment schedule: {e}")
+            
             # Send disbursement email
             from accounts.models import Customer
             customer = Customer.find_one({'customer_id': app.customer_id})
@@ -289,15 +300,24 @@ class DisburseView(LoanOfficerRequiredMixin, APIView):
                 except Exception as e:
                     logger.warning(f"Failed to send disbursement email: {e}")
             
+            response_data = {
+                'id': app.id,
+                'status': app.status,
+                'disbursed_amount': app.disbursed_amount,
+                'disbursement_method': app.disbursement_method,
+                'disbursement_reference': app.disbursement_reference,
+                'disbursed_at': app.disbursed_at.isoformat() if app.disbursed_at else None
+            }
+            
+            if schedule:
+                response_data['schedule'] = {
+                    'monthly_payment': schedule.monthly_payment,
+                    'total_amount': schedule.total_amount,
+                    'term_months': schedule.term_months
+                }
+            
             return success_response(
-                data={
-                    'id': app.id,
-                    'status': app.status,
-                    'disbursed_amount': app.disbursed_amount,
-                    'disbursement_method': app.disbursement_method,
-                    'disbursement_reference': app.disbursement_reference,
-                    'disbursed_at': app.disbursed_at.isoformat() if app.disbursed_at else None
-                },
+                data=response_data,
                 message="Loan disbursed successfully"
             )
             
@@ -306,3 +326,4 @@ class DisburseView(LoanOfficerRequiredMixin, APIView):
                 message=str(e),
                 status_code=status.HTTP_400_BAD_REQUEST
             )
+
