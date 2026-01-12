@@ -178,3 +178,27 @@ class RepaymentSchedule:
         collection = db[cls.collection_name]
         collection.create_index('loan_id', unique=True)
         collection.create_index('customer_id')
+    
+    def record_payment(self, installment_number, amount):
+        """
+        Record a payment against an installment.
+        
+        Returns:
+            Updated installment or None if not found
+        """
+        for i, inst in enumerate(self.installments):
+            if inst['number'] == installment_number:
+                inst['paid_amount'] = inst.get('paid_amount', 0) + amount
+                
+                # Update status based on payment
+                if inst['paid_amount'] >= inst['total_amount']:
+                    inst['status'] = 'paid'
+                    inst['paid_at'] = datetime.utcnow()
+                elif inst['paid_amount'] > 0:
+                    inst['status'] = 'partial'
+                
+                self.installments[i] = inst
+                self.save()
+                return inst
+        return None
+

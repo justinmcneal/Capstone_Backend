@@ -1,0 +1,13 @@
+Payment Received - Thank You!
+
+Hello {{ name }},
+
+We've received your payment. Thank you!
+
+Payment Details:
+- Amount Paid: ₱{{ amount }}
+- Installment: #{{ installment }}
+- Remaining Balance: ₱{{ remaining }}
+- Loan ID: {{ loan_id }}
+
+Keep up the good work with your payments!

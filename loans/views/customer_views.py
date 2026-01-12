@@ -415,3 +415,48 @@ class RepaymentScheduleView(APIView):
             message="Repayment schedule retrieved"
         )
 
+
+class PaymentHistoryView(APIView):
+    """
+    Get payment history for a loan application.
+    
+    GET /api/loans/applications/<id>/payments/
+    """
+    authentication_classes = [CustomJWTAuthentication]
+    permission_classes = [IsAuthenticated]
+    
+    def get(self, request, application_id):
+        user = request.user
+        customer_id = user.customer_id
+        
+        # Verify application belongs to customer
+        app = LoanApplication.find_by_id(application_id)
+        
+        if not app or app.customer_id != customer_id:
+            return error_response(
+                message="Application not found",
+                status_code=status.HTTP_404_NOT_FOUND
+            )
+        
+        from loans.models import LoanPayment
+        payments = LoanPayment.find_by_loan(application_id)
+        
+        payments_data = [{
+            'id': p.id,
+            'amount': p.amount,
+            'installment_number': p.installment_number,
+            'payment_method': p.payment_method,
+            'reference': p.reference,
+            'recorded_at': p.recorded_at.isoformat() if p.recorded_at else None
+        } for p in payments]
+        
+        total_paid = sum(p.amount for p in payments)
+        
+        return success_response(
+            data={
+                'payments': payments_data,
+                'total_paid': total_paid,
+                'count': len(payments_data)
+            },
+            message="Payment history retrieved"
+        )
