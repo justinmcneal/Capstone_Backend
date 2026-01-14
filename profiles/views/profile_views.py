@@ -361,10 +361,10 @@ class NotificationPreferencesView(APIView):
     
     def get(self, request):
         """Get notification preferences"""
-        from accounts.models import Customer
+        from accounts.services import AuthService
         
         user = request.user
-        customer = Customer.find_one({'customer_id': user.customer_id})
+        customer = AuthService.get_customer_by_id(user.customer_id)
         
         if not customer:
             return error_response(
@@ -385,10 +385,10 @@ class NotificationPreferencesView(APIView):
     
     def put(self, request):
         """Update notification preferences"""
-        from accounts.models import Customer
+        from accounts.services import AuthService
         
         user = request.user
-        customer = Customer.find_one({'customer_id': user.customer_id})
+        customer = AuthService.get_customer_by_id(user.customer_id)
         
         if not customer:
             return error_response(

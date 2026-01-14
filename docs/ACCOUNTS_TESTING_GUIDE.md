@@ -442,6 +442,20 @@ PUT /api/auth/consent/
 
 ---
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 ## Loan Officer Authentication
 
 ### 20. Loan Officer Login
@@ -545,6 +559,18 @@ POST /api/auth/admin/logout/
     "refresh_token": "eyJ..."
 }
 ```
+
+
+
+
+
+
+
+
+
+
+
+
 
 ---
 

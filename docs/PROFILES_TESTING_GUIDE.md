@@ -244,6 +244,72 @@ GET /api/profile/summary/
 
 ---
 
+## Notification Preferences
+
+### 8. Get Notification Preferences
+
+```
+GET /api/profile/notifications/
+```
+
+**Response:**
+```json
+{
+    "status": "success",
+    "message": "Notification preferences retrieved",
+    "data": {
+        "preferences": {
+            "email_loan_updates": true,
+            "email_payment_reminders": true,
+            "email_promotions": false
+        }
+    }
+}
+```
+
+---
+
+### 9. Update Notification Preferences
+
+```
+PUT /api/profile/notifications/
+```
+
+**Body:**
+```json
+{
+    "preferences": {
+        "email_loan_updates": true,
+        "email_payment_reminders": true,
+        "email_promotions": false
+    }
+}
+```
+
+**Preference Options:**
+| Field | Type | Description |
+|-------|------|-------------|
+| `email_loan_updates` | Boolean | Receive loan application status updates |
+| `email_payment_reminders` | Boolean | Receive payment reminders |
+| `email_promotions` | Boolean | Receive promotional emails |
+
+**Response:**
+```json
+{
+    "status": "success",
+    "message": "Notification preferences updated",
+    "data": {
+        "preferences": {
+            "email_loan_updates": true,
+            "email_payment_reminders": true,
+            "email_promotions": false
+        }
+    }
+}
+```
+
+---
+
 ## Testing Flow
 
 1. **Login as customer** → Get access token from `/api/auth/login/`
@@ -252,6 +318,8 @@ GET /api/profile/summary/
 4. **Fill business profile** → `PUT /api/profile/business/`
 5. **Fill alternative data** → `PUT /api/profile/alternative-data/`
 6. **Check summary again** → `ready_for_loan` should be `true`
+7. **Check notification preferences** → `GET /api/profile/notifications/`
+8. **Update preferences** → `PUT /api/profile/notifications/`
 
 ---
 
