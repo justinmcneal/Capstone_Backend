@@ -1,1 +1,1 @@
-from .llm_service import OllamaService, get_llm_service, SYSTEM_PROMPT
+from .llm_service import GroqService, get_llm_service, SYSTEM_PROMPT
