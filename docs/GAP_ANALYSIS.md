@@ -207,10 +207,10 @@ Only CNN model training is needed for full document verification capability.
 
 | Task | Priority | Effort | Status |
 |------|----------|--------|--------|
-| ~~Switch LLM to Groq~~ | ~~High~~ | ~~1 hour~~ | ✅ Done |
-| Add production settings | 🔴 High | 30 min | Pending |
-| Add Gunicorn | 🔴 High | 10 min | Pending |
-| Configure CORS | 🔴 High | 15 min | Pending |
+| ~~Switch LLM to Groq~~ | - | - | ✅ Done |
+| ~~Add production settings~~ | - | - | ✅ Done |
+| ~~Add Gunicorn~~ | - | - | ✅ Done |
+| ~~Configure WhiteNoise~~ | - | - | ✅ Done |
 
 ### CNN Training
 
@@ -240,8 +240,8 @@ Only CNN model training is needed for full document verification capability.
 ## ✅ NEXT STEPS (In Order)
 
 1. **[x] Switch Ollama to Groq** - ✅ Completed
-2. **[ ] Add production settings** - DEBUG=False, ALLOWED_HOSTS
-3. **[ ] Add Gunicorn** - Production WSGI server
+2. **[x] Add production settings** - ✅ Completed
+3. **[x] Add Gunicorn + WhiteNoise** - ✅ Completed
 4. **[ ] Deploy backend to Railway** - Make API accessible online
 5. **[ ] Build mobile app** - Customer-facing app
 6. **[ ] Build officer dashboard** - Web app for loan officers
