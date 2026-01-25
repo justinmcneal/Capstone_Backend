@@ -205,44 +205,45 @@ Only CNN model training is needed for full document verification capability.
 
 ### Backend (Before Deployment)
 
-| Task | Priority | Effort | Description |
-|------|----------|--------|-------------|
-| Switch LLM to Groq | 🔴 High | 1 hour | Replace Ollama with Groq API for cloud deployment |
-| Add production settings | 🔴 High | 30 min | `DEBUG=False`, `ALLOWED_HOSTS`, etc. |
-| Add Gunicorn | 🔴 High | 10 min | Add to requirements.txt for production server |
-| Configure CORS | 🔴 High | 15 min | Allow frontend domains |
+| Task | Priority | Effort | Status |
+|------|----------|--------|--------|
+| ~~Switch LLM to Groq~~ | - | - | ✅ Done |
+| ~~Add production settings~~ | - | - | ✅ Done |
+| ~~Add Gunicorn~~ | - | - | ✅ Done |
+| ~~Configure WhiteNoise~~ | - | - | ✅ Done |
 
 ### CNN Training
 
-| Task | Priority | Effort | Description |
-|------|----------|--------|-------------|
-| Collect training images | 🟡 Medium | 2-3 days | 50-100 images per document type |
-| Run training command | 🟡 Medium | 1 hour | `python manage.py train_document_classifier` |
+| Task | Priority | Effort | Status |
+|------|----------|--------|--------|
+| Collect training images | 🟡 Medium | 2-3 days | Pending |
+| Run training command | 🟡 Medium | 1 hour | Pending |
 
 ### Deployment
 
-| Task | Priority | Effort | Description |
-|------|----------|--------|-------------|
-| Deploy to Railway | 🔴 High | 1 hour | Push to GitHub, connect Railway |
-| Set environment variables | 🔴 High | 15 min | MongoDB, Groq, Email, etc. |
-| Test all endpoints | 🟡 Medium | 2 hours | Verify production works |
+| Task | Priority | Effort | Status |
+|------|----------|--------|--------|
+| Deploy to Railway | 🔴 High | 1 hour | Pending |
+| Set environment variables | 🔴 High | 15 min | Pending |
+| Test all endpoints | 🟡 Medium | 2 hours | Pending |
 
 ### Frontend (To Build)
 
-| Task | Priority | Effort | Description |
-|------|----------|--------|-------------|
-| Customer Mobile App | 🔴 High | 2-4 weeks | React Native / Expo |
-| Officer Web Dashboard | 🔴 High | 1-2 weeks | React / Next.js |
-| Admin Console | 🟡 Medium | 1 week | React / Next.js |
+| Task | Priority | Effort | Status |
+|------|----------|--------|--------|
+| Customer Mobile App | 🔴 High | 2-4 weeks | Pending |
+| Officer Web Dashboard | 🔴 High | 1-2 weeks | Pending |
+| Admin Console | 🟡 Medium | 1 week | Pending |
 
 ---
 
 ## ✅ NEXT STEPS (In Order)
 
-1. **[ ] Switch Ollama to Groq** - Required for cloud deployment
-2. **[ ] Deploy backend to Railway** - Make API accessible online
-3. **[ ] Build mobile app** - Customer-facing app
-4. **[ ] Build officer dashboard** - Web app for loan officers
-5. **[ ] Collect CNN training data** - Can do in parallel
-6. **[ ] Train CNN model** - Once images collected
-
+1. **[x] Switch Ollama to Groq** - ✅ Completed
+2. **[x] Add production settings** - ✅ Completed
+3. **[x] Add Gunicorn + WhiteNoise** - ✅ Completed
+4. **[ ] Deploy backend to Railway** - Make API accessible online
+5. **[ ] Build mobile app** - Customer-facing app
+6. **[ ] Build officer dashboard** - Web app for loan officers
+7. **[ ] Collect CNN training data** - Can do in parallel
+8. **[ ] Train CNN model** - Once images collected
