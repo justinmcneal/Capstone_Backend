@@ -120,20 +120,26 @@ class Verify2FAView(APIView):
             )
         
         try:
-            # Decode temp token to get user ID
+            # Decode temp token to get user ID and role
             token = RefreshToken(temp_token)
-            customer_id = token.get('customer_id')
-            loan_officer_id = token.get('loan_officer_id')
+            user_id = token.get('customer_id')  # All users store ID in customer_id
+            role = token.get('role', 'customer')
+            
+            if not user_id:
+                return APIResponseHelper.error_response(
+                    'Invalid temporary token',
+                    status.HTTP_401_UNAUTHORIZED
+                )
             
             user = None
             user_type = None
             
-            if customer_id:
-                user = AuthService.get_customer_by_id(customer_id)
-                user_type = 'customer'
-            elif loan_officer_id:
-                user = LoanOfficer.find_one({'_id': ObjectId(loan_officer_id)})
+            if role == 'loan_officer':
+                user = LoanOfficer.find_one({'_id': ObjectId(user_id)})
                 user_type = 'loan_officer'
+            else:
+                user = AuthService.get_customer_by_id(user_id)
+                user_type = 'customer'
             
             if not user:
                 return APIResponseHelper.error_response(
