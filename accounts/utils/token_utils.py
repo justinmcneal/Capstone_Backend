@@ -113,11 +113,11 @@ class TokenUtils:
             role: User role
         
         Returns:
-            str: Temporary JWT token
+            str: Temporary JWT refresh token
         """
         from datetime import timedelta
         
-        # Create a short-lived token for 2FA verification
+        # Create a short-lived refresh token for 2FA verification
         refresh = RefreshToken()
         refresh['customer_id'] = str(user_id)
         refresh['email'] = email
@@ -127,7 +127,8 @@ class TokenUtils:
         # Very short expiration - just enough to complete 2FA
         refresh.set_exp(lifetime=timedelta(minutes=5))
         
-        return str(refresh.access_token)
+        # Return the refresh token (not access token) so it can be parsed back
+        return str(refresh)
     
     @staticmethod
     def blacklist_token(token, token_type='refresh'):
