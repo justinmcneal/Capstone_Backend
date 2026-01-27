@@ -33,13 +33,13 @@ urlpatterns = [
     path('logout/', LogoutView.as_view(), name='logout'),
     path('login/', LoginView.as_view(), name='login'),
 
-    # Password Management
+    # Password Management (Unified - works for Customer and LoanOfficer)
     path('forgot-password/', ForgotPasswordView.as_view(), name='forgot-password'),
     path('verify-reset-otp/', VerifyResetOTPView.as_view(), name='verify-reset-otp'),
     path('reset-password/', ResetPasswordView.as_view(), name='reset-password'),
     path('change-password/', ChangePasswordView.as_view(), name='change-password'),
 
-    # Two-Factor Authentication (2FA)
+    # Two-Factor Authentication (Unified - works for Customer and LoanOfficer)
     path('2fa/setup/', Setup2FAView.as_view(), name='2fa-setup'),
     path('2fa/confirm/', Confirm2FASetupView.as_view(), name='2fa-confirm'),
     path('2fa/verify/', Verify2FAView.as_view(), name='2fa-verify'),
@@ -67,4 +67,3 @@ urlpatterns = [
     path('admin/admins/<str:admin_id>/', AdminDetailView.as_view(), name='admin-detail'),
     path('admin/admins/<str:admin_id>/permissions/', AdminPermissionsView.as_view(), name='admin-permissions'),
 ]
-
