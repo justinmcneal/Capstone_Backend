@@ -79,6 +79,10 @@ class ResetPasswordView(APIView):
         return APIResponseHelper.error_response(message=message, error_code=status.HTTP_400_BAD_REQUEST)
 
 class ChangePasswordView(APIView):
+    """
+    Change password for authenticated user (Customer or LoanOfficer).
+    Requires old password verification.
+    """
     permission_classes = [IsAuthenticated]
     
     def post(self, request):
@@ -90,19 +94,26 @@ class ChangePasswordView(APIView):
         new_password = serializer.validated_data['new_password']
         
         try:
-            customer_id = request.user.get('customer_id')
-            from accounts.services.auth_service import AuthService
-            customer = AuthService.get_customer_by_id(customer_id)
+            from accounts.utils.user_detection import get_authenticated_user
             
-            if not customer:
+            user, user_type = get_authenticated_user(request)
+            
+            if not user:
                 return APIResponseHelper.error_response('User not found', error_code=status.HTTP_404_NOT_FOUND)
             
-            success, message = PasswordService.change_password(customer, old_password, new_password)
+            success, message = PasswordService.change_password(user, old_password, new_password)
             
             if success:
-                logger.info(f"Password changed for {customer.email} from IP {request.META.get('REMOTE_ADDR')}")
+                # Clear must_change_password flag for loan officers
+                if user_type == 'loan_officer' and hasattr(user, 'must_change_password') and user.must_change_password:
+                    user.must_change_password = False
+                    user.save()
+                    logger.info(f"Cleared must_change_password flag for {user.email}")
+                
+                logger.info(f"Password changed for {user.email} ({user_type}) from IP {request.META.get('REMOTE_ADDR')}")
                 return APIResponseHelper.success_response(message=message)
-            logger.warning(f"Password change failed for {customer.email}")
+            
+            logger.warning(f"Password change failed for {user.email} ({user_type})")
             return APIResponseHelper.error_response(message=message, error_code=status.HTTP_400_BAD_REQUEST)
         except Exception as e:
             logger.error(f"Password change error: {str(e)}")
