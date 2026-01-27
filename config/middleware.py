@@ -17,11 +17,34 @@ class SecurityHeadersMiddleware:
         # Enable XSS protection
         response['X-XSS-Protection'] = '1; mode=block'
         
-        # Enforce HTTPS
-        response['Strict-Transport-Security'] = 'max-age=31536000; includeSubDomains'
+        # Enforce HTTPS (only in production)
+        if not request.get_host().startswith('localhost'):
+            response['Strict-Transport-Security'] = 'max-age=31536000; includeSubDomains'
         
-        # Content Security Policy
-        response['Content-Security-Policy'] = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; connect-src 'self'"
+        # Content Security Policy - relaxed for development
+        # In production, remove 'unsafe-eval' and localhost references
+        is_development = request.get_host().startswith('localhost') or request.get_host().startswith('127.0.0.1')
+        
+        if is_development:
+            # Relaxed CSP for development (allows Vite HMR, eval for dev tools)
+            response['Content-Security-Policy'] = (
+                "default-src 'self' http://localhost:* ws://localhost:*; "
+                "script-src 'self' 'unsafe-inline' 'unsafe-eval'; "
+                "style-src 'self' 'unsafe-inline'; "
+                "img-src 'self' data: https: http://localhost:*; "
+                "font-src 'self' data:; "
+                "connect-src 'self' http://localhost:* ws://localhost:*"
+            )
+        else:
+            # Strict CSP for production
+            response['Content-Security-Policy'] = (
+                "default-src 'self'; "
+                "script-src 'self'; "
+                "style-src 'self' 'unsafe-inline'; "
+                "img-src 'self' data: https:; "
+                "font-src 'self' data:; "
+                "connect-src 'self'"
+            )
         
         # Referrer Policy
         response['Referrer-Policy'] = 'strict-origin-when-cross-origin'
