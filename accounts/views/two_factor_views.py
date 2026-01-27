@@ -1,13 +1,21 @@
+"""
+Two-Factor Authentication (2FA) Views.
+
+Unified views that support both Customer and LoanOfficer authentication.
+"""
 from rest_framework.views import APIView
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from accounts.services.two_factor_service import TwoFactorService
 from accounts.services import AuthService
+from accounts.models import LoanOfficer
 from accounts.utils.response_helpers import APIResponseHelper
 from accounts.utils.throttles import TwoFactorRateThrottle
 from accounts.utils.token_utils import TokenUtils
+from accounts.utils.user_detection import get_authenticated_user
 from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.exceptions import TokenError
+from bson import ObjectId
 import logging
 
 logger = logging.getLogger('authentication')
@@ -15,25 +23,25 @@ logger = logging.getLogger('authentication')
 
 class Setup2FAView(APIView):
     """
-    Initiate 2FA setup for authenticated customer.
+    Initiate 2FA setup for authenticated user (Customer or LoanOfficer).
     Returns secret and QR code provisioning URI.
     """
     permission_classes = [IsAuthenticated]
     
     def post(self, request):
         try:
-            customer = AuthService.get_customer_by_id(request.user.customer_id)
-            if not customer:
-                return APIResponseHelper.error_response('Customer not found')
+            user, user_type = get_authenticated_user(request)
+            if not user:
+                return APIResponseHelper.error_response('User not found')
             
-            if customer.two_factor_enabled:
+            if user.two_factor_enabled:
                 return APIResponseHelper.error_response(
                     '2FA is already enabled for this account'
                 )
             
-            setup_data = TwoFactorService.setup_2fa(customer)
+            setup_data = TwoFactorService.setup_2fa(user)
             
-            logger.info(f"2FA setup initiated for {customer.email}")
+            logger.info(f"2FA setup initiated for {user.email} ({user_type})")
             
             return APIResponseHelper.success_response(
                 data={
@@ -64,20 +72,20 @@ class Confirm2FASetupView(APIView):
             return APIResponseHelper.validation_error_response('Verification code is required')
         
         try:
-            customer = AuthService.get_customer_by_id(request.user.customer_id)
-            if not customer:
-                return APIResponseHelper.error_response('Customer not found')
+            user, user_type = get_authenticated_user(request)
+            if not user:
+                return APIResponseHelper.error_response('User not found')
             
-            success, backup_codes = TwoFactorService.confirm_2fa_setup(customer, code)
+            success, backup_codes = TwoFactorService.confirm_2fa_setup(user, code)
             
             if not success:
-                logger.warning(f"Invalid 2FA setup code for {customer.email}")
+                logger.warning(f"Invalid 2FA setup code for {user.email} ({user_type})")
                 return APIResponseHelper.error_response(
                     'Invalid verification code. Please try again.',
                     status.HTTP_400_BAD_REQUEST
                 )
             
-            logger.info(f"2FA enabled for {customer.email}")
+            logger.info(f"2FA enabled for {user.email} ({user_type})")
             
             return APIResponseHelper.success_response(
                 data={
@@ -96,6 +104,7 @@ class Verify2FAView(APIView):
     """
     Verify 2FA code during login flow.
     Called after password verification when 2FA is enabled.
+    Supports both Customer and LoanOfficer.
     """
     permission_classes = [AllowAny]
     throttle_classes = [TwoFactorRateThrottle]
@@ -111,41 +120,73 @@ class Verify2FAView(APIView):
             )
         
         try:
-            # Decode temp token to get customer ID
+            # Decode temp token to get user ID and role
             token = RefreshToken(temp_token)
-            customer_id = token.get('customer_id')
+            user_id = token.get('customer_id')  # All users store ID in customer_id
+            role = token.get('role', 'customer')
             
-            if not customer_id:
+            if not user_id:
                 return APIResponseHelper.error_response(
                     'Invalid temporary token',
                     status.HTTP_401_UNAUTHORIZED
                 )
             
-            customer = AuthService.get_customer_by_id(customer_id)
-            if not customer:
-                return APIResponseHelper.error_response('Customer not found')
+            user = None
+            user_type = None
+            
+            if role == 'loan_officer':
+                user = LoanOfficer.find_one({'_id': ObjectId(user_id)})
+                user_type = 'loan_officer'
+            else:
+                user = AuthService.get_customer_by_id(user_id)
+                user_type = 'customer'
+            
+            if not user:
+                return APIResponseHelper.error_response(
+                    'Invalid temporary token',
+                    status.HTTP_401_UNAUTHORIZED
+                )
             
             # Verify 2FA code
             if use_backup:
-                is_valid = TwoFactorService.use_backup_code(customer, code)
+                is_valid = TwoFactorService.use_backup_code(user, code)
             else:
-                is_valid = TwoFactorService.verify_totp(customer.two_factor_secret, code)
+                is_valid = TwoFactorService.verify_totp(user.two_factor_secret, code)
             
             if not is_valid:
-                logger.warning(f"Invalid 2FA code for {customer.email}")
+                logger.warning(f"Invalid 2FA code for {user.email} ({user_type})")
                 return APIResponseHelper.error_response(
                     'Invalid verification code',
                     status.HTTP_401_UNAUTHORIZED
                 )
             
             # Generate full tokens after successful 2FA
-            tokens = AuthService.create_customer_tokens(customer, token_type='no_remember_me')
+            if user_type == 'customer':
+                tokens = AuthService.create_customer_tokens(user, token_type='no_remember_me')
+                user_data = AuthService.serialize_customer_data(user, include_last_name=True)
+            else:
+                # Loan Officer tokens
+                tokens = TokenUtils.generate_tokens(
+                    user_id=user.id,
+                    email=user.email,
+                    verified=user.verified,
+                    role='loan_officer',
+                    refresh_token_days=1
+                )
+                user_data = {
+                    'id': user.id,
+                    'email': user.email,
+                    'full_name': user.full_name,
+                    'department': user.department,
+                    'employee_id': user.employee_id,
+                    'role': 'loan_officer'
+                }
             
-            logger.info(f"2FA verified for {customer.email}")
+            logger.info(f"2FA verified for {user.email} ({user_type})")
             
             return APIResponseHelper.success_response(
                 data={
-                    'user': AuthService.serialize_customer_data(customer, include_last_name=True),
+                    'user': user_data,
                     'access': tokens['access'],
                     'refresh': tokens['refresh']
                 },
@@ -164,7 +205,7 @@ class Verify2FAView(APIView):
 
 class Disable2FAView(APIView):
     """
-    Disable 2FA for authenticated customer.
+    Disable 2FA for authenticated user.
     Requires password verification.
     """
     permission_classes = [IsAuthenticated]
@@ -176,14 +217,14 @@ class Disable2FAView(APIView):
             return APIResponseHelper.validation_error_response('Password is required')
         
         try:
-            customer = AuthService.get_customer_by_id(request.user.customer_id)
-            if not customer:
-                return APIResponseHelper.error_response('Customer not found')
+            user, user_type = get_authenticated_user(request)
+            if not user:
+                return APIResponseHelper.error_response('User not found')
             
-            if not customer.two_factor_enabled:
+            if not user.two_factor_enabled:
                 return APIResponseHelper.error_response('2FA is not enabled')
             
-            success = TwoFactorService.disable_2fa(customer, password)
+            success = TwoFactorService.disable_2fa(user, password)
             
             if not success:
                 return APIResponseHelper.error_response(
@@ -191,7 +232,7 @@ class Disable2FAView(APIView):
                     status.HTTP_401_UNAUTHORIZED
                 )
             
-            logger.info(f"2FA disabled for {customer.email}")
+            logger.info(f"2FA disabled for {user.email} ({user_type})")
             
             return APIResponseHelper.success_response(
                 message='2FA disabled successfully'
@@ -216,14 +257,14 @@ class RegenerateBackupCodesView(APIView):
             return APIResponseHelper.validation_error_response('Password is required')
         
         try:
-            customer = AuthService.get_customer_by_id(request.user.customer_id)
-            if not customer:
-                return APIResponseHelper.error_response('Customer not found')
+            user, user_type = get_authenticated_user(request)
+            if not user:
+                return APIResponseHelper.error_response('User not found')
             
-            if not customer.two_factor_enabled:
+            if not user.two_factor_enabled:
                 return APIResponseHelper.error_response('2FA is not enabled')
             
-            backup_codes = TwoFactorService.regenerate_backup_codes(customer, password)
+            backup_codes = TwoFactorService.regenerate_backup_codes(user, password)
             
             if backup_codes is None:
                 return APIResponseHelper.error_response(
@@ -231,7 +272,7 @@ class RegenerateBackupCodesView(APIView):
                     status.HTTP_401_UNAUTHORIZED
                 )
             
-            logger.info(f"Backup codes regenerated for {customer.email}")
+            logger.info(f"Backup codes regenerated for {user.email} ({user_type})")
             
             return APIResponseHelper.success_response(
                 data={
@@ -248,20 +289,20 @@ class RegenerateBackupCodesView(APIView):
 
 class Get2FAStatusView(APIView):
     """
-    Get 2FA status for authenticated customer.
+    Get 2FA status for authenticated user.
     """
     permission_classes = [IsAuthenticated]
     
     def get(self, request):
         try:
-            customer = AuthService.get_customer_by_id(request.user.customer_id)
-            if not customer:
-                return APIResponseHelper.error_response('Customer not found')
+            user, user_type = get_authenticated_user(request)
+            if not user:
+                return APIResponseHelper.error_response('User not found')
             
             return APIResponseHelper.success_response(
                 data={
-                    'two_factor_enabled': customer.two_factor_enabled,
-                    'backup_codes_remaining': len(customer.backup_codes) if customer.backup_codes else 0
+                    'two_factor_enabled': user.two_factor_enabled,
+                    'backup_codes_remaining': len(user.backup_codes) if user.backup_codes else 0
                 }
             )
             
