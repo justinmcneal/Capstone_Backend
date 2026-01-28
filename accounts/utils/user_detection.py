@@ -2,10 +2,10 @@
 User Detection Utility for Unified Authentication Views.
 
 Provides a helper function to detect the authenticated user type
-(Customer or LoanOfficer) from the JWT token and return the appropriate model.
+(Customer, LoanOfficer, or Admin) from the JWT token and return the appropriate model.
 """
 from accounts.services.auth_service import AuthService
-from accounts.models import LoanOfficer
+from accounts.models import LoanOfficer, Admin
 from bson import ObjectId
 import logging
 
@@ -24,8 +24,8 @@ def get_authenticated_user(request):
         
     Returns:
         Tuple of (user, user_type) where:
-        - user: Customer or LoanOfficer instance, or None if not found
-        - user_type: 'customer', 'loan_officer', or None
+        - user: Customer, LoanOfficer, or Admin instance, or None if not found
+        - user_type: 'customer', 'loan_officer', 'admin', or None
     """
     user = request.user
     
@@ -58,9 +58,15 @@ def get_authenticated_user(request):
         return (None, None)
     
     elif role == 'admin':
-        # Admins don't use these endpoints but handle gracefully
-        logger.info(f"Admin attempted to access customer/loan_officer endpoint")
+        try:
+            admin = Admin.find_one({'_id': ObjectId(user_id)})
+            if admin:
+                return (admin, 'admin')
+            logger.warning(f"Admin not found with id={user_id}")
+        except Exception as e:
+            logger.error(f"Error fetching admin: {str(e)}")
         return (None, None)
     
     logger.warning(f"Unknown role: {role}")
     return (None, None)
+
