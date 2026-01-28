@@ -8,7 +8,7 @@ from rest_framework import status
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from accounts.services.two_factor_service import TwoFactorService
 from accounts.services import AuthService
-from accounts.models import LoanOfficer
+from accounts.models import LoanOfficer, Admin
 from accounts.utils.response_helpers import APIResponseHelper
 from accounts.utils.throttles import TwoFactorRateThrottle
 from accounts.utils.token_utils import TokenUtils
@@ -137,6 +137,9 @@ class Verify2FAView(APIView):
             if role == 'loan_officer':
                 user = LoanOfficer.find_one({'_id': ObjectId(user_id)})
                 user_type = 'loan_officer'
+            elif role == 'admin':
+                user = Admin.find_one({'_id': ObjectId(user_id)})
+                user_type = 'admin'
             else:
                 user = AuthService.get_customer_by_id(user_id)
                 user_type = 'customer'
@@ -164,6 +167,24 @@ class Verify2FAView(APIView):
             if user_type == 'customer':
                 tokens = AuthService.create_customer_tokens(user, token_type='no_remember_me')
                 user_data = AuthService.serialize_customer_data(user, include_last_name=True)
+            elif user_type == 'admin':
+                # Admin tokens
+                tokens = TokenUtils.generate_tokens(
+                    user_id=user.id,
+                    email=user.email,
+                    verified=True,
+                    role='admin',
+                    refresh_token_days=1
+                )
+                user_data = {
+                    'id': user.id,
+                    'username': user.username,
+                    'email': user.email,
+                    'full_name': user.full_name,
+                    'role': 'admin',
+                    'permissions': user.permissions if not user.super_admin else ['*'],
+                    'super_admin': user.super_admin
+                }
             else:
                 # Loan Officer tokens
                 tokens = TokenUtils.generate_tokens(
