@@ -87,7 +87,14 @@ class LoanProduct:
         data = self.to_dict()
         
         if self._id:
-            collection.update_one({'_id': self._id}, {'$set': data})
+            # Remove _id from the update data to avoid immutable field error
+            update_data = {k: v for k, v in data.items() if k != '_id'}
+            result = collection.update_one(
+                {'_id': self._id}, 
+                {'$set': update_data}
+            )
+            if result.modified_count == 0 and result.matched_count == 0:
+                raise ValueError(f"Product with id {self._id} not found in database")
         else:
             result = collection.insert_one(data)
             self._id = result.inserted_id
@@ -95,6 +102,8 @@ class LoanProduct:
     
     def delete(self):
         """Soft delete - set inactive"""
+        if not self._id:
+            raise ValueError("Cannot delete product without id")
         self.active = False
         self.save()
         return True
