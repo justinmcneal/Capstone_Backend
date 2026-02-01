@@ -142,10 +142,25 @@ class AdminProductDetailView(AdminRequiredMixin, APIView):
         if not product:
             return error_response(message="Product not found", status_code=status.HTTP_404_NOT_FOUND)
         
-        product.delete()  # Soft delete
-        logger.info(f"Product deactivated: {product.code}")
-        
-        return success_response(message="Product deactivated")
+        try:
+            product.delete()  # Soft delete
+            logger.info(f"Product deactivated: {product.code}")
+            
+            # Return updated product info for confirmation
+            return success_response(
+                data={
+                    'id': product.id,
+                    'code': product.code,
+                    'active': product.active
+                },
+                message="Product deactivated successfully"
+            )
+        except ValueError as e:
+            logger.error(f"Failed to deactivate product {product_id}: {str(e)}")
+            return error_response(
+                message="Failed to deactivate product",
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 
 
 class AssignApplicationView(AdminRequiredMixin, APIView):
