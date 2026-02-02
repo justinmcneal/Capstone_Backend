@@ -26,9 +26,7 @@ contract Disbursement is
     enum DisbursementStatus {
         Pending,         // 0 - Awaiting disbursement
         Processing,      // 1 - In progress
-        Completed,       // 2 - Successfully disbursed
-        Failed,          // 3 - Disbursement failed
-        Reversed         // 4 - Reversed/refunded
+        Completed        // 2 - Successfully disbursed
     }
 
     enum DisbursementMethod {
@@ -50,15 +48,10 @@ contract Disbursement is
         address processedBy;             // Officer who processed
         uint256 initiatedAt;
         uint256 processedAt;
-        bytes32 failureReasonHash;       // If failed
-        uint256 reversedAt;              // If reversed
-        address reversedBy;              // Who reversed
-        bytes32 reversalReasonHash;
     }
 
     // ============ Constants ============
     uint256 public constant VERSION = 1;
-    uint256 public constant REVERSAL_WINDOW = 72 hours;
     
     bytes32 public constant ADMIN_ROLE = keccak256("ADMIN_ROLE");
     bytes32 public constant LOAN_OFFICER_ROLE = keccak256("LOAN_OFFICER_ROLE");
@@ -77,7 +70,6 @@ contract Disbursement is
     // Counters
     uint256 public totalDisbursements;
     uint256 public totalDisbursedAmount;
-    uint256 public totalReversals;
     uint256 private _disbursementNonce;
 
     // ============ Events ============
@@ -99,26 +91,10 @@ contract Disbursement is
         uint256 timestamp
     );
 
-    event DisbursementFailed(
-        bytes32 indexed disbursementId,
-        bytes32 indexed loanId,
-        bytes32 failureReasonHash,
-        uint256 timestamp
-    );
-
-    event DisbursementReversed(
-        bytes32 indexed disbursementId,
-        bytes32 indexed loanId,
-        address indexed reversedBy,
-        bytes32 reasonHash,
-        uint256 timestamp
-    );
-
     // ============ Errors ============
     error DisbursementNotFound(bytes32 disbursementId);
     error InvalidDisbursementStatus(bytes32 disbursementId, DisbursementStatus current, DisbursementStatus expected);
     error DuplicateReference(bytes32 referenceHash);
-    error ReversalWindowExpired(bytes32 disbursementId);
     error LoanNotApproved(bytes32 loanId);
     error AlreadyDisbursed(bytes32 loanId);
 
@@ -191,11 +167,7 @@ contract Disbursement is
         if (loanToDisbursement[loanId] != bytes32(0)) {
             bytes32 existingId = loanToDisbursement[loanId];
             DisbursementRecord storage existing = disbursements[existingId];
-            if (existing.status == DisbursementStatus.Completed) {
-                revert AlreadyDisbursed(loanId);
-            }
-            // If previous disbursement failed, allow retry
-            if (existing.status != DisbursementStatus.Failed && existing.status != DisbursementStatus.Reversed) {
+            if (existing.status == DisbursementStatus.Completed || existing.status == DisbursementStatus.Pending || existing.status == DisbursementStatus.Processing) {
                 revert AlreadyDisbursed(loanId);
             }
         }
@@ -302,106 +274,6 @@ contract Disbursement is
         return true;
     }
 
-    /**
-     * @notice Mark disbursement as failed
-     * @param disbursementId Disbursement identifier
-     * @param failureReasonHash Hash of failure reason
-     */
-    function failDisbursement(
-        bytes32 disbursementId,
-        bytes32 failureReasonHash
-    ) external 
-        nonReentrant 
-        disbursementExists(disbursementId)
-        returns (bool) 
-    {
-        require(
-            hasRole(LOAN_OFFICER_ROLE, msg.sender) || 
-            hasRole(ADMIN_ROLE, msg.sender) || 
-            hasRole(SYSTEM_ROLE, msg.sender),
-            "Disbursement: not authorized"
-        );
-
-        DisbursementRecord storage d = disbursements[disbursementId];
-        
-        if (d.status != DisbursementStatus.Processing) {
-            revert InvalidDisbursementStatus(disbursementId, d.status, DisbursementStatus.Processing);
-        }
-
-        d.status = DisbursementStatus.Failed;
-        d.failureReasonHash = failureReasonHash;
-        d.processedAt = block.timestamp;
-
-        // Revert loan status to allow retry
-        loanCore.revertToApproved(d.loanId);
-
-        emit DisbursementFailed(
-            disbursementId,
-            d.loanId,
-            failureReasonHash,
-            block.timestamp
-        );
-
-        return true;
-    }
-
-    /**
-     * @notice Reverse a completed disbursement (admin only, within time window)
-     * @param disbursementId Disbursement identifier
-     * @param reasonHash Hash of reversal reason
-     */
-    function reverseDisbursement(
-        bytes32 disbursementId,
-        bytes32 reasonHash
-    ) external 
-        nonReentrant 
-        onlyRole(ADMIN_ROLE)
-        disbursementExists(disbursementId)
-        returns (bool) 
-    {
-        DisbursementRecord storage d = disbursements[disbursementId];
-        
-        if (d.status != DisbursementStatus.Completed) {
-            revert InvalidDisbursementStatus(disbursementId, d.status, DisbursementStatus.Completed);
-        }
-
-        // Check reversal window
-        if (block.timestamp > d.processedAt + REVERSAL_WINDOW) {
-            revert ReversalWindowExpired(disbursementId);
-        }
-
-        d.status = DisbursementStatus.Reversed;
-        d.reversedAt = block.timestamp;
-        d.reversedBy = msg.sender;
-        d.reversalReasonHash = reasonHash;
-
-        totalReversals++;
-        totalDisbursedAmount -= d.amount;
-
-        // Revert loan status
-        loanCore.revertToApproved(d.loanId);
-
-        emit DisbursementReversed(
-            disbursementId,
-            d.loanId,
-            msg.sender,
-            reasonHash,
-            block.timestamp
-        );
-
-        // Audit log
-        auditRegistry.log(
-            disbursementId,
-            "disbursement",
-            IAuditRegistry.AuditAction.SystemConfigChanged, // Using as reversal action
-            keccak256(abi.encodePacked(msg.sender, reasonHash)),
-            bytes32(uint256(DisbursementStatus.Completed)),
-            bytes32(uint256(DisbursementStatus.Reversed))
-        );
-
-        return true;
-    }
-
     // ============ View Functions ============
 
     /**
@@ -431,10 +303,9 @@ contract Disbursement is
      */
     function getStats() external view returns (
         uint256 _totalDisbursements,
-        uint256 _totalDisbursedAmount,
-        uint256 _totalReversals
+        uint256 _totalDisbursedAmount
     ) {
-        return (totalDisbursements, totalDisbursedAmount, totalReversals);
+        return (totalDisbursements, totalDisbursedAmount);
     }
 
     // ============ Emergency Functions ============
