@@ -215,7 +215,7 @@ class AssignApplicationView(AdminRequiredMixin, APIView):
 
 class OfficerWorkloadView(AdminRequiredMixin, APIView):
     """
-    Admin: View officer workloads.
+    Admin: View officer workloads and pending applications.
     
     GET /api/loans/admin/officers/workload/
     """
@@ -227,10 +227,26 @@ class OfficerWorkloadView(AdminRequiredMixin, APIView):
         
         workload = get_officers_workload()
         
+        # Get pending applications for admin to assign
+        pending_apps = LoanApplication.find_pending()
+        pending_data = [{
+            'id': app.id,
+            'customer_id': app.customer_id,
+            'requested_amount': app.requested_amount,
+            'term_months': app.term_months,
+            'status': app.status,
+            'eligibility_score': app.eligibility_score,
+            'risk_category': app.risk_category,
+            'assigned_officer': app.assigned_officer,
+            'submitted_at': app.submitted_at.isoformat() if app.submitted_at else None
+        } for app in pending_apps]
+        
         return success_response(
             data={
                 'officers': workload,
-                'total': len(workload)
+                'total': len(workload),
+                'pending_applications': pending_data,
+                'pending_count': len(pending_data)
             },
             message="Officer workload retrieved"
         )
