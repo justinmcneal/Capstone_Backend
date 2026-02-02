@@ -34,7 +34,7 @@ npm test
       ✔ Should set admin role
       ...
   
-  166 passing (4s)
+  100 passing (3s)
 ```
 
 ### Test a Specific Contract
@@ -68,13 +68,13 @@ npx hardhat test --grep "disbursement"
 ```
 test/
 ├── AuditRegistry.test.js       # Audit logging tests (26 tests)
-├── LoanAccessControl.test.js   # Role management tests (~24 tests)
+├── LoanAccessControl.test.js   # Role management tests (24 tests)
 ├── LoanCore.test.js            # Loan lifecycle tests (14 tests)
-├── LoanOracle.test.js          # Oracle & AI score tests (~24 tests)
-├── PenaltyCalculator.test.js   # Penalty calculation tests (~24 tests)
-├── Disbursement.test.js        # Disbursement flow tests (~20 tests)
-└── Repayment.test.js           # Repayment & schedule tests (~24 tests)
+├── Disbursement.test.js        # Disbursement flow tests (14 tests)
+└── Repayment.test.js           # Repayment & schedule tests (22 tests)
 ```
+
+**Total: 100 tests**
 
 ---
 
@@ -147,15 +147,11 @@ Tests fund release tracking.
 |---------------|---------------|
 | Initiate Disbursement | Start disbursement process |
 | Complete Disbursement | Mark as completed with reference |
-| Failed Disbursement | Handle failures, allow retry |
-| Disbursement Reversal | Reverse within time window |
 | View Functions | Query disbursement data |
 
 **Key Functions Tested:**
 - `initiateDisbursement(loanId, amount, method)`
 - `completeDisbursement(disbursementId, referenceHash)`
-- `failDisbursement(disbursementId, reasonHash)`
-- `reverseDisbursement(disbursementId, reasonHash)`
 
 ### 5. Repayment Tests
 
@@ -167,50 +163,11 @@ Tests payment recording and schedules.
 | Payment Recording | Record payments with reference |
 | Installment Management | Track paid/partial/overdue |
 | Loan Completion | Handle full repayment |
-| Penalty Calculator | Set penalty calculator |
 
 **Key Functions Tested:**
 - `createSchedule(loanId, borrower, principal, interestRateBps, termMonths, startDate)`
 - `recordPayment(loanId, installmentNumber, amount, method, referenceHash)`
 - `getInstallment(scheduleId, installmentNumber)`
-
-### 6. PenaltyCalculator Tests
-
-Tests penalty computation.
-
-| Test Category | What It Tests |
-|---------------|---------------|
-| Configuration | Default config, updates |
-| Penalty Calculation | Grace period, daily rate, cap |
-| Penalty Recording | Store penalty records |
-| Penalty Waiver | Admin/officer can waive |
-| Edge Cases | Same-day, grace period end |
-
-**Key Functions Tested:**
-- `calculatePenalty(loanId, installmentNumber, amount, dueDate)`
-- `updateConfig(gracePeriod, lateFeePercent, dailyPenaltyPercent, maxPenaltyPercent)`
-- `recordPenalty(loanId, installmentNumber, amount)`
-- `waivePenalty(loanId, installmentNumber, reasonHash)`
-
-### 7. LoanOracle Tests
-
-Tests external data bridging.
-
-| Test Category | What It Tests |
-|---------------|---------------|
-| AI Score Submission | Submit, store, validate scores |
-| Score Invalidation | Admin can invalidate |
-| Score Validity | Check expiration |
-| External Payments | Confirm off-chain payments |
-| Batch Operations | Multiple confirmations |
-| Oracle Management | Add/remove oracles |
-
-**Key Functions Tested:**
-- `submitAIScore(loanId, score, riskCategory, factors)`
-- `invalidateScore(loanId)`
-- `isScoreValid(loanId)`
-- `confirmExternalPayment(loanId, amount, referenceHash)`
-- `confirmExternalPaymentsBatch(loanIds, amounts, referenceHashes)`
 
 ---
 
@@ -250,7 +207,7 @@ describe("LoanCore", function () {
 
 1. **Deploy in order**: AuditRegistry → LoanAccessControl → LoanCore → Disbursement/Repayment
 2. **Grant logger roles** to contracts that need to write audit logs
-3. **Register contracts**: Call `loanCore.setContracts(disbursement, repayment, oracle)`
+3. **Set contracts**: Call `loanCore.setContracts(disbursement, repayment, ethers.ZeroAddress)`
 4. **Register users**: Register officers and borrowers in LoanAccessControl
 
 ### Role Constants
@@ -391,8 +348,8 @@ This generates a coverage report in `coverage/` directory.
 
 ## 🎉 Summary
 
-- **166 tests** covering all 7 main contracts
-- Tests run in **~4 seconds** using Hardhat's in-memory blockchain
+- **100 tests** covering all 5 main contracts
+- Tests run in **~3 seconds** using Hardhat's in-memory blockchain
 - No wallet or real ETH needed for testing
 - Use `npm test` for quick validation
 - Use `npx hardhat test --grep "pattern"` for specific tests

@@ -1,5 +1,21 @@
 # Smart Contract Architecture for MSME Pathways Loan System
 
+## ⚠️ Implementation Note
+
+> **This document is the original design proposal.** After aligning with the Django backend, only the following contracts were implemented:
+> 
+> | Implemented ✅ | Removed ❌ |
+> |---------------|-----------|
+> | `LoanAccessControl.sol` | `PenaltyCalculator.sol` (no backend feature) |
+> | `LoanCore.sol` | `LoanOracle.sol` (no backend feature) |
+> | `Disbursement.sol` | `TokenDisbursement.sol` (no ERC20 in backend) |
+> | `Repayment.sol` | `TokenRepayment.sol` (no ERC20 in backend) |
+> | `AuditRegistry.sol` | `LoanToken.sol` (no ERC20 in backend) |
+> 
+> See [BACKEND_ALIGNMENT_ANALYSIS.md](docs/BACKEND_ALIGNMENT_ANALYSIS.md) for current implementation status.
+
+---
+
 ## Executive Summary
 
 This document provides a comprehensive analysis of the MSME Pathways backend system and proposes a production-grade smart contract architecture that mirrors the existing financial and operational flows. The design prioritizes **security**, **auditability**, **regulatory compliance**, and **upgrade paths**.
