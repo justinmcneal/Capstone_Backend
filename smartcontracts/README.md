@@ -15,6 +15,72 @@ With blockchain integration, **critical financial records become tamper-proof**.
 
 ---
 
+## ⚠️ Security & Dependencies Notice
+
+### NPM Audit Vulnerabilities
+
+After installation, you'll see **50 security warnings** from `npm audit`. Here's what you need to know:
+
+**Current Status:**
+- 50 vulnerabilities (23 low, 10 moderate, 17 high) in development dependencies
+- These are **NOT in your production code** - they're in development tools only
+- Your Solidity contracts are NOT affected
+- The contracts compile, test, and deploy successfully
+
+**Key Vulnerabilities:**
+1. **undici** (moderate) - HTTP decompression issue in Node.js Fetch API (Hardhat dependency)
+2. **elliptic** (moderate) - Cryptographic implementation in ethers.js v5 (Hardhat dependency)
+3. **cookie** (low) - In Hardhat's Sentry error tracking
+4. **fast-xml-parser** (high) - In AWS SDK (Hardhat tooling)
+5. **tmp** (low) - In solc compiler temporary files
+
+**Why These Exist:**
+- Hardhat v2 uses older dependencies (ethers.js v5)
+- Most are **transitive dependencies** (dependencies of dependencies)
+- They affect the development environment, not deployed contracts
+- Your smart contracts on-chain are 100% independent of these Node.js packages
+
+**Should You Fix Them?**
+
+| Option | Command | Impact | When to Use |
+|--------|---------|--------|-------------|
+| **Do Nothing** | - | No changes | ✅ Testing locally (recommended) |
+| **Safe Fix** | `npm audit fix` | Fixes `fast-xml-parser` only | ✅ Production deployments |
+| **Force Fix** | `npm audit fix --force` | ⚠️ Upgrades to Hardhat v3 (breaking changes) | ❌ Not recommended without testing |
+
+**Our Recommendation:**
+- **For testing/learning:** Ignore the warnings - they don't affect functionality
+- **For production:** Run `npm audit fix` (safe updates only)
+- **To eliminate all warnings:** Manually upgrade to Hardhat v3 in the future (requires code changes)
+
+### Node.js Version Warning
+
+**Your Version:** Node.js v25.2.1  
+**Hardhat v2 Supports:** Node.js v16-v20
+
+**Impact:**
+- ⚠️ Warning message appears during `npx hardhat` commands
+- ✅ Everything still works (tests, compilation, deployment)
+- ⚠️ Some edge cases may have unexpected behavior
+
+**Why you got the `npx hardhat init` error:**
+Your project is **already initialized** - you don't need to run `npx hardhat init` again! That command creates a new Hardhat project, but you already have:
+- ✅ `hardhat.config.js`
+- ✅ `contracts/` directory
+- ✅ `test/` directory
+- ✅ `scripts/` directory
+
+**Options for the Node version:**
+1. **Ignore it** - Everything works for testing/learning
+2. **Downgrade Node.js** to v20 LTS using nvm:
+   ```bash
+   nvm install 20
+   nvm use 20
+   ```
+3. **Upgrade to Hardhat v3** (supports Node v18-v22) - requires breaking changes
+
+---
+
 ## 🔗 How This Aligns With Your System
 
 ### Transaction Flow Mapping
