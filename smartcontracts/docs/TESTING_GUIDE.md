@@ -1,181 +1,173 @@
 # Smart Contract Testing Guide
 
-## 🎯 Overview
-
-This guide explains how to run, understand, and extend the smart contract test suite for the MSME Pathways Loan Management System.
-
----
-
-## 📋 Quick Reference
+## Quick Reference
 
 | Command | Description |
 |---------|-------------|
 | `npm test` | Run all tests |
-| `npm run test:coverage` | Run tests with coverage report |
-| `npx hardhat test test/LoanCore.test.js` | Run single test file |
-| `npx hardhat test --grep "approval"` | Run tests matching pattern |
+| `npm run test:coverage` | Run with coverage report |
+| `npx hardhat test test/LoanCore.test.js` | Run single file |
+| `npx hardhat test --grep "approval"` | Run matching tests |
 
 ---
 
-## 🚀 Running Tests
+## Running Tests
 
-### Basic Test Run
+### All Tests
 
 ```bash
-cd smartcontracts
 npm test
 ```
 
-**Expected Output:**
+**Output:**
 ```
   AuditRegistry
-    Deployment
-      ✔ Should set correct version
-      ✔ Should set admin role
-      ...
-  
+    ✔ Should set correct version
+    ✔ Should log audit entry
+    ...
+
+  Disbursement
+    ✔ Should initiate disbursement
+    ✔ Should complete disbursement
+    ...
+
+  LoanAccessControl
+    ✔ Should register officer successfully
+    ✔ Should register borrower
+    ...
+
+  LoanCore
+    ✔ Should create loan
+    ✔ Should approve loan
+    ...
+
+  Repayment
+    ✔ Should create repayment schedule
+    ✔ Should record payment
+    ...
+
   100 passing (3s)
 ```
 
-### Test a Specific Contract
+### Single Contract
 
 ```bash
 npx hardhat test test/LoanCore.test.js
 npx hardhat test test/Disbursement.test.js
 npx hardhat test test/Repayment.test.js
+npx hardhat test test/LoanAccessControl.test.js
+npx hardhat test test/AuditRegistry.test.js
 ```
 
-### Test with Verbose Output
+### Pattern Matching
 
 ```bash
-npx hardhat test --verbose
-```
-
-### Run Tests Matching a Pattern
-
-```bash
-# Run all tests containing "approval"
 npx hardhat test --grep "approval"
-
-# Run all tests containing "disbursement"
 npx hardhat test --grep "disbursement"
+npx hardhat test --grep "payment"
 ```
 
 ---
 
-## 📁 Test Files Structure
+## Test Files
 
 ```
 test/
-├── AuditRegistry.test.js       # Audit logging tests (26 tests)
-├── LoanAccessControl.test.js   # Role management tests (24 tests)
-├── LoanCore.test.js            # Loan lifecycle tests (14 tests)
-├── Disbursement.test.js        # Disbursement flow tests (14 tests)
-└── Repayment.test.js           # Repayment & schedule tests (22 tests)
+├── AuditRegistry.test.js       # 26 tests
+├── LoanAccessControl.test.js   # 24 tests
+├── LoanCore.test.js            # 14 tests
+├── Disbursement.test.js        # 14 tests
+└── Repayment.test.js           # 22 tests
 ```
 
 **Total: 100 tests**
 
 ---
 
-## 🧪 Test Categories
+## Test Categories
 
-### 1. AuditRegistry Tests
+### AuditRegistry Tests
 
-Tests the immutable audit logging system.
-
-| Test Category | What It Tests |
-|---------------|---------------|
+| Category | Tests |
+|----------|-------|
 | Deployment | Version, roles, permissions |
-| Logger Management | Granting/revoking logger roles |
+| Logger Management | Grant/revoke logger roles |
 | Audit Logging | Entry creation, retrieval |
 | State Verification | State hash validation |
-| Batch Logging | Multiple entries at once |
-| Entry Retrieval | Querying by resource, actor |
+| Batch Logging | Multiple entries |
 
-**Key Functions Tested:**
+**Functions Tested:**
 - `log(resourceId, resourceType, action, dataHash, prevState, newState)`
 - `logBatch(entries)`
 - `getEntry(entryId)`
 - `getEntriesByResource(resourceId)`
 - `verifyStateTransition(resourceId, expectedState)`
 
-### 2. LoanAccessControl Tests
+### LoanAccessControl Tests
 
-Tests role-based access control.
-
-| Test Category | What It Tests |
-|---------------|---------------|
+| Category | Tests |
+|----------|-------|
 | Officer Registration | Register, deactivate, reactivate |
-| Borrower Registration | Register with customer ID hash |
+| Borrower Registration | Register with ID hash |
 | Pause Functionality | Emergency pause/unpause |
-| Validation Functions | `isActiveOfficer`, `isBorrower` |
-| Role Management | Grant/revoke roles |
+| Validation | `isActiveOfficer`, `isBorrower` |
 
-**Key Functions Tested:**
+**Functions Tested:**
 - `registerOfficer(address, employeeIdHash)`
 - `registerBorrower(address, customerIdHash)`
 - `deactivateOfficer(address)`
 - `reactivateOfficer(address)`
 - `emergencyPause(reason)`
-- `unpause()`
 
-### 3. LoanCore Tests
+### LoanCore Tests
 
-Tests the main loan lifecycle.
-
-| Test Category | What It Tests |
-|---------------|---------------|
-| Loan Creation | Create with proper params |
+| Category | Tests |
+|----------|-------|
+| Loan Creation | Create with params |
 | Loan Submission | Submit with AI scores |
-| Officer Assignment | Assign to registered officer |
-| Approval/Rejection | Approve or reject with notes |
-| Statistics | Track loan counts |
+| Officer Assignment | Assign to officer |
+| Approval/Rejection | Approve or reject |
+| Statistics | Track counts |
 
-**Key Functions Tested:**
+**Functions Tested:**
 - `createLoan(loanId, productId, amount, termMonths, interestRateBps)`
 - `submitLoan(loanId, eligibilityScore, riskCategory, aiRecommendationHash)`
 - `assignOfficer(loanId, officerAddress)`
 - `approveLoan(loanId, approvedAmount, notesHash)`
 - `rejectLoan(loanId, rejectionReasonHash, notesHash)`
 
-### 4. Disbursement Tests
+### Disbursement Tests
 
-Tests fund release tracking.
+| Category | Tests |
+|----------|-------|
+| Initiate | Start disbursement |
+| Complete | Mark completed |
+| View | Query data |
 
-| Test Category | What It Tests |
-|---------------|---------------|
-| Initiate Disbursement | Start disbursement process |
-| Complete Disbursement | Mark as completed with reference |
-| View Functions | Query disbursement data |
-
-**Key Functions Tested:**
+**Functions Tested:**
 - `initiateDisbursement(loanId, amount, method)`
 - `completeDisbursement(disbursementId, referenceHash)`
+- `getDisbursement(disbursementId)`
 
-### 5. Repayment Tests
+### Repayment Tests
 
-Tests payment recording and schedules.
+| Category | Tests |
+|----------|-------|
+| Schedule Creation | Generate installments |
+| Payment Recording | Record with reference |
+| Installment Management | Track status |
+| Loan Completion | Full repayment |
 
-| Test Category | What It Tests |
-|---------------|---------------|
-| Schedule Creation | Generate installment schedule |
-| Payment Recording | Record payments with reference |
-| Installment Management | Track paid/partial/overdue |
-| Loan Completion | Handle full repayment |
-
-**Key Functions Tested:**
+**Functions Tested:**
 - `createSchedule(loanId, borrower, principal, interestRateBps, termMonths, startDate)`
 - `recordPayment(loanId, installmentNumber, amount, method, referenceHash)`
 - `getInstallment(scheduleId, installmentNumber)`
 
 ---
 
-## 🔧 Understanding Test Setup
+## Test Setup Pattern
 
-### beforeEach Pattern
-
-Each test file uses a `beforeEach` hook to set up fresh contracts:
+Each test file uses `beforeEach` for fresh contracts:
 
 ```javascript
 describe("LoanCore", function () {
@@ -183,61 +175,60 @@ describe("LoanCore", function () {
   let admin, officer, borrower;
 
   beforeEach(async function () {
-    // Get test accounts
     [admin, officer, borrower] = await ethers.getSigners();
 
-    // Deploy contracts
+    // Deploy AuditRegistry
     const AuditRegistry = await ethers.getContractFactory("AuditRegistry");
-    auditRegistry = await upgrades.deployProxy(
-      AuditRegistry,
-      [admin.address],
+    auditRegistry = await upgrades.deployProxy(AuditRegistry, [admin.address], { kind: "uups" });
+
+    // Deploy LoanAccessControl
+    const LoanAccessControl = await ethers.getContractFactory("LoanAccessControl");
+    accessControl = await upgrades.deployProxy(LoanAccessControl, [admin.address], { kind: "uups" });
+
+    // Deploy LoanCore
+    const LoanCore = await ethers.getContractFactory("LoanCore");
+    loanCore = await upgrades.deployProxy(
+      LoanCore,
+      [admin.address, await accessControl.getAddress(), await auditRegistry.getAddress()],
       { kind: "uups" }
     );
-    await auditRegistry.waitForDeployment();
 
-    // ... deploy other contracts
-
-    // Setup permissions
+    // Setup
     await auditRegistry.grantLoggerRole(await loanCore.getAddress());
+    await accessControl.registerOfficer(officer.address, ethers.keccak256(ethers.toUtf8Bytes("EMP001")));
+    await accessControl.registerBorrower(borrower.address, ethers.keccak256(ethers.toUtf8Bytes("CUST001")));
   });
 });
 ```
 
-### Important Setup Steps
+### Setup Order
 
-1. **Deploy in order**: AuditRegistry → LoanAccessControl → LoanCore → Disbursement/Repayment
-2. **Grant logger roles** to contracts that need to write audit logs
-3. **Set contracts**: Call `loanCore.setContracts(disbursement, repayment, ethers.ZeroAddress)`
-4. **Register users**: Register officers and borrowers in LoanAccessControl
-
-### Role Constants
-
-Tests use consistent role constants:
-
-```javascript
-const ADMIN_ROLE = ethers.keccak256(ethers.toUtf8Bytes("ADMIN_ROLE"));
-const LOAN_OFFICER_ROLE = ethers.keccak256(ethers.toUtf8Bytes("LOAN_OFFICER_ROLE"));
-const SYSTEM_ROLE = ethers.keccak256(ethers.toUtf8Bytes("SYSTEM_ROLE"));
-const LOGGER_ROLE = ethers.keccak256(ethers.toUtf8Bytes("LOGGER_ROLE"));
-```
+1. Deploy AuditRegistry
+2. Deploy LoanAccessControl
+3. Deploy LoanCore (needs AccessControl + AuditRegistry)
+4. Deploy Disbursement (needs LoanCore + AuditRegistry)
+5. Deploy Repayment (needs LoanCore + AuditRegistry)
+6. Grant logger roles
+7. Set contracts: `loanCore.setContracts(disbursement, repayment, ethers.ZeroAddress)`
+8. Register officers and borrowers
 
 ---
 
-## 🆕 Adding New Tests
+## Adding Tests
 
-### Example: Adding a Test Case
+### Example Test
 
 ```javascript
 it("Should not allow duplicate loan IDs", async function () {
   const loanId = ethers.keccak256(ethers.toUtf8Bytes("LOAN001"));
   const productId = ethers.keccak256(ethers.toUtf8Bytes("PRODUCT001"));
   
-  // First loan should succeed
+  // First loan succeeds
   await loanCore.connect(borrower).createLoan(
     loanId, productId, ethers.parseEther("1000"), 12, 150
   );
   
-  // Duplicate should fail
+  // Duplicate fails
   await expect(
     loanCore.connect(borrower).createLoan(
       loanId, productId, ethers.parseEther("1000"), 12, 150
@@ -246,110 +237,69 @@ it("Should not allow duplicate loan IDs", async function () {
 });
 ```
 
-### Test Assertions
-
-Common assertion patterns:
+### Common Assertions
 
 ```javascript
-// Check event emission
+// Event emission
 await expect(contract.function())
   .to.emit(contract, "EventName")
   .withArgs(arg1, arg2);
 
-// Check revert with message
+// Revert with message
 await expect(contract.function())
   .to.be.revertedWith("Error message");
 
-// Check state change
+// State value
 const result = await contract.getValue();
 expect(result).to.equal(expectedValue);
 
-// Check BigInt values (Ethers v6)
+// BigInt (Ethers v6)
 expect(await contract.getAmount()).to.equal(ethers.parseEther("1000"));
 ```
 
 ---
 
-## 🔍 Debugging Tests
-
-### Enable Verbose Logging
-
-Add `console.log` in contracts:
-
-```solidity
-// In contract
-import "hardhat/console.sol";
-
-function createLoan(...) {
-    console.log("Creating loan:", loanId);
-    console.log("Borrower:", msg.sender);
-}
-```
-
-### Check Transaction Details
-
-```javascript
-const tx = await contract.function();
-const receipt = await tx.wait();
-console.log("Gas used:", receipt.gasUsed);
-console.log("Events:", receipt.events);
-```
-
-### Time Manipulation
+## Time Manipulation
 
 ```javascript
 const { time } = require("@nomicfoundation/hardhat-network-helpers");
 
-// Advance time by 1 day
+// Advance 1 day
 await time.increase(86400);
 
-// Advance to specific timestamp
+// Advance to timestamp
 await time.increaseTo(futureTimestamp);
 
-// Get current block time
+// Get current time
 const now = await time.latest();
 ```
 
 ---
 
-## 📊 Test Coverage
-
-Run tests with coverage analysis:
+## Coverage
 
 ```bash
 npm run test:coverage
 ```
 
-This generates a coverage report in `coverage/` directory.
+Generates report in `coverage/` directory.
 
 ---
 
-## ❓ Troubleshooting
+## Troubleshooting
 
-### "Contract not deployed"
-- Ensure `beforeEach` deploys all required contracts
-- Check that `waitForDeployment()` is called
+| Problem | Solution |
+|---------|----------|
+| "Contract not deployed" | Check `beforeEach` deploys all contracts |
+| "Not authorized" | Grant roles, register users, set contracts |
+| "Invalid argument" | Use correct types (bytes32, uint256) |
+| Tests timeout | Restart node, check for loops |
 
-### "Not authorized" errors
-- Grant proper roles: `await contract.grantRole(ROLE, address)`
-- Register users: `await accessControl.registerOfficer(...)` 
-- Set contracts: `await loanCore.setContracts(...)`
+### Role Constants
 
-### "Invalid argument" errors
-- Check parameter types (bytes32 vs address vs uint256)
-- Use `ethers.keccak256(ethers.toUtf8Bytes("string"))` for bytes32 IDs
-- Use `ethers.parseEther("1000")` for amounts
-
-### Tests timing out
-- Hardhat local node may need restart: `Ctrl+C` and `npm run node`
-- Check for infinite loops in contract logic
-
----
-
-## 🎉 Summary
-
-- **100 tests** covering all 5 main contracts
-- Tests run in **~3 seconds** using Hardhat's in-memory blockchain
-- No wallet or real ETH needed for testing
-- Use `npm test` for quick validation
-- Use `npx hardhat test --grep "pattern"` for specific tests
+```javascript
+const ADMIN_ROLE = ethers.keccak256(ethers.toUtf8Bytes("ADMIN_ROLE"));
+const LOAN_OFFICER_ROLE = ethers.keccak256(ethers.toUtf8Bytes("LOAN_OFFICER_ROLE"));
+const SYSTEM_ROLE = ethers.keccak256(ethers.toUtf8Bytes("SYSTEM_ROLE"));
+const LOGGER_ROLE = ethers.keccak256(ethers.toUtf8Bytes("LOGGER_ROLE"));
+```
