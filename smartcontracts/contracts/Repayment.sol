@@ -9,12 +9,11 @@ import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 
 import "./interfaces/ILoanCore.sol";
 import "./interfaces/IAuditRegistry.sol";
-import "./interfaces/IPenaltyCalculator.sol";
 
 /**
  * @title Repayment
  * @notice Handles loan repayment schedules and payment recording
- * @dev Manages installments, partial payments, and loan completion
+ * @dev Manages installments and partial payments
  */
 contract Repayment is 
     Initializable,
@@ -28,8 +27,7 @@ contract Repayment is
         Pending,     // 0 - Not yet due
         Paid,        // 1 - Fully paid
         Partial,     // 2 - Partially paid
-        Overdue,     // 3 - Past due date
-        Defaulted    // 4 - Severely overdue
+        Overdue      // 3 - Past due date
     }
 
     enum PaymentMethod {
@@ -51,11 +49,8 @@ contract Repayment is
         uint256 totalAmount;
         uint256 totalInterest;
         uint256 totalPaid;
-        uint256 totalPenalties;
         uint256 startDate;
         uint256 createdAt;
-        bool isActive;
-        bool isCompleted;
     }
 
     struct Installment {
@@ -65,7 +60,6 @@ contract Repayment is
         uint256 interestAmount;
         uint256 totalAmount;
         uint256 paidAmount;
-        uint256 penaltyAmount;
         InstallmentStatus status;
         uint256 paidAt;
     }
@@ -86,18 +80,15 @@ contract Repayment is
     uint256 public constant VERSION = 1;
     uint256 public constant SECONDS_PER_DAY = 86400;
     uint256 public constant DAYS_PER_MONTH = 30;
-    uint256 public constant DEFAULT_THRESHOLD_DAYS = 90;  // Days before marked as defaulted
     
     bytes32 public constant ADMIN_ROLE = keccak256("ADMIN_ROLE");
     bytes32 public constant LOAN_OFFICER_ROLE = keccak256("LOAN_OFFICER_ROLE");
-    bytes32 public constant ORACLE_ROLE = keccak256("ORACLE_ROLE");
     bytes32 public constant SYSTEM_ROLE = keccak256("SYSTEM_ROLE");
     bytes32 public constant UPGRADER_ROLE = keccak256("UPGRADER_ROLE");
 
     // ============ State Variables ============
     ILoanCore public loanCore;
     IAuditRegistry public auditRegistry;
-    IPenaltyCalculator public penaltyCalculator;
 
     // Schedule storage
     mapping(bytes32 => RepaymentSchedule) public schedules;
@@ -157,13 +148,6 @@ contract Repayment is
         uint256 timestamp
     );
 
-    event PenaltyApplied(
-        bytes32 indexed loanId,
-        uint16 indexed installmentNumber,
-        uint256 penaltyAmount,
-        uint256 timestamp
-    );
-
     // ============ Errors ============
     error ScheduleNotFound(bytes32 loanId);
     error InstallmentNotFound(bytes32 loanId, uint16 number);
@@ -171,20 +155,11 @@ contract Repayment is
     error InvalidPaymentAmount(uint256 amount);
     error DuplicatePaymentReference(bytes32 referenceHash);
     error LoanNotDisbursed(bytes32 loanId);
-    error ScheduleNotActive(bytes32 loanId);
 
     // ============ Modifiers ============
     modifier scheduleExists(bytes32 loanId) {
         if (loanToSchedule[loanId] == bytes32(0)) {
             revert ScheduleNotFound(loanId);
-        }
-        _;
-    }
-
-    modifier scheduleActive(bytes32 loanId) {
-        bytes32 scheduleId = loanToSchedule[loanId];
-        if (!schedules[scheduleId].isActive) {
-            revert ScheduleNotActive(loanId);
         }
         _;
     }
@@ -201,7 +176,6 @@ contract Repayment is
     function initialize(
         address _loanCore,
         address _auditRegistry,
-        address _penaltyCalculator,
         address admin
     ) public initializer {
         require(
@@ -218,20 +192,10 @@ contract Repayment is
 
         loanCore = ILoanCore(_loanCore);
         auditRegistry = IAuditRegistry(_auditRegistry);
-        if (_penaltyCalculator != address(0)) {
-            penaltyCalculator = IPenaltyCalculator(_penaltyCalculator);
-        }
 
         _grantRole(DEFAULT_ADMIN_ROLE, admin);
         _grantRole(ADMIN_ROLE, admin);
         _grantRole(UPGRADER_ROLE, admin);
-    }
-
-    /**
-     * @notice Set penalty calculator contract
-     */
-    function setPenaltyCalculator(address _penaltyCalculator) external onlyRole(ADMIN_ROLE) {
-        penaltyCalculator = IPenaltyCalculator(_penaltyCalculator);
     }
 
     // ============ Schedule Functions ============
@@ -300,7 +264,6 @@ contract Repayment is
         schedule.totalInterest = totalInterest;
         schedule.startDate = startDate;
         schedule.createdAt = block.timestamp;
-        schedule.isActive = true;
 
         loanToSchedule[loanId] = scheduleId;
 
@@ -316,9 +279,6 @@ contract Repayment is
             inst.totalAmount = monthlyPayment;
             inst.status = InstallmentStatus.Pending;
         }
-
-        // Mark loan as active
-        loanCore.markActive(loanId);
 
         emit ScheduleCreated(
             scheduleId,
@@ -354,12 +314,10 @@ contract Repayment is
         nonReentrant 
         whenNotPaused 
         scheduleExists(loanId)
-        scheduleActive(loanId)
         returns (bytes32 paymentId) 
     {
         require(
             hasRole(LOAN_OFFICER_ROLE, msg.sender) || 
-            hasRole(ORACLE_ROLE, msg.sender) ||
             hasRole(SYSTEM_ROLE, msg.sender),
             "Repayment: not authorized"
         );
@@ -389,7 +347,7 @@ contract Repayment is
         InstallmentStatus oldStatus = inst.status;
         inst.paidAmount += amount;
 
-        if (inst.paidAmount >= inst.totalAmount + inst.penaltyAmount) {
+        if (inst.paidAmount >= inst.totalAmount) {
             inst.status = InstallmentStatus.Paid;
             inst.paidAt = block.timestamp;
         } else if (inst.paidAmount > 0) {
@@ -490,31 +448,8 @@ contract Repayment is
         InstallmentStatus oldStatus = inst.status;
         uint256 daysOverdue = (block.timestamp - inst.dueDate) / SECONDS_PER_DAY;
 
-        // Check for default
-        if (daysOverdue >= DEFAULT_THRESHOLD_DAYS) {
-            inst.status = InstallmentStatus.Defaulted;
-            // Mark entire loan as defaulted
-            loanCore.markDefaulted(loanId);
-        } else {
-            inst.status = InstallmentStatus.Overdue;
-        }
-
-        // Calculate penalty if calculator is set
-        if (address(penaltyCalculator) != address(0)) {
-            (uint256 penalty, ) = penaltyCalculator.calculatePenalty(
-                loanId,
-                installmentNumber,
-                inst.totalAmount,
-                inst.dueDate
-            );
-            if (penalty > 0 && penalty > inst.penaltyAmount) {
-                uint256 additionalPenalty = penalty - inst.penaltyAmount;
-                inst.penaltyAmount = penalty;
-                schedules[scheduleId].totalPenalties += additionalPenalty;
-
-                emit PenaltyApplied(loanId, installmentNumber, penalty, block.timestamp);
-            }
-        }
+        // Mark as overdue
+        inst.status = InstallmentStatus.Overdue;
 
         emit InstallmentOverdue(loanId, installmentNumber, daysOverdue, block.timestamp);
         emit InstallmentStatusChanged(loanId, installmentNumber, oldStatus, inst.status, block.timestamp);
@@ -526,17 +461,13 @@ contract Repayment is
 
     function _completeLoan(bytes32 loanId, bytes32 scheduleId) internal {
         RepaymentSchedule storage schedule = schedules[scheduleId];
-        schedule.isCompleted = true;
-        schedule.isActive = false;
-
-        loanCore.markCompleted(loanId);
 
         emit LoanFullyRepaid(loanId, schedule.totalPaid, block.timestamp);
     }
 
     function _getRemainingBalance(bytes32 scheduleId) internal view returns (uint256) {
         RepaymentSchedule storage schedule = schedules[scheduleId];
-        uint256 totalOwed = schedule.totalAmount + schedule.totalPenalties;
+        uint256 totalOwed = schedule.totalAmount;
         if (schedule.totalPaid >= totalOwed) {
             return 0;
         }

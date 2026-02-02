@@ -50,20 +50,8 @@ async function main() {
   deployedContracts.loanOracle = await loanOracle.getAddress();
   console.log("   LoanOracle deployed to:", deployedContracts.loanOracle);
 
-  // ============ 4. Deploy PenaltyCalculator ============
-  console.log("4. Deploying PenaltyCalculator...");
-  const PenaltyCalculator = await ethers.getContractFactory("PenaltyCalculator");
-  const penaltyCalculator = await upgrades.deployProxy(
-    PenaltyCalculator,
-    [deployer.address],
-    { kind: "uups" }
-  );
-  await penaltyCalculator.waitForDeployment();
-  deployedContracts.penaltyCalculator = await penaltyCalculator.getAddress();
-  console.log("   PenaltyCalculator deployed to:", deployedContracts.penaltyCalculator);
-
-  // ============ 5. Deploy LoanCore ============
-  console.log("5. Deploying LoanCore...");
+  // ============ 4. Deploy LoanCore ============
+  console.log("4. Deploying LoanCore...");
   const LoanCore = await ethers.getContractFactory("LoanCore");
   const loanCore = await upgrades.deployProxy(
     LoanCore,
@@ -78,8 +66,8 @@ async function main() {
   deployedContracts.loanCore = await loanCore.getAddress();
   console.log("   LoanCore deployed to:", deployedContracts.loanCore);
 
-  // ============ 6. Deploy Disbursement ============
-  console.log("6. Deploying Disbursement...");
+  // ============ 5. Deploy Disbursement ============
+  console.log("5. Deploying Disbursement...");
   const Disbursement = await ethers.getContractFactory("Disbursement");
   const disbursement = await upgrades.deployProxy(
     Disbursement,
@@ -94,15 +82,14 @@ async function main() {
   deployedContracts.disbursement = await disbursement.getAddress();
   console.log("   Disbursement deployed to:", deployedContracts.disbursement);
 
-  // ============ 7. Deploy Repayment ============
-  console.log("7. Deploying Repayment...");
+  // ============ 6. Deploy Repayment ============
+  console.log("6. Deploying Repayment...");
   const Repayment = await ethers.getContractFactory("Repayment");
   const repayment = await upgrades.deployProxy(
     Repayment,
     [
       deployedContracts.loanCore,
       deployedContracts.auditRegistry,
-      deployedContracts.penaltyCalculator,
       deployer.address
     ],
     { kind: "uups" }
@@ -111,8 +98,8 @@ async function main() {
   deployedContracts.repayment = await repayment.getAddress();
   console.log("   Repayment deployed to:", deployedContracts.repayment);
 
-  // ============ 8. Configure Cross-Contract References ============
-  console.log("\n8. Configuring cross-contract references...");
+  // ============ 7. Configure Cross-Contract References ============
+  console.log("\n7. Configuring cross-contract references...");
   
   // Set contract references in LoanCore
   const loanCoreContract = await ethers.getContractAt("LoanCore", deployedContracts.loanCore);

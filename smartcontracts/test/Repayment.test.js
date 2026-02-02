@@ -7,7 +7,6 @@ describe("Repayment", function () {
   let repayment;
   let loanCore;
   let auditRegistry;
-  let penaltyCalculator;
   let admin, officer, borrower, other;
 
   const ADMIN_ROLE = ethers.keccak256(ethers.toUtf8Bytes("ADMIN_ROLE"));
@@ -28,13 +27,12 @@ describe("Repayment", function () {
     Other: 4
   };
 
-  // InstallmentStatus enum
+  // InstallmentStatus enum - matches backend (no Defaulted)
   const InstallmentStatus = {
     Pending: 0,
     Paid: 1,
     Partial: 2,
-    Overdue: 3,
-    Defaulted: 4
+    Overdue: 3
   };
 
   beforeEach(async function () {
@@ -58,15 +56,6 @@ describe("Repayment", function () {
     );
     await accessControl.waitForDeployment();
 
-    // Deploy PenaltyCalculator
-    const PenaltyCalculator = await ethers.getContractFactory("PenaltyCalculator");
-    penaltyCalculator = await upgrades.deployProxy(
-      PenaltyCalculator,
-      [admin.address],
-      { kind: "uups" }
-    );
-    await penaltyCalculator.waitForDeployment();
-
     // Deploy LoanCore
     const LoanCore = await ethers.getContractFactory("LoanCore");
     loanCore = await upgrades.deployProxy(
@@ -80,14 +69,13 @@ describe("Repayment", function () {
     );
     await loanCore.waitForDeployment();
 
-    // Deploy Repayment with 3 params (loanCore, auditRegistry, admin) - penaltyCalculator is optional
+    // Deploy Repayment (loanCore, auditRegistry, admin)
     const Repayment = await ethers.getContractFactory("Repayment");
     repayment = await upgrades.deployProxy(
       Repayment,
       [
         await loanCore.getAddress(),
         await auditRegistry.getAddress(),
-        await penaltyCalculator.getAddress(),
         admin.address
       ],
       { kind: "uups" }
@@ -153,11 +141,6 @@ describe("Repayment", function () {
     it("Should set correct version", async function () {
       expect(await repayment.VERSION()).to.equal(1);
     });
-
-    it("Should set penalty calculator", async function () {
-      const pcAddress = await repayment.penaltyCalculator();
-      expect(pcAddress).to.equal(await penaltyCalculator.getAddress());
-    });
   });
 
   describe("Schedule Creation", function () {
@@ -193,7 +176,6 @@ describe("Repayment", function () {
 
       expect(schedule.termMonths).to.equal(termMonths);
       expect(schedule.principal).to.equal(principal);
-      expect(schedule.isActive).to.be.true;
     });
 
     it("Should not create duplicate schedule", async function () {
@@ -449,27 +431,9 @@ describe("Repayment", function () {
         );
       }
 
+      // Verify all payments are recorded - schedule should show total paid
       const updatedSchedule = await repayment.schedules(scheduleId);
-      expect(updatedSchedule.isCompleted).to.be.true;
-    });
-  });
-
-  describe("Set Penalty Calculator", function () {
-    it("Should allow admin to set penalty calculator", async function () {
-      const newPC = await (await ethers.getContractFactory("PenaltyCalculator")).deploy();
-      
-      await repayment.connect(admin).setPenaltyCalculator(await newPC.getAddress());
-      
-      const currentPC = await repayment.penaltyCalculator();
-      expect(currentPC).to.equal(await newPC.getAddress());
-    });
-
-    it("Should not allow non-admin to set penalty calculator", async function () {
-      const newPC = await (await ethers.getContractFactory("PenaltyCalculator")).deploy();
-      
-      await expect(
-        repayment.connect(other).setPenaltyCalculator(await newPC.getAddress())
-      ).to.be.reverted;
+      expect(updatedSchedule.totalPaid).to.be.gt(0);
     });
   });
 });

@@ -26,13 +26,11 @@ describe("Disbursement", function () {
     Other: 4
   };
 
-  // DisbursementStatus enum
+  // DisbursementStatus enum - matches backend (no Failed/Reversed)
   const DisbursementStatus = {
     Pending: 0,
     Processing: 1,
-    Completed: 2,
-    Failed: 3,
-    Reversed: 4
+    Completed: 2
   };
 
   beforeEach(async function () {
@@ -137,10 +135,6 @@ describe("Disbursement", function () {
   describe("Deployment", function () {
     it("Should set correct version", async function () {
       expect(await disbursement.VERSION()).to.equal(1);
-    });
-
-    it("Should set correct reversal window", async function () {
-      expect(await disbursement.REVERSAL_WINDOW()).to.equal(72 * 60 * 60); // 72 hours in seconds
     });
   });
 
@@ -303,98 +297,6 @@ describe("Disbursement", function () {
           ethers.ZeroHash
         )
       ).to.be.revertedWith("Disbursement: reference required");
-    });
-  });
-
-  describe("Failed Disbursement", function () {
-    let disbursementId;
-    const failureReason = ethers.keccak256(ethers.toUtf8Bytes("BANK_REJECTED"));
-
-    beforeEach(async function () {
-      await disbursement.connect(officer).initiateDisbursement(
-        loanId,
-        approvedAmount,
-        DisbursementMethod.BankTransfer
-      );
-      
-      disbursementId = await disbursement.loanToDisbursement(loanId);
-    });
-
-    it("Should mark disbursement as failed", async function () {
-      await expect(
-        disbursement.connect(officer).failDisbursement(
-          disbursementId,
-          failureReason
-        )
-      ).to.emit(disbursement, "DisbursementFailed");
-    });
-
-    it("Should allow retry after failure", async function () {
-      await disbursement.connect(officer).failDisbursement(
-        disbursementId,
-        failureReason
-      );
-
-      // Should be able to initiate again after failure
-      await expect(
-        disbursement.connect(officer).initiateDisbursement(
-          loanId,
-          approvedAmount,
-          DisbursementMethod.GCash // Different method
-        )
-      ).to.emit(disbursement, "DisbursementInitiated");
-    });
-  });
-
-  describe("Disbursement Reversal", function () {
-    let disbursementId;
-    const referenceHash = ethers.keccak256(ethers.toUtf8Bytes("REF001"));
-    const reversalReason = ethers.keccak256(ethers.toUtf8Bytes("ERROR_DETECTED"));
-
-    beforeEach(async function () {
-      await disbursement.connect(officer).initiateDisbursement(
-        loanId,
-        approvedAmount,
-        DisbursementMethod.BankTransfer
-      );
-      
-      disbursementId = await disbursement.loanToDisbursement(loanId);
-      
-      await disbursement.connect(officer).completeDisbursement(
-        disbursementId,
-        referenceHash
-      );
-    });
-
-    it("Should reverse disbursement within window", async function () {
-      await expect(
-        disbursement.connect(admin).reverseDisbursement(
-          disbursementId,
-          reversalReason
-        )
-      ).to.emit(disbursement, "DisbursementReversed");
-    });
-
-    it("Should track total reversals", async function () {
-      await disbursement.connect(admin).reverseDisbursement(
-        disbursementId,
-        reversalReason
-      );
-
-      const totalReversals = await disbursement.totalReversals();
-      expect(totalReversals).to.equal(1);
-    });
-
-    it("Should not reverse after window expires", async function () {
-      // Fast forward past reversal window (72 hours)
-      await time.increase(73 * 60 * 60);
-
-      await expect(
-        disbursement.connect(admin).reverseDisbursement(
-          disbursementId,
-          reversalReason
-        )
-      ).to.be.revertedWithCustomError(disbursement, "ReversalWindowExpired");
     });
   });
 

@@ -52,8 +52,4 @@ interface ILoanCore {
     function getLoan(bytes32 loanId) external view returns (Loan memory);
     function getLoanStatus(bytes32 loanId) external view returns (LoanStatus);
     function markDisbursed(bytes32 loanId, uint256 amount) external returns (bool);
-    function markActive(bytes32 loanId) external returns (bool);
-    function markCompleted(bytes32 loanId) external returns (bool);
-    function markDefaulted(bytes32 loanId) external returns (bool);
-    function revertToApproved(bytes32 loanId) external returns (bool);
 }

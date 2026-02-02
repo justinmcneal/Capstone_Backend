@@ -30,10 +30,7 @@ contract LoanCore is
         Approved,        // 3 - Approved, awaiting disbursement
         Rejected,        // 4 - Rejected by officer
         Disbursed,       // 5 - Funds transferred
-        Active,          // 6 - Repayment in progress
-        Completed,       // 7 - Fully repaid
-        Defaulted,       // 8 - Borrower defaulted
-        Cancelled        // 9 - Cancelled by customer/admin
+        Cancelled        // 6 - Cancelled by customer/admin
     }
 
     enum RiskCategory {
@@ -531,66 +528,6 @@ contract LoanCore is
     }
 
     /**
-     * @notice Mark loan as active (called by Repayment contract)
-     */
-    function markActive(bytes32 loanId) external loanExists(loanId) returns (bool) {
-        require(
-            msg.sender == repaymentContract || hasRole(ADMIN_ROLE, msg.sender),
-            "LoanCore: not authorized"
-        );
-
-        Loan storage loan = loans[loanId];
-        require(loan.status == LoanStatus.Disbursed, "LoanCore: must be disbursed");
-
-        LoanStatus oldStatus = loan.status;
-        loan.status = LoanStatus.Active;
-        loan.updatedAt = block.timestamp;
-
-        emit LoanStatusChanged(loanId, oldStatus, LoanStatus.Active, block.timestamp);
-        return true;
-    }
-
-    /**
-     * @notice Mark loan as completed
-     */
-    function markCompleted(bytes32 loanId) external loanExists(loanId) returns (bool) {
-        require(
-            msg.sender == repaymentContract || hasRole(ADMIN_ROLE, msg.sender),
-            "LoanCore: not authorized"
-        );
-
-        Loan storage loan = loans[loanId];
-        require(loan.status == LoanStatus.Active, "LoanCore: must be active");
-
-        LoanStatus oldStatus = loan.status;
-        loan.status = LoanStatus.Completed;
-        loan.updatedAt = block.timestamp;
-
-        emit LoanStatusChanged(loanId, oldStatus, LoanStatus.Completed, block.timestamp);
-        return true;
-    }
-
-    /**
-     * @notice Mark loan as defaulted
-     */
-    function markDefaulted(bytes32 loanId) external loanExists(loanId) returns (bool) {
-        require(
-            msg.sender == repaymentContract || hasRole(ADMIN_ROLE, msg.sender),
-            "LoanCore: not authorized"
-        );
-
-        Loan storage loan = loans[loanId];
-        require(loan.status == LoanStatus.Active, "LoanCore: must be active");
-
-        LoanStatus oldStatus = loan.status;
-        loan.status = LoanStatus.Defaulted;
-        loan.updatedAt = block.timestamp;
-
-        emit LoanStatusChanged(loanId, oldStatus, LoanStatus.Defaulted, block.timestamp);
-        return true;
-    }
-
-    /**
      * @notice Cancel a loan (only in draft/submitted status)
      */
     function cancelLoan(
@@ -619,26 +556,6 @@ contract LoanCore is
         emit LoanCancelled(loanId, msg.sender, reasonHash, block.timestamp);
         emit LoanStatusChanged(loanId, oldStatus, LoanStatus.Cancelled, block.timestamp);
 
-        return true;
-    }
-
-    /**
-     * @notice Revert loan to Approved status (for failed disbursements)
-     */
-    function revertToApproved(bytes32 loanId) external loanExists(loanId) returns (bool) {
-        require(
-            msg.sender == disbursementContract || hasRole(ADMIN_ROLE, msg.sender),
-            "LoanCore: not authorized"
-        );
-
-        Loan storage loan = loans[loanId];
-        LoanStatus oldStatus = loan.status;
-        loan.status = LoanStatus.Approved;
-        loan.disbursedAmount = 0;
-        loan.disbursedAt = 0;
-        loan.updatedAt = block.timestamp;
-
-        emit LoanStatusChanged(loanId, oldStatus, LoanStatus.Approved, block.timestamp);
         return true;
     }
 
