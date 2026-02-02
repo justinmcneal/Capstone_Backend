@@ -56,35 +56,109 @@ Copy these addresses for the next steps.
 
 ## Phase 3: Interactive Testing
 
-**Open Hardhat Console:**
+**Open Hardhat Console (in Terminal 2):**
 ```bash
 npx hardhat console --network localhost
 ```
 
-### Setup
+This opens an interactive JavaScript console where you can execute commands one by one.
+
+---
+
+### Setup Step 1: Get Test Accounts
+
+These are the accounts from your local blockchain (from Phase 1). Copy and paste this into the console:
 
 ```javascript
-// Get accounts
 const [admin, officer, borrower] = await ethers.getSigners();
+```
 
-// Contract addresses (from deployment)
+**What this does:**
+- `admin` = Account #0 (the deployer, has DEFAULT_ADMIN_ROLE)
+- `officer` = Account #1 (will be the loan officer)
+- `borrower` = Account #2 (will be the loan applicant)
+
+**Verify it worked:**
+```javascript
+console.log("Admin:", admin.address);
+console.log("Officer:", officer.address);
+console.log("Borrower:", borrower.address);
+```
+
+---
+
+### Setup Step 2: Set Contract Addresses
+
+Use the addresses from Phase 2 deployment output. **IMPORTANT:** Replace these with YOUR actual deployment addresses:
+
+```javascript
 const ACCESS_ADDR = "0x5FbDB2315678afecb367f032d93F642f64180aa3";
 const AUDIT_ADDR = "0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512";
 const CORE_ADDR = "0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0";
 const DISB_ADDR = "0xCf7Ed3AccA5a467e9e704C703E8D87F634fB0Fc9";
 const REPAY_ADDR = "0xDc64a140Aa3E981100a9becA4E685f962f0cF6C9";
+```
 
-// Connect to contracts
+**What this does:**
+- Stores the deployed contract addresses so you can interact with them
+- These addresses change each time you restart the local blockchain
+
+---
+
+### Setup Step 3: Connect to Deployed Contracts
+
+Copy and paste each line:
+
+```javascript
 const accessControl = await ethers.getContractAt("LoanAccessControl", ACCESS_ADDR);
 const auditRegistry = await ethers.getContractAt("AuditRegistry", AUDIT_ADDR);
 const loanCore = await ethers.getContractAt("LoanCore", CORE_ADDR);
 const disbursement = await ethers.getContractAt("Disbursement", DISB_ADDR);
 const repayment = await ethers.getContractAt("Repayment", REPAY_ADDR);
+```
 
-// Role constants
+**What this does:**
+- Creates JavaScript objects that let you call functions on each contract
+- `await ethers.getContractAt("ContractName", address)` connects to the contract at that address
+
+**Verify it worked:**
+```javascript
+console.log("LoanCore connected:", await loanCore.getAddress());
+```
+
+---
+
+### Setup Step 4: Define Role Constants
+
+Copy and paste these:
+
+```javascript
 const LOAN_OFFICER_ROLE = ethers.keccak256(ethers.toUtf8Bytes("LOAN_OFFICER_ROLE"));
 const SYSTEM_ROLE = ethers.keccak256(ethers.toUtf8Bytes("SYSTEM_ROLE"));
 ```
+
+**What this does:**
+- Creates the role identifiers used by the access control system
+- `keccak256` hashes the role names (that's how OpenZeppelin stores roles)
+- You'll use these to grant permissions
+
+**Verify it worked:**
+```javascript
+console.log("Officer role:", LOAN_OFFICER_ROLE);
+```
+
+---
+
+### ✅ Setup Complete!
+
+You should now have:
+- 3 test accounts (admin, officer, borrower)
+- 5 contract connections (accessControl, auditRegistry, loanCore, disbursement, repayment)
+- 2 role identifiers (LOAN_OFFICER_ROLE, SYSTEM_ROLE)
+
+Proceed to the next sections to register users and create loans.
+
+---
 
 ### Register Users
 
@@ -107,21 +181,24 @@ const loanId = ethers.keccak256(ethers.toUtf8Bytes("LOAN-001"));
 const productId = ethers.keccak256(ethers.toUtf8Bytes("PRODUCT-001"));
 const amount = ethers.parseEther("10000");
 
-await loanCore.grantRole(SYSTEM_ROLE, admin.address);
-await loanCore.createLoan(loanId, borrower.address, productId, amount, 12, 150);
+// The borrower creates their own loan (msg.sender = borrower)
+await loanCore.connect(borrower).createLoan(loanId, productId, amount, 12, 150);
 
 // Check loan
 const loan = await loanCore.getLoan(loanId);
 console.log("Status:", loan.status); // 0 = Draft
+console.log("Borrower:", loan.borrower); // Should match borrower.address
 ```
 
 ### Submit Loan
 
 ```javascript
-await loanCore.submitLoan(loanId, 85, 1, ethers.keccak256(ethers.toUtf8Bytes("AI_OK")));
+// Borrower submits their loan for review
+await loanCore.connect(borrower).submitLoan(loanId, 85, 1, ethers.keccak256(ethers.toUtf8Bytes("AI_OK")));
 
-const loan = await loanCore.getLoan(loanId);
-console.log("Status:", loan.status); // 1 = Submitted
+// Check updated loan (use 'let' to allow reassignment)
+let loanData = await loanCore.getLoan(loanId);
+console.log("Status:", loanData.status); // 1 = Submitted
 ```
 
 ### Assign Officer & Approve
