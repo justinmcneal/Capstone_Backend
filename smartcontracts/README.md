@@ -225,8 +225,8 @@ npm test
 **What happens?**
 - Hardhat creates a **temporary blockchain** in memory
 - Auto-generates **20 test accounts** with 10,000 test ETH each
-- Runs all 120+ test cases
-- Tests complete in ~30 seconds
+- Runs all **166 test cases**
+- Tests complete in ~4 seconds
 
 **You don't need:**
 - ❌ Real ETH
@@ -236,13 +236,24 @@ npm test
 
 **Expected output:**
 ```
-  LoanAccessControl
-    ✓ Should register officer
-    ✓ Should register borrower
+  AuditRegistry
+    ✓ Should set correct version
+    ✓ Should log audit entry
     ...
   
-  120 passing (28s)
+  166 passing (4s)
 ```
+
+---
+
+## 📖 Documentation
+
+| Document | Description |
+|----------|-------------|
+| [README.md](README.md) | This file - overview and quick start |
+| [SMART_CONTRACT_ARCHITECTURE.md](SMART_CONTRACT_ARCHITECTURE.md) | Backend analysis and architecture design |
+| [docs/CONTRACT_FUNCTIONS.md](docs/CONTRACT_FUNCTIONS.md) | Complete function reference for all contracts |
+| [docs/TESTING_GUIDE.md](docs/TESTING_GUIDE.md) | How to run, debug, and extend tests |
 
 ---
 

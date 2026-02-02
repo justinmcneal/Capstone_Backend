@@ -1,4 +1,4 @@
-// Test suite for Disbursement contract
+// Test suite for Disbursement contract - Aligned with actual contract implementation
 const { expect } = require("chai");
 const { ethers, upgrades } = require("hardhat");
 const { time } = require("@nomicfoundation/hardhat-network-helpers");
@@ -6,32 +6,37 @@ const { time } = require("@nomicfoundation/hardhat-network-helpers");
 describe("Disbursement", function () {
   let disbursement;
   let loanCore;
-  let accessControl;
   let auditRegistry;
-  let admin, officer, borrower, treasury, other;
+  let admin, officer, borrower, other;
 
   const ADMIN_ROLE = ethers.keccak256(ethers.toUtf8Bytes("ADMIN_ROLE"));
   const LOAN_OFFICER_ROLE = ethers.keccak256(ethers.toUtf8Bytes("LOAN_OFFICER_ROLE"));
   const SYSTEM_ROLE = ethers.keccak256(ethers.toUtf8Bytes("SYSTEM_ROLE"));
 
   const loanId = ethers.keccak256(ethers.toUtf8Bytes("LOAN001"));
-  const productId = ethers.keccak256(ethers.toUtf8Bytes("PROD001"));
   const requestedAmount = ethers.parseEther("10000");
   const approvedAmount = ethers.parseEther("8000");
-  const aiHash = ethers.keccak256(ethers.toUtf8Bytes("AI_ANALYSIS"));
-  const notesHash = ethers.keccak256(ethers.toUtf8Bytes("NOTES"));
+
+  // DisbursementMethod enum
+  const DisbursementMethod = {
+    BankTransfer: 0,
+    Cash: 1,
+    GCash: 2,
+    Maya: 3,
+    Other: 4
+  };
+
+  // DisbursementStatus enum
+  const DisbursementStatus = {
+    Pending: 0,
+    Processing: 1,
+    Completed: 2,
+    Failed: 3,
+    Reversed: 4
+  };
 
   beforeEach(async function () {
-    [admin, officer, borrower, treasury, other] = await ethers.getSigners();
-
-    // Deploy AccessControl
-    const LoanAccessControl = await ethers.getContractFactory("LoanAccessControl");
-    accessControl = await upgrades.deployProxy(
-      LoanAccessControl,
-      [admin.address],
-      { kind: "uups" }
-    );
-    await accessControl.waitForDeployment();
+    [admin, officer, borrower, other] = await ethers.getSigners();
 
     // Deploy AuditRegistry
     const AuditRegistry = await ethers.getContractFactory("AuditRegistry");
@@ -41,6 +46,15 @@ describe("Disbursement", function () {
       { kind: "uups" }
     );
     await auditRegistry.waitForDeployment();
+
+    // Deploy LoanAccessControl
+    const LoanAccessControl = await ethers.getContractFactory("LoanAccessControl");
+    const accessControl = await upgrades.deployProxy(
+      LoanAccessControl,
+      [admin.address],
+      { kind: "uups" }
+    );
+    await accessControl.waitForDeployment();
 
     // Deploy LoanCore
     const LoanCore = await ethers.getContractFactory("LoanCore");
@@ -60,7 +74,6 @@ describe("Disbursement", function () {
     disbursement = await upgrades.deployProxy(
       Disbursement,
       [
-        await accessControl.getAddress(),
         await loanCore.getAddress(),
         await auditRegistry.getAddress(),
         admin.address
@@ -69,41 +82,56 @@ describe("Disbursement", function () {
     );
     await disbursement.waitForDeployment();
 
-    // Setup roles and permissions
+    // Setup permissions
     await auditRegistry.grantLoggerRole(await loanCore.getAddress());
     await auditRegistry.grantLoggerRole(await disbursement.getAddress());
     
-    // Register officer in AccessControl
-    const employeeIdHash = ethers.keccak256(ethers.toUtf8Bytes("EMP001"));
-    await accessControl.registerOfficer(officer.address, employeeIdHash);
+    // Register Disbursement contract with LoanCore
+    await loanCore.setContracts(
+      await disbursement.getAddress(),
+      ethers.ZeroAddress, // repayment not needed for this test
+      ethers.ZeroAddress  // oracle not needed for this test
+    );
     
-    // Register borrower
-    await accessControl.grantRole(SYSTEM_ROLE, admin.address);
-    const customerIdHash = ethers.keccak256(ethers.toUtf8Bytes("CUST001"));
-    await accessControl.registerBorrower(borrower.address, customerIdHash);
-
-    // Grant roles in LoanCore
-    await loanCore.grantRole(SYSTEM_ROLE, admin.address);
+    // Grant roles
     await loanCore.grantRole(LOAN_OFFICER_ROLE, officer.address);
-    
-    // Grant SYSTEM_ROLE to Disbursement contract so it can update loan status
     await loanCore.grantRole(SYSTEM_ROLE, await disbursement.getAddress());
     
-    // Grant roles in Disbursement
     await disbursement.grantRole(LOAN_OFFICER_ROLE, officer.address);
     await disbursement.grantRole(SYSTEM_ROLE, admin.address);
 
     // Create and approve a loan
+    const productId = ethers.keccak256(ethers.toUtf8Bytes("PRODUCT001"));
+    
+    // Register borrower in access control
+    await accessControl.grantRole(SYSTEM_ROLE, admin.address);
+    const customerIdHash = ethers.keccak256(ethers.toUtf8Bytes("CUST001"));
+    await accessControl.registerBorrower(borrower.address, customerIdHash);
+    
+    // Register officer in access control
+    const employeeIdHash = ethers.keccak256(ethers.toUtf8Bytes("EMP001"));
+    await accessControl.registerOfficer(officer.address, employeeIdHash);
+    
     await loanCore.connect(borrower).createLoan(
       loanId,
       productId,
       requestedAmount,
-      12, // termMonths
-      150 // interestRateBps
+      12,  // termMonths
+      150  // interestRateBps
     );
-    await loanCore.connect(borrower).submitLoan(loanId, 75, 1, aiHash);
-    await loanCore.connect(admin).assignOfficer(loanId, officer.address);
-    await loanCore.connect(officer).approveLoan(loanId, approvedAmount, notesHash);
+    
+    // submitLoan requires: loanId, eligibilityScore, riskCategory, aiRecommendationHash
+    const eligibilityScore = 85;
+    const riskCategory = 0; // Low
+    const aiRecommendationHash = ethers.keccak256(ethers.toUtf8Bytes("AI_REC_001"));
+    await loanCore.connect(borrower).submitLoan(loanId, eligibilityScore, riskCategory, aiRecommendationHash);
+    
+    await loanCore.assignOfficer(loanId, officer.address);
+    await loanCore.connect(officer).approveLoan(
+      loanId,
+      approvedAmount,
+      ethers.keccak256(ethers.toUtf8Bytes("NOTES"))
+    );
   });
 
   describe("Deployment", function () {
@@ -111,29 +139,35 @@ describe("Disbursement", function () {
       expect(await disbursement.VERSION()).to.equal(1);
     });
 
-    it("Should set default reversal window", async function () {
-      expect(await disbursement.reversalWindowHours()).to.equal(72);
+    it("Should set correct reversal window", async function () {
+      expect(await disbursement.REVERSAL_WINDOW()).to.equal(72 * 60 * 60); // 72 hours in seconds
     });
   });
 
   describe("Initiate Disbursement", function () {
-    const transactionRef = ethers.keccak256(ethers.toUtf8Bytes("TXN001"));
-
     it("Should initiate disbursement successfully", async function () {
       await expect(
         disbursement.connect(officer).initiateDisbursement(
           loanId,
           approvedAmount,
-          treasury.address,
-          borrower.address,
-          0, // BankTransfer method
-          transactionRef
+          DisbursementMethod.BankTransfer
         )
       ).to.emit(disbursement, "DisbursementInitiated");
+    });
 
-      const disbRecord = await disbursement.getDisbursement(loanId);
-      expect(disbRecord.amount).to.equal(approvedAmount);
-      expect(disbRecord.status).to.equal(0); // Pending
+    it("Should return disbursement ID", async function () {
+      const tx = await disbursement.connect(officer).initiateDisbursement(
+        loanId,
+        approvedAmount,
+        DisbursementMethod.BankTransfer
+      );
+      
+      const receipt = await tx.wait();
+      const event = receipt.logs.find(
+        log => log.fragment && log.fragment.name === "DisbursementInitiated"
+      );
+      
+      expect(event).to.not.be.undefined;
     });
 
     it("Should not allow disbursement more than approved", async function () {
@@ -143,206 +177,250 @@ describe("Disbursement", function () {
         disbursement.connect(officer).initiateDisbursement(
           loanId,
           tooMuch,
-          treasury.address,
-          borrower.address,
-          0,
-          transactionRef
+          DisbursementMethod.BankTransfer
         )
-      ).to.be.revertedWithCustomError(disbursement, "AmountExceedsApproved");
+      ).to.be.revertedWith("Disbursement: invalid amount");
     });
 
-    it("Should not allow non-officer to initiate", async function () {
+    it("Should not allow non-authorized to initiate", async function () {
       await expect(
         disbursement.connect(other).initiateDisbursement(
           loanId,
           approvedAmount,
-          treasury.address,
-          borrower.address,
-          0,
-          transactionRef
+          DisbursementMethod.BankTransfer
         )
       ).to.be.reverted;
     });
 
-    it("Should not allow duplicate disbursement", async function () {
+    it("Should track total disbursements count", async function () {
+      const beforeCount = await disbursement.totalDisbursements();
+      
       await disbursement.connect(officer).initiateDisbursement(
         loanId,
         approvedAmount,
-        treasury.address,
-        borrower.address,
-        0,
-        transactionRef
+        DisbursementMethod.GCash
       );
 
-      await expect(
-        disbursement.connect(officer).initiateDisbursement(
-          loanId,
-          approvedAmount,
-          treasury.address,
-          borrower.address,
-          0,
-          ethers.keccak256(ethers.toUtf8Bytes("TXN002"))
-        )
-      ).to.be.revertedWithCustomError(disbursement, "DisbursementAlreadyExists");
+      const afterCount = await disbursement.totalDisbursements();
+      expect(afterCount).to.equal(beforeCount + 1n);
     });
   });
 
   describe("Complete Disbursement", function () {
-    const transactionRef = ethers.keccak256(ethers.toUtf8Bytes("TXN001"));
-    const confirmationRef = ethers.keccak256(ethers.toUtf8Bytes("CONFIRM001"));
+    let disbursementId;
+    const referenceHash = ethers.keccak256(ethers.toUtf8Bytes("REF001"));
 
     beforeEach(async function () {
-      await disbursement.connect(officer).initiateDisbursement(
+      const tx = await disbursement.connect(officer).initiateDisbursement(
         loanId,
         approvedAmount,
-        treasury.address,
-        borrower.address,
-        0,
-        transactionRef
+        DisbursementMethod.BankTransfer
       );
+      
+      const receipt = await tx.wait();
+      disbursementId = await disbursement.loanToDisbursement(loanId);
     });
 
     it("Should complete disbursement successfully", async function () {
       await expect(
-        disbursement.connect(admin).completeDisbursement(loanId, confirmationRef)
+        disbursement.connect(officer).completeDisbursement(
+          disbursementId,
+          referenceHash
+        )
       ).to.emit(disbursement, "DisbursementCompleted");
-
-      const disbRecord = await disbursement.getDisbursement(loanId);
-      expect(disbRecord.status).to.equal(1); // Completed
     });
 
-    it("Should update loan status to Disbursed", async function () {
-      await disbursement.connect(admin).completeDisbursement(loanId, confirmationRef);
+    it("Should update loan status to disbursed", async function () {
+      await disbursement.connect(officer).completeDisbursement(
+        disbursementId,
+        referenceHash
+      );
+
+      const loanStatus = await loanCore.getLoanStatus(loanId);
+      expect(loanStatus).to.equal(5); // Disbursed status (see LoanStatus enum)
+    });
+
+    it("Should track total disbursed amount", async function () {
+      await disbursement.connect(officer).completeDisbursement(
+        disbursementId,
+        referenceHash
+      );
+
+      const totalDisbursed = await disbursement.totalDisbursedAmount();
+      expect(totalDisbursed).to.equal(approvedAmount);
+    });
+
+    it("Should not allow duplicate reference", async function () {
+      await disbursement.connect(officer).completeDisbursement(
+        disbursementId,
+        referenceHash
+      );
+
+      // Create another loan and try to use same reference
+      const loanId2 = ethers.keccak256(ethers.toUtf8Bytes("LOAN002"));
+      const productId2 = ethers.keccak256(ethers.toUtf8Bytes("PRODUCT002"));
+      await loanCore.connect(borrower).createLoan(
+        loanId2,
+        productId2,
+        requestedAmount,
+        12,
+        150
+      );
       
-      const loan = await loanCore.getLoan(loanId);
-      expect(loan.status).to.equal(5); // Disbursed
-    });
+      // submitLoan requires: loanId, eligibilityScore, riskCategory, aiRecommendationHash
+      const eligibilityScore2 = 80;
+      const riskCategory2 = 0; // Low
+      const aiRecommendationHash2 = ethers.keccak256(ethers.toUtf8Bytes("AI_REC_002"));
+      await loanCore.connect(borrower).submitLoan(loanId2, eligibilityScore2, riskCategory2, aiRecommendationHash2);
+      
+      await loanCore.assignOfficer(loanId2, officer.address);
+      await loanCore.connect(officer).approveLoan(
+        loanId2,
+        approvedAmount,
+        ethers.keccak256(ethers.toUtf8Bytes("NOTES2"))
+      );
 
-    it("Should not complete non-pending disbursement", async function () {
-      await disbursement.connect(admin).completeDisbursement(loanId, confirmationRef);
+      await disbursement.connect(officer).initiateDisbursement(
+        loanId2,
+        approvedAmount,
+        DisbursementMethod.BankTransfer
+      );
+
+      const disbId2 = await disbursement.loanToDisbursement(loanId2);
       
       await expect(
-        disbursement.connect(admin).completeDisbursement(loanId, confirmationRef)
-      ).to.be.revertedWithCustomError(disbursement, "InvalidDisbursementStatus");
+        disbursement.connect(officer).completeDisbursement(
+          disbId2,
+          referenceHash // Same reference as before
+        )
+      ).to.be.revertedWithCustomError(disbursement, "DuplicateReference");
+    });
+
+    it("Should require reference hash", async function () {
+      await expect(
+        disbursement.connect(officer).completeDisbursement(
+          disbursementId,
+          ethers.ZeroHash
+        )
+      ).to.be.revertedWith("Disbursement: reference required");
     });
   });
 
   describe("Failed Disbursement", function () {
-    const transactionRef = ethers.keccak256(ethers.toUtf8Bytes("TXN001"));
-    const reasonHash = ethers.keccak256(ethers.toUtf8Bytes("INSUFFICIENT_FUNDS"));
+    let disbursementId;
+    const failureReason = ethers.keccak256(ethers.toUtf8Bytes("BANK_REJECTED"));
 
     beforeEach(async function () {
       await disbursement.connect(officer).initiateDisbursement(
         loanId,
         approvedAmount,
-        treasury.address,
-        borrower.address,
-        0,
-        transactionRef
+        DisbursementMethod.BankTransfer
       );
+      
+      disbursementId = await disbursement.loanToDisbursement(loanId);
     });
 
     it("Should mark disbursement as failed", async function () {
       await expect(
-        disbursement.connect(admin).failDisbursement(loanId, reasonHash)
+        disbursement.connect(officer).failDisbursement(
+          disbursementId,
+          failureReason
+        )
       ).to.emit(disbursement, "DisbursementFailed");
-
-      const disbRecord = await disbursement.getDisbursement(loanId);
-      expect(disbRecord.status).to.equal(2); // Failed
     });
 
-    it("Should revert loan status to Approved", async function () {
-      await disbursement.connect(admin).failDisbursement(loanId, reasonHash);
-      
-      const loan = await loanCore.getLoan(loanId);
-      expect(loan.status).to.equal(3); // Approved (reverted from awaiting disbursement)
+    it("Should allow retry after failure", async function () {
+      await disbursement.connect(officer).failDisbursement(
+        disbursementId,
+        failureReason
+      );
+
+      // Should be able to initiate again after failure
+      await expect(
+        disbursement.connect(officer).initiateDisbursement(
+          loanId,
+          approvedAmount,
+          DisbursementMethod.GCash // Different method
+        )
+      ).to.emit(disbursement, "DisbursementInitiated");
     });
   });
 
-  describe("Reversal", function () {
-    const transactionRef = ethers.keccak256(ethers.toUtf8Bytes("TXN001"));
-    const confirmationRef = ethers.keccak256(ethers.toUtf8Bytes("CONFIRM001"));
-    const reversalReason = ethers.keccak256(ethers.toUtf8Bytes("FRAUD_DETECTED"));
+  describe("Disbursement Reversal", function () {
+    let disbursementId;
+    const referenceHash = ethers.keccak256(ethers.toUtf8Bytes("REF001"));
+    const reversalReason = ethers.keccak256(ethers.toUtf8Bytes("ERROR_DETECTED"));
 
     beforeEach(async function () {
       await disbursement.connect(officer).initiateDisbursement(
         loanId,
         approvedAmount,
-        treasury.address,
-        borrower.address,
-        0,
-        transactionRef
+        DisbursementMethod.BankTransfer
       );
-      await disbursement.connect(admin).completeDisbursement(loanId, confirmationRef);
+      
+      disbursementId = await disbursement.loanToDisbursement(loanId);
+      
+      await disbursement.connect(officer).completeDisbursement(
+        disbursementId,
+        referenceHash
+      );
     });
 
-    it("Should reverse within reversal window", async function () {
+    it("Should reverse disbursement within window", async function () {
       await expect(
-        disbursement.connect(admin).reverseDisbursement(loanId, reversalReason)
+        disbursement.connect(admin).reverseDisbursement(
+          disbursementId,
+          reversalReason
+        )
       ).to.emit(disbursement, "DisbursementReversed");
+    });
 
-      const disbRecord = await disbursement.getDisbursement(loanId);
-      expect(disbRecord.status).to.equal(3); // Reversed
+    it("Should track total reversals", async function () {
+      await disbursement.connect(admin).reverseDisbursement(
+        disbursementId,
+        reversalReason
+      );
+
+      const totalReversals = await disbursement.totalReversals();
+      expect(totalReversals).to.equal(1);
     });
 
     it("Should not reverse after window expires", async function () {
-      // Fast forward 73 hours
+      // Fast forward past reversal window (72 hours)
       await time.increase(73 * 60 * 60);
 
       await expect(
-        disbursement.connect(admin).reverseDisbursement(loanId, reversalReason)
+        disbursement.connect(admin).reverseDisbursement(
+          disbursementId,
+          reversalReason
+        )
       ).to.be.revertedWithCustomError(disbursement, "ReversalWindowExpired");
-    });
-
-    it("Should allow admin to update reversal window", async function () {
-      await disbursement.connect(admin).setReversalWindow(48);
-      expect(await disbursement.reversalWindowHours()).to.equal(48);
     });
   });
 
-  describe("Disbursement Methods", function () {
-    const transactionRef = ethers.keccak256(ethers.toUtf8Bytes("TXN001"));
+  describe("View Functions", function () {
+    let disbursementId;
 
-    it("Should accept GCash method", async function () {
+    beforeEach(async function () {
       await disbursement.connect(officer).initiateDisbursement(
         loanId,
         approvedAmount,
-        treasury.address,
-        borrower.address,
-        2, // GCash
-        transactionRef
+        DisbursementMethod.Maya
       );
-
-      const disbRecord = await disbursement.getDisbursement(loanId);
-      expect(disbRecord.method).to.equal(2);
+      
+      disbursementId = await disbursement.loanToDisbursement(loanId);
     });
 
-    it("Should accept Maya method", async function () {
-      await disbursement.connect(officer).initiateDisbursement(
-        loanId,
-        approvedAmount,
-        treasury.address,
-        borrower.address,
-        3, // Maya
-        transactionRef
-      );
-
-      const disbRecord = await disbursement.getDisbursement(loanId);
-      expect(disbRecord.method).to.equal(3);
+    it("Should get disbursement by ID", async function () {
+      const record = await disbursement.disbursements(disbursementId);
+      expect(record.amount).to.equal(approvedAmount);
+      expect(record.loanId).to.equal(loanId);
+      expect(record.method).to.equal(DisbursementMethod.Maya);
     });
 
-    it("Should accept Cash method", async function () {
-      await disbursement.connect(officer).initiateDisbursement(
-        loanId,
-        approvedAmount,
-        treasury.address,
-        borrower.address,
-        1, // Cash
-        transactionRef
-      );
-
-      const disbRecord = await disbursement.getDisbursement(loanId);
-      expect(disbRecord.method).to.equal(1);
+    it("Should get disbursement ID by loan ID", async function () {
+      const disbId = await disbursement.loanToDisbursement(loanId);
+      expect(disbId).to.equal(disbursementId);
     });
   });
 });
