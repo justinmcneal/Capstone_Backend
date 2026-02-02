@@ -1,79 +1,140 @@
-# Document Analysis ML - Training Data
+# CNN Training Data - Philippine MSME Documents
 
-This folder contains training data for the document classification CNN model.
+> **Project:** MSME Pathways - Document Classification  
+> **Model:** MobileNetV2 (Transfer Learning)  
+> **Target Accuracy:** >85%
 
-## Folder Structure
+---
+
+## 📁 Folder Structure
 
 ```
 training_data/
-├── valid_id/           # Government IDs (driver's license, passport, etc.)
-├── selfie_with_id/     # Selfie holding ID
-├── business_permit/    # DTI/SEC/Mayor's permits
-├── proof_of_address/   # Utility bills, barangay certificates
-├── business_photo/     # Photos of business premises
-├── income_proof/       # Bank statements, sales records
-└── invalid/            # Random images, blurry docs (negative samples)
+├── valid_id/           # 50-100 images (PhilSys, Driver's License, UMID, etc.)
+├── selfie_with_id/     # 30-50 images (Person holding ID)
+├── business_permit/    # 30-50 images (DTI, Mayor's Permit, Barangay Permit)
+├── proof_of_address/   # 30-50 images (Meralco, Water bill, Barangay Cert)
+├── business_photo/     # 30-50 images (Sari-sari store, market stall)
+├── income_proof/       # 30-50 images (Bank statement, GCash, receipts)
+└── invalid/            # 50-100 images (Random photos, blurry docs, memes)
 ```
 
-## How to Collect Training Data
+**Total Target: 270-500 images minimum**
 
-### Option 1: Public Datasets (Recommended to start)
+---
 
-1. **Kaggle Datasets:**
-   - Search "ID card dataset" on kaggle.com
-   - https://www.kaggle.com/datasets (search "document classification")
-   - Download and place in appropriate folders
+## 📊 Collection Progress
 
-2. **Roboflow:**
-   - https://universe.roboflow.com (search "ID document")
-   - Free datasets available for research
+| Category | Target | Current | Status |
+|----------|--------|---------|--------|
+| valid_id | 50-100 | 0 | ⬜ Not started |
+| selfie_with_id | 30-50 | 0 | ⬜ Not started |
+| business_permit | 30-50 | 0 | ⬜ Not started |
+| proof_of_address | 30-50 | 0 | ⬜ Not started |
+| business_photo | 30-50 | 0 | ⬜ Not started |
+| income_proof | 30-50 | 0 | ⬜ Not started |
+| invalid | 50-100 | 0 | ⬜ Not started |
 
-3. **MIDV-500:**
-   - Public dataset of ID documents
-   - https://github.com/fcakyon/midv500
+**Update this table as you add images!**
 
-### Option 2: Generate Synthetic Data
+---
 
-You can use document templates to generate training samples.
+## 🔗 Quick Download Links
 
-### Option 3: Collect Real Samples
+### For valid_id
+| Source | URL | Notes |
+|--------|-----|-------|
+| MIDV-500 | https://github.com/fcakyon/midv500 | 500 ID documents |
+| Kaggle IDs | https://www.kaggle.com/datasets/trainingdatapro/identity-document-image-dataset | Identity documents |
+| Roboflow | https://universe.roboflow.com/search?q=id+card | ID card datasets |
 
-1. Ask testers to submit sample documents
-2. Anonymize/blur sensitive information
-3. Aim for 50-100 images per category
+### For business_permit, proof_of_address
+| Search Term | Where |
+|-------------|-------|
+| "DTI certificate sample Philippines" | Google Images |
+| "Mayor's permit sample Philippines" | Google Images |
+| "Barangay certificate sample" | Google Images |
+| "Meralco bill sample" | Google Images |
+| "Manila Water bill sample" | Google Images |
 
-## Recommended Quantities
+### For business_photo (Easiest!)
+| Method | How |
+|--------|-----|
+| Walk around | Take photos of local sari-sari stores, tiangge |
+| Google Images | Search "sari-sari store Philippines" |
+| Google Maps | Street view of local businesses |
 
-| Category | Minimum | Recommended |
-|----------|---------|-------------|
-| valid_id | 50 | 100+ |
-| selfie_with_id | 30 | 50+ |
-| business_permit | 30 | 50+ |
-| proof_of_address | 30 | 50+ |
-| business_photo | 30 | 50+ |
-| income_proof | 30 | 50+ |
-| invalid | 50 | 100+ |
+### For invalid (Super Easy!)
+| Source | What |
+|--------|------|
+| Your phone | Random photos from gallery |
+| Internet | Memes, random images |
+| Take photos | Intentionally blurry documents |
 
-## Image Requirements
+---
 
-- **Format:** JPEG or PNG
-- **Size:** At least 224x224 pixels (will be resized)
-- **Quality:** Clear, readable images
-- **Naming:** Any filename is fine (e.g., `id_001.jpg`, `permit_sample.png`)
+## ⚡ Quick Start Commands
 
-## After Collecting Data
-
-Run the training script:
+### Check your image counts:
 ```bash
+# Count images in each folder
+find . -name "*.jpg" -o -name "*.jpeg" -o -name "*.png" | wc -l
+
+# Count per folder
+for dir in */; do echo "$dir: $(find "$dir" -name "*.jpg" -o -name "*.jpeg" -o -name "*.png" | wc -l)"; done
+```
+
+### After collecting images, train the model:
+```bash
+python manage.py train_document_classifier --epochs 20
+```
+
+---
+
+## 📋 Image Requirements
+
+| Requirement | Specification |
+|-------------|---------------|
+| **Format** | JPG, JPEG, or PNG |
+| **Minimum Size** | 224 x 224 pixels |
+| **Naming** | Any filename (e.g., `id_001.jpg`) |
+| **Quality** | Clear and readable |
+
+---
+
+## ⚠️ Security Notes
+
+1. **DO NOT commit real personal documents**
+2. Use sample/template documents when possible
+3. Blur sensitive information (account numbers, TIN)
+4. Training images are gitignored (only READMEs committed)
+
+---
+
+## 📖 Category Details
+
+See the README.md in each folder for:
+- Specific examples of what to collect
+- Where to find images
+- Tips for that category
+
+---
+
+## ✅ Ready to Train?
+
+When you have at least 30 images per category:
+
+```bash
+# Navigate to project root
+cd /Users/gab/Documents/GitHub/Capstone_Backend
+
+# Run training (10 epochs default)
 python manage.py train_document_classifier
+
+# Or with more epochs for better accuracy
+python manage.py train_document_classifier --epochs 20
 ```
 
-## Security Note
-
-⚠️ **Do NOT commit real personal documents to version control.**
-
-Add to `.gitignore`:
-```
-documents/ml/training_data/
-!documents/ml/training_data/README.md
-```
+Output will be saved to:
+- `documents/ml/models/document_classifier.pth`
+- `documents/ml/models/model_config.json`
