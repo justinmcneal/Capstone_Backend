@@ -11,8 +11,6 @@ Complete reference for all smart contract functions in the MSME Pathways Loan Ma
 3. [LoanCore](#loancore)
 4. [Disbursement](#disbursement)
 5. [Repayment](#repayment)
-6. [PenaltyCalculator](#penaltycalculator)
-7. [LoanOracle](#loanoracle)
 
 ---
 
@@ -399,9 +397,11 @@ Sets related contract addresses.
 |-----------|------|-------------|
 | `_disbursement` | `address` | Disbursement contract |
 | `_repayment` | `address` | Repayment contract |
-| `_oracle` | `address` | LoanOracle contract |
+| `_oracle` | `address` | Oracle contract (set to `address(0)` - not used) |
 
 **Access:** `ADMIN_ROLE` only
+
+> **Note:** In the current backend-aligned implementation, the `_oracle` parameter should be set to `address(0)` as LoanOracle was removed.
 
 ---
 
@@ -541,19 +541,6 @@ Marks loan as disbursed (called by Disbursement contract).
 
 ---
 
-#### `markActive(bytes32 loanId)`
-
-Marks loan as active (repayment started).
-
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `loanId` | `bytes32` | Loan identifier |
-
-**Returns:** `bool` - Success status  
-**Access:** Repayment contract or `ADMIN_ROLE`
-
----
-
 #### `getLoan(bytes32 loanId)` (view)
 
 Gets full loan details.
@@ -581,9 +568,7 @@ Gets only the loan status.
 enum DisbursementStatus {
     Pending,     // 0 - Awaiting processing
     Processing,  // 1 - In progress
-    Completed,   // 2 - Successfully disbursed
-    Failed,      // 3 - Disbursement failed
-    Reversed     // 4 - Reversed (within window)
+    Completed    // 2 - Successfully disbursed
 }
 
 enum DisbursementMethod {
@@ -600,7 +585,6 @@ enum DisbursementMethod {
 | Constant | Value | Description |
 |----------|-------|-------------|
 | `VERSION` | `1` | Contract version |
-| `REVERSAL_WINDOW` | `72 hours` | Time window for reversals |
 
 ### Functions
 
@@ -652,43 +636,13 @@ Marks disbursement as completed.
 
 ---
 
-#### `failDisbursement(uint256 disbursementId, bytes32 reasonHash)`
-
-Marks disbursement as failed.
-
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `disbursementId` | `uint256` | Disbursement ID |
-| `reasonHash` | `bytes32` | Hash of failure reason |
-
-**Returns:** `bool` - Success status  
-**Emits:** `DisbursementFailed(disbursementId, reasonHash, timestamp)`
-
----
-
-#### `reverseDisbursement(uint256 disbursementId, bytes32 reasonHash)`
-
-Reverses a completed disbursement (within time window).
-
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `disbursementId` | `uint256` | Disbursement ID |
-| `reasonHash` | `bytes32` | Hash of reversal reason |
-
-**Returns:** `bool` - Success status  
-**Emits:** `DisbursementReversed(disbursementId, reasonHash, timestamp)`  
-**Reverts:**
-- `"Disbursement: reversal window expired"` - If > 72 hours since completion
-
----
-
-#### `getDisbursement(uint256 disbursementId)` (view)
+#### `getDisbursement(bytes32 disbursementId)` (view)
 
 Gets disbursement details.
 
 ---
 
-#### `getDisbursementByLoanId(bytes32 loanId)` (view)
+#### `loanToDisbursement(bytes32 loanId)` (view)
 
 Gets disbursement ID for a loan.
 
@@ -714,14 +668,13 @@ enum InstallmentStatus {
     Pending,   // 0 - Not yet due
     Paid,      // 1 - Fully paid
     Partial,   // 2 - Partially paid
-    Overdue,   // 3 - Past due date
-    Defaulted  // 4 - Long overdue (>90 days)
+    Overdue    // 3 - Past due date
 }
 ```
 
 ### Functions
 
-#### `initialize(address _loanCore, address _auditRegistry, address _penaltyCalculator, address admin)`
+#### `initialize(address _loanCore, address _auditRegistry, address admin)`
 
 Initializes the repayment contract.
 
@@ -793,226 +746,6 @@ Gets installment details.
 
 ---
 
-#### `setPenaltyCalculator(address _penaltyCalculator)`
-
-Updates penalty calculator contract.
-
-**Access:** `ADMIN_ROLE` only
-
----
-
-## PenaltyCalculator
-
-**Contract:** `contracts/PenaltyCalculator.sol`  
-**Purpose:** Calculate and track late payment penalties
-
-### Default Configuration
-
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| Grace Period | 7 days | No penalty during this period |
-| Late Fee | 5% | One-time fee after grace period |
-| Daily Penalty | 0.1% | Accrues daily after grace period |
-| Max Penalty | 25% | Penalty cap |
-
-### Functions
-
-#### `initialize(address admin)`
-
-Initializes with default configuration.
-
----
-
-#### `updateConfig(uint8 gracePeriodDays, uint8 lateFeePercent, uint8 dailyPenaltyPercent, uint8 maxPenaltyPercent)`
-
-Updates penalty configuration.
-
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `gracePeriodDays` | `uint8` | Days before penalty (max 30) |
-| `lateFeePercent` | `uint8` | One-time late fee % (max 10) |
-| `dailyPenaltyPercent` | `uint8` | Daily penalty % (max 1) |
-| `maxPenaltyPercent` | `uint8` | Maximum total penalty % (max 50) |
-
-**Access:** `ADMIN_ROLE` only
-
----
-
-#### `calculatePenalty(bytes32 loanId, uint16 installmentNumber, uint256 amount, uint256 dueDate)` (view)
-
-Calculates penalty for an overdue payment.
-
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `loanId` | `bytes32` | Loan identifier |
-| `installmentNumber` | `uint16` | Installment number |
-| `amount` | `uint256` | Installment amount |
-| `dueDate` | `uint256` | Due date timestamp |
-
-**Returns:** `uint256` - Calculated penalty amount
-
-**Example:**
-```javascript
-const penalty = await penaltyCalculator.calculatePenalty(
-  loanId,
-  1,  // installment 1
-  ethers.parseEther("1000"),
-  pastDueDate
-);
-console.log("Penalty:", ethers.formatEther(penalty));
-```
-
----
-
-#### `recordPenalty(bytes32 loanId, uint16 installmentNumber, uint256 amount)`
-
-Records a penalty for tracking.
-
-**Access:** `SYSTEM_ROLE`
-
----
-
-#### `waivePenalty(bytes32 loanId, uint16 installmentNumber, bytes32 reasonHash)`
-
-Waives a recorded penalty.
-
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `loanId` | `bytes32` | Loan identifier |
-| `installmentNumber` | `uint16` | Installment number |
-| `reasonHash` | `bytes32` | Hash of waiver reason |
-
-**Access:** `ADMIN_ROLE` or `LOAN_OFFICER_ROLE`
-
----
-
-#### `getConfig()` (view)
-
-Returns current penalty configuration.
-
----
-
-#### `getPenaltyRecord(bytes32 loanId, uint16 installmentNumber)` (view)
-
-Gets penalty record for an installment.
-
----
-
-## LoanOracle
-
-**Contract:** `contracts/LoanOracle.sol`  
-**Purpose:** Bridge off-chain data (AI scores, external payments)
-
-### Constants
-
-| Constant | Value | Description |
-|----------|-------|-------------|
-| `VERSION` | `1` | Contract version |
-| `SCORE_VALIDITY_PERIOD` | `24 hours` | How long AI scores remain valid |
-
-### Functions
-
-#### `initialize(address admin, address initialOracle)`
-
-Initializes with an oracle address.
-
----
-
-#### `submitAIScore(bytes32 loanId, uint8 score, uint8 riskCategory, bytes32 factorsHash)`
-
-Submits an AI-generated eligibility score.
-
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `loanId` | `bytes32` | Loan identifier |
-| `score` | `uint8` | Score (0-100) |
-| `riskCategory` | `uint8` | 0=Low, 1=Medium, 2=High |
-| `factorsHash` | `bytes32` | Hash of scoring factors |
-
-**Emits:** `AIScoreSubmitted(loanId, score, riskCategory, timestamp)`  
-**Access:** `ORACLE_ROLE` only  
-**Reverts:**
-- `"LoanOracle: invalid score"` - If score > 100
-- `"LoanOracle: invalid risk category"` - If > 2
-- `"LoanOracle: score still valid"` - If existing score not expired
-
-**Example:**
-```javascript
-const factorsHash = ethers.keccak256(ethers.toUtf8Bytes(JSON.stringify({
-  creditHistory: 85,
-  businessAge: 3,
-  monthlyRevenue: 50000
-})));
-
-await oracle.connect(oracleAccount).submitAIScore(
-  loanId,
-  85,      // score
-  0,       // Low risk
-  factorsHash
-);
-```
-
----
-
-#### `invalidateScore(bytes32 loanId)`
-
-Invalidates an AI score.
-
-**Access:** `ADMIN_ROLE` only
-
----
-
-#### `isScoreValid(bytes32 loanId)` (view)
-
-Checks if a loan has a valid (non-expired, non-invalidated) score.
-
-**Returns:** `bool`
-
----
-
-#### `confirmExternalPayment(bytes32 loanId, uint256 amount, bytes32 referenceHash)`
-
-Confirms a payment from external system.
-
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `loanId` | `bytes32` | Loan identifier |
-| `amount` | `uint256` | Payment amount |
-| `referenceHash` | `bytes32` | External reference hash |
-
-**Emits:** `ExternalPaymentConfirmed(loanId, amount, referenceHash, timestamp)`  
-**Access:** `ORACLE_ROLE` only
-
----
-
-#### `confirmExternalPaymentsBatch(bytes32[] loanIds, uint256[] amounts, bytes32[] referenceHashes)`
-
-Batch confirms multiple payments.
-
----
-
-#### `isPaymentConfirmed(bytes32 loanId, bytes32 referenceHash)` (view)
-
-Checks if a payment was confirmed.
-
----
-
-#### `addOracle(address oracle)`
-
-Adds a new oracle address.
-
-**Access:** `ADMIN_ROLE` only
-
----
-
-#### `removeOracle(address oracle)`
-
-Removes an oracle address.
-
-**Access:** `ADMIN_ROLE` only
-
----
-
 ## Common Patterns
 
 ### Converting Strings to bytes32
@@ -1042,7 +775,6 @@ const ADMIN_ROLE = ethers.keccak256(ethers.toUtf8Bytes("ADMIN_ROLE"));
 const LOAN_OFFICER_ROLE = ethers.keccak256(ethers.toUtf8Bytes("LOAN_OFFICER_ROLE"));
 const SYSTEM_ROLE = ethers.keccak256(ethers.toUtf8Bytes("SYSTEM_ROLE"));
 const LOGGER_ROLE = ethers.keccak256(ethers.toUtf8Bytes("LOGGER_ROLE"));
-const ORACLE_ROLE = ethers.keccak256(ethers.toUtf8Bytes("ORACLE_ROLE"));
 ```
 
 ---
@@ -1066,8 +798,6 @@ const ORACLE_ROLE = ethers.keccak256(ethers.toUtf8Bytes("ORACLE_ROLE"));
 |-------|------------|
 | `DisbursementInitiated` | disbursementId, loanId, amount, method, timestamp |
 | `DisbursementCompleted` | disbursementId, referenceHash, timestamp |
-| `DisbursementFailed` | disbursementId, reasonHash, timestamp |
-| `DisbursementReversed` | disbursementId, reasonHash, timestamp |
 
 ### Repayment Events
 
@@ -1077,11 +807,3 @@ const ORACLE_ROLE = ethers.keccak256(ethers.toUtf8Bytes("ORACLE_ROLE"));
 | `PaymentRecorded` | loanId, installmentNumber, amount, method, referenceHash |
 | `InstallmentStatusChanged` | scheduleId, installmentNumber, oldStatus, newStatus |
 | `LoanFullyRepaid` | loanId, scheduleId, timestamp |
-
-### LoanOracle Events
-
-| Event | Parameters |
-|-------|------------|
-| `AIScoreSubmitted` | loanId, score, riskCategory, timestamp |
-| `AIScoreInvalidated` | loanId, invalidatedBy, timestamp |
-| `ExternalPaymentConfirmed` | loanId, amount, referenceHash, timestamp |

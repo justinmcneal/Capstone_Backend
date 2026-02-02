@@ -111,11 +111,11 @@ Your project is **already initialized** - you don't need to run `npx hardhat ini
 │  LoanCore.sol          Disbursement.sol           Repayment.sol          │
 │  ┌─────────────┐       ┌─────────────────┐        ┌──────────────┐       │
 │  │ createLoan()│       │ initiate()      │        │ recordPay()  │       │
-│  │ approve()   │──────►│ complete()      │───────►│ markOverdue()│       │
-│  │ reject()    │       │ reverse()       │        │ markDefault()│       │
-│  └─────────────┘       └─────────────────┘        └──────────────┘       │
-│         │                      │                          │              │
-│         └──────────────────────┴──────────────────────────┘              │
+│  │ approve()   │──────►│ complete()      │───────►│ getSchedule()│       │
+│  │ reject()    │       └─────────────────┘        └──────────────┘       │
+│  └─────────────┘                │                          │             │
+│         │                       │                          │             │
+│         └───────────────────────┴──────────────────────────┘             │
 │                                │                                         │
 │                                ▼                                         │
 │                       AuditRegistry.sol                                  │
@@ -162,14 +162,11 @@ smartcontracts/
 │   ├── LoanCore.sol             # Loan lifecycle (create, approve, reject)
 │   ├── Disbursement.sol         # Fund release tracking
 │   ├── Repayment.sol            # Payment recording & schedules
-│   ├── PenaltyCalculator.sol    # Late fees & penalty logic
 │   ├── AuditRegistry.sol        # Immutable event logging
-│   ├── LoanOracle.sol           # Off-chain data bridge (AI scores)
 │   └── interfaces/              # Contract interfaces
 │       ├── ILoanAccessControl.sol
 │       ├── ILoanCore.sol
-│       ├── IAuditRegistry.sol
-│       └── IPenaltyCalculator.sol
+│       └── IAuditRegistry.sol
 ├── scripts/
 │   └── deploy.js                # Deployment script
 ├── test/                        # Unit tests
@@ -183,11 +180,9 @@ smartcontracts/
 |----------|---------|---------------|
 | **LoanAccessControl** | RBAC, officer/borrower registration | `registerOfficer()`, `registerBorrower()`, `pause()` |
 | **LoanCore** | Loan state machine | `createLoan()`, `submitLoan()`, `approveLoan()`, `rejectLoan()` |
-| **Disbursement** | Fund release tracking | `initiateDisbursement()`, `completeDisbursement()`, `reverseDisbursement()` |
-| **Repayment** | Payment recording | `createSchedule()`, `recordPayment()`, `markOverdue()`, `markDefault()` |
-| **PenaltyCalculator** | Fee computation | `calculatePenalty()`, `waivePenalty()` |
-| **AuditRegistry** | Immutable logs | `logAuditEntry()`, `verifyState()` |
-| **LoanOracle** | External data | `submitAIScore()`, `confirmPayment()` |
+| **Disbursement** | Fund release tracking | `initiateDisbursement()`, `completeDisbursement()` |
+| **Repayment** | Payment recording | `createSchedule()`, `recordPayment()` |
+| **AuditRegistry** | Immutable logs | `log()`, `verifyState()` |
 
 ---
 
@@ -213,7 +208,7 @@ npm run compile
 
 **Expected output:**
 ```
-Compiled 17 Solidity files successfully
+Compiled 8 Solidity files successfully
 ```
 
 ### Step 3: Run Tests (No Wallet Needed!)
@@ -225,8 +220,8 @@ npm test
 **What happens?**
 - Hardhat creates a **temporary blockchain** in memory
 - Auto-generates **20 test accounts** with 10,000 test ETH each
-- Runs all **166 test cases**
-- Tests complete in ~4 seconds
+- Runs all **100 test cases**
+- Tests complete in ~3 seconds
 
 **You don't need:**
 - ❌ Real ETH
@@ -241,7 +236,7 @@ npm test
     ✓ Should log audit entry
     ...
   
-  166 passing (4s)
+  100 passing (3s)
 ```
 
 ---
@@ -254,6 +249,8 @@ npm test
 | [SMART_CONTRACT_ARCHITECTURE.md](SMART_CONTRACT_ARCHITECTURE.md) | Backend analysis and architecture design |
 | [docs/CONTRACT_FUNCTIONS.md](docs/CONTRACT_FUNCTIONS.md) | Complete function reference for all contracts |
 | [docs/TESTING_GUIDE.md](docs/TESTING_GUIDE.md) | How to run, debug, and extend tests |
+| [docs/MANUAL_TESTING_GUIDE.md](docs/MANUAL_TESTING_GUIDE.md) | **Step-by-step manual testing for beginners** |
+| [docs/BACKEND_ALIGNMENT_ANALYSIS.md](docs/BACKEND_ALIGNMENT_ANALYSIS.md) | Smart contract & backend alignment status |
 
 ---
 
@@ -430,96 +427,7 @@ networks: {
 
 ---
 
-## 💰 Using ERC20 Tokens (Your Own Token!)
-
-The current implementation tracks transactions **as records** (not actual token transfers). However, you can **absolutely** integrate ERC20 tokens for actual on-chain lending!
-
-### Creating Your Own Token
-
-I've prepared an ERC20 token contract that you can use:
-
-```solidity
-// contracts/LoanToken.sol
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.19;
-
-import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
-import "@openzeppelin/contracts/token/ERC20/extensions/ERC20Burnable.sol";
-import "@openzeppelin/contracts/access/AccessControl.sol";
-
-contract LoanToken is ERC20, ERC20Burnable, AccessControl {
-    bytes32 public constant MINTER_ROLE = keccak256("MINTER_ROLE");
-
-    constructor(string memory name, string memory symbol) ERC20(name, symbol) {
-        _grantRole(DEFAULT_ADMIN_ROLE, msg.sender);
-        _grantRole(MINTER_ROLE, msg.sender);
-        
-        // Mint initial supply (e.g., 1 billion tokens with 18 decimals)
-        _mint(msg.sender, 1_000_000_000 * 10**18);
-    }
-
-    function mint(address to, uint256 amount) public onlyRole(MINTER_ROLE) {
-        _mint(to, amount);
-    }
-
-    function decimals() public pure override returns (uint8) {
-        return 18;
-    }
-}
-```
-
-### Integrating ERC20 with Disbursement
-
-Here's how the Disbursement contract would work with actual token transfers:
-
-```solidity
-// In Disbursement.sol, add:
-
-import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-
-contract Disbursement {
-    using SafeERC20 for IERC20;
-    
-    IERC20 public loanToken;
-    address public treasury;  // Where funds come from
-
-    function setLoanToken(address _token, address _treasury) external onlyRole(ADMIN_ROLE) {
-        loanToken = IERC20(_token);
-        treasury = _treasury;
-    }
-
-    // Transfer tokens to borrower on disbursement
-    function disburseWithToken(bytes32 loanId) external nonReentrant {
-        DisbursementRecord storage record = disbursements[loanId];
-        require(record.status == DisbursementStatus.Pending, "Not pending");
-        
-        // Transfer tokens from treasury to borrower
-        loanToken.safeTransferFrom(treasury, record.borrower, record.amount);
-        
-        record.status = DisbursementStatus.Completed;
-        emit DisbursementCompleted(record.disbursementId, loanId, ...);
-    }
-}
-```
-
-### Token-Based Repayment
-
-```solidity
-// In Repayment.sol, add:
-
-function payWithToken(bytes32 loanId, uint256 amount) external nonReentrant {
-    // Borrower approves contract to spend tokens first
-    loanToken.safeTransferFrom(msg.sender, treasury, amount);
-    
-    // Record the payment on-chain
-    _recordPayment(loanId, amount);
-}
-```
-
----
-
-## � Do I Need a Wallet or Real Money?
+## 🤔 Do I Need a Wallet or Real Money?
 
 ### For Testing & Local Development: **NO!** ❌
 
@@ -851,22 +759,14 @@ PAYMENT_METHODS = ['cash', 'bank_transfer', 'gcash', 'maya']
 enum PaymentMethod { BankTransfer, Cash, GCash, Maya, Other }
 ```
 
-### 3. **Penalty Logic Matches**
-
-Your backend has grace periods and late fees. The `PenaltyCalculator.sol` contract:
-- 7-day default grace period (configurable)
-- 5% late fee (configurable)
-- 0.5% daily penalty after grace (configurable)
-- 25% maximum cap (configurable)
-
-### 4. **Audit Trail Enhancement**
+### 3. **Audit Trail Enhancement**
 
 Your `analytics/models/audit_log.py` logs actions to MongoDB. The `AuditRegistry.sol` provides:
 - **Immutable** logs that cannot be deleted
 - **Cryptographic proof** of state at any point
 - **Verifiable** by any third party (regulators, auditors)
 
-### 5. **Separation of Concerns**
+### 4. **Separation of Concerns**
 
 ```
 ┌─────────────────────────────────────────────────────────┐
@@ -1018,9 +918,6 @@ npm run node
 
 # Deploy to local blockchain (in another terminal)
 npm run deploy:local
-
-# Deploy with ERC20 token support
-npm run deploy:token:local
 
 # Deploy to Ganache GUI
 npm run deploy:ganache
