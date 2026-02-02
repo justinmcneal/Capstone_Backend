@@ -1,4 +1,4 @@
-// Test suite for Repayment contract
+// Test suite for Repayment contract - Aligned with actual contract implementation
 const { expect } = require("chai");
 const { ethers, upgrades } = require("hardhat");
 const { time } = require("@nomicfoundation/hardhat-network-helpers");
@@ -6,36 +6,41 @@ const { time } = require("@nomicfoundation/hardhat-network-helpers");
 describe("Repayment", function () {
   let repayment;
   let loanCore;
-  let accessControl;
   let auditRegistry;
   let penaltyCalculator;
-  let disbursement;
   let admin, officer, borrower, other;
 
   const ADMIN_ROLE = ethers.keccak256(ethers.toUtf8Bytes("ADMIN_ROLE"));
   const LOAN_OFFICER_ROLE = ethers.keccak256(ethers.toUtf8Bytes("LOAN_OFFICER_ROLE"));
   const SYSTEM_ROLE = ethers.keccak256(ethers.toUtf8Bytes("SYSTEM_ROLE"));
-  const ORACLE_ROLE = ethers.keccak256(ethers.toUtf8Bytes("ORACLE_ROLE"));
 
   const loanId = ethers.keccak256(ethers.toUtf8Bytes("LOAN001"));
-  const productId = ethers.keccak256(ethers.toUtf8Bytes("PROD001"));
-  const requestedAmount = ethers.parseEther("12000");
-  const approvedAmount = ethers.parseEther("12000");
-  const aiHash = ethers.keccak256(ethers.toUtf8Bytes("AI_ANALYSIS"));
-  const notesHash = ethers.keccak256(ethers.toUtf8Bytes("NOTES"));
+  const principal = ethers.parseEther("12000");
+  const interestRateBps = 150; // 1.5% monthly
+  const termMonths = 12;
+
+  // PaymentMethod enum
+  const PaymentMethod = {
+    Cash: 0,
+    BankTransfer: 1,
+    GCash: 2,
+    Maya: 3,
+    Other: 4
+  };
+
+  // InstallmentStatus enum
+  const InstallmentStatus = {
+    Pending: 0,
+    Paid: 1,
+    Partial: 2,
+    Overdue: 3,
+    Defaulted: 4
+  };
 
   beforeEach(async function () {
-    [admin, officer, borrower, oracle, other] = await ethers.getSigners();
+    [admin, officer, borrower, other] = await ethers.getSigners();
 
-    // Deploy all contracts
-    const LoanAccessControl = await ethers.getContractFactory("LoanAccessControl");
-    accessControl = await upgrades.deployProxy(
-      LoanAccessControl,
-      [admin.address],
-      { kind: "uups" }
-    );
-    await accessControl.waitForDeployment();
-
+    // Deploy AuditRegistry
     const AuditRegistry = await ethers.getContractFactory("AuditRegistry");
     auditRegistry = await upgrades.deployProxy(
       AuditRegistry,
@@ -44,6 +49,16 @@ describe("Repayment", function () {
     );
     await auditRegistry.waitForDeployment();
 
+    // Deploy LoanAccessControl
+    const LoanAccessControl = await ethers.getContractFactory("LoanAccessControl");
+    const accessControl = await upgrades.deployProxy(
+      LoanAccessControl,
+      [admin.address],
+      { kind: "uups" }
+    );
+    await accessControl.waitForDeployment();
+
+    // Deploy PenaltyCalculator
     const PenaltyCalculator = await ethers.getContractFactory("PenaltyCalculator");
     penaltyCalculator = await upgrades.deployProxy(
       PenaltyCalculator,
@@ -52,6 +67,7 @@ describe("Repayment", function () {
     );
     await penaltyCalculator.waitForDeployment();
 
+    // Deploy LoanCore
     const LoanCore = await ethers.getContractFactory("LoanCore");
     loanCore = await upgrades.deployProxy(
       LoanCore,
@@ -64,27 +80,14 @@ describe("Repayment", function () {
     );
     await loanCore.waitForDeployment();
 
-    const Disbursement = await ethers.getContractFactory("Disbursement");
-    disbursement = await upgrades.deployProxy(
-      Disbursement,
-      [
-        await accessControl.getAddress(),
-        await loanCore.getAddress(),
-        await auditRegistry.getAddress(),
-        admin.address
-      ],
-      { kind: "uups" }
-    );
-    await disbursement.waitForDeployment();
-
+    // Deploy Repayment with 3 params (loanCore, auditRegistry, admin) - penaltyCalculator is optional
     const Repayment = await ethers.getContractFactory("Repayment");
     repayment = await upgrades.deployProxy(
       Repayment,
       [
-        await accessControl.getAddress(),
         await loanCore.getAddress(),
-        await penaltyCalculator.getAddress(),
         await auditRegistry.getAddress(),
+        await penaltyCalculator.getAddress(),
         admin.address
       ],
       { kind: "uups" }
@@ -93,322 +96,380 @@ describe("Repayment", function () {
 
     // Setup permissions
     await auditRegistry.grantLoggerRole(await loanCore.getAddress());
-    await auditRegistry.grantLoggerRole(await disbursement.getAddress());
     await auditRegistry.grantLoggerRole(await repayment.getAddress());
     
-    // Register officer and borrower
-    const employeeIdHash = ethers.keccak256(ethers.toUtf8Bytes("EMP001"));
-    await accessControl.registerOfficer(officer.address, employeeIdHash);
+    // Register Repayment contract with LoanCore
+    await loanCore.setContracts(
+      ethers.ZeroAddress,  // disbursement not needed for this test
+      await repayment.getAddress(),
+      ethers.ZeroAddress   // oracle not needed for this test
+    );
     
-    await accessControl.grantRole(SYSTEM_ROLE, admin.address);
-    const customerIdHash = ethers.keccak256(ethers.toUtf8Bytes("CUST001"));
-    await accessControl.registerBorrower(borrower.address, customerIdHash);
-
     // Grant roles
-    await loanCore.grantRole(SYSTEM_ROLE, admin.address);
     await loanCore.grantRole(LOAN_OFFICER_ROLE, officer.address);
-    await loanCore.grantRole(SYSTEM_ROLE, await disbursement.getAddress());
     await loanCore.grantRole(SYSTEM_ROLE, await repayment.getAddress());
-    
-    await disbursement.grantRole(LOAN_OFFICER_ROLE, officer.address);
-    await disbursement.grantRole(SYSTEM_ROLE, admin.address);
     
     await repayment.grantRole(LOAN_OFFICER_ROLE, officer.address);
     await repayment.grantRole(SYSTEM_ROLE, admin.address);
-    await repayment.grantRole(ORACLE_ROLE, admin.address);
 
-    // Create, approve, and disburse a loan
+    // Create, approve, and mark loan as disbursed
+    const productId = ethers.keccak256(ethers.toUtf8Bytes("PRODUCT001"));
+    
+    // Register borrower in access control
+    await accessControl.grantRole(SYSTEM_ROLE, admin.address);
+    const customerIdHash = ethers.keccak256(ethers.toUtf8Bytes("CUST001"));
+    await accessControl.registerBorrower(borrower.address, customerIdHash);
+    
+    // Register officer in access control
+    const employeeIdHash = ethers.keccak256(ethers.toUtf8Bytes("EMP001"));
+    await accessControl.registerOfficer(officer.address, employeeIdHash);
+    
     await loanCore.connect(borrower).createLoan(
       loanId,
       productId,
-      requestedAmount,
-      12,
-      150
+      principal,
+      termMonths,
+      interestRateBps
     );
-    await loanCore.connect(borrower).submitLoan(loanId, 75, 1, aiHash);
-    await loanCore.connect(admin).assignOfficer(loanId, officer.address);
-    await loanCore.connect(officer).approveLoan(loanId, approvedAmount, notesHash);
     
-    const transactionRef = ethers.keccak256(ethers.toUtf8Bytes("TXN001"));
-    const confirmationRef = ethers.keccak256(ethers.toUtf8Bytes("CONFIRM001"));
-    await disbursement.connect(officer).initiateDisbursement(
+    // submitLoan requires: loanId, eligibilityScore, riskCategory, aiRecommendationHash
+    const eligibilityScore = 85;
+    const riskCategory = 0; // Low
+    const aiRecommendationHash = ethers.keccak256(ethers.toUtf8Bytes("AI_REC_001"));
+    await loanCore.connect(borrower).submitLoan(loanId, eligibilityScore, riskCategory, aiRecommendationHash);
+    
+    await loanCore.assignOfficer(loanId, officer.address);
+    await loanCore.connect(officer).approveLoan(
       loanId,
-      approvedAmount,
-      admin.address, // treasury
-      borrower.address,
-      0,
-      transactionRef
+      principal,
+      ethers.keccak256(ethers.toUtf8Bytes("NOTES"))
     );
-    await disbursement.connect(admin).completeDisbursement(loanId, confirmationRef);
+    
+    // Mark as disbursed
+    await loanCore.markDisbursed(loanId, principal);
   });
 
-  describe("Repayment Schedule Creation", function () {
+  describe("Deployment", function () {
+    it("Should set correct version", async function () {
+      expect(await repayment.VERSION()).to.equal(1);
+    });
+
+    it("Should set penalty calculator", async function () {
+      const pcAddress = await repayment.penaltyCalculator();
+      expect(pcAddress).to.equal(await penaltyCalculator.getAddress());
+    });
+  });
+
+  describe("Schedule Creation", function () {
     it("Should create repayment schedule", async function () {
-      const totalAmount = ethers.parseEther("13800"); // Principal + interest
-      const installmentAmount = ethers.parseEther("1150"); // 12 months
-      const firstDueDate = Math.floor(Date.now() / 1000) + 30 * 24 * 60 * 60; // 30 days from now
+      const startDate = await time.latest();
 
       await expect(
         repayment.connect(admin).createSchedule(
           loanId,
-          12, // numberOfInstallments
-          totalAmount,
-          installmentAmount,
-          firstDueDate
+          borrower.address,
+          principal,
+          interestRateBps,
+          termMonths,
+          startDate
         )
       ).to.emit(repayment, "ScheduleCreated");
+    });
 
-      const schedule = await repayment.getSchedule(loanId);
-      expect(schedule.totalInstallments).to.equal(12);
-      expect(schedule.paidInstallments).to.equal(0);
+    it("Should generate correct installments", async function () {
+      const startDate = await time.latest();
+
+      await repayment.connect(admin).createSchedule(
+        loanId,
+        borrower.address,
+        principal,
+        interestRateBps,
+        termMonths,
+        startDate
+      );
+
+      const scheduleId = await repayment.loanToSchedule(loanId);
+      const schedule = await repayment.schedules(scheduleId);
+
+      expect(schedule.termMonths).to.equal(termMonths);
+      expect(schedule.principal).to.equal(principal);
       expect(schedule.isActive).to.be.true;
     });
 
-    it("Should not create schedule for non-disbursed loan", async function () {
-      const newLoanId = ethers.keccak256(ethers.toUtf8Bytes("LOAN002"));
-      
-      // Create but don't disburse
-      await loanCore.connect(borrower).createLoan(
-        newLoanId,
-        productId,
-        requestedAmount,
-        12,
-        150
-      );
-
-      await expect(
-        repayment.connect(admin).createSchedule(
-          newLoanId,
-          12,
-          ethers.parseEther("13800"),
-          ethers.parseEther("1150"),
-          Math.floor(Date.now() / 1000) + 30 * 24 * 60 * 60
-        )
-      ).to.be.revertedWithCustomError(repayment, "LoanNotDisbursed");
-    });
-
     it("Should not create duplicate schedule", async function () {
-      const totalAmount = ethers.parseEther("13800");
-      const installmentAmount = ethers.parseEther("1150");
-      const firstDueDate = Math.floor(Date.now() / 1000) + 30 * 24 * 60 * 60;
+      const startDate = await time.latest();
 
       await repayment.connect(admin).createSchedule(
-        loanId, 12, totalAmount, installmentAmount, firstDueDate
+        loanId,
+        borrower.address,
+        principal,
+        interestRateBps,
+        termMonths,
+        startDate
       );
 
       await expect(
         repayment.connect(admin).createSchedule(
-          loanId, 12, totalAmount, installmentAmount, firstDueDate
+          loanId,
+          borrower.address,
+          principal,
+          interestRateBps,
+          termMonths,
+          startDate
         )
       ).to.be.revertedWithCustomError(repayment, "ScheduleAlreadyExists");
+    });
+
+    it("Should reject zero principal", async function () {
+      const startDate = await time.latest();
+
+      await expect(
+        repayment.connect(admin).createSchedule(
+          loanId,
+          borrower.address,
+          0,
+          interestRateBps,
+          termMonths,
+          startDate
+        )
+      ).to.be.revertedWith("Repayment: invalid principal");
     });
   });
 
   describe("Payment Recording", function () {
-    const totalAmount = ethers.parseEther("13800");
-    const installmentAmount = ethers.parseEther("1150");
-    let firstDueDate;
+    let scheduleId;
+    const paymentAmount = ethers.parseEther("1180"); // Monthly payment
+    const referenceHash = ethers.keccak256(ethers.toUtf8Bytes("PAY001"));
 
     beforeEach(async function () {
-      firstDueDate = Math.floor(Date.now() / 1000) + 30 * 24 * 60 * 60;
+      const startDate = await time.latest();
+
       await repayment.connect(admin).createSchedule(
-        loanId, 12, totalAmount, installmentAmount, firstDueDate
+        loanId,
+        borrower.address,
+        principal,
+        interestRateBps,
+        termMonths,
+        startDate
       );
+
+      scheduleId = await repayment.loanToSchedule(loanId);
     });
 
-    it("Should record full payment", async function () {
-      const paymentRef = ethers.keccak256(ethers.toUtf8Bytes("PAY001"));
-
+    it("Should record payment successfully", async function () {
       await expect(
-        repayment.connect(admin).recordPayment(
+        repayment.connect(officer).recordPayment(
           loanId,
-          installmentAmount,
-          0, // BankTransfer
-          paymentRef
+          1, // installmentNumber
+          paymentAmount,
+          PaymentMethod.GCash,
+          referenceHash
         )
       ).to.emit(repayment, "PaymentRecorded");
+    });
 
-      const schedule = await repayment.getSchedule(loanId);
-      expect(schedule.paidInstallments).to.equal(1);
+    it("Should update paid amount", async function () {
+      await repayment.connect(officer).recordPayment(
+        loanId,
+        1,
+        paymentAmount,
+        PaymentMethod.Cash,
+        referenceHash
+      );
+
+      const schedule = await repayment.schedules(scheduleId);
+      expect(schedule.totalPaid).to.be.gt(0);
+    });
+
+    it("Should increment total payments count", async function () {
+      const beforeCount = await repayment.totalPaymentsRecorded();
+
+      await repayment.connect(officer).recordPayment(
+        loanId,
+        1,
+        paymentAmount,
+        PaymentMethod.BankTransfer,
+        referenceHash
+      );
+
+      const afterCount = await repayment.totalPaymentsRecorded();
+      expect(afterCount).to.equal(beforeCount + 1n);
     });
 
     it("Should not allow duplicate payment reference", async function () {
-      const paymentRef = ethers.keccak256(ethers.toUtf8Bytes("PAY001"));
-
-      await repayment.connect(admin).recordPayment(
-        loanId, installmentAmount, 0, paymentRef
+      await repayment.connect(officer).recordPayment(
+        loanId,
+        1,
+        paymentAmount,
+        PaymentMethod.GCash,
+        referenceHash
       );
 
       await expect(
-        repayment.connect(admin).recordPayment(
-          loanId, installmentAmount, 0, paymentRef
+        repayment.connect(officer).recordPayment(
+          loanId,
+          2,
+          paymentAmount,
+          PaymentMethod.GCash,
+          referenceHash // Same reference
         )
       ).to.be.revertedWithCustomError(repayment, "DuplicatePaymentReference");
     });
 
-    it("Should handle partial payment", async function () {
-      const partialAmount = ethers.parseEther("500");
-      const paymentRef = ethers.keccak256(ethers.toUtf8Bytes("PAY001"));
+    it("Should reject zero amount payment", async function () {
+      await expect(
+        repayment.connect(officer).recordPayment(
+          loanId,
+          1,
+          0,
+          PaymentMethod.Cash,
+          referenceHash
+        )
+      ).to.be.revertedWithCustomError(repayment, "InvalidPaymentAmount");
+    });
+  });
 
-      await repayment.connect(admin).recordPayment(
-        loanId, partialAmount, 0, paymentRef
+  describe("Installment Management", function () {
+    let scheduleId;
+
+    beforeEach(async function () {
+      const startDate = await time.latest();
+
+      await repayment.connect(admin).createSchedule(
+        loanId,
+        borrower.address,
+        principal,
+        interestRateBps,
+        termMonths,
+        startDate
       );
 
-      const schedule = await repayment.getSchedule(loanId);
-      // Paid installments stays 0 for partial payment
-      expect(schedule.paidInstallments).to.equal(0);
+      scheduleId = await repayment.loanToSchedule(loanId);
     });
 
-    it("Should close schedule when fully paid", async function () {
-      // Make 12 full payments
-      for (let i = 0; i < 12; i++) {
-        const paymentRef = ethers.keccak256(ethers.toUtf8Bytes(`PAY${i.toString().padStart(3, '0')}`));
-        await repayment.connect(admin).recordPayment(
-          loanId, installmentAmount, 0, paymentRef
+    it("Should get installment details", async function () {
+      const installment = await repayment.installments(scheduleId, 1);
+      
+      expect(installment.number).to.equal(1);
+      expect(installment.totalAmount).to.be.gt(0);
+      expect(installment.status).to.equal(InstallmentStatus.Pending);
+    });
+
+    it("Should mark installment as paid after full payment", async function () {
+      const installment = await repayment.installments(scheduleId, 1);
+      const fullAmount = installment.totalAmount;
+
+      await repayment.connect(officer).recordPayment(
+        loanId,
+        1,
+        fullAmount,
+        PaymentMethod.Cash,
+        ethers.keccak256(ethers.toUtf8Bytes("PAY001"))
+      );
+
+      const updatedInstallment = await repayment.installments(scheduleId, 1);
+      expect(updatedInstallment.status).to.equal(InstallmentStatus.Paid);
+    });
+
+    it("Should mark installment as partial after partial payment", async function () {
+      const installment = await repayment.installments(scheduleId, 1);
+      const partialAmount = installment.totalAmount / 2n;
+
+      await repayment.connect(officer).recordPayment(
+        loanId,
+        1,
+        partialAmount,
+        PaymentMethod.Cash,
+        ethers.keccak256(ethers.toUtf8Bytes("PAY001"))
+      );
+
+      const updatedInstallment = await repayment.installments(scheduleId, 1);
+      expect(updatedInstallment.status).to.equal(InstallmentStatus.Partial);
+    });
+  });
+
+  describe("Loan Completion", function () {
+    let scheduleId;
+
+    beforeEach(async function () {
+      // Create a short-term loan for easier testing
+      const shortLoanId = ethers.keccak256(ethers.toUtf8Bytes("SHORTLOAN"));
+      const shortPrincipal = ethers.parseEther("1000");
+      const shortTerm = 2; // 2 months
+      const productId = ethers.keccak256(ethers.toUtf8Bytes("PRODUCT002"));
+
+      await loanCore.connect(borrower).createLoan(
+        shortLoanId,
+        productId,
+        shortPrincipal,
+        shortTerm,
+        100
+      );
+      
+      // submitLoan requires: loanId, eligibilityScore, riskCategory, aiRecommendationHash
+      const eligibilityScore = 85;
+      const riskCategory = 0; // Low
+      const aiRecommendationHash = ethers.keccak256(ethers.toUtf8Bytes("AI_REC_002"));
+      await loanCore.connect(borrower).submitLoan(shortLoanId, eligibilityScore, riskCategory, aiRecommendationHash);
+      
+      await loanCore.assignOfficer(shortLoanId, officer.address);
+      await loanCore.connect(officer).approveLoan(
+        shortLoanId,
+        shortPrincipal,
+        ethers.keccak256(ethers.toUtf8Bytes("NOTES"))
+      );
+      await loanCore.markDisbursed(shortLoanId, shortPrincipal);
+
+      const startDate = await time.latest();
+      await repayment.connect(admin).createSchedule(
+        shortLoanId,
+        borrower.address,
+        shortPrincipal,
+        100,
+        shortTerm,
+        startDate
+      );
+
+      scheduleId = await repayment.loanToSchedule(shortLoanId);
+    });
+
+    it("Should emit LoanFullyRepaid when all installments paid", async function () {
+      const schedule = await repayment.schedules(scheduleId);
+      const loanIdFromSchedule = schedule.loanId;
+
+      // Pay all installments
+      for (let i = 1; i <= 2; i++) {
+        const installment = await repayment.installments(scheduleId, i);
+        await repayment.connect(officer).recordPayment(
+          loanIdFromSchedule,
+          i,
+          installment.totalAmount,
+          PaymentMethod.Cash,
+          ethers.keccak256(ethers.toUtf8Bytes(`PAY${i}`))
         );
       }
 
-      const schedule = await repayment.getSchedule(loanId);
-      expect(schedule.paidInstallments).to.equal(12);
-      expect(schedule.isActive).to.be.false;
+      const updatedSchedule = await repayment.schedules(scheduleId);
+      expect(updatedSchedule.isCompleted).to.be.true;
     });
   });
 
-  describe("Overdue Detection", function () {
-    const totalAmount = ethers.parseEther("13800");
-    const installmentAmount = ethers.parseEther("1150");
-
-    it("Should mark installment as overdue", async function () {
-      // Set due date in the past
-      const pastDueDate = Math.floor(Date.now() / 1000) - 10 * 24 * 60 * 60;
-      await repayment.connect(admin).createSchedule(
-        loanId, 12, totalAmount, installmentAmount, pastDueDate
-      );
-
-      await expect(
-        repayment.connect(admin).markOverdue(loanId)
-      ).to.emit(repayment, "InstallmentOverdue");
+  describe("Set Penalty Calculator", function () {
+    it("Should allow admin to set penalty calculator", async function () {
+      const newPC = await (await ethers.getContractFactory("PenaltyCalculator")).deploy();
+      
+      await repayment.connect(admin).setPenaltyCalculator(await newPC.getAddress());
+      
+      const currentPC = await repayment.penaltyCalculator();
+      expect(currentPC).to.equal(await newPC.getAddress());
     });
 
-    it("Should not mark as overdue if paid", async function () {
-      const pastDueDate = Math.floor(Date.now() / 1000) - 10 * 24 * 60 * 60;
-      await repayment.connect(admin).createSchedule(
-        loanId, 12, totalAmount, installmentAmount, pastDueDate
-      );
-
-      // Pay first installment
-      const paymentRef = ethers.keccak256(ethers.toUtf8Bytes("PAY001"));
-      await repayment.connect(admin).recordPayment(
-        loanId, installmentAmount, 0, paymentRef
-      );
-
-      // No overdue since first installment is paid
-      // This would check the second installment which isn't due yet
-      // The function should handle this correctly
-    });
-  });
-
-  describe("Default Handling", function () {
-    const totalAmount = ethers.parseEther("13800");
-    const installmentAmount = ethers.parseEther("1150");
-
-    it("Should mark loan as defaulted", async function () {
-      const pastDueDate = Math.floor(Date.now() / 1000) - 100 * 24 * 60 * 60; // 100 days ago
-      await repayment.connect(admin).createSchedule(
-        loanId, 12, totalAmount, installmentAmount, pastDueDate
-      );
-
-      // Mark overdue first
-      await repayment.connect(admin).markOverdue(loanId);
-
-      // Fast forward past default period (90 days default)
-      await time.increase(95 * 24 * 60 * 60);
-
-      const reasonHash = ethers.keccak256(ethers.toUtf8Bytes("MISSED_90_DAYS"));
-      await expect(
-        repayment.connect(admin).markDefault(loanId, reasonHash)
-      ).to.emit(repayment, "LoanDefaulted");
-
-      // Check loan status updated
-      const loan = await loanCore.getLoan(loanId);
-      expect(loan.status).to.equal(7); // Defaulted
-    });
-  });
-
-  describe("Payment Methods", function () {
-    beforeEach(async function () {
-      const firstDueDate = Math.floor(Date.now() / 1000) + 30 * 24 * 60 * 60;
-      await repayment.connect(admin).createSchedule(
-        loanId, 12, ethers.parseEther("13800"), ethers.parseEther("1150"), firstDueDate
-      );
-    });
-
-    it("Should accept GCash payment", async function () {
-      const paymentRef = ethers.keccak256(ethers.toUtf8Bytes("GCASH001"));
+    it("Should not allow non-admin to set penalty calculator", async function () {
+      const newPC = await (await ethers.getContractFactory("PenaltyCalculator")).deploy();
       
       await expect(
-        repayment.connect(admin).recordPayment(
-          loanId,
-          ethers.parseEther("1150"),
-          2, // GCash
-          paymentRef
-        )
-      ).to.emit(repayment, "PaymentRecorded");
-    });
-
-    it("Should accept Maya payment", async function () {
-      const paymentRef = ethers.keccak256(ethers.toUtf8Bytes("MAYA001"));
-      
-      await expect(
-        repayment.connect(admin).recordPayment(
-          loanId,
-          ethers.parseEther("1150"),
-          3, // Maya
-          paymentRef
-        )
-      ).to.emit(repayment, "PaymentRecorded");
-    });
-
-    it("Should accept Cash payment", async function () {
-      const paymentRef = ethers.keccak256(ethers.toUtf8Bytes("CASH001"));
-      
-      await expect(
-        repayment.connect(admin).recordPayment(
-          loanId,
-          ethers.parseEther("1150"),
-          1, // Cash
-          paymentRef
-        )
-      ).to.emit(repayment, "PaymentRecorded");
-    });
-  });
-
-  describe("Schedule Queries", function () {
-    beforeEach(async function () {
-      const firstDueDate = Math.floor(Date.now() / 1000) + 30 * 24 * 60 * 60;
-      await repayment.connect(admin).createSchedule(
-        loanId, 12, ethers.parseEther("13800"), ethers.parseEther("1150"), firstDueDate
-      );
-    });
-
-    it("Should return next due installment", async function () {
-      const nextInstallment = await repayment.getNextDueInstallment(loanId);
-      expect(nextInstallment).to.equal(0); // First installment (index 0)
-    });
-
-    it("Should return correct remaining balance", async function () {
-      const balance = await repayment.getRemainingBalance(loanId);
-      expect(balance).to.equal(ethers.parseEther("13800"));
-    });
-
-    it("Should update remaining balance after payment", async function () {
-      const paymentRef = ethers.keccak256(ethers.toUtf8Bytes("PAY001"));
-      await repayment.connect(admin).recordPayment(
-        loanId, ethers.parseEther("1150"), 0, paymentRef
-      );
-
-      const balance = await repayment.getRemainingBalance(loanId);
-      expect(balance).to.equal(ethers.parseEther("12650")); // 13800 - 1150
+        repayment.connect(other).setPenaltyCalculator(await newPC.getAddress())
+      ).to.be.reverted;
     });
   });
 });

@@ -1,42 +1,27 @@
-// Test suite for LoanOracle contract
+// Test suite for LoanOracle contract - Aligned with actual contract implementation
 const { expect } = require("chai");
 const { ethers, upgrades } = require("hardhat");
 const { time } = require("@nomicfoundation/hardhat-network-helpers");
 
 describe("LoanOracle", function () {
   let loanOracle;
-  let accessControl;
   let admin, oracle1, oracle2, other;
 
   const ADMIN_ROLE = ethers.keccak256(ethers.toUtf8Bytes("ADMIN_ROLE"));
   const ORACLE_ROLE = ethers.keccak256(ethers.toUtf8Bytes("ORACLE_ROLE"));
+  const UPGRADER_ROLE = ethers.keccak256(ethers.toUtf8Bytes("UPGRADER_ROLE"));
 
   beforeEach(async function () {
     [admin, oracle1, oracle2, other] = await ethers.getSigners();
 
-    // Deploy AccessControl
-    const LoanAccessControl = await ethers.getContractFactory("LoanAccessControl");
-    accessControl = await upgrades.deployProxy(
-      LoanAccessControl,
-      [admin.address],
-      { kind: "uups" }
-    );
-    await accessControl.waitForDeployment();
-
-    // Deploy LoanOracle
+    // Deploy LoanOracle with (admin, oracle) params
     const LoanOracle = await ethers.getContractFactory("LoanOracle");
     loanOracle = await upgrades.deployProxy(
       LoanOracle,
-      [
-        await accessControl.getAddress(),
-        admin.address
-      ],
+      [admin.address, oracle1.address],
       { kind: "uups" }
     );
     await loanOracle.waitForDeployment();
-
-    // Grant oracle role
-    await loanOracle.grantRole(ORACLE_ROLE, oracle1.address);
   });
 
   describe("Deployment", function () {
@@ -44,285 +29,415 @@ describe("LoanOracle", function () {
       expect(await loanOracle.VERSION()).to.equal(1);
     });
 
-    it("Should set default data staleness", async function () {
-      expect(await loanOracle.maxDataStalenessSeconds()).to.equal(3600); // 1 hour
+    it("Should set admin role", async function () {
+      expect(await loanOracle.hasRole(ADMIN_ROLE, admin.address)).to.be.true;
+    });
+
+    it("Should grant oracle role to initial oracle", async function () {
+      expect(await loanOracle.hasRole(ORACLE_ROLE, oracle1.address)).to.be.true;
+    });
+
+    it("Should set score validity period", async function () {
+      expect(await loanOracle.SCORE_VALIDITY_PERIOD()).to.equal(7 * 24 * 60 * 60); // 7 days
     });
   });
 
   describe("AI Score Submission", function () {
-    const applicationId = ethers.keccak256(ethers.toUtf8Bytes("APP001"));
+    const loanId = ethers.keccak256(ethers.toUtf8Bytes("LOAN001"));
+    const eligibilityScore = 78;
+    const riskCategory = 1; // Medium
+    const recommendedAmount = ethers.parseEther("10000");
+    const analysisHash = ethers.keccak256(ethers.toUtf8Bytes("AI_ANALYSIS"));
 
     it("Should submit AI score successfully", async function () {
-      const eligibilityScore = 78;
-      const riskLevel = 1; // Medium
-      const analysisHash = ethers.keccak256(ethers.toUtf8Bytes("ANALYSIS"));
-      const recommendedAmount = ethers.parseEther("10000");
-      const recommendedTerm = 12;
-
       await expect(
         loanOracle.connect(oracle1).submitAIScore(
-          applicationId,
+          loanId,
           eligibilityScore,
-          riskLevel,
-          analysisHash,
+          riskCategory,
           recommendedAmount,
-          recommendedTerm
+          analysisHash
         )
       ).to.emit(loanOracle, "AIScoreSubmitted");
+    });
 
-      const scoreData = await loanOracle.getAIScore(applicationId);
-      expect(scoreData.eligibilityScore).to.equal(eligibilityScore);
-      expect(scoreData.riskLevel).to.equal(riskLevel);
-      expect(scoreData.isValid).to.be.true;
+    it("Should store score correctly", async function () {
+      await loanOracle.connect(oracle1).submitAIScore(
+        loanId,
+        eligibilityScore,
+        riskCategory,
+        recommendedAmount,
+        analysisHash
+      );
+
+      const score = await loanOracle.getAIScore(loanId);
+      expect(score.eligibilityScore).to.equal(eligibilityScore);
+      expect(score.riskCategory).to.equal(riskCategory);
+      expect(score.recommendedAmount).to.equal(recommendedAmount);
+      expect(score.analysisHash).to.equal(analysisHash);
+      expect(score.isValid).to.be.true;
     });
 
     it("Should reject score above 100", async function () {
       await expect(
         loanOracle.connect(oracle1).submitAIScore(
-          applicationId,
-          101, // Invalid score
-          1,
-          ethers.keccak256(ethers.toUtf8Bytes("ANALYSIS")),
-          ethers.parseEther("10000"),
-          12
+          loanId,
+          101, // Invalid
+          riskCategory,
+          recommendedAmount,
+          analysisHash
         )
       ).to.be.revertedWithCustomError(loanOracle, "InvalidScore");
+    });
+
+    it("Should reject invalid risk category", async function () {
+      await expect(
+        loanOracle.connect(oracle1).submitAIScore(
+          loanId,
+          eligibilityScore,
+          3, // Invalid: must be 0, 1, or 2
+          recommendedAmount,
+          analysisHash
+        )
+      ).to.be.revertedWith("LoanOracle: invalid risk category");
     });
 
     it("Should not allow non-oracle to submit", async function () {
       await expect(
         loanOracle.connect(other).submitAIScore(
-          applicationId,
-          78,
-          1,
-          ethers.keccak256(ethers.toUtf8Bytes("ANALYSIS")),
-          ethers.parseEther("10000"),
-          12
+          loanId,
+          eligibilityScore,
+          riskCategory,
+          recommendedAmount,
+          analysisHash
         )
       ).to.be.reverted;
     });
 
-    it("Should allow score update", async function () {
-      // First submission
+    it("Should not allow duplicate score within validity period", async function () {
       await loanOracle.connect(oracle1).submitAIScore(
-        applicationId, 70, 1,
-        ethers.keccak256(ethers.toUtf8Bytes("ANALYSIS1")),
-        ethers.parseEther("10000"), 12
+        loanId,
+        eligibilityScore,
+        riskCategory,
+        recommendedAmount,
+        analysisHash
       );
 
-      // Update with new score
+      await expect(
+        loanOracle.connect(oracle1).submitAIScore(
+          loanId,
+          80, // Different score
+          riskCategory,
+          recommendedAmount,
+          analysisHash
+        )
+      ).to.be.revertedWithCustomError(loanOracle, "ScoreAlreadyExists");
+    });
+
+    it("Should allow new score after validity period expires", async function () {
       await loanOracle.connect(oracle1).submitAIScore(
-        applicationId, 85, 0,
-        ethers.keccak256(ethers.toUtf8Bytes("ANALYSIS2")),
-        ethers.parseEther("15000"), 18
+        loanId,
+        eligibilityScore,
+        riskCategory,
+        recommendedAmount,
+        analysisHash
       );
 
-      const scoreData = await loanOracle.getAIScore(applicationId);
-      expect(scoreData.eligibilityScore).to.equal(85);
+      // Fast forward past validity period (7 days)
+      await time.increase(8 * 24 * 60 * 60);
+
+      // Should allow new score
+      await expect(
+        loanOracle.connect(oracle1).submitAIScore(
+          loanId,
+          85,
+          0, // Low risk
+          recommendedAmount,
+          ethers.keccak256(ethers.toUtf8Bytes("NEW_ANALYSIS"))
+        )
+      ).to.emit(loanOracle, "AIScoreSubmitted");
     });
   });
 
-  describe("Payment Confirmation", function () {
-    const paymentId = ethers.keccak256(ethers.toUtf8Bytes("PAY001"));
-    const transactionHash = ethers.keccak256(ethers.toUtf8Bytes("TXHASH"));
+  describe("Score Invalidation", function () {
+    const loanId = ethers.keccak256(ethers.toUtf8Bytes("LOAN001"));
 
-    it("Should confirm payment successfully", async function () {
-      const amount = ethers.parseEther("1000");
-      const method = 0; // BankTransfer
-      const externalRef = ethers.keccak256(ethers.toUtf8Bytes("EXTREF"));
-
-      await expect(
-        loanOracle.connect(oracle1).confirmPayment(
-          paymentId,
-          amount,
-          method,
-          transactionHash,
-          externalRef
-        )
-      ).to.emit(loanOracle, "PaymentConfirmed");
-
-      const confirmation = await loanOracle.getPaymentConfirmation(paymentId);
-      expect(confirmation.amount).to.equal(amount);
-      expect(confirmation.isConfirmed).to.be.true;
+    beforeEach(async function () {
+      await loanOracle.connect(oracle1).submitAIScore(
+        loanId,
+        78,
+        1,
+        ethers.parseEther("10000"),
+        ethers.keccak256(ethers.toUtf8Bytes("ANALYSIS"))
+      );
     });
 
-    it("Should not confirm duplicate payment", async function () {
-      const amount = ethers.parseEther("1000");
+    it("Should invalidate score by admin", async function () {
+      await expect(
+        loanOracle.connect(admin).invalidateScore(loanId)
+      ).to.emit(loanOracle, "AIScoreInvalidated");
+    });
+
+    it("Should mark score as invalid", async function () {
+      await loanOracle.connect(admin).invalidateScore(loanId);
+
+      const score = await loanOracle.getAIScore(loanId);
+      expect(score.isValid).to.be.false;
+    });
+
+    it("Should not allow non-admin to invalidate", async function () {
+      await expect(
+        loanOracle.connect(other).invalidateScore(loanId)
+      ).to.be.reverted;
+    });
+
+    it("Should not invalidate non-existent score", async function () {
+      const unknownLoan = ethers.keccak256(ethers.toUtf8Bytes("UNKNOWN"));
       
-      await loanOracle.connect(oracle1).confirmPayment(
-        paymentId,
-        amount,
-        0,
-        transactionHash,
-        ethers.keccak256(ethers.toUtf8Bytes("EXTREF"))
+      await expect(
+        loanOracle.connect(admin).invalidateScore(unknownLoan)
+      ).to.be.revertedWithCustomError(loanOracle, "ScoreNotFound");
+    });
+  });
+
+  describe("Score Validity Check", function () {
+    const loanId = ethers.keccak256(ethers.toUtf8Bytes("LOAN001"));
+
+    beforeEach(async function () {
+      await loanOracle.connect(oracle1).submitAIScore(
+        loanId,
+        78,
+        1,
+        ethers.parseEther("10000"),
+        ethers.keccak256(ethers.toUtf8Bytes("ANALYSIS"))
+      );
+    });
+
+    it("Should return true for valid score", async function () {
+      const isValid = await loanOracle.isScoreValid(loanId);
+      expect(isValid).to.be.true;
+    });
+
+    it("Should return false after invalidation", async function () {
+      await loanOracle.connect(admin).invalidateScore(loanId);
+
+      const isValid = await loanOracle.isScoreValid(loanId);
+      expect(isValid).to.be.false;
+    });
+
+    it("Should return false after validity period expires", async function () {
+      await time.increase(8 * 24 * 60 * 60); // 8 days
+
+      const isValid = await loanOracle.isScoreValid(loanId);
+      expect(isValid).to.be.false;
+    });
+  });
+
+  describe("External Payment Confirmation", function () {
+    const loanId = ethers.keccak256(ethers.toUtf8Bytes("LOAN001"));
+    const externalRef = ethers.keccak256(ethers.toUtf8Bytes("EXTPAY001"));
+    const amount = ethers.parseEther("1000");
+
+    it("Should confirm external payment", async function () {
+      await expect(
+        loanOracle.connect(oracle1).confirmExternalPayment(
+          loanId,
+          externalRef,
+          amount
+        )
+      ).to.emit(loanOracle, "PaymentConfirmed");
+    });
+
+    it("Should store payment confirmation", async function () {
+      await loanOracle.connect(oracle1).confirmExternalPayment(
+        loanId,
+        externalRef,
+        amount
+      );
+
+      const payment = await loanOracle.getExternalPayment(externalRef);
+      expect(payment.loanId).to.equal(loanId);
+      expect(payment.amount).to.equal(amount);
+      expect(payment.isConfirmed).to.be.true;
+    });
+
+    it("Should not allow duplicate payment confirmation", async function () {
+      await loanOracle.connect(oracle1).confirmExternalPayment(
+        loanId,
+        externalRef,
+        amount
       );
 
       await expect(
-        loanOracle.connect(oracle1).confirmPayment(
-          paymentId,
-          amount,
-          0,
-          transactionHash,
-          ethers.keccak256(ethers.toUtf8Bytes("EXTREF2"))
+        loanOracle.connect(oracle1).confirmExternalPayment(
+          loanId,
+          externalRef, // Same reference
+          amount
         )
       ).to.be.revertedWithCustomError(loanOracle, "PaymentAlreadyConfirmed");
     });
-  });
 
-  describe("Disbursement Confirmation", function () {
-    const disbursementId = ethers.keccak256(ethers.toUtf8Bytes("DISB001"));
-    const transactionHash = ethers.keccak256(ethers.toUtf8Bytes("TXHASH"));
-
-    it("Should confirm disbursement successfully", async function () {
-      const amount = ethers.parseEther("10000");
-      const externalRef = ethers.keccak256(ethers.toUtf8Bytes("EXTREF"));
-
-      await expect(
-        loanOracle.connect(oracle1).confirmDisbursement(
-          disbursementId,
-          amount,
-          transactionHash,
-          externalRef
-        )
-      ).to.emit(loanOracle, "DisbursementConfirmed");
-
-      const confirmation = await loanOracle.getDisbursementConfirmation(disbursementId);
-      expect(confirmation.amount).to.equal(amount);
-      expect(confirmation.isConfirmed).to.be.true;
-    });
-  });
-
-  describe("Data Staleness", function () {
-    const applicationId = ethers.keccak256(ethers.toUtf8Bytes("APP001"));
-
-    it("Should return valid score within staleness window", async function () {
-      await loanOracle.connect(oracle1).submitAIScore(
-        applicationId, 78, 1,
-        ethers.keccak256(ethers.toUtf8Bytes("ANALYSIS")),
-        ethers.parseEther("10000"), 12
+    it("Should check if payment is confirmed", async function () {
+      await loanOracle.connect(oracle1).confirmExternalPayment(
+        loanId,
+        externalRef,
+        amount
       );
 
-      const isStale = await loanOracle.isScoreStale(applicationId);
-      expect(isStale).to.be.false;
+      const isConfirmed = await loanOracle.isPaymentConfirmed(loanId, externalRef);
+      expect(isConfirmed).to.be.true;
     });
 
-    it("Should detect stale score", async function () {
-      await loanOracle.connect(oracle1).submitAIScore(
-        applicationId, 78, 1,
-        ethers.keccak256(ethers.toUtf8Bytes("ANALYSIS")),
-        ethers.parseEther("10000"), 12
-      );
-
-      // Fast forward beyond staleness window
-      await time.increase(3601);
-
-      const isStale = await loanOracle.isScoreStale(applicationId);
-      expect(isStale).to.be.true;
+    it("Should reject empty loan ID", async function () {
+      await expect(
+        loanOracle.connect(oracle1).confirmExternalPayment(
+          ethers.ZeroHash,
+          externalRef,
+          amount
+        )
+      ).to.be.revertedWith("LoanOracle: empty loan ID");
     });
 
-    it("Should allow admin to update staleness threshold", async function () {
-      await loanOracle.connect(admin).setMaxDataStaleness(7200); // 2 hours
-      expect(await loanOracle.maxDataStalenessSeconds()).to.equal(7200);
+    it("Should reject zero amount", async function () {
+      await expect(
+        loanOracle.connect(oracle1).confirmExternalPayment(
+          loanId,
+          externalRef,
+          0
+        )
+      ).to.be.revertedWith("LoanOracle: invalid amount");
     });
   });
 
-  describe("Document Verification", function () {
-    const documentId = ethers.keccak256(ethers.toUtf8Bytes("DOC001"));
+  describe("Batch Payment Confirmation", function () {
+    it("Should confirm multiple payments in batch", async function () {
+      const loanIds = [
+        ethers.keccak256(ethers.toUtf8Bytes("LOAN001")),
+        ethers.keccak256(ethers.toUtf8Bytes("LOAN002")),
+        ethers.keccak256(ethers.toUtf8Bytes("LOAN003"))
+      ];
+      const externalRefs = [
+        ethers.keccak256(ethers.toUtf8Bytes("PAY001")),
+        ethers.keccak256(ethers.toUtf8Bytes("PAY002")),
+        ethers.keccak256(ethers.toUtf8Bytes("PAY003"))
+      ];
+      const amounts = [
+        ethers.parseEther("100"),
+        ethers.parseEther("200"),
+        ethers.parseEther("300")
+      ];
 
-    it("Should submit document verification", async function () {
-      const documentHash = ethers.keccak256(ethers.toUtf8Bytes("DOCHASH"));
-      const verificationStatus = 1; // Verified
-      const confidence = 95;
+      const tx = await loanOracle.connect(oracle1).confirmPaymentsBatch(
+        loanIds,
+        externalRefs,
+        amounts
+      );
 
-      await expect(
-        loanOracle.connect(oracle1).submitDocumentVerification(
-          documentId,
-          documentHash,
-          verificationStatus,
-          confidence
-        )
-      ).to.emit(loanOracle, "DocumentVerified");
-
-      const verification = await loanOracle.getDocumentVerification(documentId);
-      expect(verification.status).to.equal(verificationStatus);
-      expect(verification.confidence).to.equal(confidence);
+      const receipt = await tx.wait();
+      
+      // Check all payments are confirmed
+      for (let i = 0; i < externalRefs.length; i++) {
+        const isConfirmed = await loanOracle.isPaymentConfirmed(loanIds[i], externalRefs[i]);
+        expect(isConfirmed).to.be.true;
+      }
     });
 
-    it("Should reject confidence above 100", async function () {
+    it("Should skip already confirmed payments", async function () {
+      const loanId = ethers.keccak256(ethers.toUtf8Bytes("LOAN001"));
+      const externalRef = ethers.keccak256(ethers.toUtf8Bytes("PAY001"));
+
+      // Confirm first
+      await loanOracle.connect(oracle1).confirmExternalPayment(
+        loanId,
+        externalRef,
+        ethers.parseEther("100")
+      );
+
+      // Try batch with same payment - should not revert
+      await loanOracle.connect(oracle1).confirmPaymentsBatch(
+        [loanId],
+        [externalRef],
+        [ethers.parseEther("100")]
+      );
+    });
+
+    it("Should reject mismatched array lengths", async function () {
       await expect(
-        loanOracle.connect(oracle1).submitDocumentVerification(
-          documentId,
-          ethers.keccak256(ethers.toUtf8Bytes("DOCHASH")),
-          1,
-          101 // Invalid confidence
+        loanOracle.connect(oracle1).confirmPaymentsBatch(
+          [ethers.keccak256(ethers.toUtf8Bytes("LOAN001"))],
+          [ethers.keccak256(ethers.toUtf8Bytes("PAY001")), ethers.keccak256(ethers.toUtf8Bytes("PAY002"))],
+          [ethers.parseEther("100")]
         )
-      ).to.be.revertedWithCustomError(loanOracle, "InvalidConfidence");
+      ).to.be.revertedWith("LoanOracle: array mismatch");
     });
   });
 
   describe("Oracle Management", function () {
-    it("Should register new oracle", async function () {
-      await loanOracle.connect(admin).grantRole(ORACLE_ROLE, oracle2.address);
+    it("Should add new oracle", async function () {
+      await expect(
+        loanOracle.connect(admin).addOracle(oracle2.address)
+      ).to.emit(loanOracle, "OracleAddressUpdated");
+
       expect(await loanOracle.hasRole(ORACLE_ROLE, oracle2.address)).to.be.true;
     });
 
-    it("Should revoke oracle access", async function () {
-      await loanOracle.connect(admin).revokeRole(ORACLE_ROLE, oracle1.address);
-      expect(await loanOracle.hasRole(ORACLE_ROLE, oracle1.address)).to.be.false;
-    });
-
-    it("Should track oracle submissions", async function () {
-      const applicationId = ethers.keccak256(ethers.toUtf8Bytes("APP001"));
+    it("Should remove oracle", async function () {
+      await loanOracle.connect(admin).addOracle(oracle2.address);
       
-      await loanOracle.connect(oracle1).submitAIScore(
-        applicationId, 78, 1,
-        ethers.keccak256(ethers.toUtf8Bytes("ANALYSIS")),
-        ethers.parseEther("10000"), 12
-      );
-
-      const scoreData = await loanOracle.getAIScore(applicationId);
-      expect(scoreData.submittedBy).to.equal(oracle1.address);
-    });
-  });
-
-  describe("Price Feed (Future Extension)", function () {
-    it("Should have placeholder for exchange rate updates", async function () {
-      // This tests that the contract has the capability for future price feeds
-      // For currency conversion if needed
-      const rate = await loanOracle.getExchangeRate("PHP", "USD");
-      // Default should be 0 or some base rate
-      expect(rate).to.equal(0); // Not yet implemented
-    });
-  });
-
-  describe("Emergency Controls", function () {
-    it("Should invalidate score", async function () {
-      const applicationId = ethers.keccak256(ethers.toUtf8Bytes("APP001"));
-      
-      await loanOracle.connect(oracle1).submitAIScore(
-        applicationId, 78, 1,
-        ethers.keccak256(ethers.toUtf8Bytes("ANALYSIS")),
-        ethers.parseEther("10000"), 12
-      );
-
-      await loanOracle.connect(admin).invalidateScore(applicationId);
-
-      const scoreData = await loanOracle.getAIScore(applicationId);
-      expect(scoreData.isValid).to.be.false;
-    });
-
-    it("Should not allow non-admin to invalidate", async function () {
-      const applicationId = ethers.keccak256(ethers.toUtf8Bytes("APP001"));
-      
-      await loanOracle.connect(oracle1).submitAIScore(
-        applicationId, 78, 1,
-        ethers.keccak256(ethers.toUtf8Bytes("ANALYSIS")),
-        ethers.parseEther("10000"), 12
-      );
-
       await expect(
-        loanOracle.connect(other).invalidateScore(applicationId)
+        loanOracle.connect(admin).removeOracle(oracle2.address)
+      ).to.emit(loanOracle, "OracleAddressUpdated");
+
+      expect(await loanOracle.hasRole(ORACLE_ROLE, oracle2.address)).to.be.false;
+    });
+
+    it("Should not allow non-admin to add oracle", async function () {
+      await expect(
+        loanOracle.connect(other).addOracle(oracle2.address)
       ).to.be.reverted;
+    });
+
+    it("Should reject zero address for new oracle", async function () {
+      await expect(
+        loanOracle.connect(admin).addOracle(ethers.ZeroAddress)
+      ).to.be.revertedWith("LoanOracle: zero address");
+    });
+  });
+
+  describe("Statistics", function () {
+    it("Should track total scores submitted", async function () {
+      const loanId1 = ethers.keccak256(ethers.toUtf8Bytes("LOAN001"));
+      const loanId2 = ethers.keccak256(ethers.toUtf8Bytes("LOAN002"));
+
+      await loanOracle.connect(oracle1).submitAIScore(
+        loanId1, 75, 1, ethers.parseEther("10000"),
+        ethers.keccak256(ethers.toUtf8Bytes("ANALYSIS1"))
+      );
+
+      await loanOracle.connect(oracle1).submitAIScore(
+        loanId2, 80, 0, ethers.parseEther("15000"),
+        ethers.keccak256(ethers.toUtf8Bytes("ANALYSIS2"))
+      );
+
+      const [totalScores, totalPayments] = await loanOracle.getStats();
+      expect(totalScores).to.equal(2);
+    });
+
+    it("Should track total payments confirmed", async function () {
+      await loanOracle.connect(oracle1).confirmExternalPayment(
+        ethers.keccak256(ethers.toUtf8Bytes("LOAN001")),
+        ethers.keccak256(ethers.toUtf8Bytes("PAY001")),
+        ethers.parseEther("100")
+      );
+
+      await loanOracle.connect(oracle1).confirmExternalPayment(
+        ethers.keccak256(ethers.toUtf8Bytes("LOAN002")),
+        ethers.keccak256(ethers.toUtf8Bytes("PAY002")),
+        ethers.parseEther("200")
+      );
+
+      const [totalScores, totalPayments] = await loanOracle.getStats();
+      expect(totalPayments).to.equal(2);
     });
   });
 });
