@@ -1,61 +1,46 @@
-# Backend & Smart Contract Alignment Status
+# Backend & Smart Contract Alignment
 
-## ✅ Status: FULLY ALIGNED
+## Contracts
 
-The smart contracts exactly mirror the Django backend functionality. **No extra features exist in the smart contracts that aren't implemented in the backend.**
-
----
-
-## 📁 Current Contracts (5 Total)
-
-| Contract | Purpose | Mirrors Backend? |
-|----------|---------|-----------------|
-| `LoanAccessControl.sol` | Role management (Officer, Borrower) | ✅ Yes |
-| `LoanCore.sol` | Loan lifecycle (create → disburse) | ✅ Yes |
-| `Disbursement.sol` | Fund release tracking | ✅ Yes |
-| `Repayment.sol` | Payment recording & schedules | ✅ Yes |
-| `AuditRegistry.sol` | Immutable audit logging | ✅ Blockchain benefit |
+| Contract | Backend Model | Purpose |
+|----------|---------------|---------|
+| `LoanAccessControl.sol` | `LoanOfficer`, `Customer` | Role management |
+| `LoanCore.sol` | `LoanApplication` | Loan lifecycle |
+| `Disbursement.sol` | `disburse()` method | Fund release tracking |
+| `Repayment.sol` | `RepaymentSchedule`, `LoanPayment` | Payment recording |
+| `AuditRegistry.sol` | `AuditLog` | Immutable audit trail |
 
 ---
 
-## 🗑️ Removed Contracts (Not in Backend)
+## Status Mapping
 
-| Contract | Reason Removed |
-|----------|---------------|
-| `PenaltyCalculator.sol` | Backend has no penalty system |
-| `LoanOracle.sol` | Backend does AI scoring directly (no oracle pattern) |
-| `TokenDisbursement.sol` | Backend uses PHP amounts, not ERC20 tokens |
-| `TokenRepayment.sol` | Backend uses PHP amounts, not ERC20 tokens |
-| `LoanToken.sol` | No ERC20 token in backend |
+### Loan Status
 
----
-
-## 📊 Status Alignment
-
-### Loan Application Lifecycle
-
-| Backend Status | Smart Contract Status | Value |
-|----------------|----------------------|-------|
+| Django | Smart Contract | Value |
+|--------|---------------|-------|
 | `draft` | `Draft` | 0 |
 | `submitted` | `Submitted` | 1 |
 | `under_review` | `UnderReview` | 2 |
 | `approved` | `Approved` | 3 |
 | `rejected` | `Rejected` | 4 |
 | `disbursed` | `Disbursed` | 5 |
-| `cancelled` | `Cancelled` | 6 |
+| `active` | `Active` | 6 |
+| `completed` | `Completed` | 7 |
+| `defaulted` | `Defaulted` | 8 |
+| `cancelled` | `Cancelled` | 9 |
 
 ### Disbursement Status
 
-| Backend | Smart Contract | Value |
-|---------|---------------|-------|
+| Django | Smart Contract | Value |
+|--------|---------------|-------|
 | Pending | `Pending` | 0 |
 | Processing | `Processing` | 1 |
 | Completed | `Completed` | 2 |
 
 ### Installment Status
 
-| Backend | Smart Contract | Value |
-|---------|---------------|-------|
+| Django | Smart Contract | Value |
+|--------|---------------|-------|
 | `pending` | `Pending` | 0 |
 | `paid` | `Paid` | 1 |
 | `partial` | `Partial` | 2 |
@@ -63,8 +48,8 @@ The smart contracts exactly mirror the Django backend functionality. **No extra 
 
 ### Payment Methods
 
-| Backend | Smart Contract | Value |
-|---------|---------------|-------|
+| Django | Smart Contract | Value |
+|--------|---------------|-------|
 | `cash` | `Cash` | 0 |
 | `bank_transfer` | `BankTransfer` | 1 |
 | `gcash` | `GCash` | 2 |
@@ -73,24 +58,98 @@ The smart contracts exactly mirror the Django backend functionality. **No extra 
 
 ---
 
-## 🧪 Test Results
+## Data Flow
+
+```
+Django Backend                    Smart Contracts
+───────────────────────────────────────────────────────
+POST /api/loans/apply/     →     LoanCore.createLoan()
+PUT .../review/ (approve)  →     LoanCore.approveLoan()
+PUT .../review/ (reject)   →     LoanCore.rejectLoan()
+POST .../disburse/         →     Disbursement.initiateDisbursement()
+                           →     Disbursement.completeDisbursement()
+POST /api/loans/payment/   →     Repayment.recordPayment()
+```
+
+---
+
+## Field Mapping
+
+### LoanApplication → LoanCore
+
+| Django Field | Smart Contract Field |
+|--------------|---------------------|
+| `id` | `loanId` (bytes32 hash) |
+| `customer` | `borrower` (address) |
+| `loan_product` | `productId` (bytes32 hash) |
+| `requested_amount` | `requestedAmount` |
+| `approved_amount` | `approvedAmount` |
+| `term_months` | `termMonths` |
+| `interest_rate` | `interestRateBps` |
+| `status` | `status` (enum) |
+| `assigned_officer` | `assignedOfficer` (address) |
+| `eligibility_score` | `eligibilityScore` |
+| `risk_category` | `riskCategory` |
+
+### LoanPayment → Repayment
+
+| Django Field | Smart Contract Field |
+|--------------|---------------------|
+| `loan_application` | `loanId` |
+| `amount` | `amount` |
+| `payment_method` | `method` (enum) |
+| `reference_number` | `referenceHash` (bytes32) |
+| `created_at` | `recordedAt` |
+
+### LoanOfficer → LoanAccessControl
+
+| Django Field | Smart Contract Field |
+|--------------|---------------------|
+| `user` | `officer` (address) |
+| `employee_id` | `employeeIdHash` (bytes32) |
+| `is_active` | `isActive` |
+
+---
+
+## Integration Pattern
+
+```python
+# Django service example
+from web3 import Web3
+
+class BlockchainService:
+    def record_loan_approval(self, loan):
+        loan_id = Web3.keccak(text=str(loan.id))
+        
+        tx = self.loan_core.functions.approveLoan(
+            loan_id,
+            int(loan.approved_amount * 10**18),
+            Web3.keccak(text=loan.notes or "")
+        ).build_transaction({...})
+        
+        return self.sign_and_send(tx)
+    
+    def record_payment(self, payment):
+        loan_id = Web3.keccak(text=str(payment.loan_application.id))
+        reference_hash = Web3.keccak(text=payment.reference_number)
+        
+        tx = self.repayment.functions.recordPayment(
+            loan_id,
+            payment.installment_number,
+            int(payment.amount * 10**18),
+            self.payment_method_to_enum(payment.payment_method),
+            reference_hash
+        ).build_transaction({...})
+        
+        return self.sign_and_send(tx)
+```
+
+---
+
+## Test Status
 
 ```
 100 passing (3s)
 ```
 
-All tests pass with the aligned contracts.
-
----
-
-## 💡 What This Means
-
-The smart contracts now serve as an **immutable record** of your backend's loan operations:
-
-1. **LoanCore** - Records loan creation, approval, rejection (mirrors `LoanApplication` model)
-2. **Disbursement** - Records when funds are released (mirrors `disburse()` method)
-3. **Repayment** - Records payment schedules and payments (mirrors `RepaymentSchedule` and `LoanPayment` models)
-4. **AuditRegistry** - Provides tamper-proof audit trail (blockchain-native feature)
-5. **LoanAccessControl** - Manages roles (blockchain-native feature)
-
-No ERC20 tokens, no penalty calculations, no oracle patterns - just pure record-keeping that matches your backend exactly.
+All contracts tested and aligned with backend functionality.
