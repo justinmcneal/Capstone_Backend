@@ -254,12 +254,13 @@ class DisburseView(LoanOfficerRequiredMixin, APIView):
         amount = request.data.get('amount', app.approved_amount)
         method = request.data.get('method', 'bank_transfer')
         reference = request.data.get('reference', '')
+        external_reference = request.data.get('external_reference', '')  # Bank/check number
         
+        # Auto-generate system reference if not provided
         if not reference:
-            return error_response(
-                message="Disbursement reference is required",
-                status_code=status.HTTP_400_BAD_REQUEST
-            )
+            from loans.utils import generate_disbursement_reference
+            reference = generate_disbursement_reference()
+        
         
         try:
             app.disburse(
@@ -348,6 +349,7 @@ class RecordPaymentView(LoanOfficerRequiredMixin, APIView):
         amount = request.data.get('amount', 0)
         payment_method = request.data.get('payment_method', 'cash')
         reference = request.data.get('reference', '')
+        external_reference = request.data.get('external_reference', '')  # GCash/Bank ref
         notes = request.data.get('notes', '')
         
         # Validation
@@ -369,11 +371,11 @@ class RecordPaymentView(LoanOfficerRequiredMixin, APIView):
                 status_code=status.HTTP_400_BAD_REQUEST
             )
         
+        # Auto-generate system reference if not provided
         if not reference:
-            return error_response(
-                message="reference is required",
-                status_code=status.HTTP_400_BAD_REQUEST
-            )
+            from loans.utils import generate_payment_reference
+            reference = generate_payment_reference()
+        
         
         # Find schedule
         from loans.models import RepaymentSchedule, LoanPayment
@@ -436,8 +438,104 @@ class RecordPaymentView(LoanOfficerRequiredMixin, APIView):
                 'installment_number': installment_number,
                 'amount': amount,
                 'installment_status': updated_installment['status'],
-                'remaining_balance': schedule.get_remaining_balance()
+                'remaining_balance': schedule.get_remaining_balance(),
+                'reference': reference  # Include the auto-generated reference
             },
             message="Payment recorded successfully",
             status_code=status.HTTP_201_CREATED
+        )
+
+
+class ActiveLoansView(LoanOfficerRequiredMixin, APIView):
+    """
+    Loan Officer: Get active (disbursed) loans for payment recording.
+    
+    GET /api/loans/officer/active-loans/
+    
+    Query params:
+        - search: Search by customer name, phone, or ID
+        - customer_id: Filter by specific customer ID
+    """
+    authentication_classes = [CustomJWTAuthentication]
+    permission_classes = [IsAuthenticated]
+    
+    def get(self, request):
+        has_permission, result = self.check_officer_permission(request)
+        if not has_permission:
+            return result
+        
+        from loans.models import RepaymentSchedule, LoanProduct
+        from accounts.models import Customer
+        
+        search = request.query_params.get('search', '').strip()
+        customer_id_filter = request.query_params.get('customer_id', '')
+        
+        # Build customer query
+        if customer_id_filter:
+            # Direct customer ID filter
+            customers = [Customer.find_one({'customer_id': customer_id_filter})]
+            customers = [c for c in customers if c]
+        elif search:
+            # Search by name, phone, or email
+            import re
+            regex = re.compile(f'.*{re.escape(search)}.*', re.IGNORECASE)
+            customers_cursor = Customer.collection().find({
+                '$or': [
+                    {'first_name': regex},
+                    {'last_name': regex},
+                    {'phone': regex},
+                    {'email': regex},
+                    {'customer_id': regex}
+                ]
+            }).limit(20)
+            customers = [Customer.from_dict(doc) for doc in customers_cursor]
+        else:
+            # Return empty if no search criteria
+            return success_response(
+                data={'loans': [], 'total': 0},
+                message="Provide search term or customer_id"
+            )
+        
+        # Get loans for these customers
+        loans_data = []
+        for customer in customers:
+            if not customer:
+                continue
+                
+            # Get repayment schedules (active loans)
+            schedules = RepaymentSchedule.find_by_customer(customer.customer_id)
+            
+            for schedule in schedules:
+                if not schedule:
+                    continue
+                
+                # Get application for product info
+                app = LoanApplication.find_by_id(schedule.loan_id)
+                product = None
+                if app:
+                    product = LoanProduct.find_by_id(app.product_id)
+                
+                # Get next payment due
+                next_payment = schedule.get_next_payment()
+                
+                loans_data.append({
+                    'loan_id': schedule.loan_id,
+                    'schedule_id': schedule.id,
+                    'customer_id': customer.customer_id,
+                    'customer_name': f"{customer.first_name} {customer.last_name}",
+                    'customer_phone': getattr(customer, 'phone', None),
+                    'product_name': product.name if product else 'Unknown',
+                    'disbursed_amount': schedule.principal,
+                    'monthly_payment': schedule.monthly_payment,
+                    'remaining_balance': schedule.get_remaining_balance(),
+                    'paid_installments': schedule.get_paid_count(),
+                    'total_installments': schedule.term_months,
+                    'next_due_installment': next_payment['number'] if next_payment else None,
+                    'next_due_date': next_payment['due_date'].isoformat() if next_payment and next_payment.get('due_date') else None,
+                    'next_due_amount': next_payment['total_amount'] if next_payment else None
+                })
+        
+        return success_response(
+            data={'loans': loans_data, 'total': len(loans_data)},
+            message="Active loans retrieved"
         )
