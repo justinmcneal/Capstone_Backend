@@ -10,7 +10,7 @@
 |-----------|----------|--------|
 | MongoDB | Atlas Cloud | ✅ Deployed |
 | Django Backend | localhost:8000 | ❌ Not deployed |
-| LLM (Ollama) | localhost:11434 | ❌ Not deployed |
+| LLM (Groq) | Cloud API | ✅ Available |
 | CNN Model | Inside Django | ⚠️ Needs training data |
 
 ---
@@ -47,8 +47,8 @@ Frontend: Vercel (Web) + Expo (Mobile)
 - $0/month (500 hrs free)
 
 ### 2. LLM (Groq - Free)
-- Replace Ollama with Groq API
-- 14,000 requests/day free
+- Uses Groq Cloud API (already integrated)
+- 14,400 requests/day free
 - $0/month
 
 ### 3. Database (Already Done)
@@ -75,9 +75,9 @@ ALLOWED_HOSTS=your-app.railway.app
 # MongoDB (already set)
 MONGODB_URI=mongodb+srv://...
 
-# LLM (switch from Ollama)
-LLM_PROVIDER=groq
+# LLM (Groq Cloud - already configured)
 GROQ_API_KEY=gsk_xxxxxxxxxxxx
+GROQ_MODEL=llama-3.1-8b-instant
 
 # Email
 EMAIL_HOST_USER=your-email@gmail.com
