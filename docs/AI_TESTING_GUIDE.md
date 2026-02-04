@@ -9,9 +9,9 @@ Complete guide to test the AI chatbot endpoints.
 **Base URL:** `http://localhost:8000/api/ai`
 
 **Requirements:**
-1. Ollama installed: https://ollama.ai
-2. Model downloaded: `ollama pull llama3.2`
-3. Ollama running: `ollama serve`
+1. Groq API key: Get free at https://console.groq.com
+2. Set in `.env`: `GROQ_API_KEY=gsk_your_key_here`
+3. No local installation needed - cloud-based!
 
 **Headers:**
 ```
@@ -37,9 +37,9 @@ GET /api/ai/status/
     "status": "success",
     "data": {
         "available": true,
-        "current_model": "llama3.2",
-        "available_models": ["llama3.2:latest"],
-        "host": "http://localhost:11434"
+        "provider": "groq",
+        "current_model": "llama-3.1-8b-instant",
+        "api_configured": true
     }
 }
 ```
@@ -119,9 +119,9 @@ DELETE /api/ai/history/
 
 ## Testing Flow
 
-1. **Install Ollama:** `brew install ollama` (Mac) or download from ollama.ai
-2. **Pull model:** `ollama pull llama3.2`
-3. **Start Ollama:** `ollama serve` (runs on port 11434)
+1. **Get Groq API key:** Sign up free at https://console.groq.com
+2. **Add to .env:** `GROQ_API_KEY=gsk_your_key_here`
+3. **Restart server:** `python manage.py runserver`
 4. **Login as customer** with AI consent
 5. **Check status:** `GET /api/ai/status/`
 6. **Get suggestions:** `GET /api/ai/suggestions/`
@@ -146,13 +146,13 @@ DELETE /api/ai/history/
 }
 ```
 
-### Ollama Not Running
+### API Key Not Configured
 ```json
 {
     "status": "error",
-    "message": "AI service is currently unavailable. Please ensure Ollama is running.",
+    "message": "AI service is currently unavailable. Please configure GROQ_API_KEY.",
     "errors": {
-        "hint": "Run: ollama run llama3.2"
+        "hint": "Get free API key at https://console.groq.com"
     }
 }
 ```

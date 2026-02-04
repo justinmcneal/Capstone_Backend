@@ -83,11 +83,11 @@ class ChatView(ConsentRequiredMixin, APIView):
             # Get LLM response
             llm = get_llm_service()
             
-            # Check if Ollama is available
+            # Check if Groq API is available
             if not llm.is_available():
                 return error_response(
-                    message="AI service is currently unavailable. Please ensure Ollama is running.",
-                    errors={'hint': 'Run: ollama run llama3.2'},
+                    message="AI service is currently unavailable. Please configure GROQ_API_KEY.",
+                    errors={'hint': 'Get free API key at https://console.groq.com'},
                     status_code=status.HTTP_503_SERVICE_UNAVAILABLE
                 )
             
@@ -277,14 +277,13 @@ class AIStatusView(APIView):
         llm = get_llm_service()
         
         is_available = llm.is_available()
-        available_models = llm.get_available_models() if is_available else []
         
         return success_response(
             data={
                 'available': is_available,
-                'current_model': llm.model,
-                'available_models': available_models,
-                'host': llm.host
+                'provider': llm.provider,
+                'current_model': llm.model if is_available else None,
+                'api_configured': bool(llm.api_key)
             },
             message="AI status retrieved"
         )

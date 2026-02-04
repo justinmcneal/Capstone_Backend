@@ -1,5 +1,5 @@
 """
-AI Qualification Service - Uses Ollama to analyze customer eligibility.
+AI Qualification Service - Uses Groq LLM to analyze customer eligibility.
 """
 import logging
 from ai_assistant.services import get_llm_service

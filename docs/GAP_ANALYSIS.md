@@ -26,12 +26,12 @@ GET /api/health/
   "status": "healthy",
   "services": {
     "mongodb": "connected",
-    "ai": "unavailable"  ← Ollama not running
+    "ai": "available"  ← Groq API configured
   }
 }
 ```
 
-> **Note:** AI shows "unavailable" because Ollama is not running. Start it with: `ollama run llama3.2`
+> **Note:** AI uses Groq Cloud (free tier). Ensure `GROQ_API_KEY` is set in your `.env` file.
 
 ---
 
@@ -77,8 +77,8 @@ GET /api/health/
 | | Loan Service | ✅ | Full lifecycle |
 | | Document Service | ✅ | Upload, verify, re-upload |
 | | Notification Service | ✅ | Email (6 types) |
-| **AI Layer** | Multilingual AI Assistant | ✅ | Ollama LLM |
-| | NLP/LLM Engine | ✅ | Ollama integration |
+| **AI Layer** | Multilingual AI Assistant | ✅ | Groq Cloud LLM |
+| | NLP/LLM Engine | ✅ | Groq API integration |
 | | Alternative Data Profiler | ✅ | AlternativeData model |
 | | Document Analyzer (CNN) | ⚠️ | Architecture exists, needs training |
 | | Analytics Engine | ✅ | 4 dashboard endpoints |
