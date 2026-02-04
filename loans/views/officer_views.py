@@ -74,9 +74,15 @@ class OfficerApplicationListView(LoanOfficerRequiredMixin, APIView):
 
 class OfficerApplicationDetailView(LoanOfficerRequiredMixin, APIView):
     """
-    Loan Officer: View application details.
+    Loan Officer: View application details with complete customer data.
     
     GET /api/loans/officer/applications/<id>/
+    
+    Returns:
+        - Application details
+        - Product info
+        - Complete customer profiles (personal, business, alternative)
+        - Customer documents with verification status
     """
     authentication_classes = [CustomJWTAuthentication]
     permission_classes = [IsAuthenticated]
@@ -95,6 +101,80 @@ class OfficerApplicationDetailView(LoanOfficerRequiredMixin, APIView):
         
         product = LoanProduct.find_by_id(app.product_id)
         
+        # Get complete customer profiles
+        from profiles.models import CustomerProfile, BusinessProfile, AlternativeData
+        from documents.models import Document
+        from accounts.models import Customer
+        
+        customer = Customer.find_one({'customer_id': app.customer_id})
+        personal = CustomerProfile.get_or_create(app.customer_id)
+        business = BusinessProfile.get_or_create(app.customer_id)
+        alternative = AlternativeData.get_or_create(app.customer_id)
+        documents = Document.find_by_customer(app.customer_id)
+        
+        # Build customer data
+        customer_data = {
+            'customer_id': app.customer_id,
+            'email': customer.email if customer else None,
+            'personal_profile': {
+                'first_name': customer.first_name if customer else None,
+                'last_name': customer.last_name if customer else None,
+                'phone_number': personal.phone_number,
+                'civil_status': personal.civil_status,
+                'city_municipality': personal.city_municipality,
+                'province': personal.province,
+                'barangay': personal.barangay,
+                'street_address': personal.street_address,
+                'emergency_contact_name': personal.emergency_contact_name,
+                'emergency_contact_phone': personal.emergency_contact_phone,
+                'profile_completed': personal.profile_completed,
+                'completion_percentage': personal.completion_percentage
+            },
+            'business_profile': {
+                'business_name': business.business_name,
+                'business_type': business.business_type,
+                'business_address': business.business_address,
+                'years_in_operation': business.years_in_operation,
+                'is_registered': business.is_registered,
+                'income_range': business.income_range,
+                'estimated_monthly_income': float(business.estimated_monthly_income) if business.estimated_monthly_income else None,
+                'number_of_employees': business.number_of_employees,
+                'business_description': business.business_description
+            },
+            'alternative_data': {
+                'education_level': alternative.education_level,
+                'employment_status': alternative.employment_status,
+                'housing_status': alternative.housing_status,
+                'years_at_residence': alternative.years_at_residence,
+                'has_bank_account': alternative.has_bank_account,
+                'has_ewallet': alternative.has_ewallet,
+                'ewallet_usage': alternative.ewallet_usage,
+                'has_existing_loans': alternative.has_existing_loans,
+                'utility_payment_history': alternative.utility_payment_history,
+                'risk_score': alternative.risk_score,
+                'risk_category': alternative.risk_category
+            }
+        }
+        
+        # Build documents data
+        from documents.storage import get_storage_backend
+        storage = get_storage_backend()
+        
+        documents_data = [{
+            'id': doc.id,
+            'document_type': doc.document_type,
+            'filename': doc.original_filename,
+            'file_url': storage.get_url(doc.file_path),
+            'file_size': doc.file_size,
+            'status': doc.status,
+            'verified': doc.verified,
+            'verified_at': doc.verified_at.isoformat() if doc.verified_at else None,
+            'reupload_requested': doc.reupload_requested,
+            'reupload_reason': doc.reupload_reason,
+            'ai_analysis': doc.ai_analysis,
+            'uploaded_at': doc.uploaded_at.isoformat() if doc.uploaded_at else None
+        } for doc in documents]
+        
         return success_response(
             data={
                 'id': app.id,
@@ -106,7 +186,7 @@ class OfficerApplicationDetailView(LoanOfficerRequiredMixin, APIView):
                 },
                 'requested_amount': app.requested_amount,
                 'recommended_amount': app.recommended_amount,
-                'approved_amount': app.approved_amount,  # FIX: Was missing, caused ₱0 bug
+                'approved_amount': app.approved_amount,
                 'term_months': app.term_months,
                 'purpose': app.purpose,
                 'status': app.status,
@@ -117,7 +197,10 @@ class OfficerApplicationDetailView(LoanOfficerRequiredMixin, APIView):
                 'officer_notes': app.officer_notes,
                 'rejection_reason': app.rejection_reason,
                 'submitted_at': app.submitted_at.isoformat() if app.submitted_at else None,
-                'decision_date': app.decision_date.isoformat() if app.decision_date else None
+                'decision_date': app.decision_date.isoformat() if app.decision_date else None,
+                # New: Complete customer data
+                'customer': customer_data,
+                'documents': documents_data
             },
             message="Application details retrieved"
         )
