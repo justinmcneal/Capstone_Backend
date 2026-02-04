@@ -106,6 +106,7 @@ class OfficerApplicationDetailView(LoanOfficerRequiredMixin, APIView):
                 },
                 'requested_amount': app.requested_amount,
                 'recommended_amount': app.recommended_amount,
+                'approved_amount': app.approved_amount,  # FIX: Was missing, caused ₱0 bug
                 'term_months': app.term_months,
                 'purpose': app.purpose,
                 'status': app.status,
@@ -387,14 +388,34 @@ class RecordPaymentView(LoanOfficerRequiredMixin, APIView):
                 status_code=status.HTTP_404_NOT_FOUND
             )
         
-        # Record payment in schedule
-        updated_installment = schedule.record_payment(installment_number, amount)
-        
-        if not updated_installment:
+        # VALIDATION 1: Check if installment exists
+        installment = schedule.get_installment(installment_number)
+        if not installment:
             return error_response(
-                message="Installment not found",
+                message=f"Installment #{installment_number} not found",
                 status_code=status.HTTP_404_NOT_FOUND
             )
+        
+        # VALIDATION 2: Prevent duplicate payment on fully paid installments
+        if installment.get('status') == 'paid':
+            return error_response(
+                message=f"Installment #{installment_number} is already fully paid",
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # VALIDATION 3: Prevent overpayment (with 1% tolerance for rounding)
+        remaining = installment['total_amount'] - installment.get('paid_amount', 0)
+        if amount > remaining * 1.01:
+            return error_response(
+                message=f"Amount exceeds remaining balance of ₱{remaining:.2f}",
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # VALIDATION 4: Warn about skipped installments (don't block, just track)
+        unpaid_before = schedule.count_unpaid_before(installment_number)
+        
+        # Record payment in schedule
+        updated_installment = schedule.record_payment(installment_number, amount)
         
         # Create payment record
         payment = LoanPayment(
@@ -439,9 +460,11 @@ class RecordPaymentView(LoanOfficerRequiredMixin, APIView):
                 'amount': amount,
                 'installment_status': updated_installment['status'],
                 'remaining_balance': schedule.get_remaining_balance(),
-                'reference': reference  # Include the auto-generated reference
+                'reference': reference,
+                'skipped_installments': unpaid_before  # Warning: earlier unpaid installments
             },
-            message="Payment recorded successfully",
+            message="Payment recorded successfully" if unpaid_before == 0 
+                    else f"Payment recorded. Note: {unpaid_before} earlier installment(s) still unpaid.",
             status_code=status.HTTP_201_CREATED
         )
 
