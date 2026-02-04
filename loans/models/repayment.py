@@ -154,6 +154,33 @@ class RepaymentSchedule:
         paid = sum(inst.get('paid_amount', 0) for inst in self.installments)
         return self.total_amount - paid
     
+    def get_installment(self, installment_number):
+        """Get a specific installment by number"""
+        for inst in self.installments:
+            if inst['number'] == installment_number:
+                return inst
+        return None
+    
+    def is_installment_paid(self, installment_number):
+        """Check if an installment is fully paid"""
+        inst = self.get_installment(installment_number)
+        return inst and inst.get('status') == 'paid'
+    
+    def get_installment_remaining(self, installment_number):
+        """Get remaining amount for a specific installment"""
+        inst = self.get_installment(installment_number)
+        if not inst:
+            return None
+        return inst['total_amount'] - inst.get('paid_amount', 0)
+    
+    def count_unpaid_before(self, installment_number):
+        """Count unpaid installments before the given number"""
+        count = 0
+        for inst in self.installments:
+            if inst['number'] < installment_number and inst.get('status') != 'paid':
+                count += 1
+        return count
+    
     @classmethod
     def find_one(cls, query):
         db = get_db()
