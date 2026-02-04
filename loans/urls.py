@@ -23,6 +23,8 @@ from loans.views import (
     DisburseView,
     RecordPaymentView,
     ActiveLoansView,
+    OfficerScheduleView,
+    OfficerPaymentHistoryView,
 )
 
 
@@ -56,4 +58,6 @@ urlpatterns = [
     path('officer/applications/<str:application_id>/disburse/', DisburseView.as_view(), name='officer-disburse'),
     path('officer/payments/', RecordPaymentView.as_view(), name='officer-payments'),
     path('officer/active-loans/', ActiveLoansView.as_view(), name='officer-active-loans'),
+    path('officer/applications/<str:application_id>/schedule/', OfficerScheduleView.as_view(), name='officer-schedule'),
+    path('officer/applications/<str:application_id>/payments/', OfficerPaymentHistoryView.as_view(), name='officer-payment-history'),
 ]

@@ -23,4 +23,6 @@ from .officer_views import (
     DisburseView,
     RecordPaymentView,
     ActiveLoansView,
+    OfficerScheduleView,
+    OfficerPaymentHistoryView,
 )

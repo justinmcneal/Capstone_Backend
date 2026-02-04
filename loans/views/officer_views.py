@@ -644,3 +644,120 @@ class ActiveLoansView(LoanOfficerRequiredMixin, APIView):
             data={'loans': loans_data, 'total': len(loans_data)},
             message="Active loans retrieved"
         )
+
+
+class OfficerScheduleView(LoanOfficerRequiredMixin, APIView):
+    """
+    Loan Officer: Get repayment schedule for a loan.
+    
+    GET /api/loans/officer/applications/<id>/schedule/
+    """
+    authentication_classes = [CustomJWTAuthentication]
+    permission_classes = [IsAuthenticated]
+    
+    def get(self, request, application_id):
+        has_permission, result = self.check_officer_permission(request)
+        if not has_permission:
+            return result
+        
+        # Get application
+        app = LoanApplication.find_by_id(application_id)
+        if not app:
+            return error_response(
+                message="Application not found",
+                status_code=status.HTTP_404_NOT_FOUND
+            )
+        
+        # Only disbursed loans have schedules
+        if app.status != 'disbursed':
+            return error_response(
+                message="Repayment schedule is only available for disbursed loans",
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+        
+        from loans.models import RepaymentSchedule
+        schedule = RepaymentSchedule.find_by_loan(application_id)
+        
+        if not schedule:
+            return error_response(
+                message="Repayment schedule not found",
+                status_code=status.HTTP_404_NOT_FOUND
+            )
+        
+        # Format installments
+        installments = []
+        for inst in schedule.installments:
+            installments.append({
+                'number': inst['number'],
+                'due_date': inst['due_date'].isoformat() if inst.get('due_date') else None,
+                'principal': inst['principal'],
+                'interest': inst['interest'],
+                'total_amount': inst['total_amount'],
+                'status': inst['status'],
+                'paid_amount': inst.get('paid_amount', 0)
+            })
+        
+        return success_response(
+            data={
+                'loan_id': schedule.loan_id,
+                'principal': schedule.principal,
+                'interest_rate': schedule.interest_rate,
+                'term_months': schedule.term_months,
+                'monthly_payment': schedule.monthly_payment,
+                'total_amount': schedule.total_amount,
+                'total_interest': schedule.total_interest,
+                'paid_count': schedule.get_paid_count(),
+                'remaining_balance': schedule.get_remaining_balance(),
+                'next_payment': schedule.get_next_payment(),
+                'installments': installments
+            },
+            message="Repayment schedule retrieved"
+        )
+
+
+class OfficerPaymentHistoryView(LoanOfficerRequiredMixin, APIView):
+    """
+    Loan Officer: Get payment history for a loan.
+    
+    GET /api/loans/officer/applications/<id>/payments/
+    """
+    authentication_classes = [CustomJWTAuthentication]
+    permission_classes = [IsAuthenticated]
+    
+    def get(self, request, application_id):
+        has_permission, result = self.check_officer_permission(request)
+        if not has_permission:
+            return result
+        
+        # Verify application exists
+        app = LoanApplication.find_by_id(application_id)
+        if not app:
+            return error_response(
+                message="Application not found",
+                status_code=status.HTTP_404_NOT_FOUND
+            )
+        
+        from loans.models import LoanPayment
+        payments = LoanPayment.find_by_loan(application_id)
+        
+        payments_data = [{
+            'id': p.id,
+            'amount': p.amount,
+            'payment_method': p.payment_method,
+            'reference': p.reference,
+            'installment_number': p.installment_number,
+            'notes': p.notes,
+            'recorded_at': p.recorded_at.isoformat() if p.recorded_at else None
+        } for p in payments]
+        
+        total_paid = sum(p.amount for p in payments)
+        
+        return success_response(
+            data={
+                'payments': payments_data,
+                'total_paid': total_paid,
+                'count': len(payments_data)
+            },
+            message="Payment history retrieved"
+        )
+        
