@@ -307,13 +307,32 @@ class ProfileSummaryView(APIView):
             business = BusinessProfile.get_or_create(customer_id)
             alternative = AlternativeData.get_or_create(customer_id)
             
-            # Calculate overall readiness
+            # Get documents
+            from documents.models import Document
+            documents = Document.find_by_customer(customer_id)
+            
+            # Calculate profile completion
             personal_complete = personal.profile_completed
             business_complete = bool(business.business_type and business.income_range)
             alternative_complete = bool(alternative.education_level and alternative.housing_status)
             
+            # Calculate document status
+            total_docs = len(documents)
+            approved_docs = len([d for d in documents if d.status == 'approved'])
+            pending_docs = len([d for d in documents if d.status == 'pending'])
+            rejected_docs = len([d for d in documents if d.status == 'rejected'])
+            
+            # Determine if all documents are approved
+            # For ready_for_loan, we need at least some documents and all approved
+            documents_ready = total_docs > 0 and approved_docs == total_docs
+            
+            # Calculate overall readiness
+            profiles_complete = personal_complete and business_complete and alternative_complete
             sections_complete = sum([personal_complete, business_complete, alternative_complete])
             overall_percentage = int((sections_complete / 3) * 100)
+            
+            # Ready for loan requires: all 3 profiles complete + documents approved
+            ready_for_loan = profiles_complete and documents_ready
             
             return success_response(
                 data={
@@ -332,11 +351,24 @@ class ProfileSummaryView(APIView):
                         'has_risk_score': bool(alternative.risk_score),
                         'risk_category': alternative.risk_category
                     },
+                    'documents': {
+                        'total': total_docs,
+                        'approved': approved_docs,
+                        'pending': pending_docs,
+                        'rejected': rejected_docs,
+                        'all_approved': documents_ready,
+                        'has_documents': total_docs > 0
+                    },
                     'overall': {
+                        'profiles_complete': profiles_complete,
                         'sections_complete': sections_complete,
                         'total_sections': 3,
-                        'ready_for_loan': sections_complete == 3,
-                        'completion_percentage': overall_percentage
+                        'documents_verified': documents_ready,
+                        'ready_for_loan': ready_for_loan,
+                        'completion_percentage': overall_percentage,
+                        'missing': [] if ready_for_loan else self._get_missing_items(
+                            personal_complete, business_complete, alternative_complete, documents_ready, total_docs
+                        )
                     }
                 },
                 message="Profile summary retrieved successfully"
@@ -347,6 +379,22 @@ class ProfileSummaryView(APIView):
                 message="Failed to retrieve profile summary",
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+    
+    def _get_missing_items(self, personal_complete, business_complete, alternative_complete, documents_ready, total_docs):
+        """Helper to generate list of missing requirements"""
+        missing = []
+        if not personal_complete:
+            missing.append('Complete personal profile')
+        if not business_complete:
+            missing.append('Complete business profile')
+        if not alternative_complete:
+            missing.append('Complete alternative data')
+        if total_docs == 0:
+            missing.append('Upload required documents')
+        elif not documents_ready:
+            missing.append('Wait for documents to be verified')
+        return missing
+
 
 
 class NotificationPreferencesView(APIView):

@@ -327,8 +327,8 @@ class DocumentVerifyView(APIView):
         try:
             user = request.user
             
-            # Only loan officers and admins can verify
-            if not hasattr(user, 'role') or user.role not in ['loan_officer', 'admin']:
+            # Only loan officers, admins, and super admins can verify
+            if not hasattr(user, 'role') or user.role not in ['loan_officer', 'admin', 'super_admin']:
                 return error_response(
                     message="Only loan officers can verify documents",
                     status_code=status.HTTP_403_FORBIDDEN
@@ -426,8 +426,8 @@ class RequestReuploadView(APIView):
     def post(self, request, document_id):
         user = request.user
         
-        # Only officers/admins can request re-upload
-        if not hasattr(user, 'role') or user.role not in ['loan_officer', 'admin']:
+        # Only officers/admins/super admins can request re-upload
+        if not hasattr(user, 'role') or user.role not in ['loan_officer', 'admin', 'super_admin']:
             return error_response(
                 message="Only officers can request document re-upload",
                 status_code=status.HTTP_403_FORBIDDEN
