@@ -105,8 +105,9 @@ class OfficerApplicationDetailView(LoanOfficerRequiredMixin, APIView):
         from profiles.models import CustomerProfile, BusinessProfile, AlternativeData
         from documents.models import Document
         from accounts.models import Customer
+        from bson import ObjectId
         
-        customer = Customer.find_one({'customer_id': app.customer_id})
+        customer = Customer.find_one({'_id': ObjectId(app.customer_id)})
         personal = CustomerProfile.get_or_create(app.customer_id)
         business = BusinessProfile.get_or_create(app.customer_id)
         alternative = AlternativeData.get_or_create(app.customer_id)
