@@ -265,23 +265,63 @@ def rule_based_qualification(data, product, requested_amount):
 def check_basic_eligibility(customer_id, product):
     """
     Quick check for basic eligibility before full qualification.
+    
+    Requirements:
+    1. Personal profile must exist
+    2. Business profile must exist  
+    3. Alternative data must exist
+    4. All required documents must be uploaded AND APPROVED
     """
     data = get_customer_data(customer_id)
     missing = []
     
-    # Check profile exists
-    if not data.get('personal'):
-        missing.append('Personal profile required')
-    if not data.get('business'):
-        missing.append('Business profile required')
+    # Check all 3 profiles exist
+    personal = data.get('personal')
+    business = data.get('business')
+    alternative = data.get('alternative')
     
-    # Check required documents
-    doc_types = [d.document_type for d in data.get('documents', [])]
+    if not personal:
+        missing.append('Personal profile required')
+    elif not personal.profile_completed:
+        missing.append('Personal profile incomplete')
+        
+    if not business:
+        missing.append('Business profile required')
+    elif not (business.business_type and business.income_range):
+        missing.append('Business profile incomplete (type and income required)')
+    
+    # Alternative data is required
+    if not alternative:
+        missing.append('Alternative data required')
+    elif not (alternative.education_level and alternative.housing_status):
+        missing.append('Alternative data incomplete (education and housing required)')
+    
+    # Check required documents - must be APPROVED, not just uploaded
+    documents = data.get('documents', [])
+    
     for req_doc in product.required_documents:
-        if req_doc not in doc_types:
+        # Find document of this type
+        doc_found = None
+        for d in documents:
+            if d.document_type == req_doc:
+                doc_found = d
+                break
+        
+        if not doc_found:
             missing.append(f'Document required: {req_doc}')
+        elif doc_found.status != 'approved':
+            # Document exists but not approved
+            if doc_found.status == 'pending':
+                missing.append(f'Document pending verification: {req_doc}')
+            elif doc_found.status == 'rejected':
+                missing.append(f'Document rejected, please re-upload: {req_doc}')
+            elif doc_found.reupload_requested:
+                missing.append(f'Document re-upload requested: {req_doc}')
+            else:
+                missing.append(f'Document not yet approved: {req_doc}')
     
     return {
         'can_apply': len(missing) == 0,
         'missing_requirements': missing
     }
+
