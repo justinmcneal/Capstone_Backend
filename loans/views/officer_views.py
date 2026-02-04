@@ -476,19 +476,17 @@ class ActiveLoansView(LoanOfficerRequiredMixin, APIView):
             customers = [Customer.find_one({'customer_id': customer_id_filter})]
             customers = [c for c in customers if c]
         elif search:
-            # Search by name, phone, or email
+            # Search by name, phone, or email using Customer.find()
             import re
             regex = re.compile(f'.*{re.escape(search)}.*', re.IGNORECASE)
-            customers_cursor = Customer.collection().find({
+            customers = Customer.find({
                 '$or': [
                     {'first_name': regex},
                     {'last_name': regex},
                     {'phone': regex},
-                    {'email': regex},
-                    {'customer_id': regex}
+                    {'email': regex}
                 ]
-            }).limit(20)
-            customers = [Customer.from_dict(doc) for doc in customers_cursor]
+            })[:20]  # Limit to 20 results
         else:
             # Return empty if no search criteria
             return success_response(
@@ -503,7 +501,7 @@ class ActiveLoansView(LoanOfficerRequiredMixin, APIView):
                 continue
                 
             # Get repayment schedules (active loans)
-            schedules = RepaymentSchedule.find_by_customer(customer.customer_id)
+            schedules = RepaymentSchedule.find_by_customer(customer.id)
             
             for schedule in schedules:
                 if not schedule:
@@ -521,7 +519,7 @@ class ActiveLoansView(LoanOfficerRequiredMixin, APIView):
                 loans_data.append({
                     'loan_id': schedule.loan_id,
                     'schedule_id': schedule.id,
-                    'customer_id': customer.customer_id,
+                    'customer_id': customer.id,
                     'customer_name': f"{customer.first_name} {customer.last_name}",
                     'customer_phone': getattr(customer, 'phone', None),
                     'product_name': product.name if product else 'Unknown',
