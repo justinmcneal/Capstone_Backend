@@ -8,6 +8,7 @@ from accounts.authentication import CustomJWTAuthentication
 from accounts.utils.response_helpers import success_response, error_response
 from loans.models import LoanProduct, LoanApplication
 from loans.serializers import LoanReviewSerializer
+from analytics.models import AuditLog
 import logging
 
 logger = logging.getLogger('loans')
@@ -261,6 +262,18 @@ class OfficerReviewView(LoanOfficerRequiredMixin, APIView):
             logger.info(f"Application approved: {app.id} by {officer_id}")
             message = "Application approved"
             
+            # Audit log for approval
+            AuditLog.log_action(
+                action='loan_approved',
+                user_id=officer_id,
+                user_type='loan_officer',
+                description=f'Loan application approved - ₱{data["approved_amount"]:,.2f}',
+                resource_type='loan',
+                resource_id=app.id,
+                details={'approved_amount': data['approved_amount'], 'customer_id': app.customer_id},
+                ip_address=request.META.get('REMOTE_ADDR', '')
+            )
+            
             # Send approval email
             if customer_email:
                 try:
@@ -282,6 +295,18 @@ class OfficerReviewView(LoanOfficerRequiredMixin, APIView):
             )
             logger.info(f"Application rejected: {app.id} by {officer_id}")
             message = "Application rejected"
+            
+            # Audit log for rejection
+            AuditLog.log_action(
+                action='loan_rejected',
+                user_id=officer_id,
+                user_type='loan_officer',
+                description=f'Loan application rejected - {data["rejection_reason"][:50]}',
+                resource_type='loan',
+                resource_id=app.id,
+                details={'reason': data['rejection_reason'], 'customer_id': app.customer_id},
+                ip_address=request.META.get('REMOTE_ADDR', '')
+            )
             
             # Send rejection email
             if customer_email:
@@ -356,6 +381,18 @@ class DisburseView(LoanOfficerRequiredMixin, APIView):
             )
             
             logger.info(f"Loan disbursed: {app.id} by {user.customer_id}")
+            
+            # Audit log for disbursement
+            AuditLog.log_action(
+                action='loan_disbursed',
+                user_id=user.customer_id,
+                user_type='loan_officer',
+                description=f'Loan disbursed - ₱{amount:,.2f} via {method}',
+                resource_type='loan',
+                resource_id=app.id,
+                details={'amount': amount, 'method': method, 'reference': reference, 'customer_id': app.customer_id},
+                ip_address=request.META.get('REMOTE_ADDR', '')
+            )
             
             # Generate repayment schedule
             schedule = None
@@ -516,6 +553,18 @@ class RecordPaymentView(LoanOfficerRequiredMixin, APIView):
         payment.save()
         
         logger.info(f"Payment recorded: {amount} for loan {loan_id} installment {installment_number}")
+        
+        # Audit log for payment
+        AuditLog.log_action(
+            action='payment_recorded',
+            user_id=user.customer_id,
+            user_type='loan_officer',
+            description=f'Payment recorded - ₱{amount:,.2f} for installment #{installment_number}',
+            resource_type='payment',
+            resource_id=payment.id,
+            details={'loan_id': loan_id, 'amount': amount, 'installment': installment_number, 'method': payment_method},
+            ip_address=request.META.get('REMOTE_ADDR', '')
+        )
         
         # Send notification email
         try:

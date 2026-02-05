@@ -11,6 +11,7 @@ from profiles.serializers import (
     BusinessProfileSerializer,
     AlternativeDataSerializer
 )
+from analytics.models import AuditLog
 import logging
 
 logger = logging.getLogger('profiles')
@@ -88,6 +89,18 @@ class CustomerProfileView(APIView):
             profile.save()
             
             logger.info(f"Profile updated for customer {customer_id}")
+            
+            # Audit log
+            AuditLog.log_action(
+                action='profile_updated',
+                user_id=customer_id,
+                user_type='customer',
+                description='Personal profile updated',
+                resource_type='profile',
+                resource_id=profile.id,
+                details={'completion': profile.completion_percentage},
+                ip_address=request.META.get('REMOTE_ADDR', '')
+            )
             
             return success_response(
                 data={
@@ -176,6 +189,18 @@ class BusinessProfileView(APIView):
             profile.save()
             
             logger.info(f"Business profile updated for customer {customer_id}")
+            
+            # Audit log
+            AuditLog.log_action(
+                action='profile_updated',
+                user_id=customer_id,
+                user_type='customer',
+                description='Business profile updated',
+                resource_type='business_profile',
+                resource_id=profile.id,
+                details={'business_name': profile.business_name},
+                ip_address=request.META.get('REMOTE_ADDR', '')
+            )
             
             return success_response(
                 message="Business profile updated successfully"
@@ -275,6 +300,18 @@ class AlternativeDataView(APIView):
             alt_data.save()
             
             logger.info(f"Alternative data updated for customer {customer_id}")
+            
+            # Audit log
+            AuditLog.log_action(
+                action='profile_updated',
+                user_id=customer_id,
+                user_type='customer',
+                description='Alternative data updated',
+                resource_type='alternative_data',
+                resource_id=alt_data.id,
+                details={'risk_score': alt_data.risk_score},
+                ip_address=request.META.get('REMOTE_ADDR', '')
+            )
             
             return success_response(
                 message="Alternative data updated successfully"

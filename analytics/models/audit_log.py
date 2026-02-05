@@ -12,15 +12,24 @@ def get_db():
 
 # Actions to track
 AUDIT_ACTIONS = [
+    # Authentication
     'user_login',
     'user_logout',
     'user_registered',
+    # Profile
     'profile_updated',
+    # Documents
     'document_uploaded',
     'document_verified',
+    'document_rejected',
+    # Loans
     'loan_submitted',
     'loan_approved',
     'loan_rejected',
+    'loan_disbursed',
+    # Payments
+    'payment_recorded',
+    # Admin
     'admin_action',
 ]
 
