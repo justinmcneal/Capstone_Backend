@@ -144,3 +144,33 @@ class AuditLog:
         collection.create_index('action')
         collection.create_index('timestamp')
         collection.create_index('resource_type')
+
+    @classmethod
+    def log_action(cls, action, user_id=None, user_type='customer', user_email='',
+                   description='', resource_type=None, resource_id=None, 
+                   details=None, ip_address=''):
+        """
+        Convenience method to create and save an audit log entry.
+        
+        Usage:
+            AuditLog.log_action(
+                action='user_login',
+                user_id=user.id,
+                user_type='customer',
+                user_email=user.email,
+                description='User logged in successfully',
+                ip_address=request.META.get('REMOTE_ADDR', '')
+            )
+        """
+        log = cls(
+            user_id=str(user_id) if user_id else None,
+            user_type=user_type,
+            user_email=user_email,
+            action=action,
+            description=description,
+            resource_type=resource_type,
+            resource_id=str(resource_id) if resource_id else None,
+            details=details or {},
+            ip_address=ip_address,
+        )
+        return log.save()
