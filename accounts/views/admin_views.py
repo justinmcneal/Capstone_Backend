@@ -11,6 +11,7 @@ from accounts.models import Admin, LoanOfficer, ADMIN_PERMISSIONS
 from accounts.authentication import CustomJWTAuthentication
 from accounts.utils.token_utils import TokenUtils
 from accounts.utils.response_helpers import success_response, error_response
+from analytics.models import AuditLog
 import logging
 
 logger = logging.getLogger('admin_auth')
@@ -117,6 +118,16 @@ class AdminLoginView(APIView):
                 verified=True,
                 role='admin',
                 refresh_token_days=1  # Shorter session for admins
+            )
+            
+            # Audit log for admin login
+            AuditLog.log_action(
+                action='user_login',
+                user_id=admin.id,
+                user_type='admin' if not admin.super_admin else 'super_admin',
+                user_email=admin.email,
+                description=f'Admin {admin.username} logged in',
+                ip_address=request.META.get('REMOTE_ADDR', '')
             )
             
             return success_response(
@@ -317,6 +328,19 @@ class LoanOfficerManagementView(AdminRequiredMixin, APIView):
             officer.save()
             
             logger.info(f"Loan officer created: {email} by admin {admin.username}")
+            
+            # Audit log
+            AuditLog.log_action(
+                action='admin_action',
+                user_id=admin.id,
+                user_type='admin' if not admin.super_admin else 'super_admin',
+                user_email=admin.email,
+                description=f'Created loan officer: {email}',
+                resource_type='loan_officer',
+                resource_id=officer.id,
+                details={'officer_email': email, 'employee_id': employee_id},
+                ip_address=request.META.get('REMOTE_ADDR', '')
+            )
             
             return success_response(
                 data={
