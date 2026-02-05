@@ -32,18 +32,21 @@ class AdminDashboardView(AdminRequiredMixin, APIView):
         
         db = settings.MONGODB
         
-        # User counts
-        total_customers = db['customers'].count_documents({})
+        # User counts - use correct collection names from models
+        total_customers = db['customer'].count_documents({})  # Customer model uses 'customer'
         total_officers = db['loan_officers'].count_documents({})
         total_admins = db['admins'].count_documents({})
         
-        # Loan stats
+        # Loan stats - include ALL statuses for complete visibility
         loan_stats = {
             'total': db['loan_applications'].count_documents({}),
+            'draft': db['loan_applications'].count_documents({'status': 'draft'}),
             'pending': db['loan_applications'].count_documents({'status': 'submitted'}),
             'under_review': db['loan_applications'].count_documents({'status': 'under_review'}),
             'approved': db['loan_applications'].count_documents({'status': 'approved'}),
             'rejected': db['loan_applications'].count_documents({'status': 'rejected'}),
+            'disbursed': db['loan_applications'].count_documents({'status': 'disbursed'}),
+            'cancelled': db['loan_applications'].count_documents({'status': 'cancelled'}),
         }
         
         # Document stats

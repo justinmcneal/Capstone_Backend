@@ -12,6 +12,7 @@ from accounts.utils.response_helpers import APIResponseHelper
 from accounts.utils.token_utils import TokenUtils
 from accounts.serializers.auth_serializers import LoginSerializer
 from accounts.utils.throttles import SignUpRateThrottle, LoginRateThrottle, OTPVerificationRateThrottle, OTPResendRateThrottle
+from analytics.models import AuditLog
 import logging
 
 logger = logging.getLogger('authentication')
@@ -29,6 +30,16 @@ class SignUpView(APIView):
         try:
             customer = AuthService.register_customer(serializer.validated_data)
             logger.info(f"New user registered: {customer.email} from IP {request.META.get('REMOTE_ADDR')}")
+            
+            # Log audit event
+            AuditLog.log_action(
+                action='user_registered',
+                user_id=customer.id,
+                user_type='customer',
+                user_email=customer.email,
+                description=f'New user registered: {customer.email}',
+                ip_address=request.META.get('REMOTE_ADDR', '')
+            )
             
             response_data = {
                 'user': AuthService.serialize_customer_data(customer),
@@ -138,6 +149,16 @@ class LoginView(APIView):
             tokens = AuthService.create_customer_tokens(customer, token_type=token_type)
             
             logger.info(f"Successful login for user {email} from IP {request.META.get('REMOTE_ADDR')}")
+            
+            # Log audit event
+            AuditLog.log_action(
+                action='user_login',
+                user_id=customer.id,
+                user_type='customer',
+                user_email=customer.email,
+                description=f'User {customer.email} logged in successfully',
+                ip_address=request.META.get('REMOTE_ADDR', '')
+            )
             
             response_data = {
                 'user': AuthService.serialize_customer_data(customer, include_last_name=True),
@@ -327,6 +348,15 @@ class LogoutView(APIView):
             # Blacklist both tokens
             if TokenUtils.blacklist_tokens_on_logout(access_token, refresh_token):
                 logger.info(f"User logged out from IP {request.META.get('REMOTE_ADDR')}")
+                
+                # Log audit event
+                AuditLog.log_action(
+                    action='user_logout',
+                    user_type='customer',
+                    description='User logged out',
+                    ip_address=request.META.get('REMOTE_ADDR', '')
+                )
+                
                 return APIResponseHelper.success_response(
                     message='Logged out successfully'
                 )
