@@ -133,6 +133,48 @@ class AuditLog:
         )
     
     @classmethod
+    def find_with_filters(cls, action=None, date_from=None, date_to=None, limit=100):
+        """
+        Find audit logs with optional filters.
+        """
+        query = {}
+        
+        # Action filter
+        if action:
+            query['action'] = action
+        
+        # Date range filter
+        if date_from or date_to:
+            from datetime import datetime, timedelta
+            query['timestamp'] = {}
+            
+            if date_from:
+                try:
+                    # Parse YYYY-MM-DD format to start of day
+                    date_from_obj = datetime.strptime(date_from, '%Y-%m-%d')
+                    query['timestamp']['$gte'] = date_from_obj
+                except ValueError:
+                    # If parsing fails, ignore the filter
+                    pass
+                    
+            if date_to:
+                try:
+                    # Parse YYYY-MM-DD format to end of day
+                    date_to_obj = datetime.strptime(date_to, '%Y-%m-%d')
+                    # Add 23:59:59 to include the entire day
+                    date_to_obj = date_to_obj.replace(hour=23, minute=59, second=59, microsecond=999999)
+                    query['timestamp']['$lte'] = date_to_obj
+                except ValueError:
+                    # If parsing fails, ignore the filter
+                    pass
+        
+        return cls.find(
+            query,
+            sort=[('timestamp', -1)],
+            limit=limit
+        )
+    
+    @classmethod
     def count_by_action(cls, action, start_date=None, end_date=None):
         db = get_db()
         collection = db[cls.collection_name]
