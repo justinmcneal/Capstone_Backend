@@ -32,18 +32,21 @@ class AdminDashboardView(AdminRequiredMixin, APIView):
         
         db = settings.MONGODB
         
-        # User counts
-        total_customers = db['customers'].count_documents({})
+        # User counts - use correct collection names from models
+        total_customers = db['customer'].count_documents({})  # Customer model uses 'customer'
         total_officers = db['loan_officers'].count_documents({})
         total_admins = db['admins'].count_documents({})
         
-        # Loan stats
+        # Loan stats - include ALL statuses for complete visibility
         loan_stats = {
             'total': db['loan_applications'].count_documents({}),
+            'draft': db['loan_applications'].count_documents({'status': 'draft'}),
             'pending': db['loan_applications'].count_documents({'status': 'submitted'}),
             'under_review': db['loan_applications'].count_documents({'status': 'under_review'}),
             'approved': db['loan_applications'].count_documents({'status': 'approved'}),
             'rejected': db['loan_applications'].count_documents({'status': 'rejected'}),
+            'disbursed': db['loan_applications'].count_documents({'status': 'disbursed'}),
+            'cancelled': db['loan_applications'].count_documents({'status': 'cancelled'}),
         }
         
         # Document stats
@@ -118,11 +121,16 @@ class AuditLogsView(AdminRequiredMixin, APIView):
     def get(self, request):
         limit = int(request.query_params.get('limit', 50))
         action_filter = request.query_params.get('action')
+        date_from = request.query_params.get('date_from')
+        date_to = request.query_params.get('date_to')
         
-        if action_filter:
-            logs = AuditLog.find_by_action(action_filter, limit=limit)
-        else:
-            logs = AuditLog.find_recent(limit=limit)
+        # Use new find_with_filters method that handles all filtering
+        logs = AuditLog.find_with_filters(
+            action=action_filter,
+            date_from=date_from,
+            date_to=date_to,
+            limit=limit
+        )
         
         logs_data = [{
             'id': log.id,
