@@ -70,7 +70,7 @@ class DocumentVerifySerializer(serializers.Serializer):
     rejection_reason = serializers.CharField(
         max_length=500,
         required=False,
-        allow_blank=True,
+        allow_blank=False,  # Don't allow blank strings
         help_text="Required when rejecting a document"
     )
     notes = serializers.CharField(
@@ -102,11 +102,15 @@ class DocumentVerifySerializer(serializers.Serializer):
         # Remove 'status' field if it was provided
         data.pop('status', None)
         
-        # Validate rejection reason
-        if data['action'] == 'reject' and not data.get('rejection_reason'):
-            raise serializers.ValidationError({
-                'rejection_reason': 'Rejection reason is required when rejecting a document'
-            })
+        # Validate rejection reason - must be present and not just whitespace
+        if data['action'] == 'reject':
+            rejection_reason = data.get('rejection_reason', '').strip()
+            if not rejection_reason:
+                raise serializers.ValidationError({
+                    'rejection_reason': 'Rejection reason is required when rejecting a document. It cannot be empty or whitespace.'
+                })
+            # Store the trimmed value
+            data['rejection_reason'] = rejection_reason
         return data
 
 
