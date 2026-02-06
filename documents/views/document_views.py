@@ -170,7 +170,9 @@ class DocumentUploadView(APIView):
 
 class DocumentListView(APIView):
     """
-    List documents for the authenticated customer.
+    List documents based on user role.
+    - Customers: Only their own documents
+    - Loan Officers/Admins: All documents
     
     GET /api/documents/
     """
@@ -178,27 +180,52 @@ class DocumentListView(APIView):
     permission_classes = [IsAuthenticated]
     
     def get(self, request):
-        """List all documents for the customer"""
+        """List documents based on user role"""
         try:
             user = request.user
-            customer_id = user.customer_id
             
             # Optional filter by document type
             document_type = request.query_params.get('type')
             
-            documents = Document.find_by_customer(customer_id, document_type)
+            # Optional filter by customer_id (for officers/admins)
+            customer_id_filter = request.query_params.get('customer_id')
+            
+            # Determine which documents to show based on role
+            if hasattr(user, 'role') and user.role in ['loan_officer', 'admin', 'super_admin']:
+                # Loan officers and admins can see all documents
+                query = {}
+                if document_type:
+                    query['document_type'] = document_type
+                if customer_id_filter:
+                    query['customer_id'] = customer_id_filter
+                documents = Document.find(query, sort=[('uploaded_at', -1)])
+            else:
+                # Customers can only see their own documents
+                customer_id = user.customer_id
+                documents = Document.find_by_customer(customer_id, document_type)
+            
             storage = get_storage_backend()
             
             docs_data = [{
                 'id': doc.id,
+                'customer_id': doc.customer_id,
                 'document_type': doc.document_type,
+                'filename': doc.original_filename,
                 'original_filename': doc.original_filename,
                 'file_size': doc.file_size,
                 'file_size_display': doc.file_size_display,
                 'mime_type': doc.mime_type,
                 'status': doc.status,
+                'verification_status': 'verified' if doc.verified else ('rejected' if doc.status == 'rejected' else 'unverified'),
                 'verified': doc.verified,
+                'verified_by': doc.verified_by,
+                'verified_at': doc.verified_at.isoformat() if doc.verified_at else None,
+                'verification_notes': doc.notes,
+                'ai_analysis': doc.ai_analysis if doc.ai_analysis else None,
+                'reupload_requested': doc.reupload_requested,
+                'reupload_reason': doc.reupload_reason,
                 'file_url': storage.get_url(doc.file_path),
+                'created_at': doc.uploaded_at.isoformat(),
                 'uploaded_at': doc.uploaded_at.isoformat()
             } for doc in documents]
             
