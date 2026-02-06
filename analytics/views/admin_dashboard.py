@@ -121,11 +121,16 @@ class AuditLogsView(AdminRequiredMixin, APIView):
     def get(self, request):
         limit = int(request.query_params.get('limit', 50))
         action_filter = request.query_params.get('action')
+        date_from = request.query_params.get('date_from')
+        date_to = request.query_params.get('date_to')
         
-        if action_filter:
-            logs = AuditLog.find_by_action(action_filter, limit=limit)
-        else:
-            logs = AuditLog.find_recent(limit=limit)
+        # Use new find_with_filters method that handles all filtering
+        logs = AuditLog.find_with_filters(
+            action=action_filter,
+            date_from=date_from,
+            date_to=date_to,
+            limit=limit
+        )
         
         logs_data = [{
             'id': log.id,
