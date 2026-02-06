@@ -60,8 +60,12 @@ class DocumentVerifySerializer(serializers.Serializer):
     """Serializer for loan officer document verification"""
     
     action = serializers.ChoiceField(
-        choices=['approve', 'reject'],
-        required=True
+        choices=['approve', 'reject', 'approved', 'rejected'],  # Accept both forms
+        required=False  # Make it optional to check for 'status' field
+    )
+    status = serializers.ChoiceField(
+        choices=['approve', 'reject', 'approved', 'rejected'],
+        required=False  # Accept 'status' as alternative to 'action'
     )
     rejection_reason = serializers.CharField(
         max_length=500,
@@ -77,11 +81,34 @@ class DocumentVerifySerializer(serializers.Serializer):
     )
     
     def validate(self, data):
+        # Get action from either 'action' or 'status' field
+        action = data.get('action') or data.get('status')
+        
+        if not action:
+            raise serializers.ValidationError({
+                'action': 'Either "action" or "status" field is required with value "approve" or "reject"'
+            })
+        
+        # Normalize the action value
+        if action in ['approved', 'approve']:
+            data['action'] = 'approve'
+        elif action in ['rejected', 'reject']:
+            data['action'] = 'reject'
+        else:
+            raise serializers.ValidationError({
+                'action': f'Invalid action: {action}. Must be "approve" or "reject"'
+            })
+        
+        # Remove 'status' field if it was provided
+        data.pop('status', None)
+        
+        # Validate rejection reason
         if data['action'] == 'reject' and not data.get('rejection_reason'):
             raise serializers.ValidationError({
                 'rejection_reason': 'Rejection reason is required when rejecting a document'
             })
         return data
+
 
 
 def validate_uploaded_file(file):

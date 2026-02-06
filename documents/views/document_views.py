@@ -367,6 +367,11 @@ class DocumentVerifyView(APIView):
         try:
             user = request.user
             
+            # Debug logging
+            logger.info(f"Document verify request from {user.email if hasattr(user, 'email') else 'Unknown'}")
+            logger.info(f"Request data: {request.data}")
+            logger.info(f"User role: {user.role if hasattr(user, 'role') else 'No role'}")
+            
             # Only loan officers, admins, and super admins can verify
             if not hasattr(user, 'role') or user.role not in ['loan_officer', 'admin', 'super_admin']:
                 return error_response(
@@ -384,8 +389,9 @@ class DocumentVerifyView(APIView):
             
             serializer = DocumentVerifySerializer(data=request.data)
             if not serializer.is_valid():
+                logger.error(f"Serializer validation failed: {serializer.errors}")
                 return error_response(
-                    message="Invalid verification data",
+                    message="Invalid verification data. Expected: {'action': 'approve' or 'reject', 'rejection_reason': 'required if rejecting', 'notes': 'optional'}",
                     errors=serializer.errors,
                     status_code=status.HTTP_400_BAD_REQUEST
                 )
