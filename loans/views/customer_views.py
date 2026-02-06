@@ -8,6 +8,7 @@ from accounts.utils.response_helpers import success_response, error_response
 from loans.models import LoanProduct, LoanApplication
 from loans.serializers import LoanApplicationSerializer
 from loans.services import qualify_customer, check_basic_eligibility
+from analytics.models import AuditLog
 import logging
 
 logger = logging.getLogger('loans')
@@ -241,6 +242,19 @@ class LoanApplyView(APIView):
             application.submit()
             
             logger.info(f"Loan application submitted: {application.id} by {customer_id}")
+            
+            # Audit log
+            AuditLog.log_action(
+                action='loan_submitted',
+                user_id=customer_id,
+                user_type='customer',
+                user_email=user.email if hasattr(user, 'email') else '',
+                description=f'Loan application submitted for {product.name} - ₱{data["requested_amount"]:,.2f}',
+                resource_type='loan',
+                resource_id=application.id,
+                details={'product': product.name, 'amount': data['requested_amount'], 'term': data['term_months']},
+                ip_address=request.META.get('REMOTE_ADDR', '')
+            )
             
             return success_response(
                 data={

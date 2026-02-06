@@ -9,6 +9,7 @@ from accounts.models import LoanOfficer
 from accounts.utils.token_utils import TokenUtils
 from accounts.utils.response_helpers import success_response, error_response
 from accounts.services import LockoutService
+from analytics.models import AuditLog
 import logging
 
 logger = logging.getLogger('loan_officer_auth')
@@ -115,6 +116,16 @@ class LoanOfficerLoginView(APIView):
                 refresh_token_days=refresh_days
             )
             
+            # Audit log for loan officer login
+            AuditLog.log_action(
+                action='user_login',
+                user_id=officer.id,
+                user_type='loan_officer',
+                user_email=officer.email,
+                description=f'Loan officer {officer.full_name} logged in',
+                ip_address=request.META.get('REMOTE_ADDR', '')
+            )
+            
             return success_response(
                 data={
                     'access_token': tokens['access'],
@@ -161,6 +172,14 @@ class LoanOfficerLogoutView(APIView):
             
             if access_token:
                 TokenUtils.blacklist_token(access_token, token_type='access')
+            
+            # Audit log for loan officer logout
+            AuditLog.log_action(
+                action='user_logout',
+                user_type='loan_officer',
+                description='Loan officer logged out',
+                ip_address=request.META.get('REMOTE_ADDR', '')
+            )
             
             return success_response(message="Logged out successfully")
             

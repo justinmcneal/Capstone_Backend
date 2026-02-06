@@ -16,6 +16,7 @@ from documents.serializers import (
     validate_uploaded_file
 )
 from documents.storage import get_storage_backend
+from analytics.models import AuditLog
 import logging
 
 logger = logging.getLogger('documents')
@@ -120,6 +121,18 @@ class DocumentUploadView(APIView):
             document.save()
             
             logger.info(f"Document uploaded: {document.id} by customer {customer_id}")
+            
+            # Audit log
+            AuditLog.log_action(
+                action='document_uploaded',
+                user_id=customer_id,
+                user_type='customer',
+                description=f'Document uploaded: {document_type} - {file.name}',
+                resource_type='document',
+                resource_id=document.id,
+                details={'document_type': document_type, 'filename': file.name, 'size': document.file_size},
+                ip_address=request.META.get('REMOTE_ADDR', '')
+            )
             
             response_data = {
                 'id': document.id,
@@ -369,6 +382,18 @@ class DocumentVerifyView(APIView):
             document.save()
             
             logger.info(f"Document {action}d: {document_id} by {user.customer_id}")
+            
+            # Audit log
+            AuditLog.log_action(
+                action='document_verified' if action == 'approve' else 'document_rejected',
+                user_id=user.customer_id,
+                user_type=user.role if hasattr(user, 'role') else 'loan_officer',
+                description=f'Document {action}d: {document.document_type}',
+                resource_type='document',
+                resource_id=document.id,
+                details={'action': action, 'document_type': document.document_type, 'customer_id': document.customer_id},
+                ip_address=request.META.get('REMOTE_ADDR', '')
+            )
             
             return success_response(
                 data={
