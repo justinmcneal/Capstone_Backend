@@ -426,6 +426,8 @@ class LoanOfficerDetailView(AdminRequiredMixin, APIView):
             if not has_perm:
                 return result
             
+            admin = result  # get the admin from check_admin_permission
+            
             officer = LoanOfficer.find_one({'_id': ObjectId(officer_id)})
             
             if not officer:
@@ -434,13 +436,36 @@ class LoanOfficerDetailView(AdminRequiredMixin, APIView):
                     status_code=status.HTTP_404_NOT_FOUND
                 )
             
+            # Track changes for audit log
+            changes = {}
+            
             # Update allowed fields
             allowed_fields = ['first_name', 'last_name', 'phone', 'department', 'active']
             for field in allowed_fields:
                 if field in request.data:
-                    setattr(officer, field, request.data[field])
+                    old_value = getattr(officer, field)
+                    new_value = request.data[field]
+                    if old_value != new_value:
+                        changes[field] = {'old': old_value, 'new': new_value}
+                    setattr(officer, field, new_value)
             
             officer.save()
+            
+            logger.info(f"Loan officer updated: {officer.email} by admin {admin.username}")
+            
+            # Audit log
+            if changes:
+                AuditLog.log_action(
+                    action='admin_action',
+                    user_id=admin.id,
+                    user_type='admin' if not admin.super_admin else 'super_admin',
+                    user_email=admin.email,
+                    description=f'Updated loan officer: {officer.email}',
+                    resource_type='loan_officer',
+                    resource_id=officer.id,
+                    details={'officer_email': officer.email, 'changes': changes},
+                    ip_address=request.META.get('REMOTE_ADDR', '')
+                )
             
             return success_response(
                 data={
