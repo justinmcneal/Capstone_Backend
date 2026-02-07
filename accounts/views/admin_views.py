@@ -231,23 +231,67 @@ class LoanOfficerManagementView(AdminRequiredMixin, APIView):
     required_permissions = ['create_loan_officer']
     
     def get(self, request):
-        """List all loan officers"""
+        """List all loan officers with search, filtering, and pagination"""
+        import re
         try:
             has_perm, result = self.check_admin_permission(request)
             if not has_perm:
                 return result
             
             # Get query parameters
-            active_only = request.query_params.get('active', 'true').lower() == 'true'
+            search = request.query_params.get('search', '').strip()
+            active_param = request.query_params.get('active')  # None means all, 'true'/'false' for filter
             department = request.query_params.get('department')
+            page = int(request.query_params.get('page', 1))
+            page_size = min(int(request.query_params.get('page_size', 20)), 100)
+            sort_by = request.query_params.get('sort_by', 'created_at')
+            sort_order = request.query_params.get('sort_order', 'desc')
             
             query = {}
-            if active_only:
-                query['active'] = True
+            
+            # Active filter - only apply if explicitly provided
+            if active_param is not None:
+                query['active'] = active_param.lower() == 'true'
+            
             if department:
                 query['department'] = department
             
-            officers = LoanOfficer.find(query)
+            # Search filter - search in name, email, employee_id
+            if search:
+                search_regex = re.compile(re.escape(search), re.IGNORECASE)
+                query['$or'] = [
+                    {'first_name': {'$regex': search_regex}},
+                    {'last_name': {'$regex': search_regex}},
+                    {'email': {'$regex': search_regex}},
+                    {'employee_id': {'$regex': search_regex}},
+                ]
+            
+            # Get total count before pagination
+            all_officers = list(LoanOfficer.find(query))
+            total = len(all_officers)
+            
+            # Sort
+            sort_direction = -1 if sort_order == 'desc' else 1
+            valid_sort_fields = ['created_at', 'full_name', 'email', 'employee_id', 'department']
+            if sort_by not in valid_sort_fields:
+                sort_by = 'created_at'
+            
+            # Sort in Python since LoanOfficer.find returns list
+            if sort_by == 'full_name':
+                all_officers.sort(key=lambda o: o.full_name.lower(), reverse=(sort_order == 'desc'))
+            elif sort_by == 'email':
+                all_officers.sort(key=lambda o: o.email.lower(), reverse=(sort_order == 'desc'))
+            elif sort_by == 'employee_id':
+                all_officers.sort(key=lambda o: o.employee_id.lower(), reverse=(sort_order == 'desc'))
+            elif sort_by == 'department':
+                all_officers.sort(key=lambda o: (o.department or '').lower(), reverse=(sort_order == 'desc'))
+            else:  # created_at
+                all_officers.sort(key=lambda o: o.created_at or datetime.min, reverse=(sort_order == 'desc'))
+            
+            # Paginate
+            start_idx = (page - 1) * page_size
+            end_idx = start_idx + page_size
+            paginated_officers = all_officers[start_idx:end_idx]
             
             officers_data = [{
                 'id': o.id,
@@ -258,12 +302,15 @@ class LoanOfficerManagementView(AdminRequiredMixin, APIView):
                 'active': o.active,
                 'created_at': o.created_at.isoformat() if o.created_at else None,
                 'two_factor_enabled': o.two_factor_enabled
-            } for o in officers]
+            } for o in paginated_officers]
             
             return success_response(
                 data={
                     'loan_officers': officers_data,
-                    'total': len(officers_data)
+                    'total': total,
+                    'page': page,
+                    'page_size': page_size,
+                    'total_pages': (total + page_size - 1) // page_size if total > 0 else 1
                 },
                 message="Loan officers retrieved successfully"
             )
@@ -569,7 +616,8 @@ class AdminManagementView(SuperAdminRequiredMixin, APIView):
     permission_classes = [IsAuthenticated]
     
     def get(self, request):
-        """List all admins"""
+        """List all admins with search, filtering, and pagination"""
+        import re
         try:
             has_perm, result = self.check_super_admin(request)
             if not has_perm:
@@ -578,13 +626,51 @@ class AdminManagementView(SuperAdminRequiredMixin, APIView):
             current_admin = result
             
             # Get query parameters
-            active_only = request.query_params.get('active', 'true').lower() == 'true'
+            search = request.query_params.get('search', '').strip()
+            active_param = request.query_params.get('active')  # None means all
+            page = int(request.query_params.get('page', 1))
+            page_size = min(int(request.query_params.get('page_size', 20)), 100)
+            sort_by = request.query_params.get('sort_by', 'created_at')
+            sort_order = request.query_params.get('sort_order', 'desc')
             
             query = {}
-            if active_only:
-                query['active'] = True
             
-            admins = Admin.find(query)
+            # Active filter - only apply if explicitly provided
+            if active_param is not None:
+                query['active'] = active_param.lower() == 'true'
+            
+            # Search filter - search in username, name, email
+            if search:
+                search_regex = re.compile(re.escape(search), re.IGNORECASE)
+                query['$or'] = [
+                    {'username': {'$regex': search_regex}},
+                    {'first_name': {'$regex': search_regex}},
+                    {'last_name': {'$regex': search_regex}},
+                    {'email': {'$regex': search_regex}},
+                ]
+            
+            # Get all matching admins
+            all_admins = list(Admin.find(query))
+            total = len(all_admins)
+            
+            # Sort
+            valid_sort_fields = ['created_at', 'full_name', 'email', 'username']
+            if sort_by not in valid_sort_fields:
+                sort_by = 'created_at'
+            
+            if sort_by == 'full_name':
+                all_admins.sort(key=lambda a: a.full_name.lower(), reverse=(sort_order == 'desc'))
+            elif sort_by == 'email':
+                all_admins.sort(key=lambda a: a.email.lower(), reverse=(sort_order == 'desc'))
+            elif sort_by == 'username':
+                all_admins.sort(key=lambda a: a.username.lower(), reverse=(sort_order == 'desc'))
+            else:  # created_at
+                all_admins.sort(key=lambda a: a.created_at or datetime.min, reverse=(sort_order == 'desc'))
+            
+            # Paginate
+            start_idx = (page - 1) * page_size
+            end_idx = start_idx + page_size
+            paginated_admins = all_admins[start_idx:end_idx]
             
             admins_data = [{
                 'id': a.id,
@@ -596,12 +682,15 @@ class AdminManagementView(SuperAdminRequiredMixin, APIView):
                 'active': a.active,
                 'two_factor_enabled': a.two_factor_enabled,
                 'created_at': a.created_at.isoformat() if a.created_at else None
-            } for a in admins]
+            } for a in paginated_admins]
             
             return success_response(
                 data={
                     'admins': admins_data,
-                    'total': len(admins_data)
+                    'total': total,
+                    'page': page,
+                    'page_size': page_size,
+                    'total_pages': (total + page_size - 1) // page_size if total > 0 else 1
                 },
                 message="Admins retrieved successfully"
             )
