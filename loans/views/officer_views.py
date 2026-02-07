@@ -3,6 +3,7 @@ from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
 from bson import ObjectId
 from datetime import datetime
+from django.conf import settings
 
 from accounts.authentication import CustomJWTAuthentication
 from accounts.utils.response_helpers import success_response, error_response
@@ -29,46 +30,186 @@ class LoanOfficerRequiredMixin:
 
 class OfficerApplicationListView(LoanOfficerRequiredMixin, APIView):
     """
-    Loan Officer: List pending applications.
+    Loan Officer: List and search applications with advanced filtering.
     
     GET /api/loans/officer/applications/
+    
+    Query params:
+        - status: Filter by status ('pending', 'mine', 'submitted', 'under_review', 'approved', 'rejected', 'disbursed')
+        - search: Keyword search (customer name, product name, application ID)
+        - min_amount: Minimum requested amount
+        - max_amount: Maximum requested amount
+        - start_date: Filter applications submitted on or after this date (YYYY-MM-DD)
+        - end_date: Filter applications submitted on or before this date (YYYY-MM-DD)
+        - risk_category: Filter by risk category ('low', 'medium', 'high')
+        - page: Page number (default 1)
+        - page_size: Items per page (default 20, max 100)
+        - sort_by: Sort field ('submitted_at', 'requested_amount', 'eligibility_score')
+        - sort_order: 'asc' or 'desc' (default 'desc')
     """
     authentication_classes = [CustomJWTAuthentication]
     permission_classes = [IsAuthenticated]
     
     def get(self, request):
+        import re
+        from datetime import datetime
+        from accounts.models import Customer
+        
         has_permission, result = self.check_officer_permission(request)
         if not has_permission:
             return result
         
-        # Filter by status
+        # Extract query params
         status_filter = request.query_params.get('status', 'pending')
+        search_query = request.query_params.get('search', '').strip()
+        min_amount = request.query_params.get('min_amount')
+        max_amount = request.query_params.get('max_amount')
+        start_date = request.query_params.get('start_date')
+        end_date = request.query_params.get('end_date')
+        risk_category = request.query_params.get('risk_category')
+        page = int(request.query_params.get('page', 1))
+        page_size = min(int(request.query_params.get('page_size', 20)), 100)
+        sort_by = request.query_params.get('sort_by', 'submitted_at')
+        sort_order = request.query_params.get('sort_order', 'desc')
         
+        # Build base query
+        query = {}
+        
+        # Status filter
         if status_filter == 'pending':
-            applications = LoanApplication.find_pending()
+            query['status'] = {'$in': ['submitted', 'under_review']}
         elif status_filter == 'mine':
-            applications = LoanApplication.find_by_officer(result.customer_id)
-        else:
-            applications = LoanApplication.find({'status': status_filter})
+            query['assigned_officer'] = result.customer_id
+        elif status_filter != 'all':
+            query['status'] = status_filter
         
+        # Amount range filter
+        if min_amount:
+            try:
+                query.setdefault('requested_amount', {})['$gte'] = float(min_amount)
+            except ValueError:
+                pass
+        if max_amount:
+            try:
+                query.setdefault('requested_amount', {})['$lte'] = float(max_amount)
+            except ValueError:
+                pass
+        
+        # Date range filter
+        if start_date:
+            try:
+                start_dt = datetime.strptime(start_date, '%Y-%m-%d')
+                query.setdefault('submitted_at', {})['$gte'] = start_dt
+            except ValueError:
+                pass
+        if end_date:
+            try:
+                end_dt = datetime.strptime(end_date, '%Y-%m-%d').replace(hour=23, minute=59, second=59)
+                query.setdefault('submitted_at', {})['$lte'] = end_dt
+            except ValueError:
+                pass
+        
+        # Risk category filter
+        if risk_category and risk_category in ['low', 'medium', 'high']:
+            query['risk_category'] = risk_category
+        
+        # Keyword search - need to handle customer name search
+        customer_ids = []
+        if search_query:
+            # First, search for matching customers
+            regex = re.compile(f'.*{re.escape(search_query)}.*', re.IGNORECASE)
+            customers = Customer.find({
+                '$or': [
+                    {'first_name': regex},
+                    {'last_name': regex},
+                    {'phone': regex},
+                    {'email': regex}
+                ]
+            })
+            customer_ids = [c.id for c in customers if c]
+        
+        # Get applications from database
+        db = settings.MONGODB
+        collection = db['loan_applications']
+        
+        # Build final query with customer search
+        final_query = query.copy()
+        if search_query:
+            search_conditions = [
+                {'_id': {'$regex': search_query, '$options': 'i'}} if len(search_query) == 24 else {},
+            ]
+            if customer_ids:
+                search_conditions.append({'customer_id': {'$in': customer_ids}})
+            
+            # Product name search happens after DB query
+            final_query = {
+                '$and': [
+                    query,
+                    {'$or': search_conditions} if search_conditions and any(search_conditions) else {}
+                ]
+            } if customer_ids else query
+        
+        # Sorting
+        sort_field = sort_by if sort_by in ['submitted_at', 'requested_amount', 'eligibility_score', 'created_at'] else 'submitted_at'
+        sort_direction = 1 if sort_order == 'asc' else -1
+        
+        # Get total count for pagination
+        total_count = collection.count_documents(final_query if final_query else query)
+        
+        # Get paginated results
+        skip = (page - 1) * page_size
+        cursor = collection.find(final_query if final_query else query).sort(sort_field, sort_direction).skip(skip).limit(page_size)
+        
+        applications = [LoanApplication.from_dict(doc) for doc in cursor]
+        
+        # Build response with product names
         apps_data = []
         for app in applications:
+            if not app:
+                continue
             product = LoanProduct.find_by_id(app.product_id)
+            product_name = product.name if product else 'Unknown'
+            
+            # Secondary filter: product name search (if search query provided)
+            if search_query and search_query.lower() not in product_name.lower():
+                if not customer_ids or app.customer_id not in customer_ids:
+                    if search_query.lower() not in (app.id or '').lower():
+                        continue
+            
+            # Get customer name for display
+            customer = None
+            if app.customer_id:
+                try:
+                    customer = Customer.find_one({'_id': ObjectId(app.customer_id)})
+                except Exception:
+                    pass
+            customer_name = f"{customer.first_name} {customer.last_name}" if customer else 'Unknown'
+            
             apps_data.append({
                 'id': app.id,
                 'customer_id': app.customer_id,
-                'product_name': product.name if product else 'Unknown',
+                'customer_name': customer_name,
+                'product_name': product_name,
                 'requested_amount': app.requested_amount,
                 'recommended_amount': app.recommended_amount,
+                'approved_amount': app.approved_amount,
                 'term_months': app.term_months,
                 'status': app.status,
                 'eligibility_score': app.eligibility_score,
                 'risk_category': app.risk_category,
-                'submitted_at': app.submitted_at.isoformat() if app.submitted_at else None
+                'assigned_officer': app.assigned_officer,
+                'submitted_at': app.submitted_at.isoformat() if app.submitted_at else None,
+                'decision_date': app.decision_date.isoformat() if app.decision_date else None
             })
         
         return success_response(
-            data={'applications': apps_data, 'total': len(apps_data)},
+            data={
+                'applications': apps_data,
+                'total': total_count,
+                'page': page,
+                'page_size': page_size,
+                'total_pages': (total_count + page_size - 1) // page_size
+            },
             message="Applications retrieved"
         )
 
@@ -249,7 +390,12 @@ class OfficerReviewView(LoanOfficerRequiredMixin, APIView):
         
         # Get customer email for notification
         from accounts.models import Customer
-        customer = Customer.find_one({'customer_id': app.customer_id})
+        customer = None
+        if app.customer_id:
+            try:
+                customer = Customer.find_one({'_id': ObjectId(app.customer_id)})
+            except Exception:
+                pass
         customer_email = customer.email if customer else None
         customer_name = f"{customer.first_name} {customer.last_name}" if customer else "Customer"
         
@@ -407,7 +553,12 @@ class DisburseView(LoanOfficerRequiredMixin, APIView):
             
             # Send disbursement email
             from accounts.models import Customer
-            customer = Customer.find_one({'customer_id': app.customer_id})
+            customer = None
+            if app.customer_id:
+                try:
+                    customer = Customer.find_one({'_id': ObjectId(app.customer_id)})
+                except Exception:
+                    pass
             if customer and customer.email:
                 try:
                     from notifications.services import get_email_sender
@@ -571,7 +722,12 @@ class RecordPaymentView(LoanOfficerRequiredMixin, APIView):
             from accounts.models import Customer
             from notifications.services import get_email_sender
             
-            customer = Customer.find_one({'customer_id': schedule.customer_id})
+            customer = None
+            if schedule.customer_id:
+                try:
+                    customer = Customer.find_one({'_id': ObjectId(schedule.customer_id)})
+                except Exception:
+                    pass
             if customer and customer.email:
                 sender = get_email_sender()
                 sender.send_payment_received(
@@ -628,9 +784,12 @@ class ActiveLoansView(LoanOfficerRequiredMixin, APIView):
         
         # Build customer query
         if customer_id_filter:
-            # Direct customer ID filter
-            customers = [Customer.find_one({'customer_id': customer_id_filter})]
-            customers = [c for c in customers if c]
+            # Direct customer ID filter - query by _id
+            try:
+                customer = Customer.find_one({'_id': ObjectId(customer_id_filter)})
+                customers = [customer] if customer else []
+            except Exception:
+                customers = []
         elif search:
             # Search by name, phone, or email using Customer.find()
             import re
@@ -809,4 +968,202 @@ class OfficerPaymentHistoryView(LoanOfficerRequiredMixin, APIView):
             },
             message="Payment history retrieved"
         )
+
+
+class PaymentSearchView(LoanOfficerRequiredMixin, APIView):
+    """
+    Loan Officer: Search and filter all payments with advanced options.
+    
+    GET /api/loans/officer/payments/search/
+    
+    Query params:
+        - search: Keyword search (customer name, reference number)
+        - loan_id: Filter by loan ID
+        - customer_id: Filter by customer ID
+        - payment_method: Filter by payment method ('cash', 'bank_transfer', 'gcash', 'maya', 'check')
+        - min_amount: Minimum payment amount
+        - max_amount: Maximum payment amount
+        - start_date: Filter payments recorded on or after this date (YYYY-MM-DD)
+        - end_date: Filter payments recorded on or before this date (YYYY-MM-DD)
+        - page: Page number (default 1)
+        - page_size: Items per page (default 20, max 100)
+        - sort_by: Sort field ('recorded_at', 'amount', 'installment_number')
+        - sort_order: 'asc' or 'desc' (default 'desc')
+    """
+    authentication_classes = [CustomJWTAuthentication]
+    permission_classes = [IsAuthenticated]
+    
+    def get(self, request):
+        import re
+        from accounts.models import Customer
+        from loans.models import LoanPayment
         
+        has_permission, result = self.check_officer_permission(request)
+        if not has_permission:
+            return result
+        
+        # Extract query params
+        search_query = request.query_params.get('search', '').strip()
+        loan_id = request.query_params.get('loan_id', '').strip()
+        customer_id = request.query_params.get('customer_id', '').strip()
+        payment_method = request.query_params.get('payment_method', '').strip()
+        min_amount = request.query_params.get('min_amount')
+        max_amount = request.query_params.get('max_amount')
+        start_date = request.query_params.get('start_date')
+        end_date = request.query_params.get('end_date')
+        page = int(request.query_params.get('page', 1))
+        page_size = min(int(request.query_params.get('page_size', 20)), 100)
+        sort_by = request.query_params.get('sort_by', 'recorded_at')
+        sort_order = request.query_params.get('sort_order', 'desc')
+        
+        # Build query
+        query = {}
+        
+        # Loan ID filter
+        if loan_id:
+            query['loan_id'] = loan_id
+        
+        # Customer ID filter
+        if customer_id:
+            query['customer_id'] = customer_id
+        
+        # Payment method filter
+        valid_methods = ['cash', 'bank_transfer', 'gcash', 'maya', 'check', 'other']
+        if payment_method and payment_method in valid_methods:
+            query['payment_method'] = payment_method
+        
+        # Amount range filter
+        if min_amount:
+            try:
+                query.setdefault('amount', {})['$gte'] = float(min_amount)
+            except ValueError:
+                pass
+        if max_amount:
+            try:
+                query.setdefault('amount', {})['$lte'] = float(max_amount)
+            except ValueError:
+                pass
+        
+        # Date range filter
+        if start_date:
+            try:
+                start_dt = datetime.strptime(start_date, '%Y-%m-%d')
+                query.setdefault('recorded_at', {})['$gte'] = start_dt
+            except ValueError:
+                pass
+        if end_date:
+            try:
+                end_dt = datetime.strptime(end_date, '%Y-%m-%d').replace(hour=23, minute=59, second=59)
+                query.setdefault('recorded_at', {})['$lte'] = end_dt
+            except ValueError:
+                pass
+        
+        # Keyword search - find customer IDs matching the search
+        customer_ids = []
+        if search_query:
+            # Search for customers
+            regex = re.compile(f'.*{re.escape(search_query)}.*', re.IGNORECASE)
+            customers = Customer.find({
+                '$or': [
+                    {'first_name': regex},
+                    {'last_name': regex},
+                    {'phone': regex}
+                ]
+            })
+            customer_ids = [c.id for c in customers if c]
+            
+            # Also search by reference
+            search_regex = re.compile(f'.*{re.escape(search_query)}.*', re.IGNORECASE)
+        
+        # Get payments from database
+        db = settings.MONGODB
+        collection = db['loan_payments']
+        
+        # Build final query with search
+        if search_query:
+            search_conditions = []
+            if customer_ids:
+                search_conditions.append({'customer_id': {'$in': customer_ids}})
+            search_conditions.append({'reference': {'$regex': search_query, '$options': 'i'}})
+            
+            if query:
+                final_query = {'$and': [query, {'$or': search_conditions}]}
+            else:
+                final_query = {'$or': search_conditions}
+        else:
+            final_query = query
+        
+        # Sorting
+        sort_field = sort_by if sort_by in ['recorded_at', 'amount', 'installment_number'] else 'recorded_at'
+        sort_direction = 1 if sort_order == 'asc' else -1
+        
+        # Get total count for pagination
+        total_count = collection.count_documents(final_query)
+        
+        # Get paginated results
+        skip = (page - 1) * page_size
+        cursor = collection.find(final_query).sort(sort_field, sort_direction).skip(skip).limit(page_size)
+        
+        payments = [LoanPayment.from_dict(doc) for doc in cursor]
+        
+        # Build response with customer names
+        payments_data = []
+        customer_cache = {}
+        
+        for payment in payments:
+            if not payment:
+                continue
+            
+            # Cache customer lookups
+            cust_id = payment.customer_id
+            if cust_id not in customer_cache:
+                customer = None
+                if cust_id:
+                    try:
+                        customer = Customer.find_one({'_id': ObjectId(cust_id)})
+                    except Exception:
+                        pass
+                customer_cache[cust_id] = customer
+            
+            customer = customer_cache.get(cust_id)
+            customer_name = f"{customer.first_name} {customer.last_name}" if customer else 'Unknown'
+            
+            # Get loan application for product info
+            app = LoanApplication.find_by_id(payment.loan_id)
+            product_name = 'Unknown'
+            if app:
+                product = LoanProduct.find_by_id(app.product_id)
+                product_name = product.name if product else 'Unknown'
+            
+            payments_data.append({
+                'id': payment.id,
+                'loan_id': payment.loan_id,
+                'customer_id': payment.customer_id,
+                'customer_name': customer_name,
+                'product_name': product_name,
+                'installment_number': payment.installment_number,
+                'amount': payment.amount,
+                'payment_method': payment.payment_method,
+                'reference': payment.reference,
+                'notes': payment.notes,
+                'recorded_by': payment.recorded_by,
+                'recorded_at': payment.recorded_at.isoformat() if payment.recorded_at else None
+            })
+        
+        # Calculate summary stats
+        total_amount = sum(p['amount'] for p in payments_data)
+        
+        return success_response(
+            data={
+                'payments': payments_data,
+                'total': total_count,
+                'page': page,
+                'page_size': page_size,
+                'total_pages': (total_count + page_size - 1) // page_size,
+                'summary': {
+                    'total_amount': total_amount,
+                    'count': len(payments_data)
+                }
+            },
+            message="Payments retrieved"
+        )
