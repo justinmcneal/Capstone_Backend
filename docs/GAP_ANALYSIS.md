@@ -123,13 +123,15 @@ GET /api/health/
 
 ## ⚠️ PARTIALLY IMPLEMENTED
 
-| Feature | Status | What's Missing |
-|---------|--------|----------------|
-| **CNN Document Verification** | Stubbed | Needs training data & model weights |
-| **Multilingual AI Responses** | Basic | AI responds in English, needs TL tuning |
-| **Blockchain Integration** | Contracts exist | Django↔Smart Contract bridge not built |
+| Feature | Status | What's Missing | How to Complete |
+|---------|--------|----------------|-----------------|
+| **CNN Document Verification** | Architecture ready | Needs training data & model training | Follow [CNN_QUICK_START.md](CNN_QUICK_START.md) (5-day plan) |
+| **Multilingual AI Responses** | Basic | AI responds in English, needs TL tuning | Fine-tune Groq prompt or use translation layer |
+| **Blockchain Integration** | Contracts exist | Django↔Smart Contract bridge not built | Create `BlockchainService` with web3.py |
 
 > **Smart Contracts:** 5 Solidity contracts are deployed in `/smartcontracts/` but require a Python `BlockchainService` to connect Django to the blockchain.
+
+> **CNN Training:** Complete guide available at [CNN_TRAINING_GUIDE.md](CNN_TRAINING_GUIDE.md) with helper scripts and 280-560 image requirements.
 
 ---
 
@@ -215,21 +217,26 @@ GET /api/health/
 
 ### Backend (Before Deployment)
 
-| Task | Priority | Effort | Status |
-|------|----------|--------|--------|
-| ~~Switch LLM to Groq~~ | - | - | ✅ Done |
-| ~~Add production settings~~ | - | - | ✅ Done |
-| ~~Add Gunicorn~~ | - | - | ✅ Done |
-| ~~Configure WhiteNoise~~ | - | - | ✅ Done |
-| ~~Email notifications~~ | - | - | ✅ Done |
-| Blockchain integration | 🔴 High | 2-3 days | Pending |
+| Task | Priority | Effort | Status | Guide |
+|------|----------|--------|--------|-------|
+| ~~Switch LLM to Groq~~ | - | - | ✅ Done | - |
+| ~~Add production settings~~ | - | - | ✅ Done | - |
+| ~~Add Gunicorn~~ | - | - | ✅ Done | - |
+| ~~Configure WhiteNoise~~ | - | - | ✅ Done | - |
+| ~~Email notifications~~ | - | - | ✅ Done | - |
+| Blockchain integration | 🔴 High | 2-3 days | Pending | See [SMART_CONTRACTS.md](SMART_CONTRACTS.md) |
 
 ### CNN Training
 
-| Task | Priority | Effort | Status |
-|------|----------|--------|--------|
-| Collect training images | 🟡 Medium | 2-3 days | Pending |
-| Run training command | 🟡 Medium | 1 hour | Pending |
+| Task | Priority | Effort | Status | Guide |
+|------|----------|--------|--------|-------|
+| Collect training images | 🟡 Medium | 1-3 days | Pending | [CNN_QUICK_START.md](CNN_QUICK_START.md) |
+| Anonymize images | 🟡 Medium | 4-6 hours | Pending | Use `scripts/anonymize_images.py` |
+| Validate dataset | 🟡 Medium | 30 min | Pending | Run `scripts/check_training_data.py` |
+| Train model | 🟡 Medium | 30-60 min | Pending | `python manage.py train_document_classifier` |
+| Test accuracy | 🟡 Medium | 1 hour | Pending | `scripts/test_cnn_model.py --confusion` |
+
+**Target:** 280-560 images, 85-95% validation accuracy
 
 ### Deployment
 
