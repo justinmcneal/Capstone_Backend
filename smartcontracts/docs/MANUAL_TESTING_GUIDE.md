@@ -123,7 +123,11 @@ const repayment = await ethers.getContractAt("Repayment", REPAY_ADDR);
 
 **Verify it worked:**
 ```javascript
+console.log("LoanAccessControl connected:", await accessControl.getAddress());
+console.log("AuditRegistry connected:", await auditRegistry.getAddress());
 console.log("LoanCore connected:", await loanCore.getAddress());
+console.log("Disbursement connected:", await disbursement.getAddress());
+console.log("Repayment connected:", await repayment.getAddress());
 ```
 
 ---
