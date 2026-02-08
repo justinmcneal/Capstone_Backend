@@ -200,6 +200,7 @@ class DocumentAnalyzer:
         try:
             import torch
             from torchvision import transforms
+            from .cnn_model import DOCUMENT_CLASSES  # Use single source of truth
             
             # Preprocess
             transform = transforms.Compose([
@@ -217,14 +218,9 @@ class DocumentAnalyzer:
                 probabilities = torch.softmax(outputs, dim=1)
                 confidence, predicted = torch.max(probabilities, 1)
             
-            # Get class name
-            class_names = [
-                'valid_id', 'selfie_with_id', 'business_permit',
-                'proof_of_address', 'business_photo', 'income_proof', 'invalid'
-            ]
-            
+            # Get class name from centralized constant
             return {
-                'predicted_type': class_names[predicted.item()],
+                'predicted_type': DOCUMENT_CLASSES[predicted.item()],
                 'type_confidence': confidence.item()
             }
             
