@@ -182,14 +182,39 @@ When `ai_consent` is `false` or not given, the following features are blocked:
 
 ---
 
-## Consent Enforcement Middleware
+## Consent Enforcement
 
-The system includes middleware that:
+The system enforces AI consent using a **view-level mixin** (`ConsentRequiredMixin`) applied to AI-related views:
 
-1. Checks `ai_consent` status on all AI-related endpoints
-2. Returns `403 Forbidden` with `CONSENT_REQUIRED` code if not given
-3. Allows consent to be updated at any time
-4. Logs all consent changes for audit compliance
+```python
+# ai_assistant/views/chat_views.py
+class ConsentRequiredMixin:
+    """Mixin to enforce AI consent before allowing AI features"""
+    
+    def check_ai_consent(self, request):
+        """Check if user has given AI consent"""
+        consent = Consent.find_by_user(customer_id, 'customer')
+        
+        if not consent or not consent.ai_consent:
+            return False, error_response(
+                message="AI consent is required to use this feature",
+                errors={'code': 'CONSENT_REQUIRED', ...},
+                status_code=403
+            )
+        return True, consent
+```
+
+**How it works:**
+
+1. Each AI view inherits from `ConsentRequiredMixin`
+2. Views call `check_ai_consent()` at the start of request handling
+3. Returns `403 Forbidden` with `CONSENT_REQUIRED` code if not given
+4. Consent can be updated at any time via `PUT /api/auth/consent/`
+
+**Views protected by consent check:**
+- `ChatView` — AI chat endpoint
+- `ChatHistoryView` — Chat history retrieval
+- `SuggestionsView` — Conversation starters
 
 ---
 

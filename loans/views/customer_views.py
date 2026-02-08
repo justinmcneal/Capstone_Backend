@@ -243,6 +243,20 @@ class LoanApplyView(APIView):
             
             logger.info(f"Loan application submitted: {application.id} by {customer_id}")
             
+            # Send confirmation email to customer
+            try:
+                from notifications.services import get_email_sender
+                sender = get_email_sender()
+                sender.send_loan_submitted(
+                    customer_email=user.email if hasattr(user, 'email') else '',
+                    customer_name=user.full_name if hasattr(user, 'full_name') else f"{user.first_name} {user.last_name}",
+                    loan_id=application.id,
+                    product_name=product.name,
+                    amount=data['requested_amount']
+                )
+            except Exception as e:
+                logger.warning(f"Failed to send loan submitted email: {e}")
+            
             # Audit log
             AuditLog.log_action(
                 action='loan_submitted',

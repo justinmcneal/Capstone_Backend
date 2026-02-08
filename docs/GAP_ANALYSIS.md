@@ -9,10 +9,13 @@
 
 | Category | Status |
 |----------|--------|
-| **Core Features Implemented** | 98% |
-| **Flowchart Steps Covered** | 21/22 (95%) |
+| **Core Features Implemented** | 85% |
+| **Flowchart Steps Covered** | 20/22 (91%) |
 | **Architecture Layers** | 6/6 (100%) |
 | **Database Collections** | 7/7 (100%) |
+| **Smart Contracts** | Deployed, not integrated |
+
+> **Note:** CNN document analysis and blockchain integration are pending. See [PARTIALLY IMPLEMENTED](#⚠️-partially-implemented) section.
 
 ---
 
@@ -48,7 +51,7 @@ GET /api/health/
 | G | User Profile Collection | ✅ | `PUT /api/profile/`, `/business/`, `/alternative-data/` |
 | H | Alternative Data Input | ✅ | `PUT /api/profile/alternative-data/` |
 | I | Document Upload | ✅ | `POST /api/documents/upload/` |
-| J | AI Document Analysis (CNN) | ⚠️ | Model stubbed, needs training |
+| J | AI Document Analysis (CNN) | ⚠️ | Quality-check only, CNN needs training |
 | K | Documents Valid? | ✅ | `POST /api/documents/<id>/verify/` |
 | L | Request Re-upload | ✅ | `POST /api/documents/<id>/request-reupload/` |
 | M | AI Loan Pre-Qualification | ✅ | `POST /api/loans/pre-qualify/` |
@@ -76,7 +79,7 @@ GET /api/health/
 | | User Profile Service | ✅ | 3 profile types |
 | | Loan Service | ✅ | Full lifecycle |
 | | Document Service | ✅ | Upload, verify, re-upload |
-| | Notification Service | ✅ | Email (6 types) |
+| | Notification Service | ✅ | Email (7 types) |
 | **AI Layer** | Multilingual AI Assistant | ✅ | Groq Cloud LLM |
 | | NLP/LLM Engine | ✅ | Groq API integration |
 | | Alternative Data Profiler | ✅ | AlternativeData model |
@@ -124,6 +127,9 @@ GET /api/health/
 |---------|--------|----------------|
 | **CNN Document Verification** | Stubbed | Needs training data & model weights |
 | **Multilingual AI Responses** | Basic | AI responds in English, needs TL tuning |
+| **Blockchain Integration** | Contracts exist | Django↔Smart Contract bridge not built |
+
+> **Smart Contracts:** 5 Solidity contracts are deployed in `/smartcontracts/` but require a Python `BlockchainService` to connect Django to the blockchain.
 
 ---
 
@@ -138,16 +144,16 @@ GET /api/health/
 
 ---
 
-## ✅ FULLY IMPLEMENTED (59 Endpoints)
+## ✅ FULLY IMPLEMENTED (71 Endpoints)
 
-### Authentication (20 endpoints)
+### Authentication (25 endpoints)
 - Customer signup/login/logout
 - Email OTP verification
 - Password reset flow
 - Two-Factor Authentication (6 endpoints)
 - Consent management
 - Officer/Admin authentication
-- User management
+- Admin user management (officers + admins)
 
 ### Profiles (5 endpoints)
 - Personal, Business, Alternative data
@@ -155,14 +161,16 @@ GET /api/health/
 - Notification preferences
 
 ### Documents (6 endpoints)
-- Upload, list, detail, delete
+- Upload, list, types, detail, delete
 - Verify, Request re-upload
 
-### Loans (16 endpoints)
-- Products CRUD
+### Loans (23 endpoints)
+- Products CRUD (admin)
 - Pre-qualification
 - Application lifecycle
-- Payments & schedules
+- Customer: applications, schedule, payments, feedback, resubmit
+- Officer: applications, review, disburse, payments, active-loans, schedule view
+- Admin: assign, workload
 
 ### AI Assistant (7 endpoints)
 - Chat, history, suggestions
@@ -195,9 +203,11 @@ GET /api/health/
 
 ## Verdict
 
-✅ **Backend is 98% complete and ready for frontend integration!**
+✅ **Backend is 85% complete and ready for frontend integration!**
 
-Only CNN model training is needed for full document verification capability.
+**Remaining for full completion:**
+1. CNN model training (document verification)
+2. Blockchain integration (Django ↔ Smart Contracts)
 
 ---
 
@@ -211,6 +221,8 @@ Only CNN model training is needed for full document verification capability.
 | ~~Add production settings~~ | - | - | ✅ Done |
 | ~~Add Gunicorn~~ | - | - | ✅ Done |
 | ~~Configure WhiteNoise~~ | - | - | ✅ Done |
+| ~~Email notifications~~ | - | - | ✅ Done |
+| Blockchain integration | 🔴 High | 2-3 days | Pending |
 
 ### CNN Training
 

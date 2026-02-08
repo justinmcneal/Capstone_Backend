@@ -11,13 +11,13 @@
 | Module | Endpoints | Auth Required |
 |--------|-----------|---------------|
 | [System](#system) | 1 | ❌ |
-| [Authentication](#authentication) | 20 | Mixed |
+| [Authentication](#authentication) | 25 | Mixed |
 | [Profiles](#profiles) | 5 | ✅ Customer |
 | [Documents](#documents) | 6 | ✅ Mixed |
-| [Loans](#loans) | 16 | ✅ Mixed |
+| [Loans](#loans) | 23 | ✅ Mixed |
 | [AI Assistant](#ai-assistant) | 7 | ✅ Customer |
 | [Analytics](#analytics) | 4 | ✅ Mixed |
-| **Total** | **59 endpoints** | |
+| **Total** | **71 endpoints** | |
 
 ---
 
@@ -187,7 +187,11 @@ GET /api/health/
 | `GET` | `/api/loans/officer/applications/<id>/` | Application detail |
 | `POST` | `/api/loans/officer/applications/<id>/review/` | Approve/reject |
 | `POST` | `/api/loans/officer/applications/<id>/disburse/` | Disburse loan |
+| `GET` | `/api/loans/officer/applications/<id>/schedule/` | View repayment schedule |
+| `GET` | `/api/loans/officer/applications/<id>/payments/` | View payment history |
+| `GET` | `/api/loans/officer/active-loans/` | List active/disbursed loans |
 | `POST` | `/api/loans/officer/payments/` | Record payment |
+| `GET` | `/api/loans/officer/payments/search/` | Search payments |
 
 ---
 
