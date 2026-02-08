@@ -10,18 +10,27 @@ Email notifications are sent automatically on loan events. No manual API calls n
 
 | Event | When | Email Sent To |
 |-------|------|---------------|
+| Loan Submitted | Customer submits application | Customer |
 | Loan Approved | Officer approves loan | Customer |
 | Loan Rejected | Officer rejects loan | Customer |
+| Loan Disbursed | Officer disburses funds | Customer |
+| Payment Received | Payment recorded | Customer |
+| Document Flagged | Re-upload requested | Customer |
+| New Application | Application assigned | Loan Officer |
 
 ---
 
 ## Testing
 
-### 1. Configure Email (Already in `.env`)
+### 1. Configure Email in `.env`
+
+```env
+EMAIL_HOST_USER=your-email@gmail.com
+EMAIL_HOST_PASSWORD=your-app-password
+DEFAULT_FROM_EMAIL=your-email@gmail.com
 ```
-EMAIL_HOST_USER=sorianoeligabriel@gmail.com
-EMAIL_HOST_PASSWORD=exsl ffan ntwx aprv
-```
+
+> **Security Note:** Use app-specific passwords for Gmail. Never commit real credentials.
 
 ### 2. Start Server
 ```bash

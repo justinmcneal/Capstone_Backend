@@ -524,7 +524,7 @@ class RequestReuploadView(APIView):
                     customer_email=customer.email,
                     customer_name=f"{customer.first_name} {customer.last_name}",
                     document_type=doc.document_type,
-                    reason=reason
+                    issues=[reason]  # Pass reason as list of issues
                 )
         except Exception as e:
             logger.warning(f"Failed to send re-upload email: {e}")
