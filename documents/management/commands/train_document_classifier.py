@@ -47,7 +47,7 @@ class Command(BaseCommand):
             import torch
             import torch.nn as nn
             import torch.optim as optim
-            from torch.utils.data import DataLoader, random_split
+            from torch.utils.data import DataLoader, Subset
             from torchvision import transforms, datasets
         except ImportError:
             self.stderr.write(self.style.ERROR(
@@ -111,20 +111,28 @@ class Command(BaseCommand):
             transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
         ])
         
-        # Load dataset
+        # Load dataset with SEPARATE transforms for train and val
+        # (Using Subset to avoid shared transform reference bug)
         try:
-            full_dataset = datasets.ImageFolder(str(data_path), transform=train_transforms)
+            train_full = datasets.ImageFolder(str(data_path), transform=train_transforms)
+            val_full = datasets.ImageFolder(str(data_path), transform=val_transforms)
         except Exception as e:
             self.stderr.write(self.style.ERROR(f'Error loading dataset: {e}'))
             return
         
-        # Split into train/val
-        train_size = int(0.8 * len(full_dataset))
-        val_size = len(full_dataset) - train_size
-        train_dataset, val_dataset = random_split(full_dataset, [train_size, val_size])
+        # Generate consistent random split indices
+        import random
+        indices = list(range(len(train_full)))
+        random.seed(42)  # Reproducible split
+        random.shuffle(indices)
         
-        # Apply val transforms to validation set
-        val_dataset.dataset.transform = val_transforms
+        train_size = int(0.8 * len(indices))
+        train_indices = indices[:train_size]
+        val_indices = indices[train_size:]
+        
+        # Create separate subsets with their own transforms
+        train_dataset = Subset(train_full, train_indices)
+        val_dataset = Subset(val_full, val_indices)
         
         train_loader = DataLoader(
             train_dataset, 
@@ -163,11 +171,13 @@ class Command(BaseCommand):
         )
         scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=5, gamma=0.5)
         
-        # Training loop
+        # Training loop with early stopping
         best_val_acc = 0.0
         epochs = options['epochs']
+        patience = 5  # Stop if no improvement for 5 epochs
+        no_improve_count = 0
         
-        self.stdout.write(f'\nStarting training for {epochs} epochs...\n')
+        self.stdout.write(f'\nStarting training for {epochs} epochs (early stopping patience: {patience})...\n')
         
         for epoch in range(epochs):
             # Train
@@ -219,11 +229,19 @@ class Command(BaseCommand):
                 f'Val Acc: {val_acc:.2f}%'
             )
             
-            # Save best model
+            # Save best model with early stopping
             if val_acc > best_val_acc:
                 best_val_acc = val_acc
+                no_improve_count = 0
                 torch.save(model.state_dict(), model_path)
                 self.stdout.write(self.style.SUCCESS(f'  ✓ Model saved (best val acc: {val_acc:.2f}%)'))
+            else:
+                no_improve_count += 1
+                if no_improve_count >= patience:
+                    self.stdout.write(self.style.WARNING(
+                        f'\n⚠️  Early stopping triggered (no improvement for {patience} epochs)'
+                    ))
+                    break
             
             scheduler.step()
         
