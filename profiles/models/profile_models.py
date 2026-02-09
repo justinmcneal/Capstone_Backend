@@ -172,13 +172,20 @@ class CustomerProfile:
     
     @classmethod
     def find_by_customer(cls, customer_id):
-        return cls.find_one({'customer_id': str(customer_id)})
+        try:
+            # Convert to ObjectId for query if it's a string
+            from bson import ObjectId
+            if isinstance(customer_id, str):
+                customer_id = ObjectId(customer_id)
+        except:
+            pass  # If conversion fails, try as string
+        return cls.find_one({'customer_id': customer_id})
     
     @classmethod
     def get_or_create(cls, customer_id):
         profile = cls.find_by_customer(customer_id)
         if not profile:
-            profile = cls(customer_id=str(customer_id))
+            profile = cls(customer_id=ObjectId(customer_id) if isinstance(customer_id, str) else customer_id)
             profile.save()
         return profile
 
@@ -281,13 +288,20 @@ class BusinessProfile:
     
     @classmethod
     def find_by_customer(cls, customer_id):
-        return cls.find_one({'customer_id': str(customer_id)})
+        try:
+            # Convert to ObjectId for query if it's a string
+            from bson import ObjectId
+            if isinstance(customer_id, str):
+                customer_id = ObjectId(customer_id)
+        except:
+            pass  # If conversion fails, try as string
+        return cls.find_one({'customer_id': customer_id})
     
     @classmethod
     def get_or_create(cls, customer_id):
         profile = cls.find_by_customer(customer_id)
         if not profile:
-            profile = cls(customer_id=str(customer_id))
+            profile = cls(customer_id=ObjectId(customer_id) if isinstance(customer_id, str) else customer_id)
             profile.save()
         return profile
 
@@ -414,13 +428,20 @@ class AlternativeData:
     
     @classmethod
     def find_by_customer(cls, customer_id):
-        return cls.find_one({'customer_id': str(customer_id)})
+        try:
+            # Convert to ObjectId for query if it's a string
+            from bson import ObjectId
+            if isinstance(customer_id, str):
+                customer_id = ObjectId(customer_id)
+        except:
+            pass  # If conversion fails, try as string
+        return cls.find_one({'customer_id': customer_id})
     
     @classmethod
     def get_or_create(cls, customer_id):
         profile = cls.find_by_customer(customer_id)
         if not profile:
-            profile = cls(customer_id=str(customer_id))
+            profile = cls(customer_id=ObjectId(customer_id) if isinstance(customer_id, str) else customer_id)
             profile.save()
         return profile
     

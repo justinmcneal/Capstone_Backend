@@ -189,7 +189,13 @@ class Document:
     @classmethod
     def find_by_customer(cls, customer_id, document_type=None):
         """Find all documents for a customer, optionally filtered by type"""
-        query = {'customer_id': str(customer_id)}
+        # Convert string customer_id to ObjectId for querying
+        try:
+            customer_id = ObjectId(customer_id)
+        except:
+            pass  # If conversion fails, use as-is
+        
+        query = {'customer_id': customer_id}
         if document_type:
             query['document_type'] = document_type
         return cls.find(query, sort=[('uploaded_at', -1)])
@@ -197,9 +203,15 @@ class Document:
     @classmethod
     def count_by_customer(cls, customer_id, document_type=None):
         """Count documents for a customer"""
+        # Convert string customer_id to ObjectId for querying
+        try:
+            customer_id = ObjectId(customer_id)
+        except:
+            pass  # If conversion fails, use as-is
+        
         db = get_db()
         collection = db[cls.collection_name]
-        query = {'customer_id': str(customer_id)}
+        query = {'customer_id': customer_id}
         if document_type:
             query['document_type'] = document_type
         return collection.count_documents(query)
