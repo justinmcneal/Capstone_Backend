@@ -1,0 +1,19 @@
+{
+  "classes": [
+    "valid_id",
+    "selfie_with_id",
+    "business_permit",
+    "proof_of_address",
+    "business_photo",
+    "income_proof",
+    "invalid"
+  ],
+  "num_classes": 7,
+  "best_val_accuracy": 88.23529411764706,
+  "epochs_trained": 25,
+  "model_type": "MobileNetV2",
+  "input_size": [
+    224,
+    224
+  ]
+}

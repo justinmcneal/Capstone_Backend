@@ -150,7 +150,10 @@ class DocumentUploadView(APIView):
                     'quality_score': ai_analysis.get('quality_score'),
                     'is_valid': ai_analysis.get('is_valid', True),
                     'quality_issues': ai_analysis.get('quality_issues', []),
-                    'analysis_mode': ai_analysis.get('analysis_mode', 'quality_check')
+                    'analysis_mode': ai_analysis.get('analysis_mode', 'quality_check'),
+                    'predicted_type': ai_analysis.get('predicted_type'),
+                    'type_confidence': ai_analysis.get('type_confidence'),
+                    'model_available': ai_analysis.get('model_available', False)
                 }
             
             return success_response(
