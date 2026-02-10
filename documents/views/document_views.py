@@ -202,6 +202,10 @@ class DocumentListView(APIView):
         try:
             user = request.user
             
+            # Pagination parameters
+            page = int(request.query_params.get('page', 1))
+            page_size = min(int(request.query_params.get('page_size', 20)), 200)
+            
             # Optional filter by document type
             document_type = request.query_params.get('type')
             
@@ -234,6 +238,14 @@ class DocumentListView(APIView):
                        search_regex.search(doc.document_type or '')
                 ]
             
+            # Get total before pagination
+            total = len(documents)
+            
+            # Paginate
+            start_idx = (page - 1) * page_size
+            end_idx = start_idx + page_size
+            paginated_documents = documents[start_idx:end_idx]
+            
             storage = get_storage_backend()
             
             docs_data = [{
@@ -258,12 +270,15 @@ class DocumentListView(APIView):
                 'file_url': storage.get_url(doc.file_path),
                 'created_at': doc.uploaded_at.isoformat(),
                 'uploaded_at': doc.uploaded_at.isoformat()
-            } for doc in documents]
+            } for doc in paginated_documents]
             
             return success_response(
                 data={
                     'documents': docs_data,
-                    'total': len(docs_data)
+                    'total': total,
+                    'page': page,
+                    'page_size': page_size,
+                    'total_pages': (total + page_size - 1) // page_size if total > 0 else 1
                 },
                 message="Documents retrieved successfully"
             )

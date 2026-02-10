@@ -121,18 +121,22 @@ class AuditLogsView(AdminRequiredMixin, APIView):
     def get(self, request):
         import re
         
-        limit = int(request.query_params.get('limit', 50))
+        # Pagination parameters
+        page = int(request.query_params.get('page', 1))
+        page_size = min(int(request.query_params.get('page_size', 20)), 200)
+        
+        # Filter parameters
         action_filter = request.query_params.get('action')
         date_from = request.query_params.get('date_from')
         date_to = request.query_params.get('date_to')
         search = request.query_params.get('search', '').strip()
         
-        # Use new find_with_filters method that handles all filtering
+        # Get all logs with filters (no limit to get accurate total)
         logs = AuditLog.find_with_filters(
             action=action_filter,
             date_from=date_from,
             date_to=date_to,
-            limit=limit
+            limit=10000  # Limit to 10000 as it was having an error
         )
         
         # Filter by search term (description, user_email, action)
@@ -145,6 +149,14 @@ class AuditLogsView(AdminRequiredMixin, APIView):
                    search_regex.search(log.action or '')
             ]
         
+        # Get total before pagination
+        total = len(logs)
+        
+        # Paginate
+        start_idx = (page - 1) * page_size
+        end_idx = start_idx + page_size
+        paginated_logs = logs[start_idx:end_idx]
+        
         logs_data = [{
             'id': log.id,
             'user_id': log.user_id,
@@ -155,9 +167,15 @@ class AuditLogsView(AdminRequiredMixin, APIView):
             'resource_id': log.resource_id,
             'ip_address': log.ip_address,
             'timestamp': log.timestamp.isoformat()
-        } for log in logs]
+        } for log in paginated_logs]
         
         return success_response(
-            data={'logs': logs_data, 'total': len(logs_data)},
+            data={
+                'logs': logs_data,
+                'total': total,
+                'page': page,
+                'page_size': page_size,
+                'total_pages': (total + page_size - 1) // page_size if total > 0 else 1
+            },
             message="Audit logs retrieved"
         )
