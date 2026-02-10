@@ -197,6 +197,8 @@ class DocumentListView(APIView):
     
     def get(self, request):
         """List documents based on user role"""
+        import re
+        
         try:
             user = request.user
             
@@ -205,6 +207,9 @@ class DocumentListView(APIView):
             
             # Optional filter by customer_id (for officers/admins)
             customer_id_filter = request.query_params.get('customer_id')
+            
+            # Optional search term
+            search = request.query_params.get('search', '').strip()
             
             # Determine which documents to show based on role
             if hasattr(user, 'role') and user.role in ['loan_officer', 'admin', 'super_admin']:
@@ -219,6 +224,15 @@ class DocumentListView(APIView):
                 # Customers can only see their own documents
                 customer_id = user.customer_id
                 documents = Document.find_by_customer(customer_id, document_type)
+            
+            # Filter by search term (filename or document type)
+            if search:
+                search_regex = re.compile(re.escape(search), re.IGNORECASE)
+                documents = [
+                    doc for doc in documents
+                    if search_regex.search(doc.original_filename or '') or
+                       search_regex.search(doc.document_type or '')
+                ]
             
             storage = get_storage_backend()
             

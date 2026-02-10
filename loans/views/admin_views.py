@@ -26,8 +26,20 @@ class AdminProductListView(AdminRequiredMixin, APIView):
     
     def get(self, request):
         """List all products including inactive"""
+        import re
+        
         active_only = request.query_params.get('active', 'all') == 'true'
+        search = request.query_params.get('search', '').strip()
+        
         products = LoanProduct.find(active_only=active_only)
+        
+        # Filter by search term (name or code)
+        if search:
+            search_regex = re.compile(re.escape(search), re.IGNORECASE)
+            products = [
+                p for p in products
+                if search_regex.search(p.name) or search_regex.search(p.code)
+            ]
         
         products_data = [{
             'id': p.id,
@@ -223,9 +235,21 @@ class OfficerWorkloadView(AdminRequiredMixin, APIView):
     permission_classes = [IsAuthenticated]
     
     def get(self, request):
+        import re
         from loans.services import get_officers_workload
         
+        search = request.query_params.get('search', '').strip()
+        
         workload = get_officers_workload()
+        
+        # Filter by search term (officer name or email)
+        if search:
+            search_regex = re.compile(re.escape(search), re.IGNORECASE)
+            workload = [
+                w for w in workload
+                if search_regex.search(w.get('full_name', '')) or
+                   search_regex.search(w.get('email', ''))
+            ]
         
         # Get pending applications for admin to assign
         pending_apps = LoanApplication.find_pending()

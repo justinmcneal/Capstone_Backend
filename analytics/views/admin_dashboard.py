@@ -119,10 +119,13 @@ class AuditLogsView(AdminRequiredMixin, APIView):
     permission_classes = [IsAuthenticated]
     
     def get(self, request):
+        import re
+        
         limit = int(request.query_params.get('limit', 50))
         action_filter = request.query_params.get('action')
         date_from = request.query_params.get('date_from')
         date_to = request.query_params.get('date_to')
+        search = request.query_params.get('search', '').strip()
         
         # Use new find_with_filters method that handles all filtering
         logs = AuditLog.find_with_filters(
@@ -131,6 +134,16 @@ class AuditLogsView(AdminRequiredMixin, APIView):
             date_to=date_to,
             limit=limit
         )
+        
+        # Filter by search term (description, user_email, action)
+        if search:
+            search_regex = re.compile(re.escape(search), re.IGNORECASE)
+            logs = [
+                log for log in logs
+                if search_regex.search(log.description or '') or
+                   search_regex.search(log.user_email or '') or
+                   search_regex.search(log.action or '')
+            ]
         
         logs_data = [{
             'id': log.id,
