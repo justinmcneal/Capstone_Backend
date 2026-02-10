@@ -22,6 +22,19 @@ import logging
 logger = logging.getLogger('documents')
 
 
+def serialize_value(value):
+    """Convert MongoDB types to JSON-serializable types"""
+    if isinstance(value, ObjectId):
+        return str(value)
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if isinstance(value, dict):
+        return {k: serialize_value(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [serialize_value(item) for item in value]
+    return value
+
+
 class DocumentUploadView(APIView):
     """
     Upload documents for customers.
@@ -211,7 +224,7 @@ class DocumentListView(APIView):
             
             docs_data = [{
                 'id': doc.id,
-                'customer_id': doc.customer_id,
+                'customer_id': serialize_value(doc.customer_id),
                 'document_type': doc.document_type,
                 'filename': doc.original_filename,
                 'original_filename': doc.original_filename,
@@ -221,12 +234,13 @@ class DocumentListView(APIView):
                 'status': doc.status,
                 'verification_status': 'verified' if doc.verified else ('rejected' if doc.status == 'rejected' else 'unverified'),
                 'verified': doc.verified,
-                'verified_by': doc.verified_by,
+                'verified_by': serialize_value(doc.verified_by),
                 'verified_at': doc.verified_at.isoformat() if doc.verified_at else None,
                 'verification_notes': doc.notes,
-                'ai_analysis': doc.ai_analysis if doc.ai_analysis else None,
+                'ai_analysis': serialize_value(doc.ai_analysis) if doc.ai_analysis else None,
                 'reupload_requested': doc.reupload_requested,
                 'reupload_reason': doc.reupload_reason,
+                'reupload_requested_by': serialize_value(doc.reupload_requested_by) if doc.reupload_requested_by else None,
                 'file_url': storage.get_url(doc.file_path),
                 'created_at': doc.uploaded_at.isoformat(),
                 'uploaded_at': doc.uploaded_at.isoformat()
@@ -285,7 +299,7 @@ class DocumentDetailView(APIView):
             return success_response(
                 data={
                     'id': document.id,
-                    'customer_id': document.customer_id,
+                    'customer_id': serialize_value(document.customer_id),
                     'document_type': document.document_type,
                     'original_filename': document.original_filename,
                     'file_size': document.file_size,
@@ -293,9 +307,11 @@ class DocumentDetailView(APIView):
                     'mime_type': document.mime_type,
                     'status': document.status,
                     'verified': document.verified,
+                    'verified_by': serialize_value(document.verified_by),
                     'verified_at': document.verified_at.isoformat() if document.verified_at else None,
                     'rejection_reason': document.rejection_reason,
                     'description': document.description,
+                    'ai_analysis': serialize_value(document.ai_analysis) if document.ai_analysis else None,
                     'file_url': storage.get_url(document.file_path),
                     'uploaded_at': document.uploaded_at.isoformat()
                 },
