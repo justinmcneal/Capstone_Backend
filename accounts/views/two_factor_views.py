@@ -250,7 +250,7 @@ class Disable2FAView(APIView):
             if not success:
                 return APIResponseHelper.error_response(
                     'Invalid password',
-                    status.HTTP_401_UNAUTHORIZED
+                    status.HTTP_400_BAD_REQUEST
                 )
             
             logger.info(f"2FA disabled for {user.email} ({user_type})")
@@ -290,7 +290,7 @@ class RegenerateBackupCodesView(APIView):
             if backup_codes is None:
                 return APIResponseHelper.error_response(
                     'Invalid password',
-                    status.HTTP_401_UNAUTHORIZED
+                    status.HTTP_400_BAD_REQUEST
                 )
             
             logger.info(f"Backup codes regenerated for {user.email} ({user_type})")
