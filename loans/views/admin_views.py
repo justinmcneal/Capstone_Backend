@@ -287,6 +287,9 @@ class OfficerWorkloadView(AdminRequiredMixin, APIView):
         - pending_page: Page number for pending applications (default 1)
         - pending_page_size: Items per page for pending apps (default 20)
         - pending_search: Search term for pending applications
+        - assigned_page: Page number for assigned applications (default 1)
+        - assigned_page_size: Items per page for assigned apps (default 20)
+        - assigned_search: Search term for assigned applications
     """
     authentication_classes = [CustomJWTAuthentication]
     permission_classes = [IsAuthenticated]
@@ -324,6 +327,21 @@ class OfficerWorkloadView(AdminRequiredMixin, APIView):
             pending_page = 1
             pending_page_size = 20
         
+        # Get query parameters for assigned applications
+        assigned_search = request.query_params.get('assigned_search', '').strip()
+        try:
+            assigned_page = int(request.query_params.get('assigned_page', 1))
+            assigned_page_size = int(request.query_params.get('assigned_page_size', 20))
+            
+            # Validate pagination params
+            if assigned_page < 1:
+                assigned_page = 1
+            if assigned_page_size < 1 or assigned_page_size > 100:
+                assigned_page_size = 20
+        except ValueError:
+            assigned_page = 1
+            assigned_page_size = 20
+        
         # Get paginated workload
         workload_data = get_officers_workload(
             page=page,
@@ -336,6 +354,14 @@ class OfficerWorkloadView(AdminRequiredMixin, APIView):
             page=pending_page,
             page_size=pending_page_size,
             search=pending_search if pending_search else None
+        )
+        
+        # Get paginated assigned applications
+        assigned_data = LoanApplication.find_assigned_paginated(
+            page=assigned_page,
+            page_size=assigned_page_size,
+            search=assigned_search if assigned_search else None,
+            officer_id=None  # Get all assigned apps, not filtered by officer
         )
         
         # Format pending applications for response
@@ -351,6 +377,19 @@ class OfficerWorkloadView(AdminRequiredMixin, APIView):
             'submitted_at': app.submitted_at.isoformat() if app.submitted_at else None
         } for app in pending_data['applications']]
         
+        # Format assigned applications for response
+        assigned_apps = [{
+            'id': app.id,
+            'customer_id': app.customer_id,
+            'requested_amount': app.requested_amount,
+            'term_months': app.term_months,
+            'status': app.status,
+            'eligibility_score': app.eligibility_score,
+            'risk_category': app.risk_category,
+            'assigned_officer': app.assigned_officer,
+            'submitted_at': app.submitted_at.isoformat() if app.submitted_at else None
+        } for app in assigned_data['applications']]
+        
         return success_response(
             data={
                 'officers': workload_data['officers'],
@@ -362,9 +401,15 @@ class OfficerWorkloadView(AdminRequiredMixin, APIView):
                 'pending_count': pending_data['total'],
                 'pending_page': pending_data['page'],
                 'pending_page_size': pending_data['page_size'],
-                'pending_total_pages': pending_data['total_pages']
+                'pending_total_pages': pending_data['total_pages'],
+                'assigned_applications': assigned_apps,
+                'assigned_count': assigned_data['total'],
+                'assigned_page': assigned_data['page'],
+                'assigned_page_size': assigned_data['page_size'],
+                'assigned_total_pages': assigned_data['total_pages']
             },
             message="Officer workload retrieved"
         )
+
 
 

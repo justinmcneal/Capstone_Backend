@@ -231,12 +231,12 @@ class LoanApplication:
     @classmethod
     def find_pending_paginated(cls, page=1, page_size=20, search=None):
         """
-        Get paginated applications pending review with optional search.
+        Get paginated UNASSIGNED applications pending review with optional search.
         
         Args:
             page: Page number (default 1)
             page_size: Items per page (default 20)
-            search: Optional search term for customer_id
+            search: Optional search term for customer_id or application id
         
         Returns:
             dict with applications list and pagination info
@@ -247,25 +247,43 @@ class LoanApplication:
         db = get_db()
         collection = db[cls.collection_name]
         
-        # Base query for pending applications
-        query = {'status': {'$in': ['submitted', 'under_review']}}
+        # Base query: only truly unassigned applications
+        query = {
+            'status': 'submitted',
+            '$or': [
+                {'assigned_officer': None},
+                {'assigned_officer': {'$exists': False}},
+                {'assigned_officer': ''},
+            ]
+        }
         
         # Apply search filter if provided
         if search:
-            # Try to search by ObjectId or customer_id
             search_conditions = []
             try:
-                # Try as ObjectId
+                # Try as exact ObjectId
                 search_conditions.append({'_id': ObjectId(search)})
-            except:
+            except Exception:
                 pass
             
             # Search in customer_id (case-insensitive)
             search_regex = re.compile(re.escape(search), re.IGNORECASE)
             search_conditions.append({'customer_id': search_regex})
             
+            # Search by partial _id string match
+            search_conditions.append({
+                '$expr': {
+                    '$regexMatch': {
+                        'input': {'$toString': '$_id'},
+                        'regex': re.escape(search),
+                        'options': 'i'
+                    }
+                }
+            })
+            
             if search_conditions:
-                query['$or'] = search_conditions
+                # Combine base query with search using $and
+                query = {'$and': [query, {'$or': search_conditions}]}
         
         # Get total count
         total = collection.count_documents(query)
@@ -305,10 +323,10 @@ class LoanApplication:
         db = get_db()
         collection = db[cls.collection_name]
         
-        # Base query for assigned applications
+        # Base query for assigned applications (only under_review)
         query = {
-            'assigned_officer': {'$ne': None},
-            'status': {'$in': ['under_review', 'approved', 'rejected']}
+            'assigned_officer': {'$nin': [None, '', False]},
+            'status': 'under_review'
         }
         
         # Filter by officer if provided
@@ -319,20 +337,28 @@ class LoanApplication:
         if search:
             search_conditions = []
             try:
-                # Try as ObjectId
+                # Try as exact ObjectId
                 search_conditions.append({'_id': ObjectId(search)})
-            except:
+            except Exception:
                 pass
             
-            # Search in customer_id
+            # Search in customer_id (case-insensitive)
             search_regex = re.compile(re.escape(search), re.IGNORECASE)
             search_conditions.append({'customer_id': search_regex})
             
+            # Search by partial _id string match
+            search_conditions.append({
+                '$expr': {
+                    '$regexMatch': {
+                        'input': {'$toString': '$_id'},
+                        'regex': re.escape(search),
+                        'options': 'i'
+                    }
+                }
+            })
+            
             if search_conditions:
-                if '$or' in query:
-                    query['$and'] = [{'$or': query.pop('$or')}, {'$or': search_conditions}]
-                else:
-                    query['$or'] = search_conditions
+                query = {'$and': [query, {'$or': search_conditions}]}
         
         # Get total count
         total = collection.count_documents(query)
