@@ -15,6 +15,7 @@ from loans.views import (
     AdminProductListView,
     AdminProductDetailView,
     AssignApplicationView,
+    ReassignApplicationView,
     OfficerWorkloadView,
     # Officer
     OfficerApplicationListView,
@@ -50,6 +51,7 @@ urlpatterns = [
     
     # Admin endpoints (assignment)
     path('admin/applications/<str:application_id>/assign/', AssignApplicationView.as_view(), name='admin-assign'),
+    path('admin/applications/<str:application_id>/reassign/', ReassignApplicationView.as_view(), name='admin-reassign'),
     path('admin/officers/workload/', OfficerWorkloadView.as_view(), name='admin-workload'),
     
     # Loan officer endpoints

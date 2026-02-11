@@ -81,6 +81,68 @@ def manual_assign_application(application, officer_id):
     return officer
 
 
+def reassign_application(application, new_officer_id):
+    """
+    Reassign application from current officer to a new officer.
+    
+    Args:
+        application: LoanApplication instance
+        new_officer_id: ID of the new officer to assign to
+    
+    Returns:
+        LoanOfficer (new officer) or None if officer not found
+    
+    Raises:
+        ValueError: If application is not assigned or new officer is inactive
+    """
+    from bson import ObjectId
+    
+    if not application.assigned_officer:
+        raise ValueError("Application is not currently assigned to any officer")
+    
+    # Get the current officer for logging
+    try:
+        current_officer = LoanOfficer.find_one({'_id': ObjectId(application.assigned_officer)})
+    except:
+        current_officer = None
+    
+    # Find and validate new officer
+    try:
+        new_officer = LoanOfficer.find_one({'_id': ObjectId(new_officer_id)})
+    except:
+        new_officer = LoanOfficer.find_one({'employee_id': new_officer_id})
+    
+    if not new_officer:
+        return None
+    
+    if not new_officer.active:
+        raise ValueError("Cannot reassign to inactive officer")
+    
+    # Use the reassign method on the application
+    application.reassign(new_officer.id)
+    
+    logger.info(
+        f"Reassigned application {application.id} from officer "
+        f"{current_officer.id if current_officer else 'Unknown'} to officer {new_officer.id}"
+    )
+    
+    # Send notification to new officer
+    try:
+        from notifications.services import get_email_sender
+        sender = get_email_sender()
+        sender.send_new_application_alert(
+            officer_email=new_officer.email,
+            officer_name=new_officer.full_name,
+            customer_name="Customer",
+            loan_id=application.id,
+            amount=application.requested_amount
+        )
+    except Exception as e:
+        logger.warning(f"Failed to send reassignment email: {e}")
+    
+    return new_officer
+
+
 def get_officers_workload(page=1, page_size=20, search=None):
     """
     Get workload for all active officers with pagination.
