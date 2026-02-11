@@ -8,31 +8,43 @@ class LoanProductSerializer(serializers.Serializer):
     name = serializers.CharField(max_length=100)
     code = serializers.CharField(max_length=20)
     description = serializers.CharField(max_length=1000, required=False, allow_blank=True)
-    min_amount = serializers.FloatField(min_value=1000)
-    max_amount = serializers.FloatField(min_value=1000)
-    interest_rate = serializers.FloatField(min_value=0, max_value=1)
+    min_amount = serializers.FloatField(min_value=0)
+    max_amount = serializers.FloatField(min_value=0)
+    interest_rate = serializers.FloatField(min_value=0, max_value=100)
     min_term_months = serializers.IntegerField(min_value=1)
     max_term_months = serializers.IntegerField(min_value=1)
     required_documents = serializers.ListField(
         child=serializers.CharField(),
-        required=False,
-        default=['valid_id']
+        required=False
     )
-    min_business_months = serializers.IntegerField(min_value=0, required=False, default=6)
-    min_monthly_income = serializers.FloatField(min_value=0, required=False, default=5000)
+    min_business_months = serializers.IntegerField(min_value=0, required=False)
+    min_monthly_income = serializers.FloatField(min_value=0, required=False)
     business_types = serializers.ListField(
         child=serializers.CharField(),
-        required=False,
-        default=[]
+        required=False
     )
     target_description = serializers.CharField(required=False, allow_blank=True)
-    active = serializers.BooleanField(default=True)
+    active = serializers.BooleanField(required=False)
 
     def validate(self, data):
-        if data.get('min_amount', 0) > data.get('max_amount', 0):
-            raise serializers.ValidationError("min_amount cannot exceed max_amount")
-        if data.get('min_term_months', 0) > data.get('max_term_months', 0):
-            raise serializers.ValidationError("min_term cannot exceed max_term")
+        """Validate product data with clear error messages"""
+        errors = {}
+        
+        # Validate min/max amounts
+        min_amt = data.get('min_amount', 0)
+        max_amt = data.get('max_amount', 0)
+        if min_amt > max_amt:
+            errors['max_amount'] = "Maximum amount must be greater than or equal to minimum amount"
+        
+        # Validate min/max terms
+        min_term = data.get('min_term_months', 0)
+        max_term = data.get('max_term_months', 0)
+        if min_term > max_term:
+            errors['max_term_months'] = "Maximum term must be greater than or equal to minimum term"
+        
+        if errors:
+            raise serializers.ValidationError(errors)
+        
         return data
 
 

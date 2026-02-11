@@ -229,6 +229,25 @@ class LoanApplication:
         )
     
     @classmethod
+    def count_by_product(cls, product_id):
+        """
+        Count active applications using this product.
+        Active = submitted, under_review, or approved status.
+        """
+        from bson import ObjectId
+        db = get_db()
+        collection = db[cls.collection_name]
+        
+        # Convert product_id to string for comparison
+        product_id_str = str(product_id)
+        
+        count = collection.count_documents({
+            'product_id': product_id_str,
+            'status': {'$in': ['submitted', 'under_review', 'approved']}
+        })
+        return count
+    
+    @classmethod
     def find_pending_paginated(cls, page=1, page_size=20, search=None):
         """
         Get paginated UNASSIGNED applications pending review with optional search.

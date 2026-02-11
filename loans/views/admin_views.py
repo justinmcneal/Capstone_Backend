@@ -52,6 +52,10 @@ class AdminProductListView(AdminRequiredMixin, APIView):
             'min_term_months': p.min_term_months,
             'max_term_months': p.max_term_months,
             'required_documents': p.required_documents,
+            'min_business_months': p.min_business_months,
+            'min_monthly_income': p.min_monthly_income,
+            'business_types': p.business_types,
+            'target_description': p.target_description,
             'active': p.active,
             'created_at': p.created_at.isoformat()
         } for p in products]
@@ -77,6 +81,16 @@ class AdminProductListView(AdminRequiredMixin, APIView):
         if LoanProduct.find_by_code(data['code']):
             return error_response(
                 message="Product code already exists",
+                errors={'code': 'Product code already exists'},
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Check name uniqueness
+        existing_by_name = LoanProduct.find_one({'name': data['name'], 'active': True})
+        if existing_by_name:
+            return error_response(
+                message="Product name already exists",
+                errors={'name': 'Product name already exists'},
                 status_code=status.HTTP_400_BAD_REQUEST
             )
         
@@ -131,28 +145,93 @@ class AdminProductDetailView(AdminRequiredMixin, APIView):
         })
     
     def put(self, request, product_id):
+        from loans.models.application import LoanApplication
+        
         product = LoanProduct.find_by_id(product_id)
         if not product:
             return error_response(message="Product not found", status_code=status.HTTP_404_NOT_FOUND)
         
-        # Update allowed fields
+        # DEBUG: Log incoming request data
+        logger.info(f"[PUT Product {product_id}] Request data: {request.data}")
+        
+        # Check for active loans before allowing edits
+        active_loans_count = LoanApplication.count_by_product(product_id)
+        if active_loans_count > 0:
+            return error_response(
+                message=f"Cannot edit product with {active_loans_count} active loan(s). Please deactivate the product instead.",
+                errors={'product': f'This product has {active_loans_count} active loan application(s)'},
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Use serializer for validation
+        serializer = LoanProductSerializer(data=request.data, partial=True)
+        if not serializer.is_valid():
+            logger.error(f"[PUT Product {product_id}] Serializer errors: {serializer.errors}")
+            return error_response(
+                message="Invalid product data",
+                errors=serializer.errors,
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+        
+        data = serializer.validated_data
+        logger.info(f"[PUT Product {product_id}] Validated data: {data}")
+        
+        # Check name uniqueness if name is being updated
+        if 'name' in data and data['name'] != product.name:
+            existing_by_name = LoanProduct.find_one({'name': data['name'], 'active': True})
+            if existing_by_name and existing_by_name.id != product.id:
+                return error_response(
+                    message="Product name already exists",
+                    errors={'name': 'Product name already exists'},
+                    status_code=status.HTTP_400_BAD_REQUEST
+                )
+        
+        # DEBUG: Log values before update
+        logger.info(f"[PUT Product {product_id}] BEFORE update - min_business_months: {product.min_business_months}, business_types: {product.business_types}")
+        
+        # Update allowed fields (includes business_types now - fixes PROD-009)
         updatable = ['name', 'description', 'min_amount', 'max_amount', 'interest_rate',
                      'min_term_months', 'max_term_months', 'required_documents',
-                     'min_business_months', 'min_monthly_income', 'target_description', 'active']
+                     'min_business_months', 'min_monthly_income', 'business_types',
+                     'target_description', 'active']
         
+        updated_fields = []
         for field in updatable:
-            if field in request.data:
-                setattr(product, field, request.data[field])
+            if field in data:
+                old_value = getattr(product, field, None)
+                setattr(product, field, data[field])
+                updated_fields.append(f"{field}: {old_value} → {data[field]}")
+        
+        logger.info(f"[PUT Product {product_id}] Updated fields: {updated_fields}")
+        
+        # DEBUG: Log values after setattr but before save
+        logger.info(f"[PUT Product {product_id}] AFTER setattr - min_business_months: {product.min_business_months}, business_types: {product.business_types}")
         
         product.save()
+        
+        # DEBUG: Verify what was actually saved to DB
+        saved_product = LoanProduct.find_by_id(product_id)
+        logger.info(f"[PUT Product {product_id}] AFTER save (from DB) - min_business_months: {saved_product.min_business_months}, business_types: {saved_product.business_types}")
+        
         logger.info(f"Product updated: {product.code}")
         
         return success_response(data={'id': product.id}, message="Product updated")
     
     def delete(self, request, product_id):
+        from loans.models.application import LoanApplication
+        
         product = LoanProduct.find_by_id(product_id)
         if not product:
             return error_response(message="Product not found", status_code=status.HTTP_404_NOT_FOUND)
+        
+        # Check for active loans using this product
+        active_loans_count = LoanApplication.count_by_product(product_id)
+        if active_loans_count > 0:
+            return error_response(
+                message=f"Cannot delete product with {active_loans_count} active loan(s)",
+                errors={'product': f'This product has {active_loans_count} active loan application(s)'},
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
         
         try:
             product.delete()  # Soft delete
@@ -410,6 +489,3 @@ class OfficerWorkloadView(AdminRequiredMixin, APIView):
             },
             message="Officer workload retrieved"
         )
-
-
-
