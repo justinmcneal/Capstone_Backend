@@ -81,20 +81,49 @@ def manual_assign_application(application, officer_id):
     return officer
 
 
-def get_officers_workload():
+def get_officers_workload(page=1, page_size=20, search=None):
     """
-    Get workload for all active officers.
+    Get workload for all active officers with pagination.
+    
+    Args:
+        page: Page number (default 1)
+        page_size: Items per page (default 20)
+        search: Optional search term for officer name/email
     
     Returns:
-        list of dicts with officer info and pending count
+        dict with officers list, pagination info
     """
+    import re
+    
+    # Base query for active officers
     officers = LoanOfficer.find_active()
     
-    return [{
-        'id': officer.id,
-        'employee_id': officer.employee_id,
-        'name': officer.full_name,
-        'email': officer.email,
-        'pending_count': officer.get_pending_count(),
-        'active': officer.active
-    } for officer in officers]
+    # Apply search filter
+    if search:
+        search_regex = re.compile(re.escape(search), re.IGNORECASE)
+        officers = [
+            o for o in officers
+            if search_regex.search(o.full_name) or search_regex.search(o.email)
+        ]
+    
+    total = len(officers)
+    
+    # Apply pagination
+    start = (page - 1) * page_size
+    end = start + page_size
+    paginated_officers = officers[start:end]
+    
+    return {
+        'officers': [{
+            'id': officer.id,
+            'employee_id': officer.employee_id,
+            'name': officer.full_name,
+            'email': officer.email,
+            'pending_count': officer.get_pending_count(),
+            'active': officer.active
+        } for officer in paginated_officers],
+        'total': total,
+        'page': page,
+        'page_size': page_size,
+        'total_pages': (total + page_size - 1) // page_size  # Ceiling division
+    }

@@ -230,26 +230,38 @@ class OfficerWorkloadView(AdminRequiredMixin, APIView):
     Admin: View officer workloads and pending applications.
     
     GET /api/loans/admin/officers/workload/
+    Query params:
+        - search: Filter by officer name/email
+        - page: Page number (default 1)
+        - page_size: Items per page (default 20)
     """
     authentication_classes = [CustomJWTAuthentication]
     permission_classes = [IsAuthenticated]
     
     def get(self, request):
-        import re
         from loans.services import get_officers_workload
         
+        # Get query parameters
         search = request.query_params.get('search', '').strip()
+        try:
+            page = int(request.query_params.get('page', 1))
+            page_size = int(request.query_params.get('page_size', 20))
+            
+            # Validate pagination params
+            if page < 1:
+                page = 1
+            if page_size < 1 or page_size > 100:
+                page_size = 20
+        except ValueError:
+            page = 1
+            page_size = 20
         
-        workload = get_officers_workload()
-        
-        # Filter by search term (officer name or email)
-        if search:
-            search_regex = re.compile(re.escape(search), re.IGNORECASE)
-            workload = [
-                w for w in workload
-                if search_regex.search(w.get('full_name', '')) or
-                   search_regex.search(w.get('email', ''))
-            ]
+        # Get paginated workload
+        workload_data = get_officers_workload(
+            page=page,
+            page_size=page_size,
+            search=search if search else None
+        )
         
         # Get pending applications for admin to assign
         pending_apps = LoanApplication.find_pending()
@@ -267,8 +279,11 @@ class OfficerWorkloadView(AdminRequiredMixin, APIView):
         
         return success_response(
             data={
-                'officers': workload,
-                'total': len(workload),
+                'officers': workload_data['officers'],
+                'total': workload_data['total'],
+                'page': workload_data['page'],
+                'page_size': workload_data['page_size'],
+                'total_pages': workload_data['total_pages'],
                 'pending_applications': pending_data,
                 'pending_count': len(pending_data)
             },
