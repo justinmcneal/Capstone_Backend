@@ -28,6 +28,8 @@ urlpatterns = [
     path('api/ai/', include('ai_assistant.urls')),
     path('api/loans/', include('loans.urls')),
     path('api/analytics/', include('analytics.urls')),
+    path('api/notifications/', include('notifications.urls')),
+
 ]
 
 # Serve media files in development

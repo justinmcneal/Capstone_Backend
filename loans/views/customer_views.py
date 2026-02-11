@@ -295,23 +295,45 @@ class MyApplicationsView(APIView):
     List customer's loan applications.
     
     GET /api/loans/applications/
+    
+    Query Parameters:
+        search (str): Search by product name (case-insensitive)
+        status (str): Filter by status (e.g., 'pending', 'approved', 'rejected', 'active')
+        page (int): Page number for pagination (default: 1)
+        page_size (int): Items per page (default: 20, max: 100)
     """
     authentication_classes = [CustomJWTAuthentication]
     permission_classes = [IsAuthenticated]
     
     def get(self, request):
-        """Get all applications for current customer"""
+        """Get all applications for current customer with optional filtering"""
         user = request.user
         customer_id = user.customer_id
+        
+        # Get query parameters
+        search_query = request.query_params.get('search', '').strip().lower()
+        status_filter = request.query_params.get('status', '').strip().lower()
+        page = int(request.query_params.get('page', 1))
+        page_size = min(int(request.query_params.get('page_size', 20)), 100)
         
         applications = LoanApplication.find_by_customer(customer_id)
         
         apps_data = []
         for app in applications:
             product = LoanProduct.find_by_id(app.product_id)
+            product_name = product.name if product else 'Unknown'
+            
+            # Apply search filter (search in product name)
+            if search_query and search_query not in product_name.lower():
+                continue
+            
+            # Apply status filter
+            if status_filter and app.status.lower() != status_filter:
+                continue
+            
             apps_data.append({
                 'id': app.id,
-                'product_name': product.name if product else 'Unknown',
+                'product_name': product_name,
                 'requested_amount': app.requested_amount,
                 'recommended_amount': app.recommended_amount,
                 'approved_amount': app.approved_amount,
@@ -322,8 +344,23 @@ class MyApplicationsView(APIView):
                 'created_at': app.created_at.isoformat()
             })
         
+        # Calculate pagination
+        total_count = len(apps_data)
+        total_pages = (total_count + page_size - 1) // page_size if total_count > 0 else 1
+        start_idx = (page - 1) * page_size
+        end_idx = start_idx + page_size
+        paginated_apps = apps_data[start_idx:end_idx]
+        
         return success_response(
-            data={'applications': apps_data, 'total': len(apps_data)},
+            data={
+                'applications': paginated_apps,
+                'total': total_count,
+                'page': page,
+                'page_size': page_size,
+                'total_pages': total_pages,
+                'has_next': page < total_pages,
+                'has_previous': page > 1,
+            },
             message="Applications retrieved"
         )
 
