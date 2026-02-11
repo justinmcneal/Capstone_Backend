@@ -14,6 +14,7 @@ from .admin_views import (
     AdminProductListView,
     AdminProductDetailView,
     AssignApplicationView,
+    ReassignApplicationView,
     OfficerWorkloadView
 )
 from .officer_views import (

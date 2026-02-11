@@ -225,6 +225,56 @@ class AssignApplicationView(AdminRequiredMixin, APIView):
             )
 
 
+class ReassignApplicationView(AdminRequiredMixin, APIView):
+    """
+    Admin: Reassign application to a different officer.
+    
+    POST /api/loans/admin/applications/<id>/reassign/
+    """
+    authentication_classes = [CustomJWTAuthentication]
+    permission_classes = [IsAuthenticated]
+    
+    def post(self, request, application_id):
+        app = LoanApplication.find_by_id(application_id)
+        if not app:
+            return error_response(
+                message="Application not found",
+                status_code=status.HTTP_404_NOT_FOUND
+            )
+        
+        new_officer_id = request.data.get('officer_id')
+        if not new_officer_id:
+            return error_response(
+                message="officer_id is required",
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+        
+        from loans.services import reassign_application
+        
+        try:
+            new_officer = reassign_application(app, new_officer_id)
+            if not new_officer:
+                return error_response(
+                    message="Officer not found",
+                    status_code=status.HTTP_404_NOT_FOUND
+                )
+            
+            return success_response(
+                data={
+                    'application_id': app.id,
+                    'assigned_officer': new_officer.id,
+                    'officer_name': new_officer.full_name,
+                    'status': app.status
+                },
+                message="Application reassigned successfully"
+            )
+        except ValueError as e:
+            return error_response(
+                message=str(e),
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+
+
 class OfficerWorkloadView(AdminRequiredMixin, APIView):
     """
     Admin: View officer workloads and pending applications.
@@ -234,6 +284,9 @@ class OfficerWorkloadView(AdminRequiredMixin, APIView):
         - search: Filter by officer name/email
         - page: Page number (default 1)
         - page_size: Items per page (default 20)
+        - pending_page: Page number for pending applications (default 1)
+        - pending_page_size: Items per page for pending apps (default 20)
+        - pending_search: Search term for pending applications
     """
     authentication_classes = [CustomJWTAuthentication]
     permission_classes = [IsAuthenticated]
@@ -241,7 +294,7 @@ class OfficerWorkloadView(AdminRequiredMixin, APIView):
     def get(self, request):
         from loans.services import get_officers_workload
         
-        # Get query parameters
+        # Get query parameters for officers
         search = request.query_params.get('search', '').strip()
         try:
             page = int(request.query_params.get('page', 1))
@@ -256,6 +309,21 @@ class OfficerWorkloadView(AdminRequiredMixin, APIView):
             page = 1
             page_size = 20
         
+        # Get query parameters for pending applications
+        pending_search = request.query_params.get('pending_search', '').strip()
+        try:
+            pending_page = int(request.query_params.get('pending_page', 1))
+            pending_page_size = int(request.query_params.get('pending_page_size', 20))
+            
+            # Validate pagination params
+            if pending_page < 1:
+                pending_page = 1
+            if pending_page_size < 1 or pending_page_size > 100:
+                pending_page_size = 20
+        except ValueError:
+            pending_page = 1
+            pending_page_size = 20
+        
         # Get paginated workload
         workload_data = get_officers_workload(
             page=page,
@@ -263,9 +331,15 @@ class OfficerWorkloadView(AdminRequiredMixin, APIView):
             search=search if search else None
         )
         
-        # Get pending applications for admin to assign
-        pending_apps = LoanApplication.find_pending()
-        pending_data = [{
+        # Get paginated pending applications
+        pending_data = LoanApplication.find_pending_paginated(
+            page=pending_page,
+            page_size=pending_page_size,
+            search=pending_search if pending_search else None
+        )
+        
+        # Format pending applications for response
+        pending_apps = [{
             'id': app.id,
             'customer_id': app.customer_id,
             'requested_amount': app.requested_amount,
@@ -275,7 +349,7 @@ class OfficerWorkloadView(AdminRequiredMixin, APIView):
             'risk_category': app.risk_category,
             'assigned_officer': app.assigned_officer,
             'submitted_at': app.submitted_at.isoformat() if app.submitted_at else None
-        } for app in pending_apps]
+        } for app in pending_data['applications']]
         
         return success_response(
             data={
@@ -284,9 +358,13 @@ class OfficerWorkloadView(AdminRequiredMixin, APIView):
                 'page': workload_data['page'],
                 'page_size': workload_data['page_size'],
                 'total_pages': workload_data['total_pages'],
-                'pending_applications': pending_data,
-                'pending_count': len(pending_data)
+                'pending_applications': pending_apps,
+                'pending_count': pending_data['total'],
+                'pending_page': pending_data['page'],
+                'pending_page_size': pending_data['page_size'],
+                'pending_total_pages': pending_data['total_pages']
             },
             message="Officer workload retrieved"
         )
+
 

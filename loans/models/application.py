@@ -229,6 +229,149 @@ class LoanApplication:
         )
     
     @classmethod
+    def find_pending_paginated(cls, page=1, page_size=20, search=None):
+        """
+        Get paginated applications pending review with optional search.
+        
+        Args:
+            page: Page number (default 1)
+            page_size: Items per page (default 20)
+            search: Optional search term for customer_id
+        
+        Returns:
+            dict with applications list and pagination info
+        """
+        import re
+        from bson import ObjectId
+        
+        db = get_db()
+        collection = db[cls.collection_name]
+        
+        # Base query for pending applications
+        query = {'status': {'$in': ['submitted', 'under_review']}}
+        
+        # Apply search filter if provided
+        if search:
+            # Try to search by ObjectId or customer_id
+            search_conditions = []
+            try:
+                # Try as ObjectId
+                search_conditions.append({'_id': ObjectId(search)})
+            except:
+                pass
+            
+            # Search in customer_id (case-insensitive)
+            search_regex = re.compile(re.escape(search), re.IGNORECASE)
+            search_conditions.append({'customer_id': search_regex})
+            
+            if search_conditions:
+                query['$or'] = search_conditions
+        
+        # Get total count
+        total = collection.count_documents(query)
+        
+        # Apply pagination
+        skip = (page - 1) * page_size
+        cursor = collection.find(query).sort('submitted_at', 1).skip(skip).limit(page_size)
+        
+        applications = [cls.from_dict(doc) for doc in cursor]
+        total_pages = (total + page_size - 1) // page_size if total > 0 else 1
+        
+        return {
+            'applications': applications,
+            'total': total,
+            'page': page,
+            'page_size': page_size,
+            'total_pages': total_pages
+        }
+    
+    @classmethod
+    def find_assigned_paginated(cls, page=1, page_size=20, search=None, officer_id=None):
+        """
+        Get paginated assigned applications with optional search and officer filter.
+        
+        Args:
+            page: Page number (default 1)
+            page_size: Items per page (default 20)
+            search: Optional search term for customer_id or application id
+            officer_id: Optional filter by specific officer
+        
+        Returns:
+            dict with applications list and pagination info
+        """
+        import re
+        from bson import ObjectId
+        
+        db = get_db()
+        collection = db[cls.collection_name]
+        
+        # Base query for assigned applications
+        query = {
+            'assigned_officer': {'$ne': None},
+            'status': {'$in': ['under_review', 'approved', 'rejected']}
+        }
+        
+        # Filter by officer if provided
+        if officer_id:
+            query['assigned_officer'] = str(officer_id)
+        
+        # Apply search filter if provided
+        if search:
+            search_conditions = []
+            try:
+                # Try as ObjectId
+                search_conditions.append({'_id': ObjectId(search)})
+            except:
+                pass
+            
+            # Search in customer_id
+            search_regex = re.compile(re.escape(search), re.IGNORECASE)
+            search_conditions.append({'customer_id': search_regex})
+            
+            if search_conditions:
+                if '$or' in query:
+                    query['$and'] = [{'$or': query.pop('$or')}, {'$or': search_conditions}]
+                else:
+                    query['$or'] = search_conditions
+        
+        # Get total count
+        total = collection.count_documents(query)
+        
+        # Apply pagination
+        skip = (page - 1) * page_size
+        cursor = collection.find(query).sort('updated_at', -1).skip(skip).limit(page_size)
+        
+        applications = [cls.from_dict(doc) for doc in cursor]
+        total_pages = (total + page_size - 1) // page_size if total > 0 else 1
+        
+        return {
+            'applications': applications,
+            'total': total,
+            'page': page,
+            'page_size': page_size,
+            'total_pages': total_pages
+        }
+    
+    def reassign(self, new_officer_id):
+        """
+        Reassign application to a different officer.
+        
+        Args:
+            new_officer_id: ID of the new officer
+        
+        Returns:
+            self (saved instance)
+        """
+        if not self.assigned_officer:
+            raise ValueError("Application is not currently assigned")
+        
+        if self.status not in ['under_review', 'submitted']:
+            raise ValueError(f"Cannot reassign application with status: {self.status}")
+        
+        self.assigned_officer = str(new_officer_id)
+        return self.save()
+    
+    @classmethod
     def count_by_status(cls, status):
         db = get_db()
         collection = db[cls.collection_name]
