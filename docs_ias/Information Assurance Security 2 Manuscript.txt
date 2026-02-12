@@ -254,43 +254,76 @@ ASSET 8: Chatbot Conversation Logs
 
 
 3.2 CIA Triad Mapping
-Asset
-	Confindentiality
+Asset Mapping Format:
+Asset Name
+	Confidentiality
 	Integrity
 	Availability
-	User Credentials
+	Primary STRIDE Threat IDs
+	Primary OWASP Top 10 Categories
+
+User Credentials
 	Critical: Exposure enables account takeover
-	Critical: Tampering allows unauthorized access
-	High: Users are locked out if unavailable
-	Personal Identifiable Information (PII)
-	Critical: Privacy breach, regulatory violations
-	High: Corrupted data leads to wrong decisions
-	Medium: Service degradation
-	Financial Data
-	Critical: Competitive advantage loss
-	Critical: Affects loan recommendations
-	High: Core service dependency
-	Identity Documents
-	Critical: Identity theft risks
-	High: Document forgery enables fraud
-	Medium: Delays in processing
-	Authentication Tokens (JWT)
-	High: Session hijacking
-	Critical: Token tampering privilege
-	High: Authentication failures
-	Application Source Code
-	High: Reveals vulnerabilities
-	High: Malicious code injection
-	Medium: Development disruption
-	ML Models
-	High: Model theft
-	Critical: Adversarial manipulation
-	High: Scoring service unavailable
-	Chatbot Conversation Logs
-	High: Sensitive conversations
-	Critical: Compliance evidence
-	High: Forensics and compliance
-	4. STRIDE Threat Model
+	Critical: Tampering enables unauthorized access
+	High: Login services must be continuously accessible
+	S-01, S-02, E-02
+	A07: Identification and Authentication Failures, A01: Broken Access Control
+
+Personal Identifiable Information (PII)
+	Critical: Privacy breaches create legal/regulatory impact
+	High: Corruption affects loan decisions and compliance records
+	Medium: Temporary outage delays onboarding and verification
+	I-01, E-02, R-02
+	A01: Broken Access Control, A02: Cryptographic Failures, A09: Security Logging and Monitoring Failures
+
+Financial Data
+	Critical: Leakage exposes sensitive borrower risk profiles
+	Critical: Tampering changes scoring and recommendation accuracy
+	High: Availability is required for real-time eligibility decisions
+	T-01, T-02, I-02
+	A03: Injection, A02: Cryptographic Failures, A01: Broken Access Control
+
+Identity Documents
+	Critical: Exposure enables identity theft and fraud
+	High: Forgery or alteration breaks KYC integrity
+	Medium: Upload/verification delays slow processing
+	S-03, T-02, I-01
+	A07: Identification and Authentication Failures, A03: Injection, A02: Cryptographic Failures
+
+Authentication Tokens (JWT)
+	High: Token theft enables session hijacking
+	Critical: Token tampering enables privilege abuse
+	High: Token validation service downtime blocks access
+	S-02, E-02, I-01
+	A07: Identification and Authentication Failures, A01: Broken Access Control, A02: Cryptographic Failures
+
+Application Source Code
+	High: Exposure reveals attack surface and secrets
+	High: Unauthorized changes introduce malicious behavior
+	Medium: Build/deployment disruption affects release cadence
+	T-04, E-01, R-03
+	A08: Software and Data Integrity Failures, A06: Vulnerable and Outdated Components, A04: Insecure Design
+
+ML Models
+	High: Model theft exposes proprietary scoring logic
+	Critical: Adversarial manipulation alters loan outcomes
+	High: Service unavailability blocks pre-qualification flow
+	T-03, D-03, I-02
+	A08: Software and Data Integrity Failures, A04: Insecure Design, A05: Security Misconfiguration
+
+Chatbot Conversation Logs
+	High: Logs may contain sensitive personal/financial context
+	Critical: Integrity is required for dispute resolution and audits
+	High: Availability supports forensics and monitoring
+	I-03, R-01, D-03
+	A02: Cryptographic Failures, A09: Security Logging and Monitoring Failures, A05: Security Misconfiguration
+
+Alignment Notes:
+* Section 4 threat IDs are directly referenced above to maintain traceability from assets to STRIDE threats.
+* Section 5 OWASP categories are directly referenced above to maintain traceability from assets to OWASP risks.
+* Asset severity and prioritization are consistent with the Critical/High/Medium risk tiers used in Section 4.3.
+
+4. STRIDE Threat Model
 
 
 4.1 STRIDE Overview
@@ -309,6 +342,7 @@ STRIDE is a threat modeling methodology developed by Microsoft that categorizes 
 * Example: Regular user accessing admin functions
 
 
+4.2 STRIDE Threat Table
 ID
 	Component
 	Threat Category
@@ -404,7 +438,7 @@ ID
 	Low
 	High
 	Medium
-	Comprehensive audit logging,
+	Comprehensive audit logging
 	I-01
 	User Data
 	Information Disclosure
@@ -713,7 +747,7 @@ Risk Level
 Top 3 Priorities Based on Context:
 1. A01 (Broken Access Control): Critical because the system has three distinct roles with vastly different permissions—a regular user accessing loan officer data would be catastrophic.
 2. A07 (Identification & Authentication Failures): Critical for mobile-first design, where users may have weak passwords and devices are often shared in informal sector contexts
-3. A02 (Cryptographic Failures): Critical given the sensitivity of financial and identity data from economically vulnerable populations ---
+3. A02 (Cryptographic Failures): Critical given the sensitivity of financial and identity data from economically vulnerable populations
 
 
 6. Security Controls and Mitigations
