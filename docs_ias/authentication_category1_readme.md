@@ -5,7 +5,7 @@ Scope: Endpoints in `accounts/urls.py` and their linked views/services.
 ### Summary
 1. Strong password hashing (bcrypt/Argon2): Implemented (bcrypt).
 1. Secure sessions with expiry: Implemented via JWT expiry (access/refresh lifetimes).
-1. Generic login errors: Partially implemented (customer login leaks attempt count).
+1. Generic login errors: Implemented (no attempt-count leakage).
 1. Rate limiting for logins: Partially implemented (customer only).
 1. MFA available or enforced: Available, not enforced.
 1. Validated tokens (JWT): Implemented (SimpleJWT + blacklist).
@@ -22,8 +22,8 @@ Scope: Endpoints in `accounts/urls.py` and their linked views/services.
 1. `config/settings.py` (SIMPLE_JWT, TOKEN_LIFETIMES)
 1. `accounts/utils/token_utils.py`
 1. `accounts/authentication.py`
-1. Generic login errors (partial):
-1. `accounts/views/auth_views.py` (customer: invalid email/password + attempts remaining)
+1. Generic login errors:
+1. `accounts/views/auth_views.py` (customer login returns generic invalid credentials for both unknown email and wrong password)
 1. `accounts/views/admin_views.py` and `accounts/views/loan_officer_views.py` (generic "Invalid credentials")
 1. Rate limiting:
 1. `accounts/utils/throttles.py` (IP throttles)
@@ -79,7 +79,7 @@ How to know it is correct:
 1. Access token `exp` is short-lived (`~10 min`), refresh token `exp` is `~24h` (or `3d` if `remember_me`).
 1. An expired access token is rejected by a protected endpoint with `401`.
 
-### 3) Generic Login Errors (Partial) Do not show attemps remaining
+### 3) Generic Login Errors (Implemented) Do not show attempts remaining
 Steps:
 1. Non-existent email:
 ```bash
@@ -96,7 +96,7 @@ curl -s -X POST http://localhost:8000/api/auth/login/ \
 
 How to know it is correct:
 1. For non-existent email, the response is generic (`Invalid email or password`).
-1. For wrong password on an existing user, the response includes attempt count, which is not fully generic. This confirms the partial status.
+1. For wrong password on an existing user, the response is also generic (`Invalid email or password`) with no attempt count shown.
 
 ### 4) Rate Limiting For Logins (Partial) admin/loan officer only use lockout
 
@@ -108,6 +108,19 @@ How to know it is correct:
 1. IP throttle returns `429` with a rate-limit message after 10/hour.
 1. Per-user short window returns `429` with "Please try again in X seconds."
 1. Note: Admin/loan officer logins do not use DRF throttles; only lockout applies there.
+
+Validated results (Feb 12, 2026):
+1. Customer `/api/auth/login/` from same IP: first 10 attempts returned `401`, 11th returned `429`.
+1. Customer rapid retry for same account within 30s: second request returned `429` with `Please try again in X seconds`.
+1. Admin `/api/auth/admin/login/`: no DRF throttle (`429` not observed); lockout path returned `403` after repeated failures.
+1. Loan officer `/api/auth/loan-officer/login/`: no DRF throttle (`429` not observed); lockout path returned `403` after repeated failures.
+
+Automated test:
+1. `accounts/tests/test_login_rate_limiting.py`
+1. Run:
+```bash
+python manage.py test accounts.tests.test_login_rate_limiting -v 2
+```
 
 ### 5) 2FA Available (2FA)
 Steps:
@@ -139,14 +152,24 @@ How to know it is correct:
 1. Valid refresh returns new tokens.
 1. Invalid refresh returns `401` or `400` with "Invalid or expired token."
 
-### 7) Strong Password Policy (Partial), check all password, forgot pass, reset pass, change pass. No password strenght enforced, only hashing
+### 7) Strong Password Policy (Implemented for signup/reset/change; forgot-password is OTP-only)
 Steps:
-1. Attempt signup or password reset with a weak password (e.g., `123456`).
-2. Attempt with a strong password (min length, non-numeric).
+1. Signup: submit a weak password (e.g., `123456`) to `/api/auth/signup/`, then submit a strong password.
+1. Reset password: submit weak and strong `new_password` values to `/api/auth/reset-password/`.
+1. Change password: submit weak and strong `new_password` values to `/api/auth/change-password/`.
+1. Forgot password: call `/api/auth/forgot-password/` and confirm it only accepts `email` (no password field in this step).
 
 How to know it is correct:
-1. Weak passwords are rejected with validation messages from Django validators.
-1. Strong passwords succeed.
+1. Weak passwords are rejected with Django validator messages (e.g., too short/common/numeric) in signup, reset, and change flows.
+1. Strong passwords pass serializer validation in signup, reset, and change flows.
+1. Forgot-password flow only initiates OTP; password policy is enforced later at reset/change steps.
+
+Automated test:
+1. `accounts/tests/test_password_policy.py`
+1. Run:
+```bash
+MONGODB_URI='' .venv/bin/python manage.py test accounts.tests.test_password_policy -v 2
+```
 
 ### 8) Logout Invalidates Session
 Steps:

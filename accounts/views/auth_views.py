@@ -151,7 +151,7 @@ class LoginView(APIView):
             # Verify password
             if not customer.check_password(password):
                 # Record failed attempt for lockout
-                is_now_locked, attempts_remaining = LockoutService.record_failed_attempt(customer)
+                is_now_locked, _ = LockoutService.record_failed_attempt(customer)
                 logger.warning(f"Failed login attempt for {email} from IP {request.META.get('REMOTE_ADDR')}")
                 
                 if is_now_locked:
@@ -161,7 +161,7 @@ class LoginView(APIView):
                     )
                 
                 return APIResponseHelper.error_response(
-                    f'Invalid email or password. {attempts_remaining} attempts remaining.',
+                    'Invalid email or password',
                     status.HTTP_401_UNAUTHORIZED
                 )
             
