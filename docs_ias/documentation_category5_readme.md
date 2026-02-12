@@ -29,6 +29,16 @@ Expected:
 1. README has no dedicated troubleshooting/maintenance sections.
 1. Endpoint totals may be stale versus current routes/docs.
 
+**TC-01 Result:** ✅ Matches expected (`Partial`)
+
+- Core sections are present in `README.md`:
+  `Quick Start`, `Configuration`, `Deploy`, `API Endpoints`, `Documentation`.
+- No dedicated `Troubleshooting` or `Maintenance` section was found.
+- README shows a fixed endpoint total (`59`), which may be stale and should be validated against current route files/API docs.
+
+**Conclusion:** README coverage is good but completeness/freshness is still `Partial`.
+
+
 ### TC-02: Security docs presence check
 ```bash
 ls docs/SECURITY.md docs/AUTHENTICATION.md docs/SECURITY_DEMO_TESTING_GUIDE.md
@@ -36,6 +46,23 @@ rg -n "Rate Limiting|Lockout|2FA|JWT|Security Headers|Password" docs/SECURITY.md
 ```
 Expected:
 1. Security docs exist and describe implemented controls.
+
+**TC-02 Result:** ✅ Matches expected (`Implemented`)
+
+- Security documentation files are present:
+  - `docs/SECURITY.md`
+  - `docs/AUTHENTICATION.md`
+  - `docs/SECURITY_DEMO_TESTING_GUIDE.md`
+- `docs/SECURITY.md` includes documented controls for:
+  - Rate limiting
+  - Account lockout
+  - 2FA
+  - JWT token security
+  - Security headers
+  - Password security
+
+**Conclusion:** Security documentation exists and clearly describes implemented controls.
+
 
 ### TC-03: API docs coverage drift check
 ```bash
@@ -76,6 +103,20 @@ PY
 Expected:
 1. Missing/mismatched routes are reported (currently includes document preview/download, loan reassign, and notification routes).
 
+**TC-03 Result:** ✅ Matches expected (`Partial`)
+
+- API documentation drift was detected.
+- Undocumented or mismatched routes found: **6**
+  1. `/api/documents/<document_id>/preview/`
+  1. `/api/documents/<document_id>/download/`
+  1. `/api/loans/admin/applications/<application_id>/reassign/`
+  1. `/api/notifications/unread-count/`
+  1. `/api/notifications/mark-all-read/`
+  1. `/api/notifications/<notification_id>/read/`
+
+**Conclusion:** `docs/API_REFERENCE.md` is not fully synchronized with current route
+
+
 ### TC-04: Deployment guide presence check
 ```bash
 ls docs/DEPLOYMENT_GUIDE.md Procfile
@@ -83,6 +124,18 @@ rg -n "Environment Variables|Railway|Deploy|gunicorn" docs/DEPLOYMENT_GUIDE.md R
 ```
 Expected:
 1. Deployment instructions and production command references exist.
+
+**TC-04 Result:** ✅ Matches expected (`Implemented (basic)`)
+
+- Deployment artifacts are present:
+  - `docs/DEPLOYMENT_GUIDE.md`
+  - `Procfile`
+- Deployment and production command references were found:
+  - Railway deployment steps in `README.md` and `docs/DEPLOYMENT_GUIDE.md`
+  - `gunicorn` production command references in `README.md`
+  - Environment variable setup sections in both docs
+
+**Conclusion:** Deployment instructions and production command references exist.
 
 ### TC-05: Troubleshooting coverage check
 ```bash
@@ -92,6 +145,18 @@ Expected:
 1. Troubleshooting exists in some specialized docs.
 1. It is not centralized for all backend operations.
 
+**TC-05 Result:** ✅ Matches expected (`Partial`)
+
+- Troubleshooting sections were found in specialized docs:
+  - `docs/ASSIGNMENT_TESTING_FLOW.md`
+  - `docs/CNN_DOCUMENT_ANALYSIS.md`
+  - `docs/MONGODB_ATLAS_SETUP.md`
+  - `docs/CNN_TRAINING_GUIDE.md`
+- No single centralized troubleshooting guide for all backend operations was found in `README.md`/core docs.
+
+**Conclusion:** Troubleshooting coverage exists but is decentralized, so status remains `Partial`.
+
+
 ### TC-06: Maintenance notes check
 ```bash
 rg -n "(?i)maintenance|retrain|schedule|cron|celery beat|cleanup|rotation|backup|runbook" docs README.md -S
@@ -99,6 +164,14 @@ rg -n "(?i)maintenance|retrain|schedule|cron|celery beat|cleanup|rotation|backup
 Expected:
 1. Some maintenance-like notes exist (tasks/retraining).
 1. No single operations maintenance runbook with cadence/owners/SLA is found.
+
+**TC-06 Result:** ✅ Matches expected (`Partial`)
+
+- Maintenance-like notes exist (e.g., `docs/BACKGROUND_TASKS.md` for Celery Beat schedules, `docs/CNN_TRAINING_GUIDE.md` / `docs/CNN_QUICK_START.md` for retraining).
+- No single operations maintenance runbook with cadence/owners/SLA was found (`docs/OPERATIONS_RUNBOOK.md` missing).
+
+**Conclusion:** Maintenance information exists but is fragmented; centralized maintenance documentation remains incomplete.
+
 
 ### TC-07: Documentation organization check
 ```bash
@@ -108,6 +181,14 @@ test -f docs/README.md && echo "docs index exists" || echo "docs index missing"
 Expected:
 1. Documentation is grouped under `docs/` and mostly well-named.
 1. Central docs index (`docs/README.md`) is missing.
+
+**TC-07 Result:** ✅ Matches expected (`Partial`)
+
+- Documentation is grouped under `docs/` with many clearly named files.
+- Central docs index check returned: `docs index missing` (`docs/README.md` not found).
+
+**Conclusion:** Docs are organized, but discoverability is still partial due to missing central index.
+
 
 ---
 

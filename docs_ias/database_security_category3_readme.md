@@ -43,6 +43,14 @@ Correct result criteria:
 1. Credentials are loaded from environment variables.
 1. If no vault integration exists, status remains `Partial`.
 
+**Result:** ✅ Matches expected (`Partial`)
+
+- `.env` is not tracked; only `.env.example` is committed.
+- `config/settings.py` uses `load_dotenv()` and `os.getenv(...)` for secret/config values (`SECRET_KEY`, `MONGODB_URI`, email settings, etc.).
+- No vault/KMS integration is present in the repo.
+- Some sensitive settings still have fallback defaults (dev convenience), so strict production hardening is not fully enforced.
+
+**Conclusion:** Secure credential handling is present via environment variables, but without vault/KMS and strict fail-fast enforcement, status remains `Partial`.
 ---
 
 ## 2) Role-Based Access Control
@@ -104,6 +112,13 @@ Correct result criteria:
 1. Document files are encrypted at rest.
 1. MongoDB at-rest encryption is not code-enforced, so control remains `Partial`.
 
+**Result:** ✅ Consistent with `Partial`
+
+- The search did **not** find MongoDB at-rest encryption controls (no CSFLE/KMS/field-level encryption setup in DB config paths).
+- The only hit (`config/security_events.py:21` -> `encryption_key`) is a sensitive-key redaction term, not an encryption implementation.
+- File-level encryption evidence still stands (`documents/services/encryption_service.py`, `documents/storage/backends.py`).
+
+**Conclusion:** Document storage encryption is implemented, but MongoDB at-rest encryption is not enforced in application code; status remains `Partial`.
 ---
 
 ## 4) Encrypted Backups
@@ -125,6 +140,13 @@ rg -n "mongodump|backup|snapshot|restore|archive|retention" config accounts prof
 
 Correct result criteria:
 1. No DB backup encryption implementation present in repo => `Not Implemented`.
+
+**Result:** ✅ Still `Not Implemented` for DB encrypted backups
+
+- Search hits are all about **2FA backup codes** (`backup_codes`), which are account-recovery tokens.
+- No evidence of **database backup** implementation was found (no `mongodump`, snapshot job, restore pipeline, retention workflow, or backup encryption routine in backend code/scripts).
+
+**Conclusion:** The repository does not implement encrypted MongoDB backup workflows; status remains `Not Implemented`.
 
 ---
 
@@ -187,6 +209,18 @@ Correct result criteria:
 1. Prefer `mongodb+srv://` or explicit `tls=true`.
 1. Since code does not enforce TLS, status remains `Partial`.
 
+**Result:** ⚠️ `Partial` (and local config check raised a concern)
+
+- Output shows:
+  - `scheme: mongodb:// or empty`
+  - `has_tls_flag: False`
+- This means your current shell value is either:
+  1. not set (`empty`), or
+  2. using non-`mongodb+srv` without explicit TLS flags.
+- App code still does not enforce TLS in code (`MongoClient(MONGODB_URI)` only), so control remains `Partial`.
+
+**Conclusion:** Keep status as `Partial`.  
+If runtime URI is truly non-TLS, this is a real gap to fix.
 ---
 
 ## 7) Database Hardening

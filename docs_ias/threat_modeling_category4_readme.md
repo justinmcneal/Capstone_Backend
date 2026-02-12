@@ -27,6 +27,16 @@ Expected:
 1. You find flow/architecture docs (e.g., profile flow, auth architecture).
 1. You do **not** find a dedicated, full system security DFD with trust boundaries and threat annotations.
 
+
+- Found flow/architecture artifacts in:
+  - `docs/PROFILE.md` (Profile Data Flow)
+  - `docs/ROLES.md` (Authentication Architecture / API Gateway)
+  - `docs/GAP_ANALYSIS.md` (Flowchart + System Architecture)
+  - `docs/DEPLOYMENT_GUIDE.md` (Deployment Architecture)
+- Did **not** find a dedicated, full-system **security DFD** with explicit trust boundaries and threat annotations.
+**Conclusion:** Data-flow documentation exists, but Category 4 “Data Flow Diagram Created” remains `Partial`.
+
+
 ### TC-02: Check STRIDE documentation presence
 ```bash
 rg -n "(?i)STRIDE|spoofing|tampering|repudiation|information disclosure|denial of service|elevation of privilege" docs docs_ias -S
@@ -34,12 +44,24 @@ rg -n "(?i)STRIDE|spoofing|tampering|repudiation|information disclosure|denial o
 Expected:
 1. No formal STRIDE threat model entries are returned.
 
+- Search results only show references inside `docs_ias/threat_modeling_category4_readme.md` (the review/checklist itself).
+- No separate formal STRIDE threat-model artifact was found (no component/data-flow STRIDE table).
+**Conclusion:** STRIDE threat modeling is still `Not Implemented`.
+
 ### TC-03: Check OWASP Top 10 mapping
 ```bash
 rg -n "(?i)OWASP|A0[1-9]|A10|Broken Access Control|Security Misconfiguration" docs docs_ias -S
 ```
 Expected:
 1. No explicit STRIDE-to-OWASP mapping table is returned.
+
+**TC-03 Result:** ✅ Matches expected (`Not Implemented`)
+
+- Search hits are only from `docs_ias/threat_modeling_category4_readme.md` (the assessment/checklist itself).
+- No separate artifact with an explicit STRIDE-to-OWASP mapping matrix was found.
+
+**Conclusion:** OWASP Top 10 mapping remains `Not Implemented`.
+
 
 ### TC-04: Check mitigation plan + prioritization quality
 ```bash
@@ -49,6 +71,19 @@ Expected:
 1. Security controls and generic priority tables exist.
 1. Missing: a threat-by-threat mitigation register with severity, owner, due date, and status.
 
+**TC-04 Result:** ✅ Matches expected (`Partial`)
+
+- Found implemented control documentation in `docs/SECURITY.md`:
+  - rate limiting, lockout, 2FA, security headers, password hashing
+- Found prioritization tables in `docs/GAP_ANALYSIS.md`:
+  - task/priority/effort/status style planning tables
+
+- Still missing:
+  - a threat-by-threat mitigation register with fields like:
+    `Threat ID | Severity | Owner | Due Date | Status | Mitigation`
+
+**Conclusion:** Mitigation planning exists at control/task level, but not as a formal threat-level mitigation register; status remains `Partial`.
+
 ### TC-05: Check risk assessment style
 ```bash
 rg -n "(?i)risk_category|risk_score|likelihood|impact|risk matrix" loans/services docs docs_ias -S
@@ -57,6 +92,16 @@ Expected:
 1. `risk_category` appears in loan qualification code.
 1. No security threat likelihood/impact matrix is found in docs.
 
+**TC-05 Result:** ✅ Matches expected (`Partial`)
+
+- `risk_category` is present in loan/business risk logic:
+  - `loans/services/qualification.py`
+  - supporting examples in docs/testing guides (`docs/LOANS_TESTING_GUIDE.md`, `docs/PROFILE.md`)
+- No dedicated **security threat** risk matrix (likelihood/impact scoring for threats) was found in docs.
+
+**Conclusion:** Business/credit risk scoring exists, but security threat risk assessment is still missing; status remains `Partial`.
+
+
 ### TC-06: Check regular-update evidence for threat model
 ```bash
 find docs docs_ias -type f | rg -n "(?i)threat|stride|owasp|dfd|threat_model"
@@ -64,6 +109,13 @@ find docs docs_ias -type f | rg -n "(?i)threat|stride|owasp|dfd|threat_model"
 Expected:
 1. No dedicated threat-model artifact filename appears.
 1. Without a maintained threat-model artifact, "updated regularly" is not satisfied.
+
+**TC-06 Result:** ✅ Matches expected (`Not Implemented`)
+
+- Only file found: `docs_ias/threat_modeling_category4_readme.md` (assessment/checklist).
+- No dedicated threat-model artifact (e.g., `threat_model_master.md`, STRIDE matrix, OWASP mapping doc) was found.
+
+**Conclusion:** There is no maintainable threat-model file to version over time, so “updated regularly” is not satisfied.
 
 ---
 

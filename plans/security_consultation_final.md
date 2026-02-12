@@ -1,154 +1,152 @@
 # Session 2: Consultation Round Checklist
 ## MSME Pathways Backend - Security Verification
+## (Aligned with `docs_ias/*_category*_readme.md`)
 
 ## SLIDE 1: Category 1 - Authentication
 
+**Current Status:** `Partially Implemented`
+
 **Implemented:**
-• bcrypt password hashing with automatic salting for all user passwords
-• JWT-based authentication with 10-minute access tokens and 24-hour refresh tokens
-• Two-factor authentication (TOTP) compatible with Google Authenticator and Authy
-• Rate limiting protection: 10 login attempts per hour per IP address
-• Account lockout mechanism: 5 failed attempts triggers 15-minute lockout
-• Generic error messages preventing email enumeration attacks
-• Strong password policy enforcement using Django validators
-• Token blacklisting system for secure logout functionality
-• All authentication requirements met for application needs
+- bcrypt password hashing for customer/admin/loan-officer models
+- JWT auth with token expiry and token blacklisting on logout
+- Generic customer login error handling (no email-enumeration details)
+- 2FA capability is available (setup/confirm/verify flows)
+- Rate-limit controls for customer login: IP throttle + 30-second per-user window
+- Account lockout controls are present
 
 **Improvement Needed:**
-None. All critical authentication controls are fully implemented and operational for the application's requirements.
+- Login throttling is partial across roles (admin/loan officer rely on lockout only)
+- MFA is available but not enforced by policy
+- Password-policy handling is not fully uniform across all role-specific flows
 
 **Plan to Fix:**
-N/A - Category achieved 100% compliance. OAuth/SSO not required for this application.
+1. Decide policy for privileged-role login throttling (keep lockout-only or add DRF throttles with role-aware limits).
+2. Enforce MFA for admin/loan officer accounts (or document risk acceptance).
+3. Standardize password-validation handling across all auth flows.
 
 ---
 
 ## SLIDE 2: Category 2 - Input Validation
 
+**Current Status:** `Partially Implemented`
+
 **Implemented:**
-• Server-side validation using sanitize_text_input() function on all user inputs
-• XSS protection blocking script tags, event handlers, and JavaScript protocols
-• NoSQL injection prevention blocking MongoDB operators ($ne, $where, $or, $gt)
-• File upload validation enforcing 10MB size limit and JPEG/PNG/PDF types only
-• API schema validation using Django REST Framework serializers
-• CSRF token protection enabled via Django middleware
-• MIME type verification for uploaded documents
-• Parameterized queries: N/A - Application uses MongoDB (NoSQL). PyMongo uses safe dictionary-based queries preventing injection.
+- Serializer-based validation exists across many critical endpoints
+- Input sanitizer exists for XSS/NoSQL pattern blocking in selected serializers
+- File upload validation (type + size) is implemented for document upload
+- CSRF middleware is enabled in Django settings
+- SQL injection is N/A in architecture (MongoDB backend, no SQL execution layer)
 
 **Improvement Needed:**
-No improvements needed. All critical input validation controls are fully implemented and operational.
+- Validation is not uniform across all endpoints (ad-hoc request parsing still exists)
+- API schema enforcement is partial
+- XSS/NoSQL protections are not consistently applied across all apps/fields
+- CSRF is not a strong active control for bearer-token API paths
 
 **Plan to Fix:**
-N/A - Category achieved 100% compliance. Continue monitoring for new attack vectors and update patterns as needed.
+1. Require serializers for all write endpoints and query-parameter schemas.
+2. Replace ad-hoc parsing with shared typed validators for pagination/filter/search.
+3. Expand sanitizer/strict validators to uncovered inputs.
+4. Document explicit CSRF strategy for JWT/bearer usage.
 
 ---
 
 ## SLIDE 3: Category 3 - Database Security
 
-### Category 3: Database Security
+**Current Status:** `Partially Implemented`
 
 **Implemented:**
-• AES-256-GCM encryption for all uploaded documents with 12-byte random nonces
-• Environment variable storage for database credentials and encryption keys
-• Role-based access control with 4 distinct user roles (Customer, Loan Officer, Admin, Super Admin)
-• TLS 1.2+ encrypted connections to MongoDB Atlas
-• Comprehensive audit logging tracking all database operations with timestamps and IP addresses
-• MongoDB Atlas managed security with automatic security patches
+- Environment-based credential loading is in place
+- Application-level RBAC is broadly enforced
+- Document storage encryption at rest is implemented (AES-256-GCM)
+- Audit logging is enabled across key security/business flows
+- Several unique/TTL index hardening controls are defined
 
 **Improvement Needed:**
-Encrypted backup configuration not explicitly verified. MongoDB Atlas provides encrypted backups by default, but configuration needs confirmation.
+- No encrypted DB backup implementation in backend code
+- MongoDB at-rest encryption and TLS are URI/infrastructure-dependent, not app-enforced
+- No vault/KMS integration for secrets in repo
+- Index bootstrap automation is incomplete across all models
 
 **Plan to Fix:**
-Access MongoDB Atlas dashboard and verify backup encryption settings are enabled. Document backup encryption configuration in security documentation. Estimated effort: 30 minutes. Priority: Medium.
+1. Add/confirm encrypted backup policy and document evidence.
+2. Enforce DB connection security checks at startup (URI scheme/TLS requirements).
+3. Expand index bootstrap/init coverage to all model index definitions.
+4. Harden secret handling for production (fail fast on missing required secrets).
 
 ---
 
 ## SLIDE 4: Category 4 - Threat Modeling
 
-### Category 4: Threat Modeling
+**Current Status:** `Partially Implemented`
 
 **Implemented:**
-• Data flow diagram documenting 22-step user journey from signup to loan disbursement
-• System architecture documentation covering 6 layers (Client, Application, AI, Data)
-• OWASP Top 10 security controls implemented (injection prevention, authentication, encryption)
+- High-level flow/architecture artifacts exist in docs
+- Security controls are implemented and documented at control level
+- Mitigations and priorities exist in general planning docs
 
 **Improvement Needed:**
-• No formal STRIDE threat analysis document (Spoofing, Tampering, Repudiation, Information Disclosure, Denial of Service, Elevation of Privilege)
-• OWASP Top 10 compliance not formally mapped to implemented controls
-• No documented risk assessment with likelihood and impact ratings
-• No formal security mitigation plan with prioritized actions
+- No formal STRIDE threat model artifact
+- No explicit OWASP Top 10 mapping matrix
+- No security risk matrix with likelihood/impact scoring
+- No formal threat-model maintenance cadence
 
 **Plan to Fix:**
-Create comprehensive threat modeling documentation including: (1) STRIDE analysis for each system component, (2) OWASP Top 10 compliance matrix, (3) Risk assessment with likelihood/impact scores, (4) Prioritized mitigation roadmap. Estimated effort: 4-8 hours. Priority: Medium.
+1. Create `docs_ias/threat_model_master.md`.
+2. Add STRIDE entries per component/data flow with ownership/status.
+3. Add OWASP mapping columns (`A01`-`A10`) and risk scoring.
+4. Add update cadence (per release/monthly) and changelog policy.
 
 ---
 
 ## SLIDE 5: Category 5 - Documentation
 
-### Category 5: Documentation
+**Current Status:** `Partially Implemented`
 
 **Implemented:**
-• Complete README.md with quick start guide, configuration, and deployment instructions
-• Security documentation (SECURITY.md) detailing all security features and best practices
-• API reference documentation covering all 59 endpoints across 7 modules
-• Railway deployment guide with production environment setup
-• 10+ module-specific testing guides for accounts, loans, documents, and analytics
-• Gap analysis document tracking project completion status
-• 20+ organized markdown files in dedicated docs/ directory
+- Security docs, deployment docs, API reference, and module guides exist
+- Documentation is mostly organized under `docs/`
+- Domain-specific troubleshooting notes exist
 
 **Improvement Needed:**
-No improvements needed. Documentation achieved 100% compliance with professional-grade quality and organization.
+- README completeness/freshness drift
+- API reference not fully synchronized with current routes
+- Troubleshooting and maintenance notes are not centralized
+- No central docs index (`docs/README.md`)
 
 **Plan to Fix:**
-N/A - Category fully complete. Maintain documentation updates as new features are added.
+1. Update README totals/sections and add troubleshooting + maintenance coverage.
+2. Sync `docs/API_REFERENCE.md` with all live routes.
+3. Add `docs/README.md` index and `docs/OPERATIONS_RUNBOOK.md`.
+4. Define maintenance cadence/owners/checklists for operational docs.
 
 ---
 
 ## SLIDE 6: Overall Security Summary
 
-**Session 2: Consultation Round Checklist**
-
-[Illustration: Two people collaborating at laptop - LEFT SIDE]
-
 ### Overall Security Assessment
 
-| Area | Implemented | Improvement Needed | Plan to Fix |
-|------|-------------|-------------------|-------------|
-| **Authentication (100%)** | bcrypt hashing, JWT tokens, 2FA (TOTP), rate limiting (10/hr), account lockout (5 attempts), generic errors, password policy, token blacklisting, all requirements met | None - OAuth/SSO not required for this application | N/A - Category achieved 100% compliance |
-| **Input Validation (100%)** | Server-side validation, XSS protection, NoSQL injection prevention, file validation (10MB, JPEG/PNG/PDF), API schema validation, CSRF tokens, MIME verification | None - 100% complete | N/A - Continue monitoring for new attack vectors |
-| **Database Security (93%)** | AES-256-GCM encryption, environment variables, RBAC (4 roles), TLS 1.2+ connections, audit logging, MongoDB Atlas security | Backup encryption verification | Verify MongoDB Atlas backup encryption settings. Effort: 30 min. Priority: Medium |
-| **Threat Modeling (43%)** | Data flow diagram (22 steps), system architecture (6 layers), OWASP controls implemented | No formal STRIDE analysis, OWASP mapping, risk assessment, mitigation plan | Create threat docs: STRIDE analysis, OWASP matrix, risk assessment. Effort: 4-8 hrs. Priority: Medium |
-| **Documentation (100%)** | README, SECURITY.md, API reference (59 endpoints), deployment guide, 10+ testing guides, 20+ markdown files | None - 100% complete | N/A - Maintain as features are added |
+| Area | Status | Implemented Highlights | Main Gaps | Plan to Fix |
+|------|--------|------------------------|-----------|-------------|
+| **Authentication** | Partial | bcrypt, JWT+blacklist, 2FA available, lockout + customer login throttles | Privileged-role throttling policy, MFA enforcement policy, flow consistency | Define/enforce role-based auth hardening policy |
+| **Input Validation** | Partial | Serializer validation in many endpoints, sanitizer in selected paths, file validation | Inconsistent validation coverage and schema enforcement | Standardize serializers and query validation across all endpoints |
+| **Database Security** | Partial | Env-based secrets, app RBAC, audit logs, document encryption, index controls | Backups, TLS/at-rest enforcement, vault/KMS, full index automation | Add backup/TLS/index hardening controls and documentation |
+| **Threat Modeling** | Partial | High-level flows and security control docs | No formal STRIDE/OWASP/risk matrix/cadence | Create formal threat-model artifact and governance process |
+| **Documentation** | Partial | Broad docs coverage exists | Drift, no central troubleshooting/runbook/index | Synchronize docs and add operations-focused documentation |
 
-**Overall Compliance: 88% (32.5/37 items)**
-
-**Final Verdict: ✅ PRODUCTION-READY**
+**Final Verdict:** `Partially Implemented` (not yet full checklist compliance)
 
 ---
 
-## EVIDENCE REFERENCE
+## Evidence Reference (Source of Truth)
 
-**Authentication Evidence:**
-- File: `accounts/models/customer.py` (lines 120-133)
-- File: `accounts/authentication.py` (lines 52-97)
-- File: `accounts/services/two_factor_service.py` (full file)
-
-**Input Validation Evidence:**
-- File: `accounts/utils/input_sanitizer.py` (lines 9-100)
-- File: `documents/serializers/document_serializers.py` (lines 136-156)
-
-**Database Security Evidence:**
-- File: `documents/services/encryption_service.py` (lines 13-136)
-- File: `analytics/models/audit_log.py` (lines 37-227)
-- File: `.env.example` (lines 32-42)
-
-**Documentation Evidence:**
-- File: `docs/SECURITY.md` (217 lines)
-- File: `docs/GAP_ANALYSIS.md` (268 lines)
-- File: `README.md` (214 lines)
+- `docs_ias/authentication_category1_readme.md`
+- `docs_ias/input_validation_category2_readme.md`
+- `docs_ias/database_security_category3_readme.md`
+- `docs_ias/threat_modeling_category4_readme.md`
+- `docs_ias/documentation_category5_readme.md`
 
 ---
 
-**Total Slides:** 9
-**Format:** Project Area → Implemented → Improvement Needed → Plan to Fix
-**Presentation Time:** 15-18 minutes
-**Verdict:** ✅ PRODUCTION-READY (88% compliance)
+**Format:** Project Area -> Implemented -> Improvement Needed -> Plan to Fix  
+**Recommendation:** Present as "progress with prioritized hardening roadmap", not "100% complete".

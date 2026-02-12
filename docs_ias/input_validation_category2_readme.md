@@ -20,7 +20,7 @@ Assumptions:
 1. You already have a valid customer access token as `ACCESS_TOKEN`
 1. Replace placeholders before running
 
-### TC-01: Serializer validation works (positive control)
+### TC-01: Serializer validation works (positive control) Done
 ```bash
 curl -i -X POST http://localhost:8000/api/auth/signup/ \
   -H "Content-Type: application/json" \
@@ -29,7 +29,7 @@ curl -i -X POST http://localhost:8000/api/auth/signup/ \
 Expected:
 1. `400` with field-level validation errors.
 
-### TC-02: Ad-hoc endpoint validation inconsistency check
+### TC-02: Ad-hoc endpoint validation inconsistency check 
 ```bash
 curl -i "http://localhost:8000/api/analytics/audit-logs/?page=not_a_number" \
   -H "Authorization: Bearer ACCESS_TOKEN"
@@ -37,6 +37,8 @@ curl -i "http://localhost:8000/api/analytics/audit-logs/?page=not_a_number" \
 Expected:
 1. If endpoint is fully schema-validated, it should return clean `400`.
 1. In current state, behavior may be inconsistent (often server-side exception path), confirming `Partial`.
+
+500 internal server error
 
 ### TC-03: File upload type+size validation
 ```bash
@@ -48,6 +50,8 @@ curl -i -X POST http://localhost:8000/api/documents/upload/ \
 Expected:
 1. `400` with invalid file type message.
 
+Done
+
 ### TC-04: XSS pattern blocking on protected field
 ```bash
 curl -i -X POST http://localhost:8000/api/auth/signup/ \
@@ -56,6 +60,8 @@ curl -i -X POST http://localhost:8000/api/auth/signup/ \
 ```
 Expected:
 1. `400` with validation message indicating malicious input/pattern detection.
+
+DONE
 
 ### TC-05: NoSQL pattern blocking on protected field
 ```bash
@@ -73,6 +79,15 @@ rg -n "\\bSELECT\\b|\\bINSERT\\b|\\bUPDATE\\b|\\bDELETE\\b|execute\\(|cursor\\."
 Expected:
 1. No real SQL execution usage in backend business code.
 
+**TC-06 Result:** ✅ Matches expected
+
+- Hits for `DELETE` are endpoint docstrings/comments (HTTP method names), not SQL statements.
+- Hits for `cursor` are Mongo/PyMongo cursor operations (`sort`, `limit`), not SQL DB cursor execution.
+- No `execute(...)`, raw SQL queries, or SQL statement usage (`SELECT/INSERT/UPDATE/DELETE` as DB commands) found in business code.
+
+**Conclusion:** No real SQL execution usage was identified; this remains consistent with MongoDB-backed architecture.
+
+
 ### TC-07: CSRF behavior with JWT APIs
 ```bash
 curl -i -X POST http://localhost:8000/api/auth/logout/ \
@@ -83,6 +98,11 @@ curl -i -X POST http://localhost:8000/api/auth/logout/ \
 Expected:
 1. Request is handled by JWT flow (no strict CSRF token requirement in typical bearer usage path).
 1. Confirms middleware is enabled but CSRF is not the primary gate for these token-auth APIs.
+
+INFO 2026-02-12 14:36:31,148 Blacklisted access token
+INFO 2026-02-12 14:36:31,203 Blacklisted refresh token
+INFO 2026-02-12 14:36:31,203 User logged out from IP 127.0.0.1
+[12/Feb/2026 14:36:31] "POST /api/auth/logout/ HTTP/1.1" 200 56
 
 ---
 
