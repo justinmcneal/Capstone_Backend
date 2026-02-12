@@ -61,6 +61,11 @@ class Document:
         self.file_path = kwargs.get('file_path', '')  # Storage path
         self.file_size = kwargs.get('file_size', 0)  # Bytes
         self.mime_type = kwargs.get('mime_type', '')
+        self.storage_filename = kwargs.get('storage_filename', '')
+        self.is_encrypted = kwargs.get('is_encrypted', False)
+        self.encryption_algorithm = kwargs.get('encryption_algorithm', '')
+        self.encryption_version = kwargs.get('encryption_version', '')
+        self.encrypted_file_size = kwargs.get('encrypted_file_size', 0)
         
         # Status and verification
         self.status = kwargs.get('status', 'pending')
@@ -110,6 +115,11 @@ class Document:
             'file_path': self.file_path,
             'file_size': self.file_size,
             'mime_type': self.mime_type,
+            'storage_filename': self.storage_filename,
+            'is_encrypted': self.is_encrypted,
+            'encryption_algorithm': self.encryption_algorithm,
+            'encryption_version': self.encryption_version,
+            'encrypted_file_size': self.encrypted_file_size,
             'status': self.status,
             'verified': self.verified,
             'verified_by': self.verified_by,

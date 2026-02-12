@@ -3,6 +3,8 @@ from documents.views import (
     DocumentUploadView,
     DocumentListView,
     DocumentDetailView,
+    DocumentPreviewView,
+    DocumentDownloadView,
     DocumentVerifyView,
     DocumentTypesView,
     RequestReuploadView
@@ -22,6 +24,12 @@ urlpatterns = [
     
     # Document detail and delete
     path('<str:document_id>/', DocumentDetailView.as_view(), name='document-detail'),
+
+    # Preview document (auth + decryption)
+    path('<str:document_id>/preview/', DocumentPreviewView.as_view(), name='document-preview'),
+
+    # Legacy download path (alias to preview handler)
+    path('<str:document_id>/download/', DocumentDownloadView.as_view(), name='document-download'),
     
     # Verify document (loan officer)
     path('<str:document_id>/verify/', DocumentVerifyView.as_view(), name='document-verify'),

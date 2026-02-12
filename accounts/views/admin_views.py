@@ -11,6 +11,7 @@ from accounts.models import Admin, LoanOfficer, ADMIN_PERMISSIONS
 from accounts.authentication import CustomJWTAuthentication
 from accounts.utils.token_utils import TokenUtils
 from accounts.utils.response_helpers import success_response, error_response
+from config.security_events import should_log_demo_hashes
 from analytics.models import AuditLog
 import logging
 
@@ -34,6 +35,19 @@ class AdminLoginView(APIView):
     }
     """
     permission_classes = [AllowAny]
+
+    @staticmethod
+    def _build_security_demo_payload(password_hash):
+        if not should_log_demo_hashes():
+            return None
+
+        redacted = f"{password_hash[:15]}...[REDACTED]" if password_hash else "[MISSING]"
+        return {
+            'password_hash_verification_status': True,
+            'hash_algorithm': 'bcrypt',
+            'bcrypt_hash': password_hash,
+            'bcrypt_hash_redacted': redacted,
+        }
     
     def post(self, request):
         try:
@@ -103,11 +117,15 @@ class AdminLoginView(APIView):
                     email=admin.email,
                     role='admin'
                 )
+                response_data = {
+                    'requires_2fa': True,
+                    'temp_token': temp_token
+                }
+                security_demo = self._build_security_demo_payload(admin.password)
+                if security_demo:
+                    response_data['security_demo'] = security_demo
                 return success_response(
-                    data={
-                        'requires_2fa': True,
-                        'temp_token': temp_token
-                    },
+                    data=response_data,
                     message="2FA verification required"
                 )
             
@@ -130,22 +148,24 @@ class AdminLoginView(APIView):
                 ip_address=request.META.get('REMOTE_ADDR', '')
             )
             
-            return success_response(
-                data={
-                    'access_token': tokens['access'],
-                    'refresh_token': tokens['refresh'],
-                    'user': {
-                        'id': admin.id,
-                        'username': admin.username,
-                        'email': admin.email,
-                        'full_name': admin.full_name,
-                        'role': 'admin',
-                        'permissions': admin.permissions if not admin.super_admin else ['*'],
-                        'super_admin': admin.super_admin
-                    }
-                },
-                message="Login successful"
-            )
+            response_data = {
+                'access_token': tokens['access'],
+                'refresh_token': tokens['refresh'],
+                'user': {
+                    'id': admin.id,
+                    'username': admin.username,
+                    'email': admin.email,
+                    'full_name': admin.full_name,
+                    'role': 'admin',
+                    'permissions': admin.permissions if not admin.super_admin else ['*'],
+                    'super_admin': admin.super_admin
+                }
+            }
+            security_demo = self._build_security_demo_payload(admin.password)
+            if security_demo:
+                response_data['security_demo'] = security_demo
+
+            return success_response(data=response_data, message="Login successful")
             
         except Exception as e:
             logger.error(f"Admin login error: {str(e)}")
@@ -1003,4 +1023,3 @@ class AdminPermissionsView(SuperAdminRequiredMixin, APIView):
                 message="Failed to update permissions",
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
-

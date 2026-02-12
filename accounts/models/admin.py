@@ -2,6 +2,7 @@ from datetime import datetime
 import bcrypt
 from bson import ObjectId
 from django.conf import settings
+from config.security_events import log_security_event, should_log_demo_hashes
 
 
 def get_db():
@@ -135,11 +136,33 @@ class Admin:
     
     def set_password(self, raw_password):
         """Hash and set password"""
-        self.password = bcrypt.hashpw(raw_password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+        password_hash = bcrypt.hashpw(raw_password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+        self.password = password_hash
+        details = {'flow': 'set_password', 'algorithm': 'bcrypt'}
+        if should_log_demo_hashes():
+            details['bcrypt_hash'] = password_hash
+        log_security_event(
+            event='password_hashing_triggered',
+            outcome='success',
+            user_id=self.id,
+            user_role=self.role,
+            details=details
+        )
     
     def check_password(self, raw_password):
         """Verify password"""
-        return bcrypt.checkpw(raw_password.encode('utf-8'), self.password.encode('utf-8'))
+        is_valid = bcrypt.checkpw(raw_password.encode('utf-8'), self.password.encode('utf-8'))
+        details = {'flow': 'check_password', 'algorithm': 'bcrypt'}
+        if should_log_demo_hashes():
+            details['bcrypt_hash'] = self.password
+        log_security_event(
+            event='password_hash_verification',
+            outcome='success' if is_valid else 'blocked',
+            user_id=self.id,
+            user_role=self.role,
+            details=details
+        )
+        return is_valid
     
     def save(self):
         """Save admin to database"""

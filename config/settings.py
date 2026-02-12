@@ -19,6 +19,7 @@ load_dotenv()
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
+os.makedirs(BASE_DIR / 'logs', exist_ok=True)
 
 
 # Quick-start development settings - unsuitable for production
@@ -150,6 +151,7 @@ MEDIA_ROOT = BASE_DIR / 'media'
 # Document Storage Configuration
 # Options: 'local', 's3', 'gcs' (cloud backends to be implemented)
 DOCUMENT_STORAGE_BACKEND = 'local'
+SECURITY_EVENTS_LOG_PATH = BASE_DIR / 'logs' / 'security_events.jsonl'
 
 # Default primary key field type
 # https://docs.djangoproject.com/en/4.2/ref/settings/#default-auto-field
@@ -247,6 +249,10 @@ LOGGING = {
             'format': '{levelname} {asctime} {message}',
             'style': '{',
         },
+        'json_message': {
+            'format': '{message}',
+            'style': '{',
+        },
     },
     'handlers': {
         'console': {
@@ -258,10 +264,20 @@ LOGGING = {
             'filename': BASE_DIR / 'logs' / 'authentication.log',
             'formatter': 'verbose',
         },
+        'security_events_file': {
+            'class': 'logging.FileHandler',
+            'filename': SECURITY_EVENTS_LOG_PATH,
+            'formatter': 'json_message',
+        },
     },
     'loggers': {
         'authentication': {
             'handlers': ['console', 'file'],
+            'level': 'INFO',
+            'propagate': False,
+        },
+        'security_events': {
+            'handlers': ['security_events_file'],
             'level': 'INFO',
             'propagate': False,
         },
@@ -287,12 +303,10 @@ if not DEBUG:
     SESSION_COOKIE_SECURE = True
     CSRF_COOKIE_SECURE = True
     
-    # Use console logging only in production (Railway captures stdout)
-    LOGGING['handlers'] = {
-        'console': {
-            'class': 'logging.StreamHandler',
-            'formatter': 'simple',
-        },
+    # Keep security evidence logs; emit auth logs to console in production.
+    LOGGING['handlers']['console'] = {
+        'class': 'logging.StreamHandler',
+        'formatter': 'simple',
     }
     LOGGING['loggers']['authentication']['handlers'] = ['console']
 

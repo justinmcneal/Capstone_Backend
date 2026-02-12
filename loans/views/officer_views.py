@@ -300,14 +300,13 @@ class OfficerApplicationDetailView(LoanOfficerRequiredMixin, APIView):
         }
         
         # Build documents data
-        from documents.storage import get_storage_backend
-        storage = get_storage_backend()
-        
         documents_data = [{
             'id': doc.id,
             'document_type': doc.document_type,
             'filename': doc.original_filename,
-            'file_url': storage.get_url(doc.file_path),
+            'file_url': f"/api/documents/{doc.id}/preview/",
+            'preview_url': f"/api/documents/{doc.id}/preview/",
+            'download_url': f"/api/documents/{doc.id}/preview/?download=true",
             'file_size': doc.file_size,
             'status': doc.status,
             'verified': doc.verified,

@@ -1,22 +1,25 @@
 from rest_framework.views import APIView
-from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.parsers import MultiPartParser, FormParser
+from django.http import HttpResponse
 from bson import ObjectId
 from datetime import datetime
+import os
+import tempfile
 
 from accounts.authentication import CustomJWTAuthentication
 from accounts.utils.response_helpers import success_response, error_response
-from accounts.models import Admin
-from documents.models import Document, DOCUMENT_TYPES
+from documents.models import Document
 from documents.serializers import (
     DocumentUploadSerializer,
     DocumentVerifySerializer,
     validate_uploaded_file
 )
 from documents.storage import get_storage_backend
+from documents.services.encryption_service import DocumentEncryptionError
 from analytics.models import AuditLog
+from config.security_events import log_security_event
 import logging
 
 logger = logging.getLogger('documents')
@@ -49,15 +52,41 @@ class DocumentUploadView(APIView):
         """Upload a document"""
         try:
             user = request.user
+            customer_id = getattr(user, 'customer_id', '')
+            user_role = getattr(user, 'role', '')
+
+            log_security_event(
+                event='document_upload_request_received',
+                outcome='success',
+                request=request,
+                user_id=customer_id,
+                user_role=user_role,
+            )
             
             # Only customers can upload documents
             if hasattr(user, 'role') and user.role != 'customer':
+                log_security_event(
+                    event='document_authorization_check',
+                    outcome='blocked',
+                    request=request,
+                    user_id=customer_id,
+                    user_role=user_role,
+                    details={'resource': 'document_upload', 'reason': 'non_customer_role'},
+                )
                 return error_response(
                     message="Only customers can upload documents",
                     status_code=status.HTTP_403_FORBIDDEN
                 )
             
             customer_id = user.customer_id
+            log_security_event(
+                event='document_authorization_check',
+                outcome='allowed',
+                request=request,
+                user_id=customer_id,
+                user_role='customer',
+                details={'resource': 'document_upload'},
+            )
             
             # Check for file in request
             if 'file' not in request.FILES:
@@ -77,7 +106,7 @@ class DocumentUploadView(APIView):
                 )
             
             # Validate document type
-            serializer = DocumentUploadSerializer(data=request.data)
+            serializer = DocumentUploadSerializer(data=request.data, context={'request': request})
             if not serializer.is_valid():
                 return error_response(
                     message="Invalid document data",
@@ -88,7 +117,31 @@ class DocumentUploadView(APIView):
             data = serializer.validated_data
             document_type = data['document_type']
             
-            # Save file using storage backend
+            # Run AI analysis on the document
+            ai_analysis = None
+            try:
+                from documents.services import analyze_document
+
+                suffix = os.path.splitext(file.name)[1] or '.tmp'
+                with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as temp_file:
+                    for chunk in file.chunks():
+                        temp_file.write(chunk)
+                    temp_path = temp_file.name
+
+                if hasattr(file, 'seek'):
+                    file.seek(0)
+
+                ai_analysis = analyze_document(temp_path, expected_type=document_type)
+                
+                logger.info(f"AI analysis complete: quality={ai_analysis.get('quality_score', 0):.2f}")
+            except Exception as e:
+                logger.warning(f"AI analysis failed (continuing anyway): {e}")
+                ai_analysis = {'error': str(e), 'is_valid': True}
+            finally:
+                if 'temp_path' in locals() and os.path.exists(temp_path):
+                    os.remove(temp_path)
+
+            # Save file using storage backend (encrypted at rest)
             storage = get_storage_backend()
             file_info = storage.save(
                 file=file,
@@ -97,20 +150,6 @@ class DocumentUploadView(APIView):
                 original_filename=file.name
             )
             
-            # Run AI analysis on the document
-            ai_analysis = None
-            try:
-                from documents.services import analyze_document
-                
-                # Get the full file path for analysis
-                full_path = storage.get_full_path(file_info['file_path'])
-                ai_analysis = analyze_document(full_path, expected_type=document_type)
-                
-                logger.info(f"AI analysis complete: quality={ai_analysis.get('quality_score', 0):.2f}")
-            except Exception as e:
-                logger.warning(f"AI analysis failed (continuing anyway): {e}")
-                ai_analysis = {'error': str(e), 'is_valid': True}
-            
             # Create document record
             document = Document(
                 customer_id=customer_id,
@@ -118,8 +157,13 @@ class DocumentUploadView(APIView):
                 original_filename=file.name,
                 file_path=file_info['file_path'],
                 file_size=file_info['size'],
+                encrypted_file_size=file_info.get('encrypted_size', 0),
                 mime_type=file.content_type,
-                description=data.get('description', '')
+                description=data.get('description', ''),
+                storage_filename=file_info.get('filename', ''),
+                is_encrypted=file_info.get('is_encrypted', False),
+                encryption_algorithm=file_info.get('encryption_algorithm', ''),
+                encryption_version=file_info.get('encryption_version', '')
             )
             
             # Add AI analysis results if available
@@ -134,6 +178,19 @@ class DocumentUploadView(APIView):
             document.save()
             
             logger.info(f"Document uploaded: {document.id} by customer {customer_id}")
+            log_security_event(
+                event='document_upload_completed',
+                outcome='success',
+                request=request,
+                user_id=customer_id,
+                user_role='customer',
+                details={
+                    'document_id': document.id,
+                    'document_type': document_type,
+                    'is_encrypted': document.is_encrypted,
+                    'encryption_algorithm': document.encryption_algorithm,
+                }
+            )
             
             # Audit log
             AuditLog.log_action(
@@ -152,6 +209,7 @@ class DocumentUploadView(APIView):
                 'document_type': document.document_type,
                 'original_filename': document.original_filename,
                 'file_size': document.file_size,
+                'encrypted_file_size': document.encrypted_file_size,
                 'file_size_display': document.file_size_display,
                 'status': document.status,
                 'uploaded_at': document.uploaded_at.isoformat()
@@ -177,6 +235,14 @@ class DocumentUploadView(APIView):
             
         except Exception as e:
             logger.error(f"Document upload error: {str(e)}")
+            log_security_event(
+                event='document_upload_failed',
+                outcome='error',
+                request=request,
+                user_id=getattr(request.user, 'customer_id', ''),
+                user_role=getattr(request.user, 'role', ''),
+                details={'reason': str(e)}
+            )
             return error_response(
                 message="Failed to upload document",
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
@@ -246,8 +312,6 @@ class DocumentListView(APIView):
             end_idx = start_idx + page_size
             paginated_documents = documents[start_idx:end_idx]
             
-            storage = get_storage_backend()
-            
             docs_data = [{
                 'id': doc.id,
                 'customer_id': serialize_value(doc.customer_id),
@@ -267,7 +331,11 @@ class DocumentListView(APIView):
                 'reupload_requested': doc.reupload_requested,
                 'reupload_reason': doc.reupload_reason,
                 'reupload_requested_by': serialize_value(doc.reupload_requested_by) if doc.reupload_requested_by else None,
-                'file_url': storage.get_url(doc.file_path),
+                'file_url': f"/api/documents/{doc.id}/preview/",
+                'preview_url': f"/api/documents/{doc.id}/preview/",
+                'download_url': f"/api/documents/{doc.id}/preview/?download=true",
+                'is_encrypted': doc.is_encrypted,
+                'encryption_algorithm': doc.encryption_algorithm,
                 'created_at': doc.uploaded_at.isoformat(),
                 'uploaded_at': doc.uploaded_at.isoformat()
             } for doc in paginated_documents]
@@ -318,12 +386,18 @@ class DocumentDetailView(APIView):
             # Check ownership (customers can only see their own)
             if hasattr(user, 'role') and user.role == 'customer':
                 if document.customer_id != customer_id:
+                    log_security_event(
+                        event='document_access_blocked',
+                        outcome='blocked',
+                        request=request,
+                        user_id=customer_id,
+                        user_role='customer',
+                        details={'document_id': document_id, 'reason': 'ownership_mismatch'}
+                    )
                     return error_response(
                         message="Document not found",
                         status_code=status.HTTP_404_NOT_FOUND
                     )
-            
-            storage = get_storage_backend()
             
             return success_response(
                 data={
@@ -341,7 +415,11 @@ class DocumentDetailView(APIView):
                     'rejection_reason': document.rejection_reason,
                     'description': document.description,
                     'ai_analysis': serialize_value(document.ai_analysis) if document.ai_analysis else None,
-                    'file_url': storage.get_url(document.file_path),
+                    'file_url': f"/api/documents/{document.id}/preview/",
+                    'preview_url': f"/api/documents/{document.id}/preview/",
+                    'download_url': f"/api/documents/{document.id}/preview/?download=true",
+                    'is_encrypted': document.is_encrypted,
+                    'encryption_algorithm': document.encryption_algorithm,
                     'uploaded_at': document.uploaded_at.isoformat()
                 },
                 message="Document retrieved successfully"
@@ -370,6 +448,14 @@ class DocumentDetailView(APIView):
             
             # Only owner can delete
             if document.customer_id != customer_id:
+                log_security_event(
+                    event='document_access_blocked',
+                    outcome='blocked',
+                    request=request,
+                    user_id=customer_id,
+                    user_role='customer',
+                    details={'document_id': document_id, 'reason': 'delete_ownership_mismatch'}
+                )
                 return error_response(
                     message="Document not found",
                     status_code=status.HTTP_404_NOT_FOUND
@@ -399,6 +485,162 @@ class DocumentDetailView(APIView):
                 message="Failed to delete document",
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+
+
+class DocumentPreviewView(APIView):
+    """
+    Preview a document with authorization checks and decrypt-on-access.
+
+    GET /api/documents/<id>/preview/
+    """
+    authentication_classes = [CustomJWTAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, document_id):
+        try:
+            user = request.user
+            user_id = getattr(user, 'customer_id', '')
+            user_role = getattr(user, 'role', '')
+            force_download = (
+                str(request.query_params.get('download', '')).lower() in ('1', 'true', 'yes')
+                or request.path.endswith('/download/')
+            )
+
+            log_security_event(
+                event='document_view_request_received',
+                outcome='success',
+                request=request,
+                user_id=user_id,
+                user_role=user_role,
+                details={'document_id': document_id, 'force_download': force_download},
+            )
+
+            document = Document.find_one({'_id': ObjectId(document_id)})
+
+            if not document:
+                return error_response(
+                    message="Document not found",
+                    status_code=status.HTTP_404_NOT_FOUND
+                )
+
+            if hasattr(user, 'role') and user.role == 'customer':
+                if document.customer_id != user.customer_id:
+                    log_security_event(
+                        event='document_authorization_check',
+                        outcome='blocked',
+                        request=request,
+                        user_id=user.customer_id,
+                        user_role='customer',
+                        details={'document_id': document_id, 'reason': 'preview_ownership_mismatch'},
+                    )
+                    log_security_event(
+                        event='document_access_blocked',
+                        outcome='blocked',
+                        request=request,
+                        user_id=user.customer_id,
+                        user_role='customer',
+                        details={'document_id': document_id, 'reason': 'preview_ownership_mismatch'}
+                    )
+                    return error_response(
+                        message="Document not found",
+                        status_code=status.HTTP_404_NOT_FOUND
+                    )
+            elif not hasattr(user, 'role') or user.role not in ['loan_officer', 'admin', 'super_admin']:
+                log_security_event(
+                    event='document_authorization_check',
+                    outcome='blocked',
+                    request=request,
+                    user_id=getattr(user, 'customer_id', ''),
+                    user_role=getattr(user, 'role', ''),
+                    details={'document_id': document_id, 'reason': 'insufficient_role'},
+                )
+                log_security_event(
+                    event='document_access_blocked',
+                    outcome='blocked',
+                    request=request,
+                    user_id=getattr(user, 'customer_id', ''),
+                    user_role=getattr(user, 'role', ''),
+                    details={'document_id': document_id, 'reason': 'insufficient_role'}
+                )
+                return error_response(
+                    message="Forbidden",
+                    status_code=status.HTTP_403_FORBIDDEN
+                )
+
+            log_security_event(
+                event='document_authorization_check',
+                outcome='allowed',
+                request=request,
+                user_id=user_id,
+                user_role=user_role,
+                details={'document_id': document_id, 'resource': 'document_preview'},
+            )
+
+            storage = get_storage_backend()
+            if document.is_encrypted:
+                file_bytes = storage.read_decrypted(
+                    document.file_path,
+                    encryption_algorithm=document.encryption_algorithm,
+                    event_details={
+                        'storage_path': document.file_path,
+                        'document_id': document.id,
+                        'access_mode': 'preview',
+                    }
+                )
+            else:
+                full_path = storage.get_full_path(document.file_path)
+                with open(full_path, 'rb') as source:
+                    file_bytes = source.read()
+
+            log_security_event(
+                event='document_preview_streamed',
+                outcome='success',
+                request=request,
+                user_id=getattr(user, 'customer_id', ''),
+                user_role=getattr(user, 'role', ''),
+                details={
+                    'document_id': document.id,
+                    'document_type': document.document_type,
+                    'is_encrypted': document.is_encrypted,
+                    'force_download': force_download,
+                }
+            )
+
+            response = HttpResponse(
+                file_bytes,
+                content_type=document.mime_type or 'application/octet-stream'
+            )
+            disposition = 'attachment' if force_download else 'inline'
+            response['Content-Disposition'] = f'{disposition}; filename="{document.original_filename}"'
+            return response
+
+        except DocumentEncryptionError as exc:
+            logger.error(f"Encrypted document preview error for {document_id}: {str(exc)}")
+            log_security_event(
+                event='document_decryption_triggered',
+                outcome='error',
+                request=request,
+                user_id=getattr(request.user, 'customer_id', ''),
+                user_role=getattr(request.user, 'role', ''),
+                details={'document_id': document_id, 'reason': str(exc)}
+            )
+            return error_response(
+                message="Unable to decrypt document",
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+        except Exception as e:
+            logger.error(f"Document preview error for {document_id}: {str(e)}")
+            return error_response(
+                message="Failed to preview document",
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+class DocumentDownloadView(DocumentPreviewView):
+    """
+    Legacy alias for document retrieval path.
+    Use /preview/ with ?download=true for explicit download behavior.
+    """
 
 
 class DocumentVerifyView(APIView):
@@ -585,4 +827,3 @@ class RequestReuploadView(APIView):
             },
             message="Re-upload request sent"
         )
-

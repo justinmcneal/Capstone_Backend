@@ -5,6 +5,7 @@ from accounts.services.otp_service import OTPService
 from rest_framework_simplejwt.tokens import RefreshToken
 from datetime import datetime, timedelta
 from pymongo.errors import DuplicateKeyError
+from config.security_events import log_security_event
 
 
 class AuthService:
@@ -76,7 +77,12 @@ class AuthService:
             # Use centralized OTP service
             otp = OTPService.set_otp(customer, 'verification_token', 'verification_token_expires')
             
-            customer.set_password(validated_data['password'])            
+            log_security_event(
+                event='password_hashing_triggered',
+                outcome='success',
+                details={'flow': 'signup', 'algorithm': 'bcrypt', 'email': customer.email}
+            )
+            customer.set_password(validated_data['password'])
             customer.save()
 
             EmailUtils.send_verification_email(

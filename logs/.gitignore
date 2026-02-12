@@ -1,2 +1,5 @@
 # Authentication logs
 *.log
+security_events.jsonl
+security_demo_evidence_*.json
+demo_previews/

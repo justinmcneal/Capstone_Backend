@@ -9,6 +9,11 @@ from datetime import datetime
 from django.conf import settings
 import logging
 
+from documents.services.encryption_service import (
+    DocumentEncryptionService,
+    DocumentEncryptionError,
+)
+
 logger = logging.getLogger('documents')
 
 
@@ -20,6 +25,10 @@ class StorageBackend:
     
     def save(self, file, customer_id, document_type, original_filename):
         """Save file and return the storage path/URL"""
+        raise NotImplementedError
+
+    def read_decrypted(self, file_path, encryption_algorithm=None, event_details=None):
+        """Read and return decrypted file bytes"""
         raise NotImplementedError
     
     def delete(self, file_path):
@@ -76,19 +85,35 @@ class LocalStorageBackend(StorageBackend):
         relative_path = os.path.join(relative_dir, new_filename)
         full_path = os.path.join(self.base_path, relative_path)
         
-        # Save file
+        if hasattr(file, 'seek'):
+            file.seek(0)
+        raw_bytes = file.read()
+
+        encrypted_bytes = DocumentEncryptionService.encrypt(
+            raw_bytes,
+            event_details={
+                'customer_id': str(customer_id),
+                'document_type': document_type,
+                'storage_path': relative_path
+            }
+        )
+
         with open(full_path, 'wb+') as destination:
-            for chunk in file.chunks():
-                destination.write(chunk)
-        
-        file_size = os.path.getsize(full_path)
-        
-        logger.info(f"File saved: {relative_path} ({file_size} bytes)")
+            destination.write(encrypted_bytes)
+
+        encrypted_size = os.path.getsize(full_path)
+        file_size = len(raw_bytes)
+
+        logger.info(f"Encrypted file saved: {relative_path} ({encrypted_size} bytes)")
         
         return {
             'file_path': relative_path,
             'filename': new_filename,
-            'size': file_size
+            'size': file_size,
+            'encrypted_size': encrypted_size,
+            'is_encrypted': True,
+            'encryption_algorithm': DocumentEncryptionService.ALGORITHM,
+            'encryption_version': DocumentEncryptionService.VERSION
         }
     
     def delete(self, file_path):
@@ -110,6 +135,25 @@ class LocalStorageBackend(StorageBackend):
     def get_full_path(self, file_path):
         """Get full filesystem path for internal use (e.g., CNN analysis)"""
         return os.path.join(self.base_path, file_path)
+
+    def read_decrypted(self, file_path, encryption_algorithm=None, event_details=None):
+        """Read encrypted file from disk and decrypt in memory."""
+        full_path = os.path.join(self.base_path, file_path)
+
+        if not os.path.exists(full_path):
+            raise FileNotFoundError(f"Encrypted file not found: {file_path}")
+
+        with open(full_path, 'rb') as source:
+            encrypted_bytes = source.read()
+
+        try:
+            return DocumentEncryptionService.decrypt(
+                encrypted_bytes,
+                event_details=event_details or {'storage_path': file_path},
+                algorithm=encryption_algorithm,
+            )
+        except DocumentEncryptionError:
+            raise
 
 
 # Future cloud storage backends can be added here:

@@ -14,6 +14,7 @@ from accounts.serializers.auth_serializers import LoginSerializer
 from accounts.utils.throttles import SignUpRateThrottle, LoginRateThrottle, OTPVerificationRateThrottle, OTPResendRateThrottle
 from analytics.models import AuditLog
 import logging
+from config.security_events import log_security_event
 
 logger = logging.getLogger('authentication')
 
@@ -22,14 +23,28 @@ class SignUpView(APIView):
     throttle_classes = [SignUpRateThrottle]
     
     def post(self, request):
-        serializer = SignUpSerializer(data=request.data)        
+        serializer = SignUpSerializer(data=request.data, context={'request': request})
         if not serializer.is_valid():
             logger.warning(f"Signup validation failed from IP {request.META.get('REMOTE_ADDR')}")
+            log_security_event(
+                event='signup_validation_failed',
+                outcome='blocked',
+                request=request,
+                details={'errors': serializer.errors}
+            )
             return APIResponseHelper.validation_error_response(serializer.errors)
         
         try:
             customer = AuthService.register_customer(serializer.validated_data)
             logger.info(f"New user registered: {customer.email} from IP {request.META.get('REMOTE_ADDR')}")
+            log_security_event(
+                event='signup_completed',
+                outcome='success',
+                request=request,
+                user_id=customer.id,
+                user_role='customer',
+                details={'email': customer.email}
+            )
             
             # Log audit event
             AuditLog.log_action(
@@ -54,10 +69,22 @@ class SignUpView(APIView):
             
         except ValueError as e:
             logger.warning(f"Signup failed for email {serializer.validated_data.get('email')}: {str(e)}")
+            log_security_event(
+                event='signup_failed',
+                outcome='blocked',
+                request=request,
+                details={'reason': str(e)}
+            )
             return APIResponseHelper.error_response(str(e))
             
         except Exception as e:
             logger.error(f"Signup error from IP {request.META.get('REMOTE_ADDR')}: {str(e)}")
+            log_security_event(
+                event='signup_failed',
+                outcome='error',
+                request=request,
+                details={'reason': str(e)}
+            )
             return APIResponseHelper.server_error_response('An error occurred during registration')
 
 class LoginView(APIView):
@@ -65,9 +92,15 @@ class LoginView(APIView):
     throttle_classes = [LoginRateThrottle]
     
     def post(self, request):
-        serializer = LoginSerializer(data=request.data)
+        serializer = LoginSerializer(data=request.data, context={'request': request})
         if not serializer.is_valid():
             logger.warning(f"Login validation failed from IP {request.META.get('REMOTE_ADDR')}")
+            log_security_event(
+                event='login_validation_failed',
+                outcome='blocked',
+                request=request,
+                details={'errors': serializer.errors}
+            )
             return APIResponseHelper.validation_error_response(serializer.errors)
         
         email = serializer.validated_data['email']
@@ -78,6 +111,12 @@ class LoginView(APIView):
             customer = AuthService.get_customer_by_email(email)
             if not customer:
                 logger.warning(f"Login attempt for non-existent email: {email} from IP {request.META.get('REMOTE_ADDR')}")
+                log_security_event(
+                    event='password_hash_verification',
+                    outcome='blocked',
+                    request=request,
+                    details={'reason': 'customer_not_found', 'email': email}
+                )
                 return APIResponseHelper.error_response(
                     'Invalid email or password',
                     status.HTTP_401_UNAUTHORIZED
@@ -149,6 +188,14 @@ class LoginView(APIView):
             tokens = AuthService.create_customer_tokens(customer, token_type=token_type)
             
             logger.info(f"Successful login for user {email} from IP {request.META.get('REMOTE_ADDR')}")
+            log_security_event(
+                event='login_completed',
+                outcome='success',
+                request=request,
+                user_id=customer.id,
+                user_role='customer',
+                details={'email': customer.email}
+            )
             
             # Log audit event
             AuditLog.log_action(
@@ -174,6 +221,12 @@ class LoginView(APIView):
             
         except Exception as e:
             logger.error(f"Login error for {email} from IP {request.META.get('REMOTE_ADDR')}: {str(e)}")
+            log_security_event(
+                event='login_failed',
+                outcome='error',
+                request=request,
+                details={'reason': str(e), 'email': email}
+            )
             return APIResponseHelper.server_error_response('Login failed')
 
 

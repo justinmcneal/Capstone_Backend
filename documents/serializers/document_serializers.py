@@ -1,5 +1,6 @@
 from rest_framework import serializers
 from documents.models import DOCUMENT_TYPES, ALLOWED_MIME_TYPES, MAX_FILE_SIZE
+from accounts.utils.input_sanitizer import sanitize_text_input
 
 
 class DocumentUploadSerializer(serializers.Serializer):
@@ -19,11 +20,28 @@ class DocumentUploadSerializer(serializers.Serializer):
     # File is handled separately via request.FILES
     
     def validate_document_type(self, value):
+        request = self.context.get('request') if hasattr(self, 'context') else None
+        sanitize_text_input(
+            value=value,
+            field_name='document_type',
+            request=request,
+            max_length=100
+        )
         if value not in DOCUMENT_TYPES:
             raise serializers.ValidationError(
                 f"Invalid document type. Must be one of: {', '.join(DOCUMENT_TYPES)}"
             )
         return value
+
+    def validate_description(self, value):
+        request = self.context.get('request') if hasattr(self, 'context') else None
+        return sanitize_text_input(
+            value=value,
+            field_name='description',
+            request=request,
+            allow_blank=True,
+            max_length=500
+        )
 
 
 class DocumentResponseSerializer(serializers.Serializer):

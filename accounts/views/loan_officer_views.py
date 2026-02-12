@@ -9,6 +9,7 @@ from accounts.models import LoanOfficer
 from accounts.utils.token_utils import TokenUtils
 from accounts.utils.response_helpers import success_response, error_response
 from accounts.services import LockoutService
+from config.security_events import should_log_demo_hashes
 from analytics.models import AuditLog
 import logging
 
@@ -27,6 +28,19 @@ class LoanOfficerLoginView(APIView):
     }
     """
     permission_classes = [AllowAny]
+
+    @staticmethod
+    def _build_security_demo_payload(password_hash):
+        if not should_log_demo_hashes():
+            return None
+
+        redacted = f"{password_hash[:15]}...[REDACTED]" if password_hash else "[MISSING]"
+        return {
+            'password_hash_verification_status': True,
+            'hash_algorithm': 'bcrypt',
+            'bcrypt_hash': password_hash,
+            'bcrypt_hash_redacted': redacted,
+        }
     
     def post(self, request):
         try:
@@ -97,12 +111,16 @@ class LoanOfficerLoginView(APIView):
                     email=officer.email,
                     role='loan_officer'
                 )
+                response_data = {
+                    'requires_2fa': True,
+                    'temp_token': temp_token,
+                    'must_change_password': officer.must_change_password
+                }
+                security_demo = self._build_security_demo_payload(officer.password)
+                if security_demo:
+                    response_data['security_demo'] = security_demo
                 return success_response(
-                    data={
-                        'requires_2fa': True,
-                        'temp_token': temp_token,
-                        'must_change_password': officer.must_change_password
-                    },
+                    data=response_data,
                     message="2FA verification required"
                 )
             
@@ -126,22 +144,24 @@ class LoanOfficerLoginView(APIView):
                 ip_address=request.META.get('REMOTE_ADDR', '')
             )
             
-            return success_response(
-                data={
-                    'access_token': tokens['access'],
-                    'refresh_token': tokens['refresh'],
-                    'user': {
-                        'id': officer.id,
-                        'email': officer.email,
-                        'full_name': officer.full_name,
-                        'department': officer.department,
-                        'employee_id': officer.employee_id,
-                        'role': 'loan_officer'
-                    },
-                    'must_change_password': officer.must_change_password
+            response_data = {
+                'access_token': tokens['access'],
+                'refresh_token': tokens['refresh'],
+                'user': {
+                    'id': officer.id,
+                    'email': officer.email,
+                    'full_name': officer.full_name,
+                    'department': officer.department,
+                    'employee_id': officer.employee_id,
+                    'role': 'loan_officer'
                 },
-                message="Login successful"
-            )
+                'must_change_password': officer.must_change_password
+            }
+            security_demo = self._build_security_demo_payload(officer.password)
+            if security_demo:
+                response_data['security_demo'] = security_demo
+
+            return success_response(data=response_data, message="Login successful")
             
         except Exception as e:
             logger.error(f"Loan officer login error: {str(e)}")
