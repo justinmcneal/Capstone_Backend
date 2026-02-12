@@ -219,3 +219,5 @@ media/
 
 #web:
 src/
+
+logs/security_events.jsonl
