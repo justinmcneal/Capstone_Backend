@@ -1,0 +1,107 @@
+CHECKPOINT 1: Project Proposal &amp; Threat Modeling
+(Document Template)
+Course: ____________________________
+Project Title: ______________________
+Student(s): ________________________
+Instructor: _________________________
+Submission Date: ____________________
+
+1. Executive Summary (10%)
+Project Overview
+Provide a clear, concise description of the proposed system. Explain: - What the system
+does - Who the intended users are - The business or organizational problem it solves
+System Scope
+Briefly define the scope of the project: - Included components (Web, API, Mobile,
+Database) - Excluded features (out of scope)
+Security Objective
+Summarize why security and threat modeling are important for this system.
+
+2. System / Network Architecture (choose either system or network) (25%)
+Architecture Description
+Describe the overall system architecture, including: - Web application - Mobile
+application - Backend API - Database server
+Explain how these components interact.
+Architecture Diagram
+Insert Architecture Diagram Here
+The diagram should clearly show: - System components - Data flows - Trust boundaries
+- External users
+Trust Boundaries
+Identify and explain trust boundaries between: - Users and clients - Clients and API -
+API and database
+
+3. Asset Identification
+Critical Assets
+List and describe key assets such as: - User credentials - Personal or sensitive data -
+Authentication tokens - Application source code
+CIA Triad Mapping
+Map each asset to: - Confidentiality - Integrity - Availability
+
+4. STRIDE Threat Model (30%)
+STRIDE Overview
+Briefly explain the STRIDE framework: - Spoofing - Tampering - Repudiation -
+Information Disclosure - Denial of Service - Elevation of Privilege
+4.2 STRIDE Threat Table
+System
+Component
+
+STRIDE
+Category
+
+Threat
+Description
+
+Impa
+ct
+Likeliho
+od
+
+Risk
+Level
+
+Mitigatio
+n
+Example: API Spoofing Token theft High Medium High Strong
+auth
+
+(Add rows as needed)
+Threat Prioritization
+Explain how threats were ranked (impact vs likelihood) and identify: - Highest-risk
+threats - Medium-risk threats - Low-risk threats
+
+5. Mapping to OWASP Top 10
+Relevant OWASP Risks
+Identify applicable OWASP Top 10 risks, such as: - Injection - Broken Authentication -
+Cryptographic Failures
+5.2 STRIDE–OWASP Mapping Table
+STRIDE Threat OWASP Top 10 Category Affected Component
+Tampering Injection Web / API
+
+6. Security Controls &amp; Mitigations
+Preventive Controls
+
+Describe controls such as: - Input validation - Authentication &amp; authorization -
+Encryption
+Detective Controls
+Describe logging, monitoring, and error handling.
+Defense-in-Depth
+Explain how controls work together across Web, API, Mobile, and Database layers.
+
+7. Limitations &amp; Assumptions
+State: - Assumptions made (e.g., trusted hosting environment) - Known limitations of the
+threat model
+
+8. Conclusion
+Summarize: - Key security risks identified - Value of threat modeling to the project -
+Next steps for refinement
+
+Appendices (if necessary)
+Appendix A: Full Architecture Diagram
+Appendix B: STRIDE Threat Model (Expanded)
+Appendix C: OWASP Top 10 Reference List
+
+For your 5-Minute Power Point Presentation Guide (Reference)
+Slide 1: Project Overview &amp; Scope
+Slide 2: System Architecture Diagram
+Slide 3: STRIDE Threat Highlights
+Slide 4: OWASP Mapping &amp; Key Risks
+Slide 5: Mitigations &amp; Conclusion
