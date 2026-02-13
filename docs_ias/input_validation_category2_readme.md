@@ -4,7 +4,7 @@ Scope: `accounts`, `profiles`, `documents`, `loans`, `analytics`, `ai_assistant`
 
 ### Summary Status
 1. All inputs validated server-side: `Partial`
-1. Parameterized SQL queries: `N/A (MongoDB backend, no SQL layer used)`
+1. Parameterized SQL queries: `N/A for SQL (Django app uses MongoDB via PyMongo, no SQL layer)`
 1. XSS protection (context-aware escaping): `Partial`
 1. File upload validation (type + size): `Implemented (for current document upload path)`
 1. API schema validation: `Partial`
@@ -143,11 +143,13 @@ Correct result criteria:
 
 ## 2) Parameterized SQL Queries
 
-Status: `N/A (effectively satisfied by architecture)`
+Status: `N/A for SQL (not applicable); Mongo query construction safety: Partial`
 
 Why:
 1. Backend uses MongoDB (`PyMongo`), not SQL ORM queries.
 1. No raw SQL usage found (`SELECT`, `INSERT`, `cursor.execute`, etc.).
+1. In MongoDB, the SQL concept of "parameterized SQL query" does not apply directly.
+1. The equivalent concern is safe query-document construction; this is only partially consistent across endpoints.
 
 Evidence:
 1. `config/settings.py` (`django.db.backends.dummy`, MongoDB via `MongoClient`)
@@ -165,6 +167,7 @@ rg -n "\\bSELECT\\b|\\bINSERT\\b|\\bUPDATE\\b|\\bDELETE\\b|execute\\(|cursor\\."
 
 Correct result criteria:
 1. No SQL execution statements are present.
+1. This confirms SQL injection via raw SQL is not the active risk in this codebase.
 
 ---
 
