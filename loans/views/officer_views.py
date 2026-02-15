@@ -8,7 +8,7 @@ from django.conf import settings
 from accounts.authentication import CustomJWTAuthentication
 from accounts.utils.response_helpers import success_response, error_response
 from loans.models import LoanProduct, LoanApplication
-from loans.serializers import LoanReviewSerializer
+from loans.serializers import LoanReviewSerializer, MissingDocumentsRequestSerializer
 from analytics.models import AuditLog
 import logging
 
@@ -325,7 +325,8 @@ class OfficerApplicationDetailView(LoanOfficerRequiredMixin, APIView):
                 'product': {
                     'id': product.id if product else None,
                     'name': product.name if product else 'Unknown',
-                    'code': product.code if product else None
+                    'code': product.code if product else None,
+                    'required_documents': product.required_documents if product else []
                 },
                 'requested_amount': app.requested_amount,
                 'recommended_amount': app.recommended_amount,
@@ -341,11 +342,136 @@ class OfficerApplicationDetailView(LoanOfficerRequiredMixin, APIView):
                 'rejection_reason': app.rejection_reason,
                 'submitted_at': app.submitted_at.isoformat() if app.submitted_at else None,
                 'decision_date': app.decision_date.isoformat() if app.decision_date else None,
+                'missing_documents_requested': app.missing_documents_requested,
+                'missing_documents_reason': app.missing_documents_reason,
+                'missing_documents_requested_at': (
+                    app.missing_documents_requested_at.isoformat()
+                    if app.missing_documents_requested_at else None
+                ),
                 # New: Complete customer data
                 'customer': customer_data,
                 'documents': documents_data
             },
             message="Application details retrieved"
+        )
+
+
+class OfficerRequestMissingDocumentsView(LoanOfficerRequiredMixin, APIView):
+    """
+    Loan Officer: Request missing documents that have not been uploaded yet.
+    
+    POST /api/loans/officer/applications/<id>/request-missing-documents/
+    """
+    authentication_classes = [CustomJWTAuthentication]
+    permission_classes = [IsAuthenticated]
+    
+    def post(self, request, application_id):
+        has_permission, user = self.check_officer_permission(request)
+        if not has_permission:
+            return user
+        
+        app = LoanApplication.find_by_id(application_id)
+        if not app:
+            return error_response(
+                message="Application not found",
+                status_code=status.HTTP_404_NOT_FOUND
+            )
+        
+        if app.status not in ['submitted', 'under_review']:
+            return error_response(
+                message=f"Cannot request documents for application with status: {app.status}",
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+        
+        serializer = MissingDocumentsRequestSerializer(data=request.data)
+        if not serializer.is_valid():
+            return error_response(
+                message="Invalid missing document request data",
+                errors=serializer.errors,
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+        
+        data = serializer.validated_data
+        officer_id = user.customer_id
+        
+        from documents.models import Document
+        uploaded_docs = Document.find_by_customer(app.customer_id)
+        uploaded_types = {doc.document_type for doc in uploaded_docs}
+        
+        already_uploaded = [
+            document_type for document_type in data['missing_documents']
+            if document_type in uploaded_types
+        ]
+        if already_uploaded:
+            return error_response(
+                message="Some selected documents are already uploaded",
+                errors={'already_uploaded': already_uploaded},
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+        
+        try:
+            app.request_missing_documents(
+                officer_id=officer_id,
+                missing_documents=data['missing_documents'],
+                reason=data.get('reason', '')
+            )
+        except ValueError as e:
+            return error_response(
+                message=str(e),
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Audit log
+        AuditLog.log_action(
+            action='loan_missing_documents_requested',
+            user_id=officer_id,
+            user_type='loan_officer',
+            description='Requested missing documents for loan application',
+            resource_type='loan',
+            resource_id=app.id,
+            details={
+                'customer_id': app.customer_id,
+                'missing_documents': app.missing_documents_requested,
+                'reason': app.missing_documents_reason
+            },
+            ip_address=request.META.get('REMOTE_ADDR', '')
+        )
+        
+        # Send email notification to customer
+        customer = None
+        if app.customer_id:
+            try:
+                from accounts.models import Customer
+                customer = Customer.find_one({'_id': ObjectId(app.customer_id)})
+            except Exception:
+                customer = None
+        
+        if customer and customer.email:
+            try:
+                from notifications.services import get_email_sender
+                sender = get_email_sender()
+                sender.send_missing_documents_requested(
+                    customer_email=customer.email,
+                    customer_name=f"{customer.first_name} {customer.last_name}".strip() or "Customer",
+                    loan_id=app.id,
+                    missing_documents=app.missing_documents_requested,
+                    reason=app.missing_documents_reason
+                )
+            except Exception as e:
+                logger.warning(f"Failed to send missing documents email: {e}")
+        
+        return success_response(
+            data={
+                'id': app.id,
+                'status': app.status,
+                'missing_documents_requested': app.missing_documents_requested,
+                'missing_documents_reason': app.missing_documents_reason,
+                'missing_documents_requested_at': (
+                    app.missing_documents_requested_at.isoformat()
+                    if app.missing_documents_requested_at else None
+                )
+            },
+            message="Missing document request sent"
         )
 
 

@@ -54,6 +54,13 @@ class LoanApplication:
         self.rejection_reason = kwargs.get('rejection_reason', '')
         self.decision_date = kwargs.get('decision_date')
         
+        # Missing document requests (for documents never uploaded)
+        self.missing_documents_requested = kwargs.get('missing_documents_requested', [])
+        self.missing_documents_reason = kwargs.get('missing_documents_reason', '')
+        self.missing_documents_requested_by = kwargs.get('missing_documents_requested_by')
+        self.missing_documents_requested_at = kwargs.get('missing_documents_requested_at')
+        self.document_request_history = kwargs.get('document_request_history', [])
+        
         # Disbursement tracking
         self.disbursed_amount = kwargs.get('disbursed_amount')
         self.disbursed_at = kwargs.get('disbursed_at')
@@ -87,6 +94,11 @@ class LoanApplication:
             'officer_notes': self.officer_notes,
             'rejection_reason': self.rejection_reason,
             'decision_date': self.decision_date,
+            'missing_documents_requested': self.missing_documents_requested,
+            'missing_documents_reason': self.missing_documents_reason,
+            'missing_documents_requested_by': self.missing_documents_requested_by,
+            'missing_documents_requested_at': self.missing_documents_requested_at,
+            'document_request_history': self.document_request_history,
             'disbursed_amount': self.disbursed_amount,
             'disbursed_at': self.disbursed_at,
             'disbursement_method': self.disbursement_method,
@@ -149,6 +161,50 @@ class LoanApplication:
         self.decision_date = datetime.utcnow()
         return self.save()
     
+    def request_missing_documents(self, officer_id, missing_documents, reason=''):
+        """
+        Request missing documents that were never uploaded.
+        
+        - Keeps application in active review flow
+        - Tracks latest request and request history
+        """
+        if self.status not in ['submitted', 'under_review']:
+            raise ValueError(
+                f"Cannot request missing documents for status: {self.status}"
+            )
+        
+        # Keep stable order while removing duplicates
+        unique_documents = []
+        for document_type in missing_documents:
+            if document_type not in unique_documents:
+                unique_documents.append(document_type)
+        
+        now = datetime.utcnow()
+        officer_id = str(officer_id)
+        
+        self.missing_documents_requested = unique_documents
+        self.missing_documents_reason = reason
+        self.missing_documents_requested_by = officer_id
+        self.missing_documents_requested_at = now
+        
+        # Ensure application is actively tracked under review
+        if self.status == 'submitted':
+            self.status = 'under_review'
+        if not self.assigned_officer:
+            self.assigned_officer = officer_id
+        
+        history = self.document_request_history or []
+        history.append({
+            'requested_documents': unique_documents,
+            'reason': reason,
+            'requested_by': officer_id,
+            'requested_at': now,
+        })
+        # Keep history bounded
+        self.document_request_history = history[-20:]
+        
+        return self.save()
+    
     def disburse(self, amount, method, reference, processed_by):
         """Mark loan as disbursed"""
         if self.status != 'approved':
@@ -177,6 +233,10 @@ class LoanApplication:
         self.officer_notes = None
         self.decision_date = None
         self.assigned_officer = None
+        self.missing_documents_requested = []
+        self.missing_documents_reason = ''
+        self.missing_documents_requested_by = None
+        self.missing_documents_requested_at = None
         self.updated_at = datetime.utcnow()
         return self.save()
     
