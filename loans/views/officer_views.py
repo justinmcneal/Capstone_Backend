@@ -373,6 +373,10 @@ class OfficerApplicationDetailView(LoanOfficerRequiredMixin, APIView):
                 'rejection_reason': app.rejection_reason,
                 'submitted_at': app.submitted_at.isoformat() if app.submitted_at else None,
                 'decision_date': app.decision_date.isoformat() if app.decision_date else None,
+                'disbursed_amount': app.disbursed_amount,
+                'disbursement_method': app.disbursement_method,
+                'disbursement_reference': app.disbursement_reference,
+                'disbursed_at': app.disbursed_at.isoformat() if app.disbursed_at else None,
                 'internal_notes': [
                     serialize_internal_note(note)
                     for note in (app.internal_notes or [])
