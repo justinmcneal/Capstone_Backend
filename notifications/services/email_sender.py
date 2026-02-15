@@ -137,14 +137,24 @@ class EmailSender:
             notification=notification
         )
     
-    def send_document_flagged(self, customer_email, customer_name, document_type, issues):
+    def send_document_flagged(
+        self,
+        customer_email,
+        customer_name,
+        document_type,
+        issues,
+        document_id=None,
+        customer_id=None,
+    ):
         """Send document quality issue notification"""
         notification = Notification(
+            user_id=str(customer_id) if customer_id else None,
             recipient_email=customer_email,
             recipient_name=customer_name,
             notification_type='document_flagged',
             subject='Document Needs Attention',
-            related_type='document'
+            related_type='document',
+            related_id=document_id,
         )
         notification.save()
         
@@ -156,6 +166,76 @@ class EmailSender:
                 'name': customer_name,
                 'document_type': document_type,
                 'issues': issues
+            },
+            notification=notification
+        )
+
+    def send_document_approved(
+        self,
+        customer_email,
+        customer_name,
+        document_type,
+        document_id=None,
+        customer_id=None,
+        notes='',
+    ):
+        """Send document approval notification to customer."""
+        notification = Notification(
+            user_id=str(customer_id) if customer_id else None,
+            recipient_email=customer_email,
+            recipient_name=customer_name,
+            notification_type='document_verified',
+            subject='Document Approved',
+            related_type='document',
+            related_id=document_id,
+        )
+        notification.save()
+
+        return self.send(
+            to_email=customer_email,
+            subject='Your Document Has Been Approved',
+            template_name='document_approved',
+            context={
+                'name': customer_name,
+                'document_type': document_type,
+                'document_id': document_id,
+                'notes': notes,
+            },
+            notification=notification
+        )
+
+    def send_document_pending_review(
+        self,
+        reviewer_email,
+        reviewer_name,
+        customer_name,
+        document_type,
+        document_id,
+        reviewer_user_id=None,
+        reviewer_user_type='loan_officer',
+    ):
+        """Notify reviewers that a new document needs review."""
+        notification = Notification(
+            user_id=str(reviewer_user_id) if reviewer_user_id else None,
+            user_type=reviewer_user_type,
+            recipient_email=reviewer_email,
+            recipient_name=reviewer_name,
+            notification_type='document_pending_review',
+            subject='New Document Pending Review',
+            related_type='document',
+            related_id=document_id,
+        )
+        notification.save()
+
+        return self.send(
+            to_email=reviewer_email,
+            subject='New Customer Document Pending Review',
+            template_name='document_pending_review',
+            context={
+                'reviewer_name': reviewer_name,
+                'customer_name': customer_name,
+                'document_type': document_type,
+                'document_id': document_id,
             },
             notification=notification
         )

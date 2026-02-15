@@ -1,0 +1,16 @@
+Hello {{ name }},
+
+Your document has been approved.
+
+Document Type: {{ document_type }}
+{% if document_id %}Document ID: {{ document_id }}{% endif %}
+{% if notes %}
+
+Reviewer Notes:
+{{ notes }}
+{% endif %}
+
+No further action is needed for this document at this time.
+
+Thank you,
+MSME Pathways Team

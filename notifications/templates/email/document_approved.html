@@ -1,0 +1,20 @@
+<html>
+<body>
+  <p>Hello {{ name }},</p>
+
+  <p>Your document has been approved.</p>
+
+  <p>
+    <strong>Document Type:</strong> {{ document_type }}<br>
+    {% if document_id %}<strong>Document ID:</strong> {{ document_id }}{% endif %}
+  </p>
+
+  {% if notes %}
+  <p><strong>Reviewer Notes:</strong><br>{{ notes }}</p>
+  {% endif %}
+
+  <p>No further action is needed for this document at this time.</p>
+
+  <p>Thank you,<br>MSME Pathways Team</p>
+</body>
+</html>
