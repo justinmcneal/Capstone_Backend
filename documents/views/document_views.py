@@ -203,11 +203,22 @@ class DocumentListView(APIView):
             user = request.user
             
             # Pagination parameters
-            page = int(request.query_params.get('page', 1))
-            page_size = min(int(request.query_params.get('page_size', 20)), 200)
+            try:
+                page = int(request.query_params.get('page', 1))
+            except (TypeError, ValueError):
+                page = 1
+            try:
+                page_size = min(int(request.query_params.get('page_size', 20)), 200)
+            except (TypeError, ValueError):
+                page_size = 20
+            if page < 1:
+                page = 1
+            if page_size < 1:
+                page_size = 20
             
             # Optional filter by document type
             document_type = request.query_params.get('type')
+            status_filter = request.query_params.get('status')
             
             # Optional filter by customer_id (for officers/admins)
             customer_id_filter = request.query_params.get('customer_id')
@@ -221,6 +232,8 @@ class DocumentListView(APIView):
                 query = {}
                 if document_type:
                     query['document_type'] = document_type
+                if status_filter in ['pending', 'approved', 'rejected']:
+                    query['status'] = status_filter
                 if customer_id_filter:
                     query['customer_id'] = customer_id_filter
                 documents = Document.find(query, sort=[('uploaded_at', -1)])
@@ -228,6 +241,8 @@ class DocumentListView(APIView):
                 # Customers can only see their own documents
                 customer_id = user.customer_id
                 documents = Document.find_by_customer(customer_id, document_type)
+                if status_filter in ['pending', 'approved', 'rejected']:
+                    documents = [doc for doc in documents if doc.status == status_filter]
             
             # Filter by search term (filename or document type)
             if search:
@@ -585,4 +600,3 @@ class RequestReuploadView(APIView):
             },
             message="Re-upload request sent"
         )
-
