@@ -107,3 +107,14 @@ class MissingDocumentsRequestSerializer(serializers.Serializer):
             if document_type not in unique:
                 unique.append(document_type)
         return unique
+
+
+class ApplicationInternalNoteSerializer(serializers.Serializer):
+    """Serializer for adding standalone internal notes on an application."""
+    note = serializers.CharField(max_length=1000, required=True)
+
+    def validate_note(self, value):
+        text = (value or '').strip()
+        if not text:
+            raise serializers.ValidationError('Note content is required')
+        return text

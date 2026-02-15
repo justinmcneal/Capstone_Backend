@@ -14,6 +14,22 @@ import logging
 logger = logging.getLogger('loans')
 
 
+def serialize_internal_note(note):
+    if not note:
+        return None
+
+    created_at = note.get('created_at')
+    if hasattr(created_at, 'isoformat'):
+        created_at = created_at.isoformat()
+
+    return {
+        'content': note.get('content', ''),
+        'author_id': note.get('author_id'),
+        'author_role': note.get('author_role'),
+        'created_at': created_at,
+    }
+
+
 class AdminProductListView(AdminRequiredMixin, APIView):
     """
     Admin: List and create loan products.
@@ -453,7 +469,11 @@ class OfficerWorkloadView(AdminRequiredMixin, APIView):
             'eligibility_score': app.eligibility_score,
             'risk_category': app.risk_category,
             'assigned_officer': app.assigned_officer,
-            'submitted_at': app.submitted_at.isoformat() if app.submitted_at else None
+            'submitted_at': app.submitted_at.isoformat() if app.submitted_at else None,
+            'internal_notes_count': len(app.internal_notes or []),
+            'latest_internal_note': serialize_internal_note(
+                (app.internal_notes or [])[-1] if (app.internal_notes or []) else None
+            ),
         } for app in pending_data['applications']]
         
         # Format assigned applications for response
@@ -466,7 +486,11 @@ class OfficerWorkloadView(AdminRequiredMixin, APIView):
             'eligibility_score': app.eligibility_score,
             'risk_category': app.risk_category,
             'assigned_officer': app.assigned_officer,
-            'submitted_at': app.submitted_at.isoformat() if app.submitted_at else None
+            'submitted_at': app.submitted_at.isoformat() if app.submitted_at else None,
+            'internal_notes_count': len(app.internal_notes or []),
+            'latest_internal_note': serialize_internal_note(
+                (app.internal_notes or [])[-1] if (app.internal_notes or []) else None
+            ),
         } for app in assigned_data['applications']]
         
         return success_response(
@@ -489,6 +513,4 @@ class OfficerWorkloadView(AdminRequiredMixin, APIView):
             },
             message="Officer workload retrieved"
         )
-
-
 

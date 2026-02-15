@@ -53,6 +53,7 @@ class LoanApplication:
         self.officer_notes = kwargs.get('officer_notes', '')
         self.rejection_reason = kwargs.get('rejection_reason', '')
         self.decision_date = kwargs.get('decision_date')
+        self.internal_notes = kwargs.get('internal_notes', [])
         
         # Missing document requests (for documents never uploaded)
         self.missing_documents_requested = kwargs.get('missing_documents_requested', [])
@@ -94,6 +95,7 @@ class LoanApplication:
             'officer_notes': self.officer_notes,
             'rejection_reason': self.rejection_reason,
             'decision_date': self.decision_date,
+            'internal_notes': self.internal_notes,
             'missing_documents_requested': self.missing_documents_requested,
             'missing_documents_reason': self.missing_documents_reason,
             'missing_documents_requested_by': self.missing_documents_requested_by,
@@ -159,6 +161,25 @@ class LoanApplication:
         self.rejection_reason = reason
         self.officer_notes = notes
         self.decision_date = datetime.utcnow()
+        return self.save()
+
+    def add_internal_note(self, author_id, author_role, content):
+        """Add an internal note without changing approval/rejection state."""
+        text = (content or '').strip()
+        if not text:
+            raise ValueError("Note content is required")
+
+        entry = {
+            'content': text,
+            'author_id': str(author_id),
+            'author_role': author_role or 'loan_officer',
+            'created_at': datetime.utcnow(),
+        }
+
+        notes = self.internal_notes or []
+        notes.append(entry)
+        # Keep history bounded
+        self.internal_notes = notes[-100:]
         return self.save()
     
     def request_missing_documents(self, officer_id, missing_documents, reason=''):
