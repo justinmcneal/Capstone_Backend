@@ -8,11 +8,41 @@ from django.conf import settings
 from accounts.authentication import CustomJWTAuthentication
 from accounts.utils.response_helpers import success_response, error_response
 from loans.models import LoanProduct, LoanApplication
-from loans.serializers import LoanReviewSerializer, MissingDocumentsRequestSerializer
+from loans.serializers import (
+    LoanReviewSerializer,
+    MissingDocumentsRequestSerializer,
+    ApplicationInternalNoteSerializer,
+)
 from analytics.models import AuditLog
 import logging
 
 logger = logging.getLogger('loans')
+
+
+def serialize_internal_note(note):
+    """Normalize a stored note entry for API responses."""
+    if not note:
+        return None
+
+    created_at = note.get('created_at')
+    if hasattr(created_at, 'isoformat'):
+        created_at = created_at.isoformat()
+
+    return {
+        'content': note.get('content', ''),
+        'author_id': note.get('author_id'),
+        'author_role': note.get('author_role'),
+        'created_at': created_at,
+    }
+
+
+def internal_note_summary(app):
+    notes = app.internal_notes or []
+    latest = serialize_internal_note(notes[-1]) if notes else None
+    return {
+        'internal_notes_count': len(notes),
+        'latest_internal_note': latest,
+    }
 
 
 class LoanOfficerRequiredMixin:
@@ -199,7 +229,8 @@ class OfficerApplicationListView(LoanOfficerRequiredMixin, APIView):
                 'risk_category': app.risk_category,
                 'assigned_officer': app.assigned_officer,
                 'submitted_at': app.submitted_at.isoformat() if app.submitted_at else None,
-                'decision_date': app.decision_date.isoformat() if app.decision_date else None
+                'decision_date': app.decision_date.isoformat() if app.decision_date else None,
+                **internal_note_summary(app),
             })
         
         return success_response(
@@ -342,6 +373,11 @@ class OfficerApplicationDetailView(LoanOfficerRequiredMixin, APIView):
                 'rejection_reason': app.rejection_reason,
                 'submitted_at': app.submitted_at.isoformat() if app.submitted_at else None,
                 'decision_date': app.decision_date.isoformat() if app.decision_date else None,
+                'internal_notes': [
+                    serialize_internal_note(note)
+                    for note in (app.internal_notes or [])
+                ],
+                **internal_note_summary(app),
                 'missing_documents_requested': app.missing_documents_requested,
                 'missing_documents_reason': app.missing_documents_reason,
                 'missing_documents_requested_at': (
@@ -353,6 +389,79 @@ class OfficerApplicationDetailView(LoanOfficerRequiredMixin, APIView):
                 'documents': documents_data
             },
             message="Application details retrieved"
+        )
+
+
+class OfficerApplicationNotesView(LoanOfficerRequiredMixin, APIView):
+    """
+    Loan Officer/Admin: Add standalone internal notes on an application.
+
+    POST /api/loans/officer/applications/<id>/notes/
+    """
+    authentication_classes = [CustomJWTAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, application_id):
+        has_permission, user = self.check_officer_permission(request)
+        if not has_permission:
+            return user
+
+        app = LoanApplication.find_by_id(application_id)
+        if not app:
+            return error_response(
+                message="Application not found",
+                status_code=status.HTTP_404_NOT_FOUND
+            )
+
+        if app.status in ['draft', 'cancelled']:
+            return error_response(
+                message=f"Cannot add notes for application with status: {app.status}",
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+
+        serializer = ApplicationInternalNoteSerializer(data=request.data)
+        if not serializer.is_valid():
+            return error_response(
+                message="Invalid note data",
+                errors=serializer.errors,
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+
+        try:
+            app.add_internal_note(
+                author_id=user.customer_id,
+                author_role=getattr(user, 'role', 'loan_officer'),
+                content=serializer.validated_data['note']
+            )
+        except ValueError as e:
+            return error_response(
+                message=str(e),
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+
+        latest_note = serialize_internal_note((app.internal_notes or [])[-1])
+        AuditLog.log_action(
+            action='loan_internal_note_added',
+            user_id=user.customer_id,
+            user_type=getattr(user, 'role', 'loan_officer'),
+            description='Added internal note to loan application',
+            resource_type='loan',
+            resource_id=app.id,
+            details={
+                'customer_id': app.customer_id,
+                'note_preview': serializer.validated_data['note'][:120],
+            },
+            ip_address=request.META.get('REMOTE_ADDR', '')
+        )
+
+        return success_response(
+            data={
+                'id': app.id,
+                'status': app.status,
+                'internal_notes_count': len(app.internal_notes or []),
+                'latest_internal_note': latest_note,
+            },
+            message="Internal note saved"
         )
 
 

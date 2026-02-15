@@ -3,5 +3,6 @@ from .loan_serializers import (
     LoanApplicationSerializer,
     LoanApplicationResponseSerializer,
     LoanReviewSerializer,
-    MissingDocumentsRequestSerializer
+    MissingDocumentsRequestSerializer,
+    ApplicationInternalNoteSerializer
 )

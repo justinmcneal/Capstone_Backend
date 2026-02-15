@@ -20,6 +20,7 @@ from loans.views import (
     # Officer
     OfficerApplicationListView,
     OfficerApplicationDetailView,
+    OfficerApplicationNotesView,
     OfficerRequestMissingDocumentsView,
     OfficerReviewView,
     DisburseView,
@@ -58,6 +59,7 @@ urlpatterns = [
     # Loan officer endpoints
     path('officer/applications/', OfficerApplicationListView.as_view(), name='officer-applications'),
     path('officer/applications/<str:application_id>/', OfficerApplicationDetailView.as_view(), name='officer-application-detail'),
+    path('officer/applications/<str:application_id>/notes/', OfficerApplicationNotesView.as_view(), name='officer-application-notes'),
     path('officer/applications/<str:application_id>/request-missing-documents/', OfficerRequestMissingDocumentsView.as_view(), name='officer-request-missing-documents'),
     path('officer/applications/<str:application_id>/review/', OfficerReviewView.as_view(), name='officer-review'),
     path('officer/applications/<str:application_id>/disburse/', DisburseView.as_view(), name='officer-disburse'),
