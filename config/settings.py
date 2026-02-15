@@ -150,6 +150,9 @@ MEDIA_ROOT = BASE_DIR / 'media'
 # Document Storage Configuration
 # Options: 'local', 's3', 'gcs' (cloud backends to be implemented)
 DOCUMENT_STORAGE_BACKEND = 'local'
+DOCUMENT_UPLOAD_AI_ANALYSIS = os.getenv('DOCUMENT_UPLOAD_AI_ANALYSIS', 'True') == 'True'
+DOCUMENT_UPLOAD_NOTIFY_REVIEWERS = os.getenv('DOCUMENT_UPLOAD_NOTIFY_REVIEWERS', 'True') == 'True'
+DOCUMENT_UPLOAD_NOTIFY_ASYNC = os.getenv('DOCUMENT_UPLOAD_NOTIFY_ASYNC', 'True') == 'True'
 
 # Default primary key field type
 # https://docs.djangoproject.com/en/4.2/ref/settings/#default-auto-field
@@ -208,6 +211,7 @@ EMAIL_USE_TLS = os.getenv('EMAIL_USE_TLS', 'True') == 'True'
 EMAIL_HOST_USER = os.getenv('EMAIL_HOST_USER', '')
 EMAIL_HOST_PASSWORD = os.getenv('EMAIL_HOST_PASSWORD', '')
 DEFAULT_FROM_EMAIL = os.getenv('DEFAULT_FROM_EMAIL', EMAIL_HOST_USER)
+EMAIL_TIMEOUT = int(os.getenv('EMAIL_TIMEOUT', 10))
 
 # Templates configuration
 TEMPLATES = [
