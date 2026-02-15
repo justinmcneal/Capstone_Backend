@@ -1,5 +1,6 @@
 from rest_framework import serializers
 from loans.models import APPLICATION_STATUSES
+from documents.models import DOCUMENT_TYPES
 
 
 class LoanProductSerializer(serializers.Serializer):
@@ -90,3 +91,19 @@ class LoanReviewSerializer(serializers.Serializer):
                 'rejection_reason': 'Required when rejecting'
             })
         return data
+
+
+class MissingDocumentsRequestSerializer(serializers.Serializer):
+    """Serializer for requesting missing (not-yet-uploaded) documents"""
+    missing_documents = serializers.ListField(
+        child=serializers.ChoiceField(choices=DOCUMENT_TYPES),
+        min_length=1
+    )
+    reason = serializers.CharField(max_length=1000, required=False, allow_blank=True)
+
+    def validate_missing_documents(self, value):
+        unique = []
+        for document_type in value:
+            if document_type not in unique:
+                unique.append(document_type)
+        return unique

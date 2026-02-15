@@ -20,6 +20,7 @@ from .admin_views import (
 from .officer_views import (
     OfficerApplicationListView,
     OfficerApplicationDetailView,
+    OfficerRequestMissingDocumentsView,
     OfficerReviewView,
     DisburseView,
     RecordPaymentView,
