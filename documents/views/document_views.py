@@ -3,8 +3,10 @@ from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.parsers import MultiPartParser, FormParser
+from django.conf import settings
 from bson import ObjectId
 from datetime import datetime
+import threading
 
 from accounts.authentication import CustomJWTAuthentication
 from accounts.utils.response_helpers import success_response, error_response
@@ -145,6 +147,26 @@ def notify_reviewers_document_pending(document):
             )
 
 
+def notify_reviewers_document_pending_async(document):
+    """Dispatch reviewer notifications in the background to avoid blocking upload responses."""
+    document_id = document.id or 'unknown'
+
+    def _send():
+        try:
+            notify_reviewers_document_pending(document)
+        except Exception as e:
+            logger.warning(
+                f"Background reviewer notification failed for document {document_id}: {e}"
+            )
+
+    thread = threading.Thread(
+        target=_send,
+        name=f'document-review-notify-{document_id}',
+        daemon=True,
+    )
+    thread.start()
+
+
 class DocumentUploadView(APIView):
     """
     Upload documents for customers.
@@ -207,19 +229,21 @@ class DocumentUploadView(APIView):
                 original_filename=file.name
             )
             
-            # Run AI analysis on the document
             ai_analysis = None
-            try:
-                from documents.services import analyze_document
-                
-                # Get the full file path for analysis
-                full_path = storage.get_full_path(file_info['file_path'])
-                ai_analysis = analyze_document(full_path, expected_type=document_type)
-                
-                logger.info(f"AI analysis complete: quality={ai_analysis.get('quality_score', 0):.2f}")
-            except Exception as e:
-                logger.warning(f"AI analysis failed (continuing anyway): {e}")
-                ai_analysis = {'error': str(e), 'is_valid': True}
+            run_ai_analysis = getattr(settings, 'DOCUMENT_UPLOAD_AI_ANALYSIS', True)
+            if run_ai_analysis:
+                # Run AI analysis on the document
+                try:
+                    from documents.services import analyze_document
+                    
+                    # Get the full file path for analysis
+                    full_path = storage.get_full_path(file_info['file_path'])
+                    ai_analysis = analyze_document(full_path, expected_type=document_type)
+                    
+                    logger.info(f"AI analysis complete: quality={ai_analysis.get('quality_score', 0):.2f}")
+                except Exception as e:
+                    logger.warning(f"AI analysis failed (continuing anyway): {e}")
+                    ai_analysis = {'error': str(e), 'is_valid': True}
             
             # Create document record
             document = Document(
@@ -258,9 +282,14 @@ class DocumentUploadView(APIView):
             )
 
             # Optional reviewer notification for newly pending documents.
-            if document.status in ['pending', 'needs_review']:
+            should_notify_reviewers = getattr(settings, 'DOCUMENT_UPLOAD_NOTIFY_REVIEWERS', True)
+            notify_async = getattr(settings, 'DOCUMENT_UPLOAD_NOTIFY_ASYNC', True)
+            if should_notify_reviewers and document.status in ['pending', 'needs_review']:
                 try:
-                    notify_reviewers_document_pending(document)
+                    if notify_async:
+                        notify_reviewers_document_pending_async(document)
+                    else:
+                        notify_reviewers_document_pending(document)
                 except Exception as notify_error:
                     logger.warning(
                         f"Failed to notify reviewers for document {document.id}: {notify_error}"
