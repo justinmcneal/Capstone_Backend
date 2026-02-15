@@ -8,7 +8,7 @@ from datetime import datetime
 
 from accounts.authentication import CustomJWTAuthentication
 from accounts.utils.response_helpers import success_response, error_response
-from accounts.models import Admin
+from accounts.models import Customer
 from documents.models import Document, DOCUMENT_TYPES
 from documents.serializers import (
     DocumentUploadSerializer,
@@ -33,6 +33,31 @@ def serialize_value(value):
     if isinstance(value, list):
         return [serialize_value(item) for item in value]
     return value
+
+
+def get_customer_by_identifier(customer_id):
+    """Resolve customer record from ObjectId/string IDs across legacy data shapes."""
+    if not customer_id:
+        return None
+
+    candidate_queries = []
+    if isinstance(customer_id, ObjectId):
+        candidate_queries.append({'_id': customer_id})
+        customer_id = str(customer_id)
+    else:
+        try:
+            candidate_queries.append({'_id': ObjectId(customer_id)})
+        except Exception:
+            pass
+
+    candidate_queries.append({'_id': customer_id})
+    candidate_queries.append({'customer_id': customer_id})
+
+    for query in candidate_queries:
+        customer = Customer.find_one(query)
+        if customer:
+            return customer
+    return None
 
 
 class DocumentUploadView(APIView):
@@ -476,6 +501,29 @@ class DocumentVerifyView(APIView):
                 document.notes = data['notes']
             
             document.save()
+
+            # Notify customer when a document is rejected.
+            if action == 'reject':
+                try:
+                    from notifications.services import get_email_sender
+
+                    customer = get_customer_by_identifier(document.customer_id)
+                    if customer and customer.email:
+                        sender = get_email_sender()
+                        sender.send_document_flagged(
+                            customer_email=customer.email,
+                            customer_name=f"{customer.first_name} {customer.last_name}".strip() or "Customer",
+                            document_type=document.document_type,
+                            issues=[document.rejection_reason] if document.rejection_reason else [
+                                "Document was rejected during verification."
+                            ],
+                        )
+                    else:
+                        logger.warning(
+                            f"Skip rejected-document email: customer/email not found for document {document.id}"
+                        )
+                except Exception as notify_error:
+                    logger.warning(f"Failed to send rejected-document email: {notify_error}")
             
             logger.info(f"Document {action}d: {document_id} by {user.customer_id}")
             
@@ -554,7 +602,11 @@ class RequestReuploadView(APIView):
                 status_code=status.HTTP_403_FORBIDDEN
             )
         
-        doc = Document.find_by_id(document_id)
+        doc = None
+        try:
+            doc = Document.find_one({'_id': ObjectId(document_id)})
+        except Exception:
+            doc = None
         if not doc:
             return error_response(
                 message="Document not found",
@@ -577,10 +629,9 @@ class RequestReuploadView(APIView):
         
         # Send email notification to customer
         try:
-            from accounts.models import Customer
             from notifications.services import get_email_sender
             
-            customer = Customer.find_one({'customer_id': doc.customer_id})
+            customer = get_customer_by_identifier(doc.customer_id)
             if customer and customer.email:
                 sender = get_email_sender()
                 sender.send_document_flagged(
@@ -588,6 +639,10 @@ class RequestReuploadView(APIView):
                     customer_name=f"{customer.first_name} {customer.last_name}",
                     document_type=doc.document_type,
                     issues=[reason]  # Pass reason as list of issues
+                )
+            else:
+                logger.warning(
+                    f"Skip reupload email: customer/email not found for document {doc.id}"
                 )
         except Exception as e:
             logger.warning(f"Failed to send re-upload email: {e}")
