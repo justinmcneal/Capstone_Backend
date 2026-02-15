@@ -1,0 +1,20 @@
+Action Required: Additional Documents Needed
+
+Hello {{ name }},
+
+Your loan application (ID: {{ loan_id }}) is still being reviewed.
+To continue processing, please upload the following missing document(s):
+
+{% for doc in missing_documents %}- {{ doc }}
+{% endfor %}
+{% if reason %}
+Officer note:
+{{ reason }}
+{% endif %}
+
+What to do next:
+1. Log in to your account
+2. Upload the requested document(s)
+3. Resubmit if prompted
+
+Submitting these documents promptly will help avoid delays.

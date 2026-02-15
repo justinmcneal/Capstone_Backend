@@ -160,6 +160,38 @@ class EmailSender:
             notification=notification
         )
     
+    def send_missing_documents_requested(
+        self,
+        customer_email,
+        customer_name,
+        loan_id,
+        missing_documents,
+        reason='',
+    ):
+        """Send missing documents request notification"""
+        notification = Notification(
+            recipient_email=customer_email,
+            recipient_name=customer_name,
+            notification_type='missing_documents_requested',
+            subject='Additional Documents Needed',
+            related_type='loan',
+            related_id=loan_id
+        )
+        notification.save()
+        
+        return self.send(
+            to_email=customer_email,
+            subject='Action Required: Additional Documents Needed',
+            template_name='missing_documents_requested',
+            context={
+                'name': customer_name,
+                'loan_id': loan_id,
+                'missing_documents': missing_documents,
+                'reason': reason,
+            },
+            notification=notification
+        )
+    
     def send_new_application_alert(self, officer_email, officer_name, customer_name, loan_id, amount):
         """Send new application alert to loan officer"""
         notification = Notification(
