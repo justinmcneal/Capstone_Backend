@@ -16,6 +16,7 @@ NOTIFICATION_TYPES = [
     'loan_approved',
     'loan_rejected',
     'document_flagged',
+    'document_pending_review',
     'missing_documents_requested',
     'document_verified',
     'new_application',  # For loan officers

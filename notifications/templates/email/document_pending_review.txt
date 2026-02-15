@@ -1,0 +1,11 @@
+Hello {{ reviewer_name }},
+
+A new customer document is pending review.
+
+Customer: {{ customer_name }}
+Document Type: {{ document_type }}
+Document ID: {{ document_id }}
+
+Please review it from your officer/admin documents page.
+
+MSME Pathways

@@ -8,7 +8,7 @@ from datetime import datetime
 
 from accounts.authentication import CustomJWTAuthentication
 from accounts.utils.response_helpers import success_response, error_response
-from accounts.models import Customer
+from accounts.models import Admin, Customer, LoanOfficer
 from documents.models import Document, DOCUMENT_TYPES
 from documents.serializers import (
     DocumentUploadSerializer,
@@ -58,6 +58,91 @@ def get_customer_by_identifier(customer_id):
         if customer:
             return customer
     return None
+
+
+def get_display_name(user, fallback='User'):
+    """Build a readable display name from common account model fields."""
+    if not user:
+        return fallback
+
+    first_name = (getattr(user, 'first_name', '') or '').strip()
+    last_name = (getattr(user, 'last_name', '') or '').strip()
+    full_name = f"{first_name} {last_name}".strip()
+    if full_name:
+        return full_name
+
+    username = (getattr(user, 'username', '') or '').strip()
+    if username:
+        return username
+
+    email = (getattr(user, 'email', '') or '').strip()
+    if email:
+        return email
+    return fallback
+
+
+def notify_reviewers_document_pending(document):
+    """Notify active officers/admins that a document needs review."""
+    from notifications.services import get_email_sender
+
+    sender = get_email_sender()
+    customer = get_customer_by_identifier(document.customer_id)
+    customer_name = get_display_name(customer, fallback='Customer')
+
+    recipients = []
+    seen_emails = set()
+
+    for officer in LoanOfficer.find({'active': True}):
+        email = (officer.email or '').strip()
+        if not email:
+            continue
+        email_key = email.lower()
+        if email_key in seen_emails:
+            continue
+        seen_emails.add(email_key)
+        recipients.append({
+            'email': email,
+            'name': get_display_name(officer, fallback='Loan Officer'),
+            'user_id': officer.id,
+            'user_type': 'loan_officer',
+        })
+
+    for admin in Admin.find({'active': True}):
+        email = (admin.email or '').strip()
+        if not email:
+            continue
+        email_key = email.lower()
+        if email_key in seen_emails:
+            continue
+        seen_emails.add(email_key)
+        recipients.append({
+            'email': email,
+            'name': get_display_name(admin, fallback='Admin'),
+            'user_id': admin.id,
+            'user_type': 'admin',
+        })
+
+    if not recipients:
+        logger.warning(
+            f"No active reviewers found to notify for pending document {document.id}"
+        )
+        return
+
+    for recipient in recipients:
+        try:
+            sender.send_document_pending_review(
+                reviewer_email=recipient['email'],
+                reviewer_name=recipient['name'],
+                customer_name=customer_name,
+                document_type=document.document_type,
+                document_id=document.id,
+                reviewer_user_id=recipient['user_id'],
+                reviewer_user_type=recipient['user_type'],
+            )
+        except Exception as e:
+            logger.warning(
+                f"Failed pending-review email to {recipient['email']} for document {document.id}: {e}"
+            )
 
 
 class DocumentUploadView(APIView):
@@ -171,6 +256,15 @@ class DocumentUploadView(APIView):
                 details={'document_type': document_type, 'filename': file.name, 'size': document.file_size},
                 ip_address=request.META.get('REMOTE_ADDR', '')
             )
+
+            # Optional reviewer notification for newly pending documents.
+            if document.status in ['pending', 'needs_review']:
+                try:
+                    notify_reviewers_document_pending(document)
+                except Exception as notify_error:
+                    logger.warning(
+                        f"Failed to notify reviewers for document {document.id}: {notify_error}"
+                    )
             
             response_data = {
                 'id': document.id,
@@ -501,29 +595,43 @@ class DocumentVerifyView(APIView):
                 document.notes = data['notes']
             
             document.save()
+            customer = get_customer_by_identifier(document.customer_id)
 
-            # Notify customer when a document is rejected.
-            if action == 'reject':
+            # Notify customer for document status outcomes.
+            if action in ['approve', 'reject']:
                 try:
                     from notifications.services import get_email_sender
 
-                    customer = get_customer_by_identifier(document.customer_id)
                     if customer and customer.email:
                         sender = get_email_sender()
-                        sender.send_document_flagged(
-                            customer_email=customer.email,
-                            customer_name=f"{customer.first_name} {customer.last_name}".strip() or "Customer",
-                            document_type=document.document_type,
-                            issues=[document.rejection_reason] if document.rejection_reason else [
-                                "Document was rejected during verification."
-                            ],
-                        )
+                        customer_name = get_display_name(customer, fallback='Customer')
+
+                        if action == 'approve':
+                            sender.send_document_approved(
+                                customer_email=customer.email,
+                                customer_name=customer_name,
+                                document_type=document.document_type,
+                                document_id=document.id,
+                                customer_id=customer.id,
+                                notes=document.notes or '',
+                            )
+                        else:
+                            sender.send_document_flagged(
+                                customer_email=customer.email,
+                                customer_name=customer_name,
+                                document_type=document.document_type,
+                                issues=[document.rejection_reason] if document.rejection_reason else [
+                                    "Document was rejected during verification."
+                                ],
+                                document_id=document.id,
+                                customer_id=customer.id,
+                            )
                     else:
                         logger.warning(
-                            f"Skip rejected-document email: customer/email not found for document {document.id}"
+                            f"Skip {action}-document email: customer/email not found for document {document.id}"
                         )
                 except Exception as notify_error:
-                    logger.warning(f"Failed to send rejected-document email: {notify_error}")
+                    logger.warning(f"Failed to send {action}-document email: {notify_error}")
             
             logger.info(f"Document {action}d: {document_id} by {user.customer_id}")
             
@@ -636,9 +744,11 @@ class RequestReuploadView(APIView):
                 sender = get_email_sender()
                 sender.send_document_flagged(
                     customer_email=customer.email,
-                    customer_name=f"{customer.first_name} {customer.last_name}",
+                    customer_name=get_display_name(customer, fallback='Customer'),
                     document_type=doc.document_type,
-                    issues=[reason]  # Pass reason as list of issues
+                    issues=[reason],  # Pass reason as list of issues
+                    document_id=doc.id,
+                    customer_id=customer.id,
                 )
             else:
                 logger.warning(
