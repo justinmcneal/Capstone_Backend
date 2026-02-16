@@ -33,7 +33,13 @@ class SecurityHeadersMiddleware:
                 "style-src 'self' 'unsafe-inline'; "
                 "img-src 'self' data: https: http://localhost:*; "
                 "font-src 'self' data:; "
-                "connect-src 'self' http://localhost:* ws://localhost:*"
+                "base-uri 'self'; "
+                "form-action 'self'; "
+                "frame-src 'none'; "
+                "manifest-src 'self'; "
+                "worker-src 'self' blob:; "
+                "connect-src 'self' http://localhost:* ws://localhost:*; "
+                "frame-ancestors 'none'; object-src 'none'"
             )
         else:
             # Strict CSP for production
@@ -43,7 +49,13 @@ class SecurityHeadersMiddleware:
                 "style-src 'self' 'unsafe-inline'; "
                 "img-src 'self' data: https:; "
                 "font-src 'self' data:; "
-                "connect-src 'self'"
+                "base-uri 'self'; "
+                "form-action 'self'; "
+                "frame-src 'none'; "
+                "manifest-src 'self'; "
+                "worker-src 'self' blob:; "
+                "connect-src 'self'; "
+                "frame-ancestors 'none'; object-src 'none'"
             )
         
         # Referrer Policy
@@ -51,5 +63,11 @@ class SecurityHeadersMiddleware:
         
         # Permissions Policy
         response['Permissions-Policy'] = 'geolocation=(), microphone=(), camera=()'
+
+        # Cross-origin isolation / Spectre hardening
+        response['Cross-Origin-Opener-Policy'] = 'same-origin'
+        response['Cross-Origin-Resource-Policy'] = 'same-site'
+        response['Cross-Origin-Embedder-Policy'] = 'require-corp'
+        response['Origin-Agent-Cluster'] = '?1'
         
         return response
