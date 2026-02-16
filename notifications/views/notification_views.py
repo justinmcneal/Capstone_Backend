@@ -1,5 +1,5 @@
 """
-Notification Views - Customer-facing notification inbox API.
+Notification Views - Notification inbox API.
 
 Endpoints:
     GET /api/notifications/                 - List notifications with pagination
@@ -10,6 +10,7 @@ Endpoints:
 import logging
 import math
 from datetime import datetime
+from bson import ObjectId
 
 from rest_framework.views import APIView
 from rest_framework.permissions import IsAuthenticated
@@ -22,9 +23,41 @@ from notifications.models.notification import Notification, get_db
 logger = logging.getLogger('notifications')
 
 
+def _build_notification_owner_query(user):
+    """
+    Build a role-safe ownership query for notifications.
+
+    Legacy records may miss user_id but still include recipient_email/user_type.
+    """
+    user_id = str(getattr(user, 'customer_id', '') or '').strip()
+    user_email = str(getattr(user, 'email', '') or '').strip().lower()
+    user_role = str(getattr(user, 'role', 'customer') or 'customer').strip()
+
+    owner_conditions = []
+    if user_id:
+        owner_conditions.append({'user_id': user_id})
+    if user_email:
+        owner_conditions.append({
+            'recipient_email': user_email,
+            'user_type': user_role,
+        })
+
+    if not owner_conditions:
+        return {'_id': None}
+    if len(owner_conditions) == 1:
+        return owner_conditions[0]
+    return {'$or': owner_conditions}
+
+
+def _serialize_related_id(value):
+    if isinstance(value, ObjectId):
+        return str(value)
+    return value
+
+
 class NotificationListView(APIView):
     """
-    List customer notifications with pagination.
+    List notifications with pagination.
     
     GET /api/notifications/
     Query params:
@@ -37,9 +70,6 @@ class NotificationListView(APIView):
     permission_classes = [IsAuthenticated]
     
     def get(self, request):
-        user = request.user
-        user_id = str(user.customer_id)
-        
         # Parse query params
         try:
             page = int(request.query_params.get('page', 1))
@@ -55,7 +85,7 @@ class NotificationListView(APIView):
         db = get_db()
         collection = db[Notification.collection_name]
         
-        query = {'user_id': user_id}
+        query = _build_notification_owner_query(request.user)
         if unread_only:
             query['status'] = {'$nin': ['read']}
         if channel_filter:
@@ -78,7 +108,7 @@ class NotificationListView(APIView):
                 'subject': notification.subject,
                 'message': notification.message,
                 'related_type': notification.related_type,
-                'related_id': notification.related_id,
+                'related_id': _serialize_related_id(notification.related_id),
                 'channel': notification.channel,
                 'status': notification.status,
                 'is_read': notification.status == 'read',
@@ -87,7 +117,9 @@ class NotificationListView(APIView):
             })
         
         # Get unread count
-        unread_count = collection.count_documents({'user_id': user_id, 'status': {'$nin': ['read']}})
+        unread_query = _build_notification_owner_query(request.user)
+        unread_query['status'] = {'$nin': ['read']}
+        unread_count = collection.count_documents(unread_query)
         
         return success_response(
             data={
@@ -116,18 +148,20 @@ class NotificationMarkReadView(APIView):
     permission_classes = [IsAuthenticated]
     
     def post(self, request, notification_id):
-        user = request.user
-        user_id = str(user.customer_id)
-        
         # Find notification
         db = get_db()
         collection = db[Notification.collection_name]
         
-        from bson import ObjectId
         try:
+            owner_query = _build_notification_owner_query(request.user)
+            find_query = {'_id': ObjectId(notification_id)}
+            if '$or' in owner_query:
+                find_query['$or'] = owner_query['$or']
+            else:
+                find_query.update(owner_query)
+
             doc = collection.find_one({
-                '_id': ObjectId(notification_id),
-                'user_id': user_id
+                **find_query
             })
         except Exception:
             return error_response(
@@ -147,7 +181,7 @@ class NotificationMarkReadView(APIView):
             {'$set': {'status': 'read', 'read_at': datetime.utcnow()}}
         )
         
-        logger.info(f"Notification {notification_id} marked as read by user {user_id}")
+        logger.info(f"Notification {notification_id} marked as read")
         
         return success_response(
             data={'notification_id': notification_id, 'status': 'read'},
@@ -165,19 +199,19 @@ class NotificationMarkAllReadView(APIView):
     permission_classes = [IsAuthenticated]
     
     def post(self, request):
-        user = request.user
-        user_id = str(user.customer_id)
-        
         # Mark all as read
         db = get_db()
         collection = db[Notification.collection_name]
-        
+
+        update_query = _build_notification_owner_query(request.user)
+        update_query['status'] = {'$nin': ['read']}
+
         result = collection.update_many(
-            {'user_id': user_id, 'status': {'$nin': ['read']}},
+            update_query,
             {'$set': {'status': 'read', 'read_at': datetime.utcnow()}}
         )
         
-        logger.info(f"Marked {result.modified_count} notifications as read for user {user_id}")
+        logger.info(f"Marked {result.modified_count} notifications as read")
         
         return success_response(
             data={'marked_count': result.modified_count},
@@ -195,16 +229,12 @@ class NotificationUnreadCountView(APIView):
     permission_classes = [IsAuthenticated]
     
     def get(self, request):
-        user = request.user
-        user_id = str(user.customer_id)
-        
         db = get_db()
         collection = db[Notification.collection_name]
-        
-        unread_count = collection.count_documents({
-            'user_id': user_id,
-            'status': {'$nin': ['read']}
-        })
+
+        unread_query = _build_notification_owner_query(request.user)
+        unread_query['status'] = {'$nin': ['read']}
+        unread_count = collection.count_documents(unread_query)
         
         return success_response(
             data={'unread_count': unread_count},
