@@ -14,6 +14,8 @@ from pathlib import Path
 import os
 from dotenv import load_dotenv
 from pymongo import MongoClient
+from django.core.exceptions import ImproperlyConfigured
+from django.core.management.utils import get_random_secret_key
 
 load_dotenv()
 
@@ -24,13 +26,26 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/4.2/howto/deployment/checklist/
 
-# SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = os.getenv('SECRET_KEY', 'django-insecure-4p^#05(g7*t^#)zxpmzlgn+9t6-9y)j97g@4qo+2vu!df#i&29')
+def env_bool(name, default=False):
+    return os.getenv(name, str(default)).strip().lower() in {'1', 'true', 'yes', 'on'}
+
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = os.getenv('DEBUG', 'True') == 'True'
+DEBUG = env_bool('DEBUG', False)
 
-ALLOWED_HOSTS = os.getenv('ALLOWED_HOSTS', 'localhost,127.0.0.1').split(',')
+# SECURITY WARNING: keep the secret key used in production secret!
+SECRET_KEY = os.getenv('SECRET_KEY')
+if not SECRET_KEY:
+    if DEBUG:
+        SECRET_KEY = get_random_secret_key()
+    else:
+        raise ImproperlyConfigured("SECRET_KEY must be set when DEBUG=False")
+
+ALLOWED_HOSTS = [
+    host.strip()
+    for host in os.getenv('ALLOWED_HOSTS', 'localhost,127.0.0.1').split(',')
+    if host.strip()
+]
 
 
 # Application definition
@@ -279,17 +294,17 @@ LOGGING = {
 
 if not DEBUG:
     # Force HTTPS
-    SECURE_SSL_REDIRECT = True
+    SECURE_SSL_REDIRECT = env_bool('SECURE_SSL_REDIRECT', True)
     SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
     
     # HSTS (HTTP Strict Transport Security)
-    SECURE_HSTS_SECONDS = 31536000  # 1 year
-    SECURE_HSTS_INCLUDE_SUBDOMAINS = True
-    SECURE_HSTS_PRELOAD = True
+    SECURE_HSTS_SECONDS = int(os.getenv('SECURE_HSTS_SECONDS', '31536000'))  # 1 year
+    SECURE_HSTS_INCLUDE_SUBDOMAINS = env_bool('SECURE_HSTS_INCLUDE_SUBDOMAINS', True)
+    SECURE_HSTS_PRELOAD = env_bool('SECURE_HSTS_PRELOAD', True)
     
     # Secure cookies
-    SESSION_COOKIE_SECURE = True
-    CSRF_COOKIE_SECURE = True
+    SESSION_COOKIE_SECURE = env_bool('SESSION_COOKIE_SECURE', True)
+    CSRF_COOKIE_SECURE = env_bool('CSRF_COOKIE_SECURE', True)
     
     # Use console logging only in production (Railway captures stdout)
     LOGGING['handlers'] = {
