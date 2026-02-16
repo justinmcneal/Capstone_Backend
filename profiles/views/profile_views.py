@@ -38,7 +38,7 @@ class CustomerProfileView(APIView):
             return success_response(
                 data={
                     'id': profile.id,
-                    'customer_id': profile.customer_id,
+                    'customer_id': str(profile.customer_id) if profile.customer_id else '',
                     'date_of_birth': profile.date_of_birth.isoformat() if profile.date_of_birth else None,
                     'gender': profile.gender,
                     'civil_status': profile.civil_status,
@@ -138,7 +138,7 @@ class BusinessProfileView(APIView):
             return success_response(
                 data={
                     'id': profile.id,
-                    'customer_id': profile.customer_id,
+                    'customer_id': str(profile.customer_id) if profile.customer_id else '',
                     'business_name': profile.business_name,
                     'business_type': profile.business_type,
                     'business_type_other': profile.business_type_other,
@@ -234,7 +234,7 @@ class AlternativeDataView(APIView):
             return success_response(
                 data={
                     'id': data.id,
-                    'customer_id': data.customer_id,
+                    'customer_id': str(data.customer_id) if data.customer_id else '',
                     # Education & Employment
                     'education_level': data.education_level,
                     'employment_status': data.employment_status,
@@ -501,4 +501,3 @@ class NotificationPreferencesView(APIView):
             data={'preferences': current_prefs},
             message="Notification preferences updated"
         )
-
