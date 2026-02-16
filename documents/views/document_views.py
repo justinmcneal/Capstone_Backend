@@ -231,7 +231,9 @@ class DocumentUploadView(APIView):
             
             ai_analysis = None
             run_ai_analysis = getattr(settings, 'DOCUMENT_UPLOAD_AI_ANALYSIS', True)
-            if run_ai_analysis:
+            file_content_type = (file.content_type or '').lower()
+            is_image_upload = file_content_type.startswith('image/')
+            if run_ai_analysis and is_image_upload:
                 # Run AI analysis on the document
                 try:
                     from documents.services import analyze_document
@@ -244,6 +246,10 @@ class DocumentUploadView(APIView):
                 except Exception as e:
                     logger.warning(f"AI analysis failed (continuing anyway): {e}")
                     ai_analysis = {'error': str(e), 'is_valid': True}
+            elif run_ai_analysis:
+                logger.info(
+                    f"Skipping AI analysis for non-image upload: content_type={file_content_type or 'unknown'}"
+                )
             
             # Create document record
             document = Document(
