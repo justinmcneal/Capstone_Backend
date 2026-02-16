@@ -11,6 +11,7 @@ from accounts.models import Admin, LoanOfficer, ADMIN_PERMISSIONS
 from accounts.authentication import CustomJWTAuthentication
 from accounts.utils.token_utils import TokenUtils
 from accounts.utils.response_helpers import success_response, error_response
+from accounts.utils.validation_utils import validate_person_name, normalize_text
 from analytics.models import AuditLog
 import logging
 
@@ -342,6 +343,30 @@ class LoanOfficerManagementView(AdminRequiredMixin, APIView):
             
             email = request.data.get('email', '').lower().strip()
             employee_id = request.data.get('employee_id', '').strip()
+            first_name = request.data.get('first_name', '')
+            last_name = request.data.get('last_name', '')
+
+            first_name_valid, first_name_error, first_name_normalized = validate_person_name(
+                first_name,
+                field_name='First name'
+            )
+            if not first_name_valid:
+                return error_response(
+                    message=first_name_error,
+                    errors={'first_name': first_name_error},
+                    status_code=status.HTTP_400_BAD_REQUEST
+                )
+
+            last_name_valid, last_name_error, last_name_normalized = validate_person_name(
+                last_name,
+                field_name='Last name'
+            )
+            if not last_name_valid:
+                return error_response(
+                    message=last_name_error,
+                    errors={'last_name': last_name_error},
+                    status_code=status.HTTP_400_BAD_REQUEST
+                )
             
             # Check if email already exists
             if LoanOfficer.find_one({'email': email}):
@@ -363,8 +388,8 @@ class LoanOfficerManagementView(AdminRequiredMixin, APIView):
             # Create loan officer
             officer = LoanOfficer(
                 employee_id=employee_id,
-                first_name=request.data.get('first_name', '').strip(),
-                last_name=request.data.get('last_name', '').strip(),
+                first_name=first_name_normalized,
+                last_name=last_name_normalized,
                 email=email,
                 phone=request.data.get('phone', ''),
                 department=request.data.get('department', ''),
@@ -492,6 +517,22 @@ class LoanOfficerDetailView(AdminRequiredMixin, APIView):
                 if field in request.data:
                     old_value = getattr(officer, field)
                     new_value = request.data[field]
+
+                    if field in ['first_name', 'last_name']:
+                        is_valid, error_msg, normalized_name = validate_person_name(
+                            new_value,
+                            field_name='First name' if field == 'first_name' else 'Last name'
+                        )
+                        if not is_valid:
+                            return error_response(
+                                message=error_msg,
+                                errors={field: error_msg},
+                                status_code=status.HTTP_400_BAD_REQUEST
+                            )
+                        new_value = normalized_name
+                    elif isinstance(new_value, str):
+                        new_value = normalize_text(new_value)
+
                     if old_value != new_value:
                         changes[field] = {'old': old_value, 'new': new_value}
                     setattr(officer, field, new_value)
@@ -1003,4 +1044,3 @@ class AdminPermissionsView(SuperAdminRequiredMixin, APIView):
                 message="Failed to update permissions",
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
-
