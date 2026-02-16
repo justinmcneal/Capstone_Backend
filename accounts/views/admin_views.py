@@ -334,12 +334,16 @@ class LoanOfficerManagementView(AdminRequiredMixin, APIView):
             
             # Validate required fields
             required_fields = ['employee_id', 'first_name', 'last_name', 'email']
+            missing_errors = {}
             for field in required_fields:
                 if not request.data.get(field):
-                    return error_response(
-                        message=f"{field} is required",
-                        status_code=status.HTTP_400_BAD_REQUEST
-                    )
+                    missing_errors[field] = f"{field.replace('_', ' ').title()} is required"
+            if missing_errors:
+                return error_response(
+                    message="Validation failed",
+                    errors=missing_errors,
+                    status_code=status.HTTP_400_BAD_REQUEST
+                )
             
             email = request.data.get('email', '').lower().strip()
             employee_id = request.data.get('employee_id', '').strip()
@@ -348,7 +352,8 @@ class LoanOfficerManagementView(AdminRequiredMixin, APIView):
 
             first_name_valid, first_name_error, first_name_normalized = validate_person_name(
                 first_name,
-                field_name='First name'
+                field_name='First name',
+                max_length=50
             )
             if not first_name_valid:
                 return error_response(
@@ -359,7 +364,8 @@ class LoanOfficerManagementView(AdminRequiredMixin, APIView):
 
             last_name_valid, last_name_error, last_name_normalized = validate_person_name(
                 last_name,
-                field_name='Last name'
+                field_name='Last name',
+                max_length=50
             )
             if not last_name_valid:
                 return error_response(
@@ -521,7 +527,8 @@ class LoanOfficerDetailView(AdminRequiredMixin, APIView):
                     if field in ['first_name', 'last_name']:
                         is_valid, error_msg, normalized_name = validate_person_name(
                             new_value,
-                            field_name='First name' if field == 'first_name' else 'Last name'
+                            field_name='First name' if field == 'first_name' else 'Last name',
+                            max_length=50
                         )
                         if not is_valid:
                             return error_response(

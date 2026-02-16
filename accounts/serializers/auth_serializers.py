@@ -18,7 +18,8 @@ class SignUpSerializer(PasswordValidationMixin, serializers.Serializer):
     def validate_first_name(self, value):
         is_valid, error_msg, normalized = validate_person_name(
             value,
-            field_name='First name'
+            field_name='First name',
+            max_length=100
         )
         if not is_valid:
             raise serializers.ValidationError(error_msg)
@@ -28,7 +29,8 @@ class SignUpSerializer(PasswordValidationMixin, serializers.Serializer):
         is_valid, error_msg, normalized = validate_person_name(
             value,
             field_name='Middle name',
-            allow_blank=True
+            allow_blank=True,
+            max_length=100
         )
         if not is_valid:
             raise serializers.ValidationError(error_msg)
@@ -37,7 +39,8 @@ class SignUpSerializer(PasswordValidationMixin, serializers.Serializer):
     def validate_last_name(self, value):
         is_valid, error_msg, normalized = validate_person_name(
             value,
-            field_name='Last name'
+            field_name='Last name',
+            max_length=100
         )
         if not is_valid:
             raise serializers.ValidationError(error_msg)
