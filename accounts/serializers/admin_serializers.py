@@ -1,5 +1,6 @@
 from rest_framework import serializers
 from accounts.models import ADMIN_PERMISSIONS
+from accounts.utils.validation_utils import validate_person_name
 
 
 class AdminCreateSerializer(serializers.Serializer):
@@ -45,6 +46,26 @@ class AdminCreateSerializer(serializers.Serializer):
         if not value.replace('_', '').replace('-', '').isalnum():
             raise serializers.ValidationError("Username can only contain letters, numbers, underscores, and hyphens")
         return value
+
+    def validate_first_name(self, value):
+        is_valid, error_msg, normalized = validate_person_name(
+            value,
+            field_name="First name",
+            allow_blank=True
+        )
+        if not is_valid:
+            raise serializers.ValidationError(error_msg)
+        return normalized
+
+    def validate_last_name(self, value):
+        is_valid, error_msg, normalized = validate_person_name(
+            value,
+            field_name="Last name",
+            allow_blank=True
+        )
+        if not is_valid:
+            raise serializers.ValidationError(error_msg)
+        return normalized
     
     def validate_permissions(self, value):
         """Validate that all permissions are valid"""
@@ -62,6 +83,26 @@ class AdminUpdateSerializer(serializers.Serializer):
     first_name = serializers.CharField(max_length=50, required=False, allow_blank=True)
     last_name = serializers.CharField(max_length=50, required=False, allow_blank=True)
     active = serializers.BooleanField(required=False)
+
+    def validate_first_name(self, value):
+        is_valid, error_msg, normalized = validate_person_name(
+            value,
+            field_name="First name",
+            allow_blank=True
+        )
+        if not is_valid:
+            raise serializers.ValidationError(error_msg)
+        return normalized
+
+    def validate_last_name(self, value):
+        is_valid, error_msg, normalized = validate_person_name(
+            value,
+            field_name="Last name",
+            allow_blank=True
+        )
+        if not is_valid:
+            raise serializers.ValidationError(error_msg)
+        return normalized
     
     def validate(self, data):
         if not data:

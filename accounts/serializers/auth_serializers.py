@@ -1,5 +1,6 @@
 from rest_framework import serializers
 from accounts.utils.email_utils import EmailUtils
+from accounts.utils.validation_utils import validate_person_name
 from .base_serializers import PasswordValidationMixin
 
 
@@ -15,14 +16,32 @@ class SignUpSerializer(PasswordValidationMixin, serializers.Serializer):
     language = serializers.ChoiceField(choices=[('en', 'English'), ('tl', 'Tagalog')], default='en', required=False)
     
     def validate_first_name(self, value):
-        if not value.strip():
-            raise serializers.ValidationError('First name cannot be blank')
-        return value.strip()
+        is_valid, error_msg, normalized = validate_person_name(
+            value,
+            field_name='First name'
+        )
+        if not is_valid:
+            raise serializers.ValidationError(error_msg)
+        return normalized
+
+    def validate_middle_name(self, value):
+        is_valid, error_msg, normalized = validate_person_name(
+            value,
+            field_name='Middle name',
+            allow_blank=True
+        )
+        if not is_valid:
+            raise serializers.ValidationError(error_msg)
+        return normalized
     
     def validate_last_name(self, value):
-        if not value.strip():
-            raise serializers.ValidationError('Last name cannot be blank')
-        return value.strip()
+        is_valid, error_msg, normalized = validate_person_name(
+            value,
+            field_name='Last name'
+        )
+        if not is_valid:
+            raise serializers.ValidationError(error_msg)
+        return normalized
     
     def validate_email(self, value):
         """Validate and normalize email using centralized method"""
