@@ -33,6 +33,26 @@ AUDIT_ACTIONS = [
     'admin_action',
 ]
 
+# High-level action group mapping for analytics filtering.
+ACTION_GROUPS = {
+    'login': ['user_login', 'user_logout'],
+    'create': [
+        'user_registered',
+        'loan_submitted',
+        'document_uploaded',
+        'payment_recorded',
+    ],
+    'update': [
+        'profile_updated',
+        'document_verified',
+        'document_rejected',
+        'loan_approved',
+        'loan_rejected',
+        'loan_disbursed',
+        'admin_action',
+    ],
+}
+
 
 class AuditLog:
     """
@@ -133,7 +153,15 @@ class AuditLog:
         )
     
     @classmethod
-    def find_with_filters(cls, action=None, date_from=None, date_to=None, limit=100):
+    def find_with_filters(
+        cls,
+        action=None,
+        action_group=None,
+        user_id=None,
+        date_from=None,
+        date_to=None,
+        limit=100,
+    ):
         """
         Find audit logs with optional filters.
         """
@@ -142,6 +170,22 @@ class AuditLog:
         # Action filter
         if action:
             query['action'] = action
+
+        # Action-group filter (Login/Create/Update/Delete)
+        if action_group:
+            group = str(action_group).strip().lower()
+            if group in ACTION_GROUPS:
+                query['action'] = {'$in': ACTION_GROUPS[group]}
+            elif group == 'delete':
+                # Most delete/deactivate events are captured as admin_action + descriptive text.
+                query['$and'] = [
+                    {'action': 'admin_action'},
+                    {'description': {'$regex': '(delete|deleted|deactivate|deactivated|remove|removed)', '$options': 'i'}},
+                ]
+
+        # User filter
+        if user_id:
+            query['user_id'] = str(user_id).strip()
         
         # Date range filter
         if date_from or date_to:

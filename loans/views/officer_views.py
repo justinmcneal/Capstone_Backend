@@ -914,9 +914,9 @@ class RecordPaymentView(LoanOfficerRequiredMixin, APIView):
                 status_code=status.HTTP_400_BAD_REQUEST
             )
         
-        # VALIDATION 3: Prevent overpayment (with 1% tolerance for rounding)
+        # VALIDATION 3: Prevent overpayment (allow 1 cent tolerance for float noise)
         remaining = installment['total_amount'] - installment.get('paid_amount', 0)
-        if amount > remaining * 1.01:
+        if amount - remaining > 0.01:
             return error_response(
                 message=f"Amount exceeds remaining balance of ₱{remaining:.2f}",
                 status_code=status.HTTP_400_BAD_REQUEST
@@ -1172,14 +1172,26 @@ class OfficerScheduleView(LoanOfficerRequiredMixin, APIView):
         
         # Format installments
         installments = []
+        now = datetime.utcnow()
         for inst in schedule.installments:
+            due_date = inst.get('due_date')
+            inst_status = inst.get('status', 'pending')
+            if (
+                inst_status == 'pending'
+                and due_date
+                and hasattr(due_date, 'date')
+                and due_date.date() < now.date()
+            ):
+                # Derive overdue dynamically so stale pending records still show correctly.
+                inst_status = 'overdue'
+
             installments.append({
                 'number': inst['number'],
-                'due_date': inst['due_date'].isoformat() if inst.get('due_date') else None,
+                'due_date': due_date.isoformat() if due_date else None,
                 'principal': inst['principal'],
                 'interest': inst['interest'],
                 'total_amount': inst['total_amount'],
-                'status': inst['status'],
+                'status': inst_status,
                 'paid_amount': inst.get('paid_amount', 0)
             })
         
@@ -1259,6 +1271,7 @@ class PaymentSearchView(LoanOfficerRequiredMixin, APIView):
         - loan_id: Filter by loan ID
         - customer_id: Filter by customer ID
         - disbursed_only: If true (default), only include payments from disbursed loans
+        - payment_status: Filter by payment timing status ('on_time', 'late')
         - payment_method: Filter by payment method ('cash', 'bank_transfer', 'gcash', 'maya', 'check')
         - min_amount: Minimum payment amount
         - max_amount: Maximum payment amount
@@ -1275,7 +1288,7 @@ class PaymentSearchView(LoanOfficerRequiredMixin, APIView):
     def get(self, request):
         import re
         from accounts.models import Customer
-        from loans.models import LoanPayment
+        from loans.models import LoanPayment, RepaymentSchedule
         
         has_permission, result = self.check_officer_permission(request)
         if not has_permission:
@@ -1287,6 +1300,7 @@ class PaymentSearchView(LoanOfficerRequiredMixin, APIView):
         customer_id = request.query_params.get('customer_id', '').strip()
         disbursed_only_raw = request.query_params.get('disbursed_only', 'true').strip().lower()
         disbursed_only = disbursed_only_raw in ['true', '1', 'yes', 'on']
+        payment_status = request.query_params.get('payment_status', '').strip().lower()
         payment_method = request.query_params.get('payment_method', '').strip()
         min_amount = request.query_params.get('min_amount')
         max_amount = request.query_params.get('max_amount')
@@ -1296,6 +1310,7 @@ class PaymentSearchView(LoanOfficerRequiredMixin, APIView):
         page_size = min(int(request.query_params.get('page_size', 20)), 100)
         sort_by = request.query_params.get('sort_by', 'recorded_at')
         sort_order = request.query_params.get('sort_order', 'desc')
+        valid_payment_statuses = ['on_time', 'late']
         
         # Build query
         query = {}
@@ -1354,6 +1369,8 @@ class PaymentSearchView(LoanOfficerRequiredMixin, APIView):
         valid_methods = ['cash', 'bank_transfer', 'gcash', 'maya', 'check', 'other']
         if payment_method and payment_method in valid_methods:
             query['payment_method'] = payment_method
+        if payment_status and payment_status not in valid_payment_statuses:
+            payment_status = ''
         
         # Amount range filter
         if min_amount:
@@ -1419,15 +1436,52 @@ class PaymentSearchView(LoanOfficerRequiredMixin, APIView):
         # Sorting
         sort_field = sort_by if sort_by in ['recorded_at', 'amount', 'installment_number'] else 'recorded_at'
         sort_direction = 1 if sort_order == 'asc' else -1
-        
-        # Get total count for pagination
-        total_count = collection.count_documents(final_query)
-        
-        # Get paginated results
-        skip = (page - 1) * page_size
-        cursor = collection.find(final_query).sort(sort_field, sort_direction).skip(skip).limit(page_size)
-        
-        payments = [LoanPayment.from_dict(doc) for doc in cursor]
+        schedule_cache = {}
+
+        def resolve_payment_status(payment):
+            """Classify payment as on_time/late based on installment due date."""
+            if not payment:
+                return 'unknown', None
+
+            loan_key = payment.loan_id
+            if loan_key not in schedule_cache:
+                schedule_cache[loan_key] = RepaymentSchedule.find_by_loan(loan_key)
+            schedule = schedule_cache.get(loan_key)
+            if not schedule:
+                return 'unknown', None
+
+            installment = schedule.get_installment(payment.installment_number)
+            if not installment:
+                return 'unknown', None
+
+            due_date = installment.get('due_date')
+            if not due_date or not payment.recorded_at:
+                return 'unknown', due_date
+
+            status_value = 'on_time' if payment.recorded_at.date() <= due_date.date() else 'late'
+            return status_value, due_date
+
+        # Get filtered + paginated results
+        if payment_status:
+            all_cursor = collection.find(final_query).sort(sort_field, sort_direction)
+            all_payments = [LoanPayment.from_dict(doc) for doc in all_cursor]
+
+            status_filtered = []
+            for payment in all_payments:
+                if not payment:
+                    continue
+                status_value, _ = resolve_payment_status(payment)
+                if status_value == payment_status:
+                    status_filtered.append(payment)
+
+            total_count = len(status_filtered)
+            skip = (page - 1) * page_size
+            payments = status_filtered[skip: skip + page_size]
+        else:
+            total_count = collection.count_documents(final_query)
+            skip = (page - 1) * page_size
+            cursor = collection.find(final_query).sort(sort_field, sort_direction).skip(skip).limit(page_size)
+            payments = [LoanPayment.from_dict(doc) for doc in cursor]
         
         # Build response with customer names
         payments_data = []
@@ -1457,6 +1511,7 @@ class PaymentSearchView(LoanOfficerRequiredMixin, APIView):
             if app:
                 product = LoanProduct.find_by_id(app.product_id)
                 product_name = product.name if product else 'Unknown'
+            status_value, due_date = resolve_payment_status(payment)
             
             payments_data.append({
                 'id': payment.id,
@@ -1465,6 +1520,8 @@ class PaymentSearchView(LoanOfficerRequiredMixin, APIView):
                 'customer_name': customer_name,
                 'product_name': product_name,
                 'installment_number': payment.installment_number,
+                'due_date': due_date.isoformat() if due_date else None,
+                'payment_status': status_value,
                 'amount': payment.amount,
                 'payment_method': payment.payment_method,
                 'reference': payment.reference,

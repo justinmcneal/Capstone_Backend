@@ -152,7 +152,8 @@ class RepaymentSchedule:
     def get_remaining_balance(self):
         """Calculate remaining balance"""
         paid = sum(inst.get('paid_amount', 0) for inst in self.installments)
-        return self.total_amount - paid
+        # Never return negative values even if historical overpayments exist.
+        return max(self.total_amount - paid, 0)
     
     def get_installment(self, installment_number):
         """Get a specific installment by number"""
@@ -215,17 +216,18 @@ class RepaymentSchedule:
         """
         for i, inst in enumerate(self.installments):
             if inst['number'] == installment_number:
-                inst['paid_amount'] = inst.get('paid_amount', 0) + amount
+                new_paid_amount = inst.get('paid_amount', 0) + amount
                 
                 # Update status based on payment
-                if inst['paid_amount'] >= inst['total_amount']:
+                if new_paid_amount >= inst['total_amount']:
+                    inst['paid_amount'] = inst['total_amount']
                     inst['status'] = 'paid'
                     inst['paid_at'] = datetime.utcnow()
-                elif inst['paid_amount'] > 0:
+                elif new_paid_amount > 0:
+                    inst['paid_amount'] = new_paid_amount
                     inst['status'] = 'partial'
                 
                 self.installments[i] = inst
                 self.save()
                 return inst
         return None
-
