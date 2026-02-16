@@ -1258,6 +1258,7 @@ class PaymentSearchView(LoanOfficerRequiredMixin, APIView):
         - search: Keyword search (customer name, reference number)
         - loan_id: Filter by loan ID
         - customer_id: Filter by customer ID
+        - disbursed_only: If true (default), only include payments from disbursed loans
         - payment_method: Filter by payment method ('cash', 'bank_transfer', 'gcash', 'maya', 'check')
         - min_amount: Minimum payment amount
         - max_amount: Maximum payment amount
@@ -1284,6 +1285,8 @@ class PaymentSearchView(LoanOfficerRequiredMixin, APIView):
         search_query = request.query_params.get('search', '').strip()
         loan_id = request.query_params.get('loan_id', '').strip()
         customer_id = request.query_params.get('customer_id', '').strip()
+        disbursed_only_raw = request.query_params.get('disbursed_only', 'true').strip().lower()
+        disbursed_only = disbursed_only_raw in ['true', '1', 'yes', 'on']
         payment_method = request.query_params.get('payment_method', '').strip()
         min_amount = request.query_params.get('min_amount')
         max_amount = request.query_params.get('max_amount')
@@ -1304,6 +1307,48 @@ class PaymentSearchView(LoanOfficerRequiredMixin, APIView):
         # Customer ID filter
         if customer_id:
             query['customer_id'] = customer_id
+
+        # Restrict to disbursed loans by default
+        if disbursed_only:
+            if loan_id:
+                app = LoanApplication.find_by_id(loan_id)
+                if not app or app.status != 'disbursed':
+                    return success_response(
+                        data={
+                            'payments': [],
+                            'total': 0,
+                            'page': page,
+                            'page_size': page_size,
+                            'total_pages': 0,
+                            'summary': {
+                                'total_amount': 0,
+                                'count': 0
+                            }
+                        },
+                        message="Payments retrieved"
+                    )
+            else:
+                app_collection = settings.MONGODB['loan_applications']
+                disbursed_ids = app_collection.distinct('_id', {'status': 'disbursed'})
+                disbursed_loan_ids = [str(app_id) for app_id in disbursed_ids]
+
+                if not disbursed_loan_ids:
+                    return success_response(
+                        data={
+                            'payments': [],
+                            'total': 0,
+                            'page': page,
+                            'page_size': page_size,
+                            'total_pages': 0,
+                            'summary': {
+                                'total_amount': 0,
+                                'count': 0
+                            }
+                        },
+                        message="Payments retrieved"
+                    )
+
+                query['loan_id'] = {'$in': disbursed_loan_ids}
         
         # Payment method filter
         valid_methods = ['cash', 'bank_transfer', 'gcash', 'maya', 'check', 'other']
