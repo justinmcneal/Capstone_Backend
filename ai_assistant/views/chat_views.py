@@ -1,8 +1,8 @@
 from rest_framework.views import APIView
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
-from bson import ObjectId
 import uuid
+import math
 
 from accounts.authentication import CustomJWTAuthentication
 from accounts.utils.response_helpers import success_response, error_response
@@ -157,6 +157,13 @@ class ChatHistoryView(ConsentRequiredMixin, APIView):
     """
     authentication_classes = [CustomJWTAuthentication]
     permission_classes = [IsAuthenticated]
+
+    def _parse_positive_int(self, value, default):
+        try:
+            parsed = int(value)
+            return parsed if parsed > 0 else default
+        except (TypeError, ValueError):
+            return default
     
     def get(self, request):
         """Get chat history"""
@@ -168,10 +175,20 @@ class ChatHistoryView(ConsentRequiredMixin, APIView):
             user = request.user
             customer_id = user.customer_id
             
-            # Get optional limit
-            limit = min(int(request.query_params.get('limit', 50)), 100)
-            
-            interactions = AIInteraction.find_by_customer(customer_id, limit=limit)
+            # Query params
+            page = self._parse_positive_int(request.query_params.get('page', 1), 1)
+            limit = min(
+                self._parse_positive_int(request.query_params.get('limit', 50), 50),
+                100,
+            )
+            search_query = request.query_params.get('search', '').strip()
+
+            interactions, total_messages = AIInteraction.find_by_customer_paginated(
+                customer_id=customer_id,
+                page=page,
+                limit=limit,
+                search_query=search_query or None,
+            )
             
             # Group by conversation
             history = [{
@@ -182,11 +199,18 @@ class ChatHistoryView(ConsentRequiredMixin, APIView):
                 'timestamp': i.timestamp.isoformat(),
                 'language': i.language
             } for i in reversed(interactions)]  # Oldest first
+            total_pages = max(1, math.ceil(total_messages / limit)) if total_messages else 1
+            has_more = page < total_pages
             
             return success_response(
                 data={
                     'history': history,
-                    'total': len(history)
+                    'total': len(history),  # Backward-compatible key
+                    'page': page,
+                    'limit': limit,
+                    'total_messages': total_messages,
+                    'total_pages': total_pages,
+                    'has_more': has_more,
                 },
                 message="Chat history retrieved successfully"
             )
@@ -414,4 +438,3 @@ class FAQsView(APIView):
             data={'faqs': faqs, 'total': len(faqs)},
             message="FAQs retrieved"
         )
-

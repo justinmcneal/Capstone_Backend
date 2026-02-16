@@ -2,6 +2,8 @@
 AIInteraction Model for storing chat history.
 """
 from datetime import datetime
+import re
+
 from bson import ObjectId
 from django.conf import settings
 
@@ -102,11 +104,48 @@ class AIInteraction:
     @classmethod
     def find_by_customer(cls, customer_id, limit=50):
         """Get chat history for a customer"""
-        return cls.find(
-            {'customer_id': str(customer_id)},
-            sort=[('timestamp', -1)],
-            limit=limit
+        interactions, _ = cls.find_by_customer_paginated(
+            customer_id=customer_id,
+            page=1,
+            limit=limit,
         )
+        return interactions
+
+    @classmethod
+    def find_by_customer_paginated(
+        cls,
+        customer_id,
+        page=1,
+        limit=50,
+        search_query=None,
+    ):
+        """Get paginated chat history for a customer with optional search."""
+        db = get_db()
+        collection = db[cls.collection_name]
+
+        page = max(1, int(page))
+        limit = max(1, int(limit))
+
+        query = {'customer_id': str(customer_id)}
+        if search_query:
+            escaped_query = re.escape(search_query)
+            query['$or'] = [
+                {'message': {'$regex': escaped_query, '$options': 'i'}},
+                {'response': {'$regex': escaped_query, '$options': 'i'}},
+            ]
+
+        total_count = collection.count_documents(query)
+        skip = (page - 1) * limit
+
+        cursor = (
+            collection.find(query)
+            .sort([('timestamp', -1)])
+            .skip(skip)
+            .limit(limit)
+        )
+
+        interactions = [cls.from_dict(doc) for doc in cursor]
+        return interactions, total_count
     
     @classmethod
     def find_by_conversation(cls, conversation_id):
