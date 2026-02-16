@@ -1004,7 +1004,7 @@ class ActiveLoansView(LoanOfficerRequiredMixin, APIView):
     GET /api/loans/officer/active-loans/
     
     Query params:
-        - search: Search by customer name, phone, or ID
+        - search: Search by customer name, phone, customer ID, or loan/application ID
         - customer_id: Filter by specific customer ID
     """
     authentication_classes = [CustomJWTAuthentication]
@@ -1021,7 +1021,8 @@ class ActiveLoansView(LoanOfficerRequiredMixin, APIView):
         search = request.query_params.get('search', '').strip()
         customer_id_filter = request.query_params.get('customer_id', '')
         
-        # Build customer query
+        # Build customer query and support direct ID lookups
+        direct_schedules = []
         if customer_id_filter:
             # Direct customer ID filter - query by _id
             try:
@@ -1041,6 +1042,19 @@ class ActiveLoansView(LoanOfficerRequiredMixin, APIView):
                     {'email': regex}
                 ]
             })[:20]  # Limit to 20 results
+
+            # Exact customer ID lookup (MongoDB ObjectId string)
+            if ObjectId.is_valid(search):
+                customer_by_id = Customer.find_one({'_id': ObjectId(search)})
+                if customer_by_id and not any(
+                    c and c.id == customer_by_id.id for c in customers
+                ):
+                    customers.append(customer_by_id)
+
+            # Exact loan/application ID lookup
+            schedule_by_loan_id = RepaymentSchedule.find_by_loan(search)
+            if schedule_by_loan_id:
+                direct_schedules.append(schedule_by_loan_id)
         else:
             # Return empty if no search criteria
             return success_response(
@@ -1048,8 +1062,46 @@ class ActiveLoansView(LoanOfficerRequiredMixin, APIView):
                 message="Provide search term or customer_id"
             )
         
-        # Get loans for these customers
+        # Get loans for these customers + directly matched loan IDs
         loans_data = []
+        customer_cache = {
+            c.id: c for c in customers if c and c.id
+        }
+        seen_schedule_ids = set()
+
+        def append_schedule(schedule, customer):
+            if not schedule or not customer:
+                return
+            if schedule.id in seen_schedule_ids:
+                return
+            seen_schedule_ids.add(schedule.id)
+
+            # Get application for product info
+            app = LoanApplication.find_by_id(schedule.loan_id)
+            product = None
+            if app:
+                product = LoanProduct.find_by_id(app.product_id)
+
+            # Get next payment due
+            next_payment = schedule.get_next_payment()
+
+            loans_data.append({
+                'loan_id': schedule.loan_id,
+                'schedule_id': schedule.id,
+                'customer_id': customer.id,
+                'customer_name': f"{customer.first_name} {customer.last_name}",
+                'customer_phone': getattr(customer, 'phone', None),
+                'product_name': product.name if product else 'Unknown',
+                'disbursed_amount': schedule.principal,
+                'monthly_payment': schedule.monthly_payment,
+                'remaining_balance': schedule.get_remaining_balance(),
+                'paid_installments': schedule.get_paid_count(),
+                'total_installments': schedule.term_months,
+                'next_due_installment': next_payment['number'] if next_payment else None,
+                'next_due_date': next_payment['due_date'].isoformat() if next_payment and next_payment.get('due_date') else None,
+                'next_due_amount': next_payment['total_amount'] if next_payment else None
+            })
+
         for customer in customers:
             if not customer:
                 continue
@@ -1058,34 +1110,21 @@ class ActiveLoansView(LoanOfficerRequiredMixin, APIView):
             schedules = RepaymentSchedule.find_by_customer(customer.id)
             
             for schedule in schedules:
-                if not schedule:
-                    continue
-                
-                # Get application for product info
-                app = LoanApplication.find_by_id(schedule.loan_id)
-                product = None
-                if app:
-                    product = LoanProduct.find_by_id(app.product_id)
-                
-                # Get next payment due
-                next_payment = schedule.get_next_payment()
-                
-                loans_data.append({
-                    'loan_id': schedule.loan_id,
-                    'schedule_id': schedule.id,
-                    'customer_id': customer.id,
-                    'customer_name': f"{customer.first_name} {customer.last_name}",
-                    'customer_phone': getattr(customer, 'phone', None),
-                    'product_name': product.name if product else 'Unknown',
-                    'disbursed_amount': schedule.principal,
-                    'monthly_payment': schedule.monthly_payment,
-                    'remaining_balance': schedule.get_remaining_balance(),
-                    'paid_installments': schedule.get_paid_count(),
-                    'total_installments': schedule.term_months,
-                    'next_due_installment': next_payment['number'] if next_payment else None,
-                    'next_due_date': next_payment['due_date'].isoformat() if next_payment and next_payment.get('due_date') else None,
-                    'next_due_amount': next_payment['total_amount'] if next_payment else None
-                })
+                append_schedule(schedule, customer)
+
+        # Add schedules found via direct loan/application ID lookup
+        for schedule in direct_schedules:
+            if not schedule or not schedule.customer_id:
+                continue
+            customer = customer_cache.get(schedule.customer_id)
+            if not customer:
+                try:
+                    customer = Customer.find_one({'_id': ObjectId(schedule.customer_id)})
+                except Exception:
+                    customer = None
+                if customer:
+                    customer_cache[schedule.customer_id] = customer
+            append_schedule(schedule, customer)
         
         return success_response(
             data={'loans': loans_data, 'total': len(loans_data)},
