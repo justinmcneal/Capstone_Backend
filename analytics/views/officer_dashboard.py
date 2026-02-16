@@ -53,7 +53,7 @@ class OfficerDashboardView(LoanOfficerRequiredMixin, APIView):
         # My reviews - applications I've reviewed
         my_approved = db['loan_applications'].count_documents({
             'assigned_officer': str(officer_id),
-            'status': 'approved'
+            'status': {'$in': ['approved', 'disbursed']}
         })
         my_rejected = db['loan_applications'].count_documents({
             'assigned_officer': str(officer_id),
@@ -63,7 +63,7 @@ class OfficerDashboardView(LoanOfficerRequiredMixin, APIView):
         # Reviews today
         approved_today = db['loan_applications'].count_documents({
             'assigned_officer': str(officer_id),
-            'status': 'approved',
+            'status': {'$in': ['approved', 'disbursed']},
             'decision_date': {'$gte': today}
         })
         rejected_today = db['loan_applications'].count_documents({
