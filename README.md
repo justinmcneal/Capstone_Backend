@@ -27,7 +27,7 @@ cp .env.example .env
 python init_db.py
 
 # 6. Run server
-python manage.py runserver
+python manage.py runserver 0.0.0.0:8000
 ```
 
 API available at: `http://localhost:8000/`
