@@ -158,6 +158,7 @@ class AuditLog:
         action=None,
         action_group=None,
         user_id=None,
+        user_type=None,
         date_from=None,
         date_to=None,
         limit=100,
@@ -186,6 +187,10 @@ class AuditLog:
         # User filter
         if user_id:
             query['user_id'] = str(user_id).strip()
+
+        # Role filter
+        if user_type:
+            query['user_type'] = str(user_type).strip()
         
         # Date range filter
         if date_from or date_to:

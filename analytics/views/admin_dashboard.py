@@ -153,6 +153,7 @@ class AuditLogsView(AdminRequiredMixin, APIView):
         action_filter = request.query_params.get('action')
         action_group = request.query_params.get('action_group')
         user_id = request.query_params.get('user_id')
+        user_type = request.query_params.get('user_type')
         date_from = request.query_params.get('date_from')
         date_to = request.query_params.get('date_to')
         search = request.query_params.get('search', '').strip()
@@ -162,6 +163,7 @@ class AuditLogsView(AdminRequiredMixin, APIView):
             action=action_filter,
             action_group=action_group,
             user_id=user_id,
+            user_type=user_type,
             date_from=date_from,
             date_to=date_to,
             limit=10000
