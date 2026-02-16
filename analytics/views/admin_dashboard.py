@@ -5,6 +5,7 @@ from rest_framework.views import APIView
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
 from datetime import datetime, timedelta
+from bson import ObjectId
 
 from accounts.authentication import CustomJWTAuthentication
 from accounts.utils.response_helpers import success_response, error_response
@@ -115,18 +116,43 @@ class AuditLogsView(AdminRequiredMixin, APIView):
     
     GET /api/analytics/audit-logs/
     """
+    required_permissions = ['view_logs']
     authentication_classes = [CustomJWTAuthentication]
     permission_classes = [IsAuthenticated]
     
     def get(self, request):
         import re
+
+        has_permission, result = self.check_admin_permission(request)
+        if not has_permission:
+            return result
+
+        def serialize_details(value):
+            """Ensure details payload is JSON-serializable."""
+            if isinstance(value, datetime):
+                return value.isoformat()
+            if isinstance(value, ObjectId):
+                return str(value)
+            if isinstance(value, dict):
+                return {k: serialize_details(v) for k, v in value.items()}
+            if isinstance(value, list):
+                return [serialize_details(v) for v in value]
+            return value
         
         # Pagination parameters
-        page = int(request.query_params.get('page', 1))
-        page_size = min(int(request.query_params.get('page_size', 20)), 200)
+        try:
+            page = max(int(request.query_params.get('page', 1)), 1)
+        except (TypeError, ValueError):
+            page = 1
+        try:
+            page_size = min(max(int(request.query_params.get('page_size', 20)), 1), 200)
+        except (TypeError, ValueError):
+            page_size = 20
         
         # Filter parameters
         action_filter = request.query_params.get('action')
+        action_group = request.query_params.get('action_group')
+        user_id = request.query_params.get('user_id')
         date_from = request.query_params.get('date_from')
         date_to = request.query_params.get('date_to')
         search = request.query_params.get('search', '').strip()
@@ -134,19 +160,23 @@ class AuditLogsView(AdminRequiredMixin, APIView):
         # Get all logs with filters (no limit to get accurate total)
         logs = AuditLog.find_with_filters(
             action=action_filter,
+            action_group=action_group,
+            user_id=user_id,
             date_from=date_from,
             date_to=date_to,
-            limit=10000  # Limit to 10000 as it was having an error
+            limit=10000
         )
         
-        # Filter by search term (description, user_email, action)
+        # Filter by search term (description, user_email, action, user_id, user_type)
         if search:
             search_regex = re.compile(re.escape(search), re.IGNORECASE)
             logs = [
                 log for log in logs
                 if search_regex.search(log.description or '') or
                    search_regex.search(log.user_email or '') or
-                   search_regex.search(log.action or '')
+                   search_regex.search(log.action or '') or
+                   search_regex.search(log.user_id or '') or
+                   search_regex.search(log.user_type or '')
             ]
         
         # Get total before pagination
@@ -161,10 +191,12 @@ class AuditLogsView(AdminRequiredMixin, APIView):
             'id': log.id,
             'user_id': log.user_id,
             'user_type': log.user_type,
+            'user_email': log.user_email,
             'action': log.action,
             'description': log.description,
             'resource_type': log.resource_type,
             'resource_id': log.resource_id,
+            'details': serialize_details(log.details or {}),
             'ip_address': log.ip_address,
             'timestamp': log.timestamp.isoformat()
         } for log in paginated_logs]
@@ -178,4 +210,139 @@ class AuditLogsView(AdminRequiredMixin, APIView):
                 'total_pages': (total + page_size - 1) // page_size if total > 0 else 1
             },
             message="Audit logs retrieved"
+        )
+
+
+class AuditLogUsersView(AdminRequiredMixin, APIView):
+    """
+    List users present in audit logs for user-based filtering.
+
+    GET /api/analytics/audit-logs/users/
+    """
+    required_permissions = ['view_logs']
+    authentication_classes = [CustomJWTAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        from django.conf import settings
+
+        has_permission, result = self.check_admin_permission(request)
+        if not has_permission:
+            return result
+
+        search = request.query_params.get('search', '').strip()
+        try:
+            limit = min(max(int(request.query_params.get('limit', 200)), 1), 500)
+        except (TypeError, ValueError):
+            limit = 200
+
+        collection = settings.MONGODB['audit_logs']
+        match_stage = {'user_id': {'$nin': [None, '']}}
+        if search:
+            regex = {'$regex': search, '$options': 'i'}
+            match_stage['$or'] = [
+                {'user_email': regex},
+                {'user_type': regex},
+                {'user_id': regex},
+            ]
+
+        pipeline = [
+            {'$match': match_stage},
+            {'$sort': {'timestamp': -1}},
+            {
+                '$group': {
+                    '_id': '$user_id',
+                    'user_id': {'$first': '$user_id'},
+                    'user_type': {'$first': '$user_type'},
+                    'user_email': {'$first': '$user_email'},
+                    'latest_timestamp': {'$first': '$timestamp'},
+                }
+            },
+            {'$sort': {'latest_timestamp': -1}},
+            {'$limit': limit},
+        ]
+
+        users = []
+        for doc in collection.aggregate(pipeline):
+            user_id = doc.get('user_id')
+            user_type = doc.get('user_type') or 'unknown'
+            user_email = doc.get('user_email') or ''
+            short_id = f"{user_id[:8]}..." if isinstance(user_id, str) else ''
+            label = (
+                f"{user_email} ({user_type})"
+                if user_email
+                else f"{user_type} ({short_id})"
+            )
+            users.append({
+                'user_id': user_id,
+                'user_type': user_type,
+                'user_email': user_email,
+                'label': label,
+            })
+
+        return success_response(
+            data={'users': users},
+            message="Audit log users retrieved",
+        )
+
+
+class AuditLogDetailView(AdminRequiredMixin, APIView):
+    """
+    Get full detail for a specific audit log entry.
+
+    GET /api/analytics/audit-logs/<log_id>/
+    """
+    required_permissions = ['view_logs']
+    authentication_classes = [CustomJWTAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, log_id):
+        from django.conf import settings
+
+        has_permission, result = self.check_admin_permission(request)
+        if not has_permission:
+            return result
+
+        def serialize_details(value):
+            if isinstance(value, datetime):
+                return value.isoformat()
+            if isinstance(value, ObjectId):
+                return str(value)
+            if isinstance(value, dict):
+                return {k: serialize_details(v) for k, v in value.items()}
+            if isinstance(value, list):
+                return [serialize_details(v) for v in value]
+            return value
+
+        try:
+            oid = ObjectId(log_id)
+        except Exception:
+            return error_response(
+                message="Invalid log ID",
+                status_code=status.HTTP_400_BAD_REQUEST,
+            )
+
+        doc = settings.MONGODB['audit_logs'].find_one({'_id': oid})
+        if not doc:
+            return error_response(
+                message="Audit log not found",
+                status_code=status.HTTP_404_NOT_FOUND,
+            )
+
+        log = AuditLog.from_dict(doc)
+        return success_response(
+            data={
+                'id': log.id,
+                'user_id': log.user_id,
+                'user_type': log.user_type,
+                'user_email': log.user_email,
+                'action': log.action,
+                'description': log.description,
+                'resource_type': log.resource_type,
+                'resource_id': log.resource_id,
+                'details': serialize_details(log.details or {}),
+                'ip_address': log.ip_address,
+                'timestamp': log.timestamp.isoformat() if log.timestamp else None,
+            },
+            message="Audit log detail retrieved",
         )
