@@ -16,15 +16,13 @@ class AdminCreateSerializer(serializers.Serializer):
     )
     first_name = serializers.CharField(
         max_length=50,
-        required=False,
-        default='',
-        allow_blank=True
+        required=True,
+        allow_blank=False
     )
     last_name = serializers.CharField(
         max_length=50,
-        required=False,
-        default='',
-        allow_blank=True
+        required=True,
+        allow_blank=False
     )
     super_admin = serializers.BooleanField(
         required=False,
@@ -51,7 +49,7 @@ class AdminCreateSerializer(serializers.Serializer):
         is_valid, error_msg, normalized = validate_person_name(
             value,
             field_name="First name",
-            allow_blank=True
+            max_length=50
         )
         if not is_valid:
             raise serializers.ValidationError(error_msg)
@@ -61,7 +59,7 @@ class AdminCreateSerializer(serializers.Serializer):
         is_valid, error_msg, normalized = validate_person_name(
             value,
             field_name="Last name",
-            allow_blank=True
+            max_length=50
         )
         if not is_valid:
             raise serializers.ValidationError(error_msg)
@@ -80,15 +78,15 @@ class AdminCreateSerializer(serializers.Serializer):
 
 class AdminUpdateSerializer(serializers.Serializer):
     """Serializer for updating admin details"""
-    first_name = serializers.CharField(max_length=50, required=False, allow_blank=True)
-    last_name = serializers.CharField(max_length=50, required=False, allow_blank=True)
+    first_name = serializers.CharField(max_length=50, required=False, allow_blank=False)
+    last_name = serializers.CharField(max_length=50, required=False, allow_blank=False)
     active = serializers.BooleanField(required=False)
 
     def validate_first_name(self, value):
         is_valid, error_msg, normalized = validate_person_name(
             value,
             field_name="First name",
-            allow_blank=True
+            max_length=50
         )
         if not is_valid:
             raise serializers.ValidationError(error_msg)
@@ -98,7 +96,7 @@ class AdminUpdateSerializer(serializers.Serializer):
         is_valid, error_msg, normalized = validate_person_name(
             value,
             field_name="Last name",
-            allow_blank=True
+            max_length=50
         )
         if not is_valid:
             raise serializers.ValidationError(error_msg)

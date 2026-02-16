@@ -12,7 +12,7 @@ def normalize_text(value):
     return " ".join(str(value).strip().split())
 
 
-def validate_person_name(value, field_name="Name", allow_blank=False):
+def validate_person_name(value, field_name="Name", allow_blank=False, max_length=None):
     """
     Validate a person-name input.
 
@@ -25,6 +25,9 @@ def validate_person_name(value, field_name="Name", allow_blank=False):
         if allow_blank:
             return True, None, normalized
         return False, f"{field_name} is required", normalized
+
+    if max_length is not None and len(normalized) > max_length:
+        return False, f"{field_name} must be at most {max_length} characters", normalized
 
     if not _PERSON_NAME_PATTERN.fullmatch(normalized):
         return (
