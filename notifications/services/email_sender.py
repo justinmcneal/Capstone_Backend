@@ -272,9 +272,18 @@ class EmailSender:
             notification=notification
         )
     
-    def send_new_application_alert(self, officer_email, officer_name, customer_name, loan_id, amount):
+    def send_new_application_alert(
+        self,
+        officer_email,
+        officer_name,
+        customer_name,
+        loan_id,
+        amount,
+        officer_user_id=None,
+    ):
         """Send new application alert to loan officer"""
         notification = Notification(
+            user_id=str(officer_user_id) if officer_user_id else None,
             recipient_email=officer_email,
             recipient_name=officer_name,
             notification_type='new_application',
