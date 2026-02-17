@@ -34,19 +34,33 @@ class DocumentAnalyzer:
     def __init__(self):
         self.model = None
         self.model_loaded = False
+        self.class_names = None  # Loaded from model_config.json
         self._try_load_model()
     
     def _try_load_model(self):
         """Try to load trained CNN model if available"""
-        model_path = Path(__file__).parent.parent / 'ml' / 'models' / 'document_classifier.pth'
+        model_dir = Path(__file__).parent.parent / 'ml' / 'models'
+        model_path = model_dir / 'document_classifier.pth'
+        config_path = model_dir / 'model_config.json'
         
         if model_path.exists():
             try:
+                import json
                 import torch
-                from .cnn_model import DocumentClassifier
+                from .cnn_model import DocumentClassifier, DOCUMENT_CLASSES
                 
-                self.model = DocumentClassifier()
-                self.model.load_state_dict(torch.load(model_path, map_location='cpu'))
+                # Load class mapping from config (saved during training)
+                if config_path.exists():
+                    with open(config_path, 'r') as f:
+                        config = json.load(f)
+                    self.class_names = config.get('classes', DOCUMENT_CLASSES)
+                    logger.info(f"Loaded class mapping from config: {self.class_names}")
+                else:
+                    self.class_names = DOCUMENT_CLASSES
+                    logger.warning("No model_config.json found, using default DOCUMENT_CLASSES")
+                
+                self.model = DocumentClassifier(num_classes=len(self.class_names))
+                self.model.load_state_dict(torch.load(model_path, map_location='cpu', weights_only=True))
                 self.model.eval()
                 self.model_loaded = True
                 logger.info("CNN model loaded successfully")
@@ -200,7 +214,6 @@ class DocumentAnalyzer:
         try:
             import torch
             from torchvision import transforms
-            from .cnn_model import DOCUMENT_CLASSES  # Use single source of truth
             
             # Preprocess
             transform = transforms.Compose([
@@ -218,9 +231,15 @@ class DocumentAnalyzer:
                 probabilities = torch.softmax(outputs, dim=1)
                 confidence, predicted = torch.max(probabilities, 1)
             
-            # Get class name from centralized constant
+            # Map index → class name using config loaded at init
+            predicted_idx = predicted.item()
+            if self.class_names and 0 <= predicted_idx < len(self.class_names):
+                predicted_name = self.class_names[predicted_idx]
+            else:
+                predicted_name = 'unknown'
+            
             return {
-                'predicted_type': DOCUMENT_CLASSES[predicted.item()],
+                'predicted_type': predicted_name,
                 'type_confidence': confidence.item()
             }
             

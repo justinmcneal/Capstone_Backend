@@ -1,16 +1,25 @@
 {
   "classes": [
-    "valid_id",
-    "selfie_with_id",
     "business_permit",
-    "proof_of_address",
     "business_photo",
     "income_proof",
-    "invalid"
+    "invalid",
+    "proof_of_address",
+    "selfie_with_id",
+    "valid_id"
   ],
+  "class_to_idx": {
+    "business_permit": 0,
+    "business_photo": 1,
+    "income_proof": 2,
+    "invalid": 3,
+    "proof_of_address": 4,
+    "selfie_with_id": 5,
+    "valid_id": 6
+  },
   "num_classes": 7,
-  "best_val_accuracy": 88.23529411764706,
-  "epochs_trained": 25,
+  "best_val_accuracy": 100.0,
+  "epochs_trained": 10,
   "model_type": "MobileNetV2",
   "input_size": [
     224,
