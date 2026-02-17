@@ -149,12 +149,17 @@ def qualify_customer(customer_id, product, requested_amount, term_months, purpos
     if not llm.is_available():
         # Fallback to rule-based if AI unavailable
         return rule_based_qualification(data, product, requested_amount)
-    
+        
     result = llm.chat(message=prompt, language='en')
     
     if not result['success']:
         logger.error(f"AI qualification failed: {result.get('error')}")
-        return rule_based_qualification(data, product, requested_amount)
+        return rule_based_qualification(
+            data,
+            product,
+            requested_amount,
+            requirements_scope=scope,
+        )
     
     # Parse AI response (extract JSON)
     try:
@@ -165,17 +170,32 @@ def qualify_customer(customer_id, product, requested_amount, term_months, purpos
         end = response_text.rfind('}') + 1
         if start >= 0 and end > start:
             json_str = response_text[start:end]
-            return json.loads(json_str)
+            parsed = json.loads(json_str)
+            parsed['can_apply'] = parsed.get('can_apply', parsed.get('eligible', False))
+            parsed['required_documents_resolved'] = required_doc_types
+            parsed['requirements_scope'] = scope
+            return parsed
     except Exception as e:
         logger.error(f"Failed to parse AI response: {e}")
     
-    return rule_based_qualification(data, product, requested_amount)
+    return rule_based_qualification(
+        data,
+        product,
+        requested_amount,
+        requirements_scope=scope,
+    )
 
 
-def rule_based_qualification(data, product, requested_amount):
+def rule_based_qualification(
+    data,
+    product,
+    requested_amount,
+    requirements_scope='product',
+):
     """
     Fallback rule-based qualification when AI is unavailable.
     """
+    scope = _normalize_scope(requirements_scope)
     score = 50  # Base score
     concerns = []
     strengths = []
@@ -209,11 +229,17 @@ def rule_based_qualification(data, product, requested_amount):
         missing.append("Business profile not complete")
     
     # Check documents
-    doc_types = [d.document_type for d in docs]
-    for req_doc in product.required_documents:
+    doc_types = set()
+    for doc in docs:
+        canonical_type = canonicalize_document_type(doc.document_type)
+        if canonical_type:
+            doc_types.add(canonical_type)
+    required_doc_types = []
+    for req_doc in required_doc_types:
+        label = document_type_label(req_doc)
         if req_doc not in doc_types:
             score -= 5
-            missing.append(f"Missing: {req_doc}")
+            missing.append(f"Missing: {label}")
         else:
             score += 5
     
@@ -258,11 +284,14 @@ def rule_based_qualification(data, product, requested_amount):
         'reasoning': 'Rule-based assessment (AI unavailable)',
         'strengths': strengths,
         'concerns': concerns,
-        'missing_requirements': missing
+        'missing_requirements': missing,
+        'can_apply': eligible,
+        'required_documents_resolved': required_doc_types,
+        'requirements_scope': scope,
     }
 
 
-def check_basic_eligibility(customer_id, product):
+def check_basic_eligibility(customer_id, product, requirements_scope='product'):
     """
     Quick check for basic eligibility before full qualification.
     
@@ -272,6 +301,7 @@ def check_basic_eligibility(customer_id, product):
     3. Alternative data must exist
     4. All required documents must be uploaded AND APPROVED
     """
+    scope = _normalize_scope(requirements_scope)
     data = get_customer_data(customer_id)
     missing = []
     
@@ -299,36 +329,40 @@ def check_basic_eligibility(customer_id, product):
     # Check required documents - must be APPROVED, not just uploaded
     documents = data.get('documents', [])
     
-    # If product has no required_documents specified, use default set
-    required_doc_types = product.required_documents if product.required_documents else [
-        'valid_id',
-        'proof_of_income',
-        'business_registration'
-    ]
+    required_doc_types = []
+
+    latest_documents_by_type = {}
+    for doc in documents:
+        canonical_type = canonicalize_document_type(doc.document_type)
+        if not canonical_type:
+            continue
+        if canonical_type not in latest_documents_by_type:
+            latest_documents_by_type[canonical_type] = doc
     
     for req_doc in required_doc_types:
+        label = document_type_label(req_doc)
         # Find document of this type
-        doc_found = None
-        for d in documents:
-            if d.document_type == req_doc:
-                doc_found = d
-                break
+        doc_found = latest_documents_by_type.get(req_doc)
         
         if not doc_found:
-            missing.append(f'Document required: {req_doc}')
+            missing.append(f'Document required: {label}')
         elif doc_found.status != 'approved':
             # Document exists but not approved
-            if doc_found.status == 'pending':
-                missing.append(f'Document pending verification: {req_doc}')
+            if doc_found.reupload_requested:
+                missing.append(f'Document re-upload requested: {label}')
+            elif doc_found.status in ['pending', 'needs_review']:
+                missing.append(f'Document pending verification: {label}')
             elif doc_found.status == 'rejected':
-                missing.append(f'Document rejected, please re-upload: {req_doc}')
-            elif doc_found.reupload_requested:
-                missing.append(f'Document re-upload requested: {req_doc}')
+                missing.append(f'Document rejected, please re-upload: {label}')
             else:
-                missing.append(f'Document not yet approved: {req_doc}')
+                missing.append(f'Document not yet approved: {label}')
     
     return {
         'can_apply': len(missing) == 0,
-        'missing_requirements': missing
+        'missing_requirements': missing,
+        'required_documents_resolved': required_doc_types,
+        'requirements_scope': scope,
+        'required_documents_labels': {
+            doc: document_type_label(doc) for doc in required_doc_types
+        },
     }
-

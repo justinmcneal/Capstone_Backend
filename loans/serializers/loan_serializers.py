@@ -42,7 +42,7 @@ class LoanProductSerializer(serializers.Serializer):
         max_term = data.get('max_term_months', 0)
         if min_term > max_term:
             errors['max_term_months'] = "Maximum term must be greater than or equal to minimum term"
-        
+            
         if errors:
             raise serializers.ValidationError(errors)
         

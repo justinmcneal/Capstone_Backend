@@ -356,7 +356,9 @@ class ProfileSummaryView(APIView):
             # Calculate document status
             total_docs = len(documents)
             approved_docs = len([d for d in documents if d.status == 'approved'])
-            pending_docs = len([d for d in documents if d.status == 'pending'])
+            pending_docs = len([
+                d for d in documents if d.status in ['pending', 'needs_review']
+            ])
             rejected_docs = len([d for d in documents if d.status == 'rejected'])
             reupload_requested_docs = len([d for d in documents if d.reupload_requested])
             

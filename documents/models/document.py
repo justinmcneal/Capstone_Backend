@@ -171,6 +171,45 @@ class Document:
         return False
     
     @classmethod
+    def _customer_id_candidates(cls, customer_id):
+        """Return customer_id candidates covering both ObjectId and string storage."""
+        if customer_id is None:
+            return []
+
+        candidates = []
+
+        if isinstance(customer_id, ObjectId):
+            candidates.append(customer_id)
+            candidates.append(str(customer_id))
+        else:
+            customer_id_str = str(customer_id)
+            candidates.append(customer_id_str)
+            try:
+                candidates.insert(0, ObjectId(customer_id_str))
+            except Exception:
+                pass
+
+        deduped = []
+        seen = set()
+        for value in candidates:
+            marker = (type(value).__name__, str(value))
+            if marker in seen:
+                continue
+            seen.add(marker)
+            deduped.append(value)
+        return deduped
+
+    @classmethod
+    def _customer_query(cls, customer_id):
+        """Build a Mongo query that matches both legacy and current ID shapes."""
+        candidates = cls._customer_id_candidates(customer_id)
+        if not candidates:
+            return {'customer_id': customer_id}
+        if len(candidates) == 1:
+            return {'customer_id': candidates[0]}
+        return {'customer_id': {'$in': candidates}}
+
+    @classmethod
     def find_one(cls, query):
         db = get_db()
         collection = db[cls.collection_name]
@@ -189,13 +228,7 @@ class Document:
     @classmethod
     def find_by_customer(cls, customer_id, document_type=None):
         """Find all documents for a customer, optionally filtered by type"""
-        # Convert string customer_id to ObjectId for querying
-        try:
-            customer_id = ObjectId(customer_id)
-        except:
-            pass  # If conversion fails, use as-is
-        
-        query = {'customer_id': customer_id}
+        query = cls._customer_query(customer_id)
         if document_type:
             query['document_type'] = document_type
         return cls.find(query, sort=[('uploaded_at', -1)])
@@ -203,15 +236,9 @@ class Document:
     @classmethod
     def count_by_customer(cls, customer_id, document_type=None):
         """Count documents for a customer"""
-        # Convert string customer_id to ObjectId for querying
-        try:
-            customer_id = ObjectId(customer_id)
-        except:
-            pass  # If conversion fails, use as-is
-        
         db = get_db()
         collection = db[cls.collection_name]
-        query = {'customer_id': customer_id}
+        query = cls._customer_query(customer_id)
         if document_type:
             query['document_type'] = document_type
         return collection.count_documents(query)
