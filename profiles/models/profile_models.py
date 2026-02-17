@@ -16,6 +16,53 @@ def get_db():
     return settings.MONGODB
 
 
+def _customer_id_candidates(customer_id):
+    """Return both ObjectId and string forms for robust customer lookups."""
+    if customer_id is None:
+        return []
+
+    candidates = []
+    if isinstance(customer_id, ObjectId):
+        candidates.append(customer_id)
+        candidates.append(str(customer_id))
+    else:
+        customer_id_str = str(customer_id)
+        candidates.append(customer_id_str)
+        try:
+            candidates.insert(0, ObjectId(customer_id_str))
+        except Exception:
+            pass
+
+    deduped = []
+    seen = set()
+    for value in candidates:
+        marker = (type(value).__name__, str(value))
+        if marker in seen:
+            continue
+        seen.add(marker)
+        deduped.append(value)
+
+    return deduped
+
+
+def _customer_lookup_query(customer_id):
+    candidates = _customer_id_candidates(customer_id)
+    if not candidates:
+        return {'customer_id': customer_id}
+    if len(candidates) == 1:
+        return {'customer_id': candidates[0]}
+    return {'customer_id': {'$in': candidates}}
+
+
+def _find_latest_by_customer(collection_name, customer_id):
+    """Fetch the most recently updated profile among mixed customer_id shapes."""
+    db = get_db()
+    collection = db[collection_name]
+    query = _customer_lookup_query(customer_id)
+    doc = collection.find_one(query, sort=[('updated_at', -1), ('created_at', -1)])
+    return doc
+
+
 # Business Type Options
 BUSINESS_TYPES = [
     'sari_sari_store',      # Sari-sari store
@@ -172,20 +219,13 @@ class CustomerProfile:
     
     @classmethod
     def find_by_customer(cls, customer_id):
-        try:
-            # Convert to ObjectId for query if it's a string
-            from bson import ObjectId
-            if isinstance(customer_id, str):
-                customer_id = ObjectId(customer_id)
-        except:
-            pass  # If conversion fails, try as string
-        return cls.find_one({'customer_id': customer_id})
+        return cls.from_dict(_find_latest_by_customer(cls.collection_name, customer_id))
     
     @classmethod
     def get_or_create(cls, customer_id):
         profile = cls.find_by_customer(customer_id)
         if not profile:
-            profile = cls(customer_id=ObjectId(customer_id) if isinstance(customer_id, str) else customer_id)
+            profile = cls(customer_id=str(customer_id))
             profile.save()
         return profile
 
@@ -288,20 +328,13 @@ class BusinessProfile:
     
     @classmethod
     def find_by_customer(cls, customer_id):
-        try:
-            # Convert to ObjectId for query if it's a string
-            from bson import ObjectId
-            if isinstance(customer_id, str):
-                customer_id = ObjectId(customer_id)
-        except:
-            pass  # If conversion fails, try as string
-        return cls.find_one({'customer_id': customer_id})
+        return cls.from_dict(_find_latest_by_customer(cls.collection_name, customer_id))
     
     @classmethod
     def get_or_create(cls, customer_id):
         profile = cls.find_by_customer(customer_id)
         if not profile:
-            profile = cls(customer_id=ObjectId(customer_id) if isinstance(customer_id, str) else customer_id)
+            profile = cls(customer_id=str(customer_id))
             profile.save()
         return profile
 
@@ -428,20 +461,13 @@ class AlternativeData:
     
     @classmethod
     def find_by_customer(cls, customer_id):
-        try:
-            # Convert to ObjectId for query if it's a string
-            from bson import ObjectId
-            if isinstance(customer_id, str):
-                customer_id = ObjectId(customer_id)
-        except:
-            pass  # If conversion fails, try as string
-        return cls.find_one({'customer_id': customer_id})
+        return cls.from_dict(_find_latest_by_customer(cls.collection_name, customer_id))
     
     @classmethod
     def get_or_create(cls, customer_id):
         profile = cls.find_by_customer(customer_id)
         if not profile:
-            profile = cls(customer_id=ObjectId(customer_id) if isinstance(customer_id, str) else customer_id)
+            profile = cls(customer_id=str(customer_id))
             profile.save()
         return profile
     
