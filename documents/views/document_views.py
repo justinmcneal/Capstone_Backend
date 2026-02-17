@@ -718,9 +718,11 @@ class DocumentTypesView(APIView):
     
     def get(self, request):
         """Get available document types with descriptions"""
+        from loans.services.qualification import resolve_required_document_types
+
         product_id = (request.query_params.get('product_id') or '').strip()
         requirement_source = 'baseline'
-        required_document_set = set()
+        required_document_set = set(resolve_required_document_types(None, 'baseline'))
 
         if product_id:
             from loans.models import LoanProduct
@@ -733,7 +735,9 @@ class DocumentTypesView(APIView):
                 )
 
             requirement_source = 'product'
-            required_document_set = set()
+            required_document_set = set(
+                resolve_required_document_types(product, 'product')
+            )
 
         types_info = []
         for doc_type in DOCUMENT_TYPES:
