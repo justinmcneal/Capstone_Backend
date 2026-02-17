@@ -2,8 +2,9 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.permissions import AllowAny, IsAuthenticated
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from bson import ObjectId
+from django.utils.dateparse import parse_datetime
 import secrets
 import string
 
@@ -22,6 +23,47 @@ def generate_temp_password(length=12):
     """Generate a secure temporary password"""
     alphabet = string.ascii_letters + string.digits + "!@#$%^&*"
     return ''.join(secrets.choice(alphabet) for _ in range(length))
+
+
+def _normalize_datetime(dt):
+    """Normalize datetime for safe equality checks (naive UTC)."""
+    if dt is None:
+        return None
+    if dt.tzinfo is not None:
+        return dt.astimezone(timezone.utc).replace(tzinfo=None)
+    return dt
+
+
+def _validate_last_known_updated_at(raw_value):
+    """
+    Validate optimistic concurrency timestamp from request.
+    Returns (parsed_datetime, error_response_or_none)
+    """
+    if not raw_value:
+        return None, None
+
+    parsed = parse_datetime(str(raw_value))
+    if parsed is None:
+        return None, error_response(
+            message="Invalid last_known_updated_at format",
+            errors={'last_known_updated_at': 'Use ISO-8601 datetime string'},
+            status_code=status.HTTP_400_BAD_REQUEST
+        )
+    return parsed, None
+
+
+def _build_stale_update_response(current_updated_at):
+    return error_response(
+        message="Record was updated by another user. Refresh and try again.",
+        code="stale_update",
+        errors={
+            'last_known_updated_at': 'Stale record version',
+            'current_updated_at': (
+                current_updated_at.isoformat() if current_updated_at else None
+            ),
+        },
+        status_code=status.HTTP_409_CONFLICT
+    )
 
 
 class AdminLoginView(APIView):
@@ -485,6 +527,7 @@ class LoanOfficerDetailView(AdminRequiredMixin, APIView):
                     'verified': officer.verified,
                     'two_factor_enabled': officer.two_factor_enabled,
                     'created_at': officer.created_at.isoformat() if officer.created_at else None,
+                    'updated_at': officer.updated_at.isoformat() if officer.updated_at else None,
                     'must_change_password': officer.must_change_password
                 },
                 message="Loan officer retrieved successfully"
@@ -513,6 +556,16 @@ class LoanOfficerDetailView(AdminRequiredMixin, APIView):
                     message="Loan officer not found",
                     status_code=status.HTTP_404_NOT_FOUND
                 )
+
+            client_updated_at_raw = request.data.get('last_known_updated_at')
+            client_updated_at, version_error = _validate_last_known_updated_at(client_updated_at_raw)
+            if version_error:
+                return version_error
+            if (
+                client_updated_at is not None and
+                _normalize_datetime(client_updated_at) != _normalize_datetime(officer.updated_at)
+            ):
+                return _build_stale_update_response(officer.updated_at)
             
             # Track changes for audit log
             changes = {}
@@ -568,7 +621,8 @@ class LoanOfficerDetailView(AdminRequiredMixin, APIView):
                     'email': officer.email,
                     'full_name': officer.full_name,
                     'department': officer.department,
-                    'active': officer.active
+                    'active': officer.active,
+                    'updated_at': officer.updated_at.isoformat() if officer.updated_at else None
                 },
                 message="Loan officer updated successfully"
             )
@@ -867,7 +921,8 @@ class AdminDetailView(SuperAdminRequiredMixin, APIView):
                     'permissions': target_admin.permissions if not target_admin.super_admin else ['*'],
                     'active': target_admin.active,
                     'two_factor_enabled': target_admin.two_factor_enabled,
-                    'created_at': target_admin.created_at.isoformat() if target_admin.created_at else None
+                    'created_at': target_admin.created_at.isoformat() if target_admin.created_at else None,
+                    'updated_at': target_admin.updated_at.isoformat() if target_admin.updated_at else None
                 },
                 message="Admin retrieved successfully"
             )
@@ -897,6 +952,16 @@ class AdminDetailView(SuperAdminRequiredMixin, APIView):
                     message="Admin not found",
                     status_code=status.HTTP_404_NOT_FOUND
                 )
+
+            client_updated_at_raw = request.data.get('last_known_updated_at')
+            client_updated_at, version_error = _validate_last_known_updated_at(client_updated_at_raw)
+            if version_error:
+                return version_error
+            if (
+                client_updated_at is not None and
+                _normalize_datetime(client_updated_at) != _normalize_datetime(target_admin.updated_at)
+            ):
+                return _build_stale_update_response(target_admin.updated_at)
             
             # Prevent self-deactivation
             if str(current_admin.id) == str(target_admin.id) and request.data.get('active') is False:
@@ -932,7 +997,8 @@ class AdminDetailView(SuperAdminRequiredMixin, APIView):
                     'username': target_admin.username,
                     'email': target_admin.email,
                     'full_name': target_admin.full_name,
-                    'active': target_admin.active
+                    'active': target_admin.active,
+                    'updated_at': target_admin.updated_at.isoformat() if target_admin.updated_at else None
                 },
                 message="Admin updated successfully"
             )
