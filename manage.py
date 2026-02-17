@@ -7,6 +7,12 @@ import sys
 def main():
     """Run administrative tasks."""
     os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'config.settings')
+
+    # Developer-friendly default: expose Django dev server to LAN devices
+    # when running `python manage.py runserver` without explicit host/port.
+    if len(sys.argv) == 2 and sys.argv[1] == 'runserver':
+        sys.argv.append('0.0.0.0:8000')
+
     try:
         from django.core.management import execute_from_command_line
     except ImportError as exc:
