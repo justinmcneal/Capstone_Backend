@@ -299,7 +299,14 @@ def check_basic_eligibility(customer_id, product):
     # Check required documents - must be APPROVED, not just uploaded
     documents = data.get('documents', [])
     
-    for req_doc in product.required_documents:
+    # If product has no required_documents specified, use default set
+    required_doc_types = product.required_documents if product.required_documents else [
+        'valid_id',
+        'proof_of_income',
+        'business_registration'
+    ]
+    
+    for req_doc in required_doc_types:
         # Find document of this type
         doc_found = None
         for d in documents:
