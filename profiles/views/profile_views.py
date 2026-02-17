@@ -358,6 +358,7 @@ class ProfileSummaryView(APIView):
             approved_docs = len([d for d in documents if d.status == 'approved'])
             pending_docs = len([d for d in documents if d.status == 'pending'])
             rejected_docs = len([d for d in documents if d.status == 'rejected'])
+            reupload_requested_docs = len([d for d in documents if d.reupload_requested])
             
             # Determine if all documents are approved
             # For ready_for_loan, we need at least some documents and all approved
@@ -365,10 +366,15 @@ class ProfileSummaryView(APIView):
             
             # Calculate overall readiness
             profiles_complete = personal_complete and business_complete and alternative_complete
-            sections_complete = sum([personal_complete, business_complete, alternative_complete])
-            overall_percentage = int((sections_complete / 3) * 100)
             
-            # Ready for loan requires: all 3 profiles complete + documents approved
+            # Documents section is complete when at least one document is approved
+            documents_complete = total_docs > 0 and approved_docs > 0
+            
+            # Count all 4 sections: Personal, Business, Alternative, Documents
+            sections_complete = sum([personal_complete, business_complete, alternative_complete, documents_complete])
+            overall_percentage = int((sections_complete / 4) * 100)
+            
+            # Ready for loan requires: all 3 profiles complete + ALL documents approved
             ready_for_loan = profiles_complete and documents_ready
             
             return success_response(
@@ -393,16 +399,21 @@ class ProfileSummaryView(APIView):
                         'approved': approved_docs,
                         'pending': pending_docs,
                         'rejected': rejected_docs,
+                        'reupload_requested': reupload_requested_docs,
                         'all_approved': documents_ready,
                         'has_documents': total_docs > 0
                     },
                     'overall': {
                         'profiles_complete': profiles_complete,
                         'sections_complete': sections_complete,
-                        'total_sections': 3,
+                        'total_sections': 4,
+                        'documents_complete': documents_complete,
                         'documents_verified': documents_ready,
                         'ready_for_loan': ready_for_loan,
                         'completion_percentage': overall_percentage,
+                        'completed_section_names': self._get_completed_section_names(
+                            personal_complete, business_complete, alternative_complete, documents_complete
+                        ),
                         'missing': [] if ready_for_loan else self._get_missing_items(
                             personal_complete, business_complete, alternative_complete, documents_ready, total_docs
                         )
@@ -431,6 +442,19 @@ class ProfileSummaryView(APIView):
         elif not documents_ready:
             missing.append('Wait for documents to be verified')
         return missing
+    
+    def _get_completed_section_names(self, personal_complete, business_complete, alternative_complete, documents_complete):
+        """Helper to generate list of completed section names"""
+        completed = []
+        if personal_complete:
+            completed.append('Personal Information')
+        if business_complete:
+            completed.append('Business Information')
+        if alternative_complete:
+            completed.append('Alternative Data')
+        if documents_complete:
+            completed.append('Documents')
+        return completed
 
 
 
