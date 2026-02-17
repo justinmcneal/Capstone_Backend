@@ -79,6 +79,19 @@ documents/ml/training_data/
 └── invalid/            # Negative samples — random photos, blurry docs, screenshots
 ```
 
+Holdout test folder (create this manually before training):
+
+```
+documents/ml/test_data/
+├── valid_id/
+├── selfie_with_id/
+├── business_permit/
+├── proof_of_address/
+├── business_photo/
+├── income_proof/
+└── invalid/
+```
+
 ---
 
 ## 3 · How Many Images Do I Need?
@@ -112,6 +125,21 @@ documents/ml/training_data/
 | **Test (holdout)** | 20 % | Never seen during training — final accuracy report |
 
 > The built-in training script uses an **80 / 20 train / val** split automatically. You should **manually set aside ~20 % of your images as a holdout test set** *before* training, so the model never learns from them.
+
+**Practical setup (required):**
+
+1. Keep ~80 % of each class in `documents/ml/training_data/`.
+2. Move ~20 % of each class to `documents/ml/test_data/` (holdout).
+3. Run training as usual:
+   ```bash
+   python manage.py train_document_classifier
+   ```
+4. After training, run final evaluation on holdout only:
+   ```bash
+   python scripts/test_cnn_model.py documents/ml/test_data --confusion
+   ```
+
+**Example:** If a class has 100 images, put 80 in `training_data/` and 20 in `test_data/`.
 
 ### 3.3 How Class Imbalance Changes the Requirement
 
@@ -257,7 +285,7 @@ documents/ml/models/*.json
 | **2** | Anonymization & validation | `scripts/anonymize_images.py` on all folders. Copy to `training_data/`. Run `scripts/check_training_data.py` — expect "✅ READY". | 3–4 h |
 | **3** | First training run | `pip install torch torchvision pillow opencv-python`. `python manage.py train_document_classifier`. Target: 70–85 % val accuracy on first run. | 1–2 h |
 | **4** | Improvement iteration | Add 20–40 more images to weak classes. Retrain with `--epochs 15`. If 80+ / class, try `--fine-tune`. | 4–6 h |
-| **5** | Testing & deployment | Run `scripts/test_cnn_model.py` on holdout set. Verify API returns `"analysis_mode": "cnn"`. Delete training images from production. | 2–3 h |
+| **5** | Testing & deployment | Run `python scripts/test_cnn_model.py documents/ml/test_data --confusion` on holdout set. Verify API returns `"analysis_mode": "cnn"`. Delete training images from production. | 2–3 h |
 
 ---
 
