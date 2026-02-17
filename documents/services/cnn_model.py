@@ -9,15 +9,15 @@ import torch.nn as nn
 from torchvision import models
 
 
-# Document categories
+# Document categories — MUST be alphabetical to match ImageFolder class ordering
 DOCUMENT_CLASSES = [
-    'valid_id',
-    'selfie_with_id',
     'business_permit',
-    'proof_of_address',
     'business_photo',
     'income_proof',
-    'invalid'
+    'invalid',
+    'proof_of_address',
+    'selfie_with_id',
+    'valid_id',
 ]
 
 NUM_CLASSES = len(DOCUMENT_CLASSES)
@@ -38,14 +38,19 @@ class DocumentClassifier(nn.Module):
             weights=models.MobileNet_V2_Weights.DEFAULT if pretrained else None
         )
         
-        # Replace classifier head
+        # Replace classifier head with improved architecture
         num_features = self.mobilenet.classifier[1].in_features
         self.mobilenet.classifier = nn.Sequential(
             nn.Dropout(p=0.2),
             nn.Linear(num_features, 512),
+            nn.BatchNorm1d(512),
             nn.ReLU(),
             nn.Dropout(p=0.3),
-            nn.Linear(512, num_classes)
+            nn.Linear(512, 256),
+            nn.BatchNorm1d(256),
+            nn.ReLU(),
+            nn.Dropout(p=0.2),
+            nn.Linear(256, num_classes),
         )
     
     def forward(self, x):

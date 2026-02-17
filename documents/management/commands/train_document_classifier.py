@@ -94,13 +94,15 @@ class Command(BaseCommand):
         for cls, count in class_counts.items():
             self.stdout.write(f'  {cls}: {count}')
         
-        # Data transforms
+        # Data transforms — strengthened augmentation
         train_transforms = transforms.Compose([
             transforms.Resize((256, 256)),
             transforms.RandomCrop(224),
             transforms.RandomHorizontalFlip(),
-            transforms.RandomRotation(10),
-            transforms.ColorJitter(brightness=0.2, contrast=0.2),
+            transforms.RandomRotation(15),
+            transforms.ColorJitter(brightness=0.3, contrast=0.3, saturation=0.2, hue=0.05),
+            transforms.RandomPerspective(distortion_scale=0.1, p=0.3),
+            transforms.GaussianBlur(kernel_size=3, sigma=(0.1, 1.0)),
             transforms.ToTensor(),
             transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
         ])
@@ -163,8 +165,25 @@ class Command(BaseCommand):
         
         model = model.to(device)
         
-        # Loss and optimizer
-        criterion = nn.CrossEntropyLoss()
+        # Loss and optimizer — use class-weighted loss to handle imbalance
+        # Compute inverse-frequency weights from ImageFolder class counts
+        class_sample_counts = [0] * len(train_full.classes)
+        for _, label in train_full.samples:
+            class_sample_counts[label] += 1
+        
+        class_weights = []
+        for count in class_sample_counts:
+            if count > 0:
+                class_weights.append(total_samples / (len(train_full.classes) * count))
+            else:
+                class_weights.append(1.0)
+        
+        self.stdout.write(f'\nClass weights (inverse-frequency):')
+        for i, cls_name in enumerate(train_full.classes):
+            self.stdout.write(f'  {cls_name}: {class_weights[i]:.2f} ({class_sample_counts[i]} samples)')
+        
+        weight_tensor = torch.FloatTensor(class_weights).to(device)
+        criterion = nn.CrossEntropyLoss(weight=weight_tensor)
         optimizer = optim.Adam(
             filter(lambda p: p.requires_grad, model.parameters()),
             lr=options['learning_rate']
@@ -245,12 +264,13 @@ class Command(BaseCommand):
             
             scheduler.step()
         
-        # Save config
+        # Save config — include ACTUAL class-to-idx mapping from ImageFolder
         config = {
-            'classes': DOCUMENT_CLASSES,
-            'num_classes': len(DOCUMENT_CLASSES),
+            'classes': list(train_full.classes),
+            'class_to_idx': train_full.class_to_idx,
+            'num_classes': len(train_full.classes),
             'best_val_accuracy': best_val_acc,
-            'epochs_trained': epochs,
+            'epochs_trained': epoch + 1,
             'model_type': 'MobileNetV2',
             'input_size': [224, 224]
         }
