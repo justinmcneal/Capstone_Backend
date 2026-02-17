@@ -4,9 +4,74 @@ AI Qualification Service - Uses Groq LLM to analyze customer eligibility.
 import logging
 from ai_assistant.services import get_llm_service
 from profiles.models import CustomerProfile, BusinessProfile, AlternativeData
-from documents.models import Document
+from documents.models import Document, DOCUMENT_TYPES
 
 logger = logging.getLogger('loans')
+
+BASELINE_REQUIRED_DOCUMENTS = ['valid_id']
+DOCUMENT_TYPE_ALIASES = {
+    'proof_of_income': 'income_proof',
+    'business_registration': 'business_permit',
+}
+DOCUMENT_TYPE_LABELS = {
+    'valid_id': 'valid_id',
+    'selfie_with_id': 'selfie_with_id',
+    'proof_of_address': 'proof_of_address',
+    'business_permit': 'business_permit',
+    'business_photo': 'business_photo',
+    'income_proof': 'proof_of_income',
+    'other': 'other',
+}
+
+
+def _normalize_scope(requirements_scope):
+    """Normalize scope to supported values."""
+    normalized = str(requirements_scope or 'product').strip().lower()
+    if normalized not in {'baseline', 'product'}:
+        return 'product'
+    return normalized
+
+
+def canonicalize_document_type(document_type):
+    """Return canonical document type key or None if unknown."""
+    if not document_type:
+        return None
+
+    normalized = str(document_type).strip().lower()
+    normalized = DOCUMENT_TYPE_ALIASES.get(normalized, normalized)
+    if normalized in DOCUMENT_TYPES:
+        return normalized
+    return None
+
+
+def document_type_label(document_type):
+    """Return display label used by requirements messages."""
+    canonical = canonicalize_document_type(document_type) or str(document_type)
+    return DOCUMENT_TYPE_LABELS.get(canonical, canonical.replace('_', ' '))
+
+
+def resolve_required_document_types(product=None, requirements_scope='product'):
+    """
+    Resolve required documents with normalization and sane fallback.
+    - baseline scope: always baseline required docs
+    - product scope: product.required_documents when available; falls back to baseline
+    """
+    scope = _normalize_scope(requirements_scope)
+    if scope == 'baseline':
+        source = BASELINE_REQUIRED_DOCUMENTS
+    else:
+        source = getattr(product, 'required_documents', None) or BASELINE_REQUIRED_DOCUMENTS
+
+    resolved = []
+    for raw_type in source:
+        canonical = canonicalize_document_type(raw_type)
+        if canonical and canonical not in resolved:
+            resolved.append(canonical)
+
+    if not resolved:
+        resolved = list(BASELINE_REQUIRED_DOCUMENTS)
+
+    return resolved
 
 
 QUALIFICATION_PROMPT = """You are a loan qualification assistant for MSME (Micro, Small, Medium Enterprise) customers.
@@ -116,12 +181,22 @@ def format_profile_for_ai(data):
     return profile_str, business_str, alt_str, docs_str
 
 
-def qualify_customer(customer_id, product, requested_amount, term_months, purpose):
+def qualify_customer(
+    customer_id,
+    product,
+    requested_amount,
+    term_months,
+    purpose,
+    requirements_scope='product',
+):
     """
     Use AI to assess customer loan eligibility.
     
     Returns dict with eligibility info.
     """
+    scope = _normalize_scope(requirements_scope)
+    required_doc_types = resolve_required_document_types(product, scope)
+
     # Get customer data
     data = get_customer_data(customer_id)
     
@@ -140,7 +215,7 @@ def qualify_customer(customer_id, product, requested_amount, term_months, purpos
         purpose=purpose or 'Not specified',
         min_income=product.min_monthly_income,
         min_months=product.min_business_months,
-        required_docs=', '.join(product.required_documents)
+        required_docs=', '.join(document_type_label(doc) for doc in required_doc_types)
     )
     
     # Get AI response
@@ -148,7 +223,12 @@ def qualify_customer(customer_id, product, requested_amount, term_months, purpos
     
     if not llm.is_available():
         # Fallback to rule-based if AI unavailable
-        return rule_based_qualification(data, product, requested_amount)
+        return rule_based_qualification(
+            data,
+            product,
+            requested_amount,
+            requirements_scope=scope,
+        )
         
     result = llm.chat(message=prompt, language='en')
     
@@ -234,7 +314,7 @@ def rule_based_qualification(
         canonical_type = canonicalize_document_type(doc.document_type)
         if canonical_type:
             doc_types.add(canonical_type)
-    required_doc_types = []
+    required_doc_types = resolve_required_document_types(product, scope)
     for req_doc in required_doc_types:
         label = document_type_label(req_doc)
         if req_doc not in doc_types:
@@ -329,7 +409,7 @@ def check_basic_eligibility(customer_id, product, requirements_scope='product'):
     # Check required documents - must be APPROVED, not just uploaded
     documents = data.get('documents', [])
     
-    required_doc_types = []
+    required_doc_types = resolve_required_document_types(product, scope)
 
     latest_documents_by_type = {}
     for doc in documents:
