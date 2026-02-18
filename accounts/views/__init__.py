@@ -1,4 +1,4 @@
-from .auth_views import SignUpView, LoginView, VerifyOTP, ResendOTP, RefreshTokenView, LogoutView
+from .auth_views import CSRFTokenView, SignUpView, LoginView, VerifyOTP, ResendOTP, RefreshTokenView, LogoutView
 from .password_views import (
     ForgotPasswordView,
     VerifyResetOTPView,
@@ -9,6 +9,7 @@ from .consent_views import ConsentView, ConsentRequiredMixin
 
 __all__ = [
     'SignUpView', 
+    'CSRFTokenView',
     'LoginView', 
     'VerifyOTP', 
     'ResendOTP', 
