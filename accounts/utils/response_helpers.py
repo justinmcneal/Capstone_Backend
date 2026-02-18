@@ -65,14 +65,23 @@ def _flatten_validation_errors(errors, path=''):
     return issues
 
 
+def _normalize_validation_errors(errors):
+    """
+    Normalize validation errors to a serializer-like structure.
+    """
+    if isinstance(errors, (dict, list, tuple)):
+        return errors
+    if errors is None:
+        return {'non_field_errors': ['Invalid input']}
+    return {'non_field_errors': [str(errors)]}
+
+
 def build_validation_feedback(errors):
     """
     Convert serializer errors into normalized, machine-readable feedback.
     """
-    if not isinstance(errors, (dict, list, tuple)):
-        return None
-
-    issues = _flatten_validation_errors(errors)
+    normalized_errors = _normalize_validation_errors(errors)
+    issues = _flatten_validation_errors(normalized_errors)
     if not issues:
         return None
 
@@ -105,19 +114,34 @@ class APIResponseHelper:
         return Response(response_data, status=status_code)
     
     @staticmethod
-    def error_response(message, error_code=status.HTTP_400_BAD_REQUEST):
-        return Response({
+    def error_response(message, error_code=status.HTTP_400_BAD_REQUEST, errors=None, code=None):
+        response_data = {
             'status': 'error',
             'message': message
-        }, status=error_code)
+        }
+        if code:
+            response_data['code'] = code
+        normalized_errors = None
+        if errors is not None:
+            normalized_errors = _normalize_validation_errors(errors)
+        elif error_code == status.HTTP_400_BAD_REQUEST:
+            normalized_errors = _normalize_validation_errors(message)
+
+        if normalized_errors is not None:
+            response_data['errors'] = normalized_errors
+            feedback = build_validation_feedback(normalized_errors)
+            if feedback:
+                response_data['validation_feedback'] = feedback
+        return Response(response_data, status=error_code)
     
     @staticmethod
     def validation_error_response(errors):
+        normalized_errors = _normalize_validation_errors(errors)
         response_data = {
             'status': 'error',
-            'errors': errors,
+            'errors': normalized_errors,
         }
-        feedback = build_validation_feedback(errors)
+        feedback = build_validation_feedback(normalized_errors)
         if feedback:
             response_data['validation_feedback'] = feedback
         return Response(response_data, status=status.HTTP_400_BAD_REQUEST)
@@ -149,9 +173,15 @@ def error_response(message, errors=None, code=None, status_code=status.HTTP_400_
     }
     if code:
         response_data['code'] = code
-    if errors:
-        response_data['errors'] = errors
-        feedback = build_validation_feedback(errors)
+    normalized_errors = None
+    if errors is not None:
+        normalized_errors = _normalize_validation_errors(errors)
+    elif status_code == status.HTTP_400_BAD_REQUEST:
+        normalized_errors = _normalize_validation_errors(message)
+
+    if normalized_errors is not None:
+        response_data['errors'] = normalized_errors
+        feedback = build_validation_feedback(normalized_errors)
         if feedback:
             response_data['validation_feedback'] = feedback
     return Response(response_data, status=status_code)

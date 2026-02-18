@@ -214,7 +214,10 @@ class VerifyOTP(APIView):
 
         if not email or not otp:
             logger.warning(f"OTP verification missing required fields from IP {request.META.get('REMOTE_ADDR')}")
-            return APIResponseHelper.validation_error_response('Email and OTP are required')
+            return APIResponseHelper.validation_error_response({
+                'email': 'Email is required',
+                'otp': 'OTP is required',
+            })
         if not otp.isdigit() or len(otp) != 6:
             return APIResponseHelper.validation_error_response(
                 {'otp': 'OTP must be exactly 6 digits'}
