@@ -5,6 +5,7 @@ from bson import ObjectId
 
 from accounts.authentication import CustomJWTAuthentication
 from accounts.utils.response_helpers import success_response, error_response
+from accounts.utils.throttles import PreQualifyRateThrottle
 from loans.models import LoanProduct, LoanApplication
 from loans.serializers import LoanApplicationSerializer, PreQualifyRequestSerializer
 from loans.services import qualify_customer, check_basic_eligibility
@@ -96,6 +97,7 @@ class PreQualifyView(APIView):
     """
     authentication_classes = [CustomJWTAuthentication]
     permission_classes = [IsAuthenticated]
+    throttle_classes = [PreQualifyRateThrottle]
     
     def post(self, request):
         """Check eligibility for a loan"""

@@ -6,6 +6,7 @@ import math
 
 from accounts.authentication import CustomJWTAuthentication
 from accounts.utils.response_helpers import success_response, error_response
+from accounts.utils.throttles import ChatRateThrottle
 from accounts.models import Consent
 from ai_assistant.models import AIInteraction
 from ai_assistant.services import get_llm_service
@@ -49,6 +50,7 @@ class ChatView(ConsentRequiredMixin, APIView):
     """
     authentication_classes = [CustomJWTAuthentication]
     permission_classes = [IsAuthenticated]
+    throttle_classes = [ChatRateThrottle]
     
     def post(self, request):
         """Send a message to the AI assistant"""
