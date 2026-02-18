@@ -58,9 +58,32 @@ class CustomerDashboardView(APIView):
         }
         
         # Profile completion
-        has_personal = db['customer_profiles'].count_documents({'customer_id': str(customer_id)}) > 0
-        has_business = db['business_profiles'].count_documents({'customer_id': str(customer_id)}) > 0
-        has_alternative = db['alternative_data'].count_documents({'customer_id': str(customer_id)}) > 0
+        personal = db['customer_profiles'].find_one(
+            {'customer_id': str(customer_id)},
+            sort=[('updated_at', -1), ('created_at', -1)],
+        )
+        business = db['business_profiles'].find_one(
+            {'customer_id': str(customer_id)},
+            sort=[('updated_at', -1), ('created_at', -1)],
+        )
+        alternative = db['alternative_data'].find_one(
+            {'customer_id': str(customer_id)},
+            sort=[('updated_at', -1), ('created_at', -1)],
+        )
+
+        # Treat section as complete only when meaningful data exists,
+        # not merely because an empty placeholder document exists.
+        has_personal = bool((personal or {}).get('completion_percentage', 0) > 0)
+        has_business = bool(
+            (business or {}).get('business_type') and (
+                (business or {}).get('income_range') or
+                (business or {}).get('estimated_monthly_income')
+            )
+        )
+        has_alternative = bool(
+            (alternative or {}).get('education_level') and
+            (alternative or {}).get('housing_status')
+        )
         has_id = db['documents'].count_documents({
             'customer_id': str(customer_id),
             'document_type': 'valid_id'

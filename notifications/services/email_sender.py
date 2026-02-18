@@ -64,9 +64,18 @@ class EmailSender:
             
             return False
     
-    def send_loan_submitted(self, customer_email, customer_name, loan_id, product_name, amount):
+    def send_loan_submitted(
+        self,
+        customer_email,
+        customer_name,
+        loan_id,
+        product_name,
+        amount,
+        customer_id=None,
+    ):
         """Send loan submission confirmation"""
         notification = Notification(
+            user_id=str(customer_id) if customer_id else None,
             recipient_email=customer_email,
             recipient_name=customer_name,
             notification_type='loan_submitted',
@@ -89,9 +98,17 @@ class EmailSender:
             notification=notification
         )
     
-    def send_loan_approved(self, customer_email, customer_name, loan_id, approved_amount):
+    def send_loan_approved(
+        self,
+        customer_email,
+        customer_name,
+        loan_id,
+        approved_amount,
+        customer_id=None,
+    ):
         """Send loan approval notification"""
         notification = Notification(
+            user_id=str(customer_id) if customer_id else None,
             recipient_email=customer_email,
             recipient_name=customer_name,
             notification_type='loan_approved',
@@ -113,9 +130,17 @@ class EmailSender:
             notification=notification
         )
     
-    def send_loan_rejected(self, customer_email, customer_name, loan_id, reason):
+    def send_loan_rejected(
+        self,
+        customer_email,
+        customer_name,
+        loan_id,
+        reason,
+        customer_id=None,
+    ):
         """Send loan rejection notification"""
         notification = Notification(
+            user_id=str(customer_id) if customer_id else None,
             recipient_email=customer_email,
             recipient_name=customer_name,
             notification_type='loan_rejected',
@@ -247,9 +272,11 @@ class EmailSender:
         loan_id,
         missing_documents,
         reason='',
+        customer_id=None,
     ):
         """Send missing documents request notification"""
         notification = Notification(
+            user_id=str(customer_id) if customer_id else None,
             recipient_email=customer_email,
             recipient_name=customer_name,
             notification_type='missing_documents_requested',
@@ -307,9 +334,19 @@ class EmailSender:
             notification=notification
         )
     
-    def send_loan_disbursed(self, customer_email, customer_name, loan_id, amount, method, reference):
+    def send_loan_disbursed(
+        self,
+        customer_email,
+        customer_name,
+        loan_id,
+        amount,
+        method,
+        reference,
+        customer_id=None,
+    ):
         """Send loan disbursement notification"""
         notification = Notification(
+            user_id=str(customer_id) if customer_id else None,
             recipient_email=customer_email,
             recipient_name=customer_name,
             notification_type='loan_disbursed',
@@ -333,9 +370,19 @@ class EmailSender:
             notification=notification
         )
     
-    def send_payment_received(self, customer_email, customer_name, loan_id, amount, installment, remaining):
+    def send_payment_received(
+        self,
+        customer_email,
+        customer_name,
+        loan_id,
+        amount,
+        installment,
+        remaining,
+        customer_id=None,
+    ):
         """Send payment received notification"""
         notification = Notification(
+            user_id=str(customer_id) if customer_id else None,
             recipient_email=customer_email,
             recipient_name=customer_name,
             notification_type='payment_received',

@@ -314,7 +314,8 @@ class LoanApplyView(APIView):
                     customer_name=user.full_name if hasattr(user, 'full_name') else f"{user.first_name} {user.last_name}",
                     loan_id=application.id,
                     product_name=product.name,
-                    amount=data['requested_amount']
+                    amount=data['requested_amount'],
+                    customer_id=customer_id,
                 )
             except Exception as e:
                 logger.warning(f"Failed to send loan submitted email: {e}")
