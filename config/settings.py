@@ -73,6 +73,7 @@ MIDDLEWARE = [
     'django.contrib.sessions.middleware.SessionMiddleware',
     'corsheaders.middleware.CorsMiddleware',  
     'django.middleware.common.CommonMiddleware',
+    'config.middleware.NoSQLInjectionGuardMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
     'config.middleware.CSRFSameSiteTokenMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
