@@ -1,8 +1,10 @@
 import re
+from django.utils.html import strip_tags
 
 
 # Unicode-aware: allows letters with optional separators between words.
 _PERSON_NAME_PATTERN = re.compile(r"^[^\W\d_]+(?:[ .'-][^\W\d_]+)*$", re.UNICODE)
+_CONTROL_CHARS_PATTERN = re.compile(r"[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]")
 
 
 def normalize_text(value):
@@ -10,6 +12,19 @@ def normalize_text(value):
     if value is None:
         return ""
     return " ".join(str(value).strip().split())
+
+
+def sanitize_text(value):
+    """
+    Sanitize free-text input by stripping HTML tags, removing control chars,
+    and normalizing whitespace.
+    """
+    if value is None:
+        return ""
+
+    cleaned = strip_tags(str(value))
+    cleaned = _CONTROL_CHARS_PATTERN.sub("", cleaned)
+    return normalize_text(cleaned)
 
 
 def validate_person_name(value, field_name="Name", allow_blank=False, max_length=None):
