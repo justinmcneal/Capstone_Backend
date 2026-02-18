@@ -119,7 +119,16 @@ class GroqService:
         """
         return bool(self.api_key)
     
-    def chat(self, message, conversation_history=None, language='en'):
+    def chat(
+        self,
+        message,
+        conversation_history=None,
+        language='en',
+        system_prompt=None,
+        temperature=0.7,
+        max_tokens=1024,
+        top_p=0.9,
+    ):
         """
         Send a message to the AI and get a response.
         
@@ -129,6 +138,10 @@ class GroqService:
             message: The user's message (string)
             conversation_history: Previous messages for context (list, optional)
             language: 'en' for English, 'tl' for Tagalog
+            system_prompt: Optional custom system prompt override
+            temperature: Sampling temperature
+            max_tokens: Maximum output tokens
+            top_p: Nucleus sampling parameter
         
         Returns:
             dict with:
@@ -155,7 +168,8 @@ class GroqService:
         
         # Build the messages array for the API
         # First message is always the system prompt (AI's instructions)
-        messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+        active_system_prompt = system_prompt or SYSTEM_PROMPT
+        messages = [{"role": "system", "content": active_system_prompt}]
         
         # Add previous conversation messages for context (last 10 only)
         # This helps the AI remember what was discussed
@@ -184,9 +198,9 @@ class GroqService:
                 json={
                     "model": self.model,           # llama-3.1-8b-instant
                     "messages": messages,          # The conversation
-                    "temperature": 0.7,            # Creativity (0=strict, 1=creative)
-                    "max_tokens": 1024,            # Max response length
-                    "top_p": 0.9                   # Response diversity
+                    "temperature": temperature,    # Creativity (0=strict, 1=creative)
+                    "max_tokens": max_tokens,      # Max response length
+                    "top_p": top_p                 # Response diversity
                 },
                 timeout=30  # Wait max 30 seconds for response
             )
