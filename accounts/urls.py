@@ -1,5 +1,5 @@
 from django.urls import path
-from accounts.views import SignUpView, VerifyOTP, ResendOTP, ForgotPasswordView, VerifyResetOTPView, ResetPasswordView, ChangePasswordView, ConsentView
+from accounts.views import CSRFTokenView, SignUpView, VerifyOTP, ResendOTP, ForgotPasswordView, VerifyResetOTPView, ResetPasswordView, ChangePasswordView, ConsentView
 from accounts.views.auth_views import LoginView, LogoutView, RefreshTokenView
 from accounts.views.two_factor_views import (
     Setup2FAView, 
@@ -26,6 +26,7 @@ app_name = 'accounts'
 
 urlpatterns = [
     # Customer Authentication
+    path('csrf-token/', CSRFTokenView.as_view(), name='csrf-token'),
     path('signup/', SignUpView.as_view(), name='signup'),
     path('verify-email/', VerifyOTP.as_view(), name='verify-email'),
     path('resend-otp/', ResendOTP.as_view(), name='resend-otp'),

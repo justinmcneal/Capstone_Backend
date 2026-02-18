@@ -1,6 +1,8 @@
 from rest_framework.views import APIView
 from rest_framework import status
 from rest_framework.permissions import AllowAny
+from django.conf import settings
+from django.middleware.csrf import get_token
 from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.exceptions import TokenError
 from accounts.models import Customer
@@ -16,6 +18,31 @@ from analytics.models import AuditLog
 import logging
 
 logger = logging.getLogger('authentication')
+
+
+class CSRFTokenView(APIView):
+    permission_classes = [AllowAny]
+    authentication_classes = []
+
+    def get(self, request):
+        csrf_token = get_token(request)
+        response = APIResponseHelper.success_response(
+            data={
+                'csrf_token': csrf_token,
+                'same_site': getattr(settings, 'CSRF_COOKIE_SAMESITE', 'Lax'),
+            },
+            message='CSRF token issued',
+        )
+        response.set_cookie(
+            key=getattr(settings, 'CSRF_COOKIE_NAME', 'csrftoken'),
+            value=csrf_token,
+            secure=getattr(settings, 'CSRF_COOKIE_SECURE', False),
+            httponly=getattr(settings, 'CSRF_COOKIE_HTTPONLY', False),
+            samesite=getattr(settings, 'CSRF_COOKIE_SAMESITE', 'Lax'),
+            path='/',
+        )
+        return response
+
 
 class SignUpView(APIView):
     permission_classes = [AllowAny]

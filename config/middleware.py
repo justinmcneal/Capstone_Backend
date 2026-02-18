@@ -1,3 +1,8 @@
+from hmac import compare_digest
+from django.conf import settings
+from django.http import JsonResponse
+
+
 class SecurityHeadersMiddleware:
     """
     Middleware to add security headers to all responses
@@ -72,3 +77,55 @@ class SecurityHeadersMiddleware:
         response['Origin-Agent-Cluster'] = '?1'
         
         return response
+
+
+class CSRFSameSiteTokenMiddleware:
+    """
+    Enforce CSRF token checks for unsafe API methods when a CSRF cookie exists.
+
+    This keeps Bearer-token API clients working (no cookie, no CSRF check),
+    while protecting browser cookie-based flows with double-submit token checks.
+    """
+
+    SAFE_METHODS = {'GET', 'HEAD', 'OPTIONS', 'TRACE'}
+
+    def __init__(self, get_response):
+        self.get_response = get_response
+
+    def __call__(self, request):
+        if self._requires_csrf_validation(request):
+            cookie_name = getattr(settings, 'CSRF_COOKIE_NAME', 'csrftoken')
+            csrf_cookie = request.COOKIES.get(cookie_name, '')
+
+            if csrf_cookie:
+                csrf_header = (
+                    request.META.get('HTTP_X_CSRFTOKEN')
+                    or request.META.get('HTTP_X_CSRF_TOKEN')
+                    or request.POST.get('csrfmiddlewaretoken')
+                    or ''
+                )
+
+                if not csrf_header:
+                    return JsonResponse(
+                        {
+                            'status': 'error',
+                            'message': 'CSRF token required',
+                            'code': 'csrf_token_missing',
+                        },
+                        status=403,
+                    )
+
+                if not compare_digest(csrf_header, csrf_cookie):
+                    return JsonResponse(
+                        {
+                            'status': 'error',
+                            'message': 'Invalid CSRF token',
+                            'code': 'csrf_token_invalid',
+                        },
+                        status=403,
+                    )
+
+        return self.get_response(request)
+
+    def _requires_csrf_validation(self, request):
+        return request.path.startswith('/api/') and request.method not in self.SAFE_METHODS
