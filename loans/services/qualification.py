@@ -362,6 +362,7 @@ def qualify_customer(
     term_months,
     purpose,
     requirements_scope='product',
+    require_approved_documents=True,
 ):
     """
     Use AI to assess customer loan eligibility.
@@ -385,6 +386,7 @@ def qualify_customer(
             product,
             requested_amount,
             requirements_scope=scope,
+            require_approved_documents=require_approved_documents,
             reason='Rule-based assessment (AI consent not granted)',
         )
     
@@ -400,7 +402,11 @@ def qualify_customer(
         purpose=purpose or 'Not specified',
         min_income=product.min_monthly_income,
         min_months=product.min_business_months,
-        required_docs=', '.join(document_type_label(doc) for doc in required_doc_types)
+        required_docs=(
+            ', '.join(document_type_label(doc) for doc in required_doc_types)
+            if require_approved_documents
+            else 'Not required at pre-qualification stage (enforced during loan application)'
+        )
     )
     
     # Get AI response
@@ -413,6 +419,7 @@ def qualify_customer(
             product,
             requested_amount,
             requirements_scope=scope,
+            require_approved_documents=require_approved_documents,
             reason='Rule-based assessment (AI unavailable)',
         )
         
@@ -432,6 +439,7 @@ def qualify_customer(
             product,
             requested_amount,
             requirements_scope=scope,
+            require_approved_documents=require_approved_documents,
             reason='Rule-based assessment (AI request failed)',
         )
     
@@ -443,6 +451,7 @@ def qualify_customer(
             product,
             requested_amount,
             requirements_scope=scope,
+            require_approved_documents=require_approved_documents,
             reason='Rule-based assessment (AI response parsing failed)',
         )
 
@@ -462,6 +471,7 @@ def qualify_customer(
         product,
         requested_amount,
         requirements_scope=scope,
+        require_approved_documents=require_approved_documents,
         reason='Rule-based assessment (AI response parsing failed)',
     )
 
@@ -471,6 +481,7 @@ def rule_based_qualification(
     product,
     requested_amount,
     requirements_scope='product',
+    require_approved_documents=True,
     reason='Rule-based assessment (AI unavailable)',
 ):
     """
@@ -516,13 +527,14 @@ def rule_based_qualification(
         if canonical_type:
             doc_types.add(canonical_type)
     required_doc_types = resolve_required_document_types(product, scope)
-    for req_doc in required_doc_types:
-        label = document_type_label(req_doc)
-        if req_doc not in doc_types:
-            score -= 5
-            missing.append(f"Missing: {label}")
-        else:
-            score += 5
+    if require_approved_documents:
+        for req_doc in required_doc_types:
+            label = document_type_label(req_doc)
+            if req_doc not in doc_types:
+                score -= 5
+                missing.append(f"Missing: {label}")
+            else:
+                score += 5
     
     # Check alternative data
     if alternative:
@@ -573,15 +585,20 @@ def rule_based_qualification(
     }
 
 
-def check_basic_eligibility(customer_id, product, requirements_scope='product'):
+def check_basic_eligibility(
+    customer_id,
+    product,
+    requirements_scope='product',
+    require_approved_documents=True,
+):
     """
     Quick check for basic eligibility before full qualification.
     
     Requirements:
     1. Personal profile must exist
-    2. Business profile must exist  
+    2. Business profile must exist
     3. Alternative data must exist
-    4. All required documents must be uploaded AND APPROVED
+    4. Required documents must be uploaded/approved when require_approved_documents=True
     """
     scope = _normalize_scope(requirements_scope)
     data = get_customer_data(customer_id)
@@ -608,36 +625,37 @@ def check_basic_eligibility(customer_id, product, requirements_scope='product'):
     elif not (alternative.education_level and alternative.housing_status):
         missing.append('Alternative data incomplete (education and housing required)')
     
-    # Check required documents - must be APPROVED, not just uploaded
-    documents = data.get('documents', [])
-    
     required_doc_types = resolve_required_document_types(product, scope)
 
-    latest_documents_by_type = {}
-    for doc in documents:
-        canonical_type = canonicalize_document_type(doc.document_type)
-        if not canonical_type:
-            continue
-        if canonical_type not in latest_documents_by_type:
-            latest_documents_by_type[canonical_type] = doc
-    
-    for req_doc in required_doc_types:
-        label = document_type_label(req_doc)
-        # Find document of this type
-        doc_found = latest_documents_by_type.get(req_doc)
-        
-        if not doc_found:
-            missing.append(f'Document required: {label}')
-        elif doc_found.status != 'approved':
-            # Document exists but not approved
-            if doc_found.reupload_requested:
-                missing.append(f'Document re-upload requested: {label}')
-            elif doc_found.status in ['pending', 'needs_review']:
-                missing.append(f'Document pending verification: {label}')
-            elif doc_found.status == 'rejected':
-                missing.append(f'Document rejected, please re-upload: {label}')
-            else:
-                missing.append(f'Document not yet approved: {label}')
+    if require_approved_documents:
+        # Check required documents - must be APPROVED, not just uploaded
+        documents = data.get('documents', [])
+
+        latest_documents_by_type = {}
+        for doc in documents:
+            canonical_type = canonicalize_document_type(doc.document_type)
+            if not canonical_type:
+                continue
+            if canonical_type not in latest_documents_by_type:
+                latest_documents_by_type[canonical_type] = doc
+
+        for req_doc in required_doc_types:
+            label = document_type_label(req_doc)
+            # Find document of this type
+            doc_found = latest_documents_by_type.get(req_doc)
+
+            if not doc_found:
+                missing.append(f'Document required: {label}')
+            elif doc_found.status != 'approved':
+                # Document exists but not approved
+                if doc_found.reupload_requested:
+                    missing.append(f'Document re-upload requested: {label}')
+                elif doc_found.status in ['pending', 'needs_review']:
+                    missing.append(f'Document pending verification: {label}')
+                elif doc_found.status == 'rejected':
+                    missing.append(f'Document rejected, please re-upload: {label}')
+                else:
+                    missing.append(f'Document not yet approved: {label}')
     
     return {
         'can_apply': len(missing) == 0,

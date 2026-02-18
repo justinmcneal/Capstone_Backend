@@ -149,6 +149,7 @@ class PreQualifyView(APIView):
                 customer_id,
                 product,
                 requirements_scope=requirements_scope,
+                require_approved_documents=False,
             )
             if not basic['can_apply']:
                 return success_response(
@@ -171,6 +172,7 @@ class PreQualifyView(APIView):
                 term_months=term_months,
                 purpose=purpose,
                 requirements_scope=requirements_scope,
+                require_approved_documents=False,
             )
             
             return success_response(
@@ -249,6 +251,7 @@ class LoanApplyView(APIView):
                 customer_id,
                 product,
                 requirements_scope='product',
+                require_approved_documents=True,
             )
             if not basic['can_apply']:
                 return error_response(
@@ -263,7 +266,8 @@ class LoanApplyView(APIView):
                 product=product,
                 requested_amount=data['requested_amount'],
                 term_months=data['term_months'],
-                purpose=data.get('purpose', '')
+                purpose=data.get('purpose', ''),
+                require_approved_documents=True,
             )
 
             # Final safety clamp before persisting recommendation.

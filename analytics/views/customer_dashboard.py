@@ -89,7 +89,8 @@ class CustomerDashboardView(APIView):
             'document_type': 'valid_id'
         }) > 0
         
-        profile_items = [has_personal, has_business, has_alternative, has_id]
+        # Profile completion is based on the 3 core sections only.
+        profile_items = [has_personal, has_business, has_alternative]
         completion = (sum(profile_items) / len(profile_items)) * 100
         
         profile_completion = {

@@ -362,22 +362,22 @@ class ProfileSummaryView(APIView):
             rejected_docs = len([d for d in documents if d.status == 'rejected'])
             reupload_requested_docs = len([d for d in documents if d.reupload_requested])
             
-            # Determine if all documents are approved
-            # For ready_for_loan, we need at least some documents and all approved
+            # Determine if all uploaded documents are approved
             documents_ready = total_docs > 0 and approved_docs == total_docs
             
             # Calculate overall readiness
             profiles_complete = personal_complete and business_complete and alternative_complete
             
-            # Documents section is complete when at least one document is approved
+            # Documents section is tracked separately (optional for profile completion)
             documents_complete = total_docs > 0 and approved_docs > 0
             
-            # Count all 4 sections: Personal, Business, Alternative, Documents
-            sections_complete = sum([personal_complete, business_complete, alternative_complete, documents_complete])
-            overall_percentage = int((sections_complete / 4) * 100)
+            # Profile completion is based on 3 required sections only.
+            sections_complete = sum([personal_complete, business_complete, alternative_complete])
+            overall_percentage = int((sections_complete / 3) * 100)
             
-            # Ready for loan requires: all 3 profiles complete + ALL documents approved
-            ready_for_loan = profiles_complete and documents_ready
+            # "Ready for loan" at profile stage means core profile is complete.
+            # Product-specific documents are enforced later during loan application.
+            ready_for_loan = profiles_complete
             
             return success_response(
                 data={
@@ -408,7 +408,7 @@ class ProfileSummaryView(APIView):
                     'overall': {
                         'profiles_complete': profiles_complete,
                         'sections_complete': sections_complete,
-                        'total_sections': 4,
+                        'total_sections': 3,
                         'documents_complete': documents_complete,
                         'documents_verified': documents_ready,
                         'ready_for_loan': ready_for_loan,
@@ -417,7 +417,7 @@ class ProfileSummaryView(APIView):
                             personal_complete, business_complete, alternative_complete, documents_complete
                         ),
                         'missing': [] if ready_for_loan else self._get_missing_items(
-                            personal_complete, business_complete, alternative_complete, documents_ready, total_docs
+                            personal_complete, business_complete, alternative_complete
                         )
                     }
                 },
@@ -430,7 +430,7 @@ class ProfileSummaryView(APIView):
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
     
-    def _get_missing_items(self, personal_complete, business_complete, alternative_complete, documents_ready, total_docs):
+    def _get_missing_items(self, personal_complete, business_complete, alternative_complete):
         """Helper to generate list of missing requirements"""
         missing = []
         if not personal_complete:
@@ -439,10 +439,6 @@ class ProfileSummaryView(APIView):
             missing.append('Complete business profile')
         if not alternative_complete:
             missing.append('Complete alternative data')
-        if total_docs == 0:
-            missing.append('Upload required documents')
-        elif not documents_ready:
-            missing.append('Wait for documents to be verified')
         return missing
     
     def _get_completed_section_names(self, personal_complete, business_complete, alternative_complete, documents_complete):
