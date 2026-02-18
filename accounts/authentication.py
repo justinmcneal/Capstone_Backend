@@ -35,6 +35,19 @@ class AuthenticatedUser:
     def user_id(self):
         """Alias for customer_id for clearer semantics"""
         return self.customer_id
+
+    @property
+    def pk(self):
+        """
+        Django/DRF compatibility primary key alias.
+        Required by UserRateThrottle which reads request.user.pk.
+        """
+        return self.customer_id
+
+    @property
+    def id(self):
+        """Django-style id alias for compatibility with generic code paths."""
+        return self.customer_id
     
     @property
     def is_admin(self):
@@ -95,4 +108,3 @@ class CustomJWTAuthentication(JWTAuthentication):
             )
         except KeyError:
             raise InvalidToken('Token contained no recognizable user identification')
-
