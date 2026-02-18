@@ -1,8 +1,9 @@
 from rest_framework import serializers
 from profiles.models import BUSINESS_TYPES, EDUCATION_LEVELS, INCOME_RANGES
+from accounts.serializers.base_serializers import InputSanitizationMixin
 
 
-class CustomerProfileSerializer(serializers.Serializer):
+class CustomerProfileSerializer(InputSanitizationMixin, serializers.Serializer):
     """Serializer for customer profile updates"""
     
     # Personal Information
@@ -54,7 +55,7 @@ class CustomerProfileResponseSerializer(serializers.Serializer):
     completion_percentage = serializers.IntegerField()
 
 
-class BusinessProfileSerializer(serializers.Serializer):
+class BusinessProfileSerializer(InputSanitizationMixin, serializers.Serializer):
     """Serializer for business profile updates"""
     
     # Business Information
@@ -101,7 +102,7 @@ class BusinessProfileSerializer(serializers.Serializer):
         return data
 
 
-class AlternativeDataSerializer(serializers.Serializer):
+class AlternativeDataSerializer(InputSanitizationMixin, serializers.Serializer):
     """Serializer for alternative credit data updates"""
     
     # Education & Employment

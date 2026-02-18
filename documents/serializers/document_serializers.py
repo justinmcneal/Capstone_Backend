@@ -1,8 +1,9 @@
 from rest_framework import serializers
 from documents.models import DOCUMENT_TYPES, ALLOWED_MIME_TYPES, MAX_FILE_SIZE
+from accounts.serializers.base_serializers import InputSanitizationMixin
 
 
-class DocumentUploadSerializer(serializers.Serializer):
+class DocumentUploadSerializer(InputSanitizationMixin, serializers.Serializer):
     """Serializer for document upload validation"""
     
     document_type = serializers.ChoiceField(
@@ -56,7 +57,7 @@ class DocumentResponseSerializer(serializers.Serializer):
         return {'verified': False, 'status': obj.status}
 
 
-class DocumentVerifySerializer(serializers.Serializer):
+class DocumentVerifySerializer(InputSanitizationMixin, serializers.Serializer):
     """Serializer for loan officer document verification"""
     
     action = serializers.ChoiceField(

@@ -1,10 +1,10 @@
 from rest_framework import serializers
 from accounts.utils.email_utils import EmailUtils
 from accounts.utils.validation_utils import validate_person_name
-from .base_serializers import PasswordValidationMixin
+from .base_serializers import InputSanitizationMixin, PasswordValidationMixin
 
 
-class SignUpSerializer(PasswordValidationMixin, serializers.Serializer):
+class SignUpSerializer(InputSanitizationMixin, PasswordValidationMixin, serializers.Serializer):
     
     first_name = serializers.CharField(max_length=100)
     middle_name = serializers.CharField(max_length=100, required=False, allow_blank=True)
@@ -71,7 +71,7 @@ class SignUpSerializer(PasswordValidationMixin, serializers.Serializer):
         
         return data
 
-class LoginSerializer(serializers.Serializer):
+class LoginSerializer(InputSanitizationMixin, serializers.Serializer):
     email = serializers.EmailField()
     password = serializers.CharField(write_only=True)
     remember_me = serializers.BooleanField(default=False)
