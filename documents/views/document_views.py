@@ -12,6 +12,7 @@ from accounts.authentication import CustomJWTAuthentication
 from accounts.utils.response_helpers import success_response, error_response
 from accounts.models import Admin, Customer, LoanOfficer
 from documents.models import Document, DOCUMENT_TYPES
+
 from documents.serializers import (
     DocumentUploadSerializer,
     DocumentVerifySerializer,
@@ -189,7 +190,7 @@ class DocumentUploadView(APIView):
                     status_code=status.HTTP_403_FORBIDDEN
                 )
             
-            customer_id = user.customer_id
+            customer_id = str(user.customer_id)
             
             # Check for file in request
             if 'file' not in request.FILES:
@@ -373,6 +374,13 @@ class DocumentListView(APIView):
             # Optional filter by document type
             document_type = request.query_params.get('type')
             status_filter = request.query_params.get('status')
+            allowed_status_filters = {
+                'pending',
+                'needs_review',
+                'approved',
+                'rejected',
+                'expired',
+            }
             
             # Optional filter by customer_id (for officers/admins)
             customer_id_filter = request.query_params.get('customer_id')
@@ -386,16 +394,16 @@ class DocumentListView(APIView):
                 query = {}
                 if document_type:
                     query['document_type'] = document_type
-                if status_filter in ['pending', 'approved', 'rejected']:
+                if status_filter in allowed_status_filters:
                     query['status'] = status_filter
                 if customer_id_filter:
-                    query['customer_id'] = customer_id_filter
+                    query.update(Document._customer_query(customer_id_filter))
                 documents = Document.find(query, sort=[('uploaded_at', -1)])
             else:
                 # Customers can only see their own documents
                 customer_id = user.customer_id
                 documents = Document.find_by_customer(customer_id, document_type)
-                if status_filter in ['pending', 'approved', 'rejected']:
+                if status_filter in allowed_status_filters:
                     documents = [doc for doc in documents if doc.status == status_filter]
             
             # Filter by search term (filename or document type)
@@ -486,7 +494,7 @@ class DocumentDetailView(APIView):
             
             # Check ownership (customers can only see their own)
             if hasattr(user, 'role') and user.role == 'customer':
-                if document.customer_id != customer_id:
+                if str(document.customer_id) != str(customer_id):
                     return error_response(
                         message="Document not found",
                         status_code=status.HTTP_404_NOT_FOUND
@@ -538,7 +546,7 @@ class DocumentDetailView(APIView):
                 )
             
             # Only owner can delete
-            if document.customer_id != customer_id:
+            if str(document.customer_id) != str(customer_id):
                 return error_response(
                     message="Document not found",
                     status_code=status.HTTP_404_NOT_FOUND
@@ -710,18 +718,41 @@ class DocumentTypesView(APIView):
     
     def get(self, request):
         """Get available document types with descriptions"""
-        types_info = [
-            {'value': 'valid_id', 'label': 'Valid Government ID', 'required': True},
-            {'value': 'selfie_with_id', 'label': 'Selfie with ID', 'required': False},
-            {'value': 'proof_of_address', 'label': 'Proof of Address', 'required': False},
-            {'value': 'business_permit', 'label': 'Business Permit', 'required': False},
-            {'value': 'business_photo', 'label': 'Business Photo', 'required': False},
-            {'value': 'income_proof', 'label': 'Proof of Income (Optional)', 'required': False},
-            {'value': 'other', 'label': 'Other Documents', 'required': False},
-        ]
+        from loans.services.qualification import resolve_required_document_types
+
+        product_id = (request.query_params.get('product_id') or '').strip()
+        requirement_source = 'baseline'
+        required_document_set = set(resolve_required_document_types(None, 'baseline'))
+
+        if product_id:
+            from loans.models import LoanProduct
+
+            product = LoanProduct.find_by_id(product_id)
+            if not product or not product.active:
+                return error_response(
+                    message="Loan product not found",
+                    status_code=status.HTTP_404_NOT_FOUND,
+                )
+
+            requirement_source = 'product'
+            required_document_set = set(
+                resolve_required_document_types(product, 'product')
+            )
+
+        types_info = []
+        for doc_type in DOCUMENT_TYPES:
+            label = doc_type.replace('_', ' ').title()
+            types_info.append({
+                'value': doc_type,
+                'label': label,
+                'required': doc_type in required_document_set,
+            })
         
         return success_response(
-            data={'document_types': types_info},
+            data={
+                'document_types': types_info,
+                'requirement_source': requirement_source,
+            },
             message="Document types retrieved successfully"
         )
 

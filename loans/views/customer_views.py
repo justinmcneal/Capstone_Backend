@@ -8,6 +8,7 @@ from accounts.utils.response_helpers import success_response, error_response
 from loans.models import LoanProduct, LoanApplication
 from loans.serializers import LoanApplicationSerializer
 from loans.services import qualify_customer, check_basic_eligibility
+
 from analytics.models import AuditLog
 import logging
 
@@ -38,7 +39,7 @@ class LoanProductListView(APIView):
             'interest_rate_display': f"{p.interest_rate * 100:.1f}% monthly",
             'min_term_months': p.min_term_months,
             'max_term_months': p.max_term_months,
-            'required_documents': p.required_documents,
+            'required_documents': [],
             'target_description': p.target_description
         } for p in products]
         
@@ -77,7 +78,7 @@ class LoanProductDetailView(APIView):
                 'interest_rate': product.interest_rate,
                 'min_term_months': product.min_term_months,
                 'max_term_months': product.max_term_months,
-                'required_documents': product.required_documents,
+                'required_documents': [],
                 'min_business_months': product.min_business_months,
                 'min_monthly_income': product.min_monthly_income,
                 'target_description': product.target_description
@@ -106,6 +107,7 @@ class PreQualifyView(APIView):
             requested_amount = request.data.get('amount', 0)
             term_months = request.data.get('term_months', 12)
             purpose = request.data.get('purpose', '')
+            requirements_scope = request.data.get('requirements_scope')
             
             if not product_id:
                 return error_response(
@@ -128,13 +130,19 @@ class PreQualifyView(APIView):
                 )
             
             # Quick eligibility check
-            basic = check_basic_eligibility(customer_id, product)
+            basic = check_basic_eligibility(
+                customer_id,
+                product,
+                requirements_scope=requirements_scope,
+            )
             if not basic['can_apply']:
                 return success_response(
                     data={
                         'eligible': False,
                         'can_apply': False,
                         'missing_requirements': basic['missing_requirements'],
+                        'requirements_scope': basic.get('requirements_scope', 'product'),
+                        'required_documents_resolved': basic.get('required_documents_resolved', []),
                         'message': 'Please complete requirements before applying'
                     },
                     message="Eligibility check complete"
@@ -146,7 +154,8 @@ class PreQualifyView(APIView):
                 product=product,
                 requested_amount=requested_amount,
                 term_months=term_months,
-                purpose=purpose
+                purpose=purpose,
+                requirements_scope=requirements_scope,
             )
             
             return success_response(
@@ -164,7 +173,18 @@ class PreQualifyView(APIView):
                     'strengths': qualification.get('strengths', []),
                     'concerns': qualification.get('concerns', []),
                     'missing_requirements': qualification.get('missing_requirements', []),
-                    'can_apply': qualification.get('eligible', False)
+                    'can_apply': qualification.get(
+                        'can_apply',
+                        qualification.get('eligible', False),
+                    ),
+                    'requirements_scope': qualification.get(
+                        'requirements_scope',
+                        basic.get('requirements_scope', 'product'),
+                    ),
+                    'required_documents_resolved': qualification.get(
+                        'required_documents_resolved',
+                        basic.get('required_documents_resolved', []),
+                    ),
                 },
                 message="Pre-qualification complete"
             )
@@ -210,7 +230,11 @@ class LoanApplyView(APIView):
                 )
             
             # Check basic eligibility
-            basic = check_basic_eligibility(customer_id, product)
+            basic = check_basic_eligibility(
+                customer_id,
+                product,
+                requirements_scope='product',
+            )
             if not basic['can_apply']:
                 return error_response(
                     message="Cannot apply - requirements not met",
