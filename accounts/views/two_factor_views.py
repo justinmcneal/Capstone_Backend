@@ -10,6 +10,7 @@ from accounts.services.two_factor_service import TwoFactorService
 from accounts.services import AuthService
 from accounts.models import LoanOfficer, Admin
 from accounts.utils.response_helpers import APIResponseHelper
+from accounts.utils.auth_cookies import set_auth_cookies
 from accounts.utils.throttles import TwoFactorRateThrottle
 from accounts.utils.token_utils import TokenUtils
 from accounts.utils.user_detection import get_authenticated_user
@@ -205,7 +206,7 @@ class Verify2FAView(APIView):
             
             logger.info(f"2FA verified for {user.email} ({user_type})")
             
-            return APIResponseHelper.success_response(
+            response = APIResponseHelper.success_response(
                 data={
                     'user': user_data,
                     'access': tokens['access'],
@@ -213,6 +214,8 @@ class Verify2FAView(APIView):
                 },
                 message='2FA verification successful'
             )
+            set_auth_cookies(response, tokens['access'], tokens['refresh'])
+            return response
             
         except TokenError:
             return APIResponseHelper.error_response(
