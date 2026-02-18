@@ -14,6 +14,7 @@ from accounts.utils.token_utils import TokenUtils
 from accounts.utils.response_helpers import success_response, error_response
 from accounts.utils.email_utils import EmailUtils
 from accounts.utils.validation_utils import (
+    validate_employee_id,
     validate_person_name,
     normalize_text,
     sanitize_text,
@@ -435,15 +436,17 @@ class LoanOfficerManagementView(AdminRequiredMixin, APIView):
             
             admin = result  # result is the admin object when has_perm is True
             
-            employee_id = normalize_text(request.data.get('employee_id', ''))
+            employee_id_valid, employee_id_error, employee_id = validate_employee_id(
+                request.data.get('employee_id', ''),
+                field_name='Employee ID',
+                max_length=50
+            )
             first_name = request.data.get('first_name', '')
             last_name = request.data.get('last_name', '')
             email = EmailUtils.normalize_email(str(request.data.get('email') or ''))
 
             # Validate required fields
             missing_errors = {}
-            if not employee_id:
-                missing_errors['employee_id'] = "Employee Id is required"
             if not normalize_text(first_name):
                 missing_errors['first_name'] = "First Name is required"
             if not normalize_text(last_name):
@@ -454,6 +457,13 @@ class LoanOfficerManagementView(AdminRequiredMixin, APIView):
                 return error_response(
                     message="Validation failed",
                     errors=missing_errors,
+                    status_code=status.HTTP_400_BAD_REQUEST
+                )
+
+            if not employee_id_valid:
+                return error_response(
+                    message=employee_id_error,
+                    errors={'employee_id': employee_id_error},
                     status_code=status.HTTP_400_BAD_REQUEST
                 )
 
@@ -665,7 +675,7 @@ class LoanOfficerDetailView(AdminRequiredMixin, APIView):
                             )
                         new_value = parsed_active
                     elif isinstance(new_value, str):
-                        new_value = normalize_text(new_value)
+                        new_value = sanitize_text(new_value)
                     elif field in ['phone', 'department'] and new_value is not None:
                         return error_response(
                             message=f"{field} must be a string",

@@ -1,10 +1,13 @@
+import os
 import re
 from django.utils.html import strip_tags
 
 
 # Unicode-aware: allows letters with optional separators between words.
 _PERSON_NAME_PATTERN = re.compile(r"^[^\W\d_]+(?:[ .'-][^\W\d_]+)*$", re.UNICODE)
+_EMPLOYEE_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]*$")
 _CONTROL_CHARS_PATTERN = re.compile(r"[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]")
+_MULTI_NEWLINE_PATTERN = re.compile(r"\n{3,}")
 _TRUE_VALUES = {"1", "true", "yes", "on"}
 _FALSE_VALUES = {"0", "false", "no", "off"}
 
@@ -27,6 +30,30 @@ def sanitize_text(value):
     cleaned = strip_tags(str(value))
     cleaned = _CONTROL_CHARS_PATTERN.sub("", cleaned)
     return normalize_text(cleaned)
+
+
+def sanitize_multiline_text(value):
+    """
+    Sanitize text while preserving line breaks for multi-line content.
+    """
+    if value is None:
+        return ""
+
+    cleaned = strip_tags(str(value))
+    cleaned = _CONTROL_CHARS_PATTERN.sub("", cleaned)
+    cleaned = cleaned.replace("\r\n", "\n").replace("\r", "\n")
+    cleaned = "\n".join(" ".join(line.split()) for line in cleaned.split("\n"))
+    cleaned = _MULTI_NEWLINE_PATTERN.sub("\n\n", cleaned)
+    return cleaned.strip()
+
+
+def sanitize_filename(value, fallback="uploaded_file"):
+    """
+    Sanitize a user-provided filename for metadata/display use.
+    """
+    basename = os.path.basename(str(value or ""))
+    cleaned = sanitize_text(basename).replace("/", "_").replace("\\", "_").strip(" .")
+    return cleaned or fallback
 
 
 def parse_bool(value, field_name="value"):
@@ -87,6 +114,39 @@ def validate_person_name(value, field_name="Name", allow_blank=False, max_length
                 f"{field_name} can only contain letters, spaces, apostrophes, "
                 "hyphens, and periods"
             ),
+            normalized,
+        )
+
+    return True, None, normalized
+
+
+def validate_employee_id(value, field_name="Employee ID", min_length=3, max_length=50):
+    """
+    Validate employee identifiers (alphanumeric + underscore/hyphen).
+    """
+    normalized = sanitize_text(value)
+
+    if not normalized:
+        return False, f"{field_name} is required", normalized
+
+    if len(normalized) < min_length:
+        return (
+            False,
+            f"{field_name} must be at least {min_length} characters",
+            normalized,
+        )
+
+    if len(normalized) > max_length:
+        return (
+            False,
+            f"{field_name} must be at most {max_length} characters",
+            normalized,
+        )
+
+    if not _EMPLOYEE_ID_PATTERN.fullmatch(normalized):
+        return (
+            False,
+            f"{field_name} can only contain letters, numbers, underscores, and hyphens",
             normalized,
         )
 
