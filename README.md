@@ -36,22 +36,37 @@ API available at: `http://localhost:8000/`
 
 ## Configuration
 
-### Required Environment Variables
+### Environment Variables
 
-Edit your `.env` file:
+Copy template first:
+
+```bash
+cp .env.example .env
+```
+
+Use these minimum values for local development:
 
 ```env
 # Django
 DEBUG=True
 SECRET_KEY=your-secret-key
 ALLOWED_HOSTS=localhost,127.0.0.1
+SECRET_PEPPER=generate-a-64-char-hex-pepper
 
 # MongoDB Atlas
 MONGODB_URI=mongodb+srv://user:pass@cluster.mongodb.net/
 MONGODB_NAME=capstone_db
 
-# CORS (Frontend URLs)
+# Frontend origins
 CORS_ALLOWED_ORIGINS=http://localhost:3000,http://localhost:5173
+CSRF_TRUSTED_ORIGINS=http://localhost:3000,http://localhost:5173,http://127.0.0.1:3000,http://127.0.0.1:5173
+
+# Auth/session cookies (dev on HTTP)
+AUTH_COOKIE_HTTPONLY=True
+AUTH_COOKIE_SECURE=False
+AUTH_COOKIE_SAMESITE=Lax
+SESSION_COOKIE_SECURE=False
+CSRF_COOKIE_SECURE=False
 
 # Groq LLM (AI Chatbot)
 # Get free key at: https://console.groq.com
@@ -66,6 +81,8 @@ EMAIL_HOST_PASSWORD=your-app-password
 
 ```
 
+For full variable reference (dev + production), see `.env.example` and `docs/DEPLOYMENT_GUIDE.md`.
+
 ---
 
 ## Development vs Production
@@ -74,6 +91,7 @@ EMAIL_HOST_PASSWORD=your-app-password
 |---------|-------------|------------|
 | `DEBUG` | `True` | `False` |
 | `SECRET_KEY` | Any value | Strong random key |
+| `SECRET_PEPPER` | Set | Set (rotate securely) |
 | `ALLOWED_HOSTS` | `localhost,127.0.0.1` | `your-app.railway.app` |
 | HTTPS | Off | On (automatic) |
 | Secure Cookies | Off | On (automatic) |
@@ -103,6 +121,7 @@ In Railway dashboard, add:
 ```env
 DEBUG=False
 SECRET_KEY=<generate-strong-key>
+SECRET_PEPPER=<generate-strong-pepper>
 ALLOWED_HOSTS=your-app.railway.app
 MONGODB_URI=<your-mongodb-atlas-uri>
 MONGODB_NAME=capstone_db
@@ -112,7 +131,18 @@ GROQ_QUALIFICATION_MODEL=llama-3.1-8b-instant
 EMAIL_HOST_USER=<your-email>
 EMAIL_HOST_PASSWORD=<your-app-password>
 CORS_ALLOWED_ORIGINS=https://your-frontend.vercel.app
+CSRF_TRUSTED_ORIGINS=https://your-frontend.vercel.app
+
+# Session/cookie security
+AUTH_COOKIE_HTTPONLY=True
+AUTH_COOKIE_SECURE=True
+AUTH_COOKIE_SAMESITE=None
+CSRF_COOKIE_SECURE=True
+CSRF_COOKIE_SAMESITE=None
+SESSION_COOKIE_SECURE=True
 ```
+
+If frontend and backend share the same site, you can keep `AUTH_COOKIE_SAMESITE=Lax`.
 
 ### 4. Deploy
 Railway auto-deploys from `Procfile`:

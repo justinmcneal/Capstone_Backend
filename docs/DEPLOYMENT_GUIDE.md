@@ -1,6 +1,6 @@
 # MSME Pathways - Deployment Guide
 
-> **Last Updated:** January 16, 2026
+> **Last Updated:** February 18, 2026
 
 ---
 
@@ -66,144 +66,100 @@ Frontend: Vercel (Web) + Expo (Mobile)
 
 ## Environment Variables for Production
 
+This is the canonical backend deployment set for Railway.
+
 ```env
-# Django
+# Core Django
 DEBUG=False
-SECRET_KEY=your-production-secret-key
+SECRET_KEY=<generate-strong-random-key>
+SECRET_PEPPER=<generate-64-char-hex-pepper>
 ALLOWED_HOSTS=your-app.railway.app
 
-# MongoDB (already set)
-MONGODB_URI=mongodb+srv://...
+# Database
+MONGODB_URI=mongodb+srv://<user>:<password>@<cluster>.mongodb.net/?retryWrites=true&w=majority
+MONGODB_NAME=capstone_db
 
-# LLM (Groq Cloud - already configured)
-GROQ_API_KEY=gsk_xxxxxxxxxxxx
+# Frontend origin + CSRF trust
+CORS_ALLOWED_ORIGINS=https://your-frontend.vercel.app
+CSRF_TRUSTED_ORIGINS=https://your-frontend.vercel.app
+
+# Cookie/session security
+# Use SameSite=None when frontend/backend are on different top-level domains
+AUTH_COOKIE_HTTPONLY=True
+AUTH_COOKIE_SECURE=True
+AUTH_COOKIE_SAMESITE=None
+AUTH_COOKIE_PATH=/
+SESSION_COOKIE_HTTPONLY=True
+SESSION_COOKIE_SECURE=True
+SESSION_COOKIE_SAMESITE=None
+CSRF_COOKIE_HTTPONLY=False
+CSRF_COOKIE_SECURE=True
+CSRF_COOKIE_SAMESITE=None
+
+# HTTPS hardening
+SECURE_SSL_REDIRECT=True
+SECURE_HSTS_SECONDS=31536000
+SECURE_HSTS_INCLUDE_SUBDOMAINS=True
+SECURE_HSTS_PRELOAD=True
+
+# AI (Groq)
+GROQ_API_KEY=<your-groq-api-key>
 GROQ_MODEL=llama-3.1-8b-instant
 GROQ_CHAT_MODEL=llama-3.1-8b-instant
 GROQ_QUALIFICATION_MODEL=llama-3.1-8b-instant
 
 # Email
-EMAIL_HOST_USER=your-email@gmail.com
-EMAIL_HOST_PASSWORD=app-specific-password
+EMAIL_BACKEND=django.core.mail.backends.smtp.EmailBackend
+EMAIL_HOST=smtp.gmail.com
+EMAIL_PORT=587
+EMAIL_USE_TLS=True
+EMAIL_HOST_USER=<your-email@gmail.com>
+EMAIL_HOST_PASSWORD=<your-app-password>
+DEFAULT_FROM_EMAIL=<your-email@gmail.com>
+EMAIL_TIMEOUT=10
 
-# CORS (for frontend)
-CORS_ALLOWED_ORIGINS=https://your-frontend.vercel.app
+# Document processing behavior
+DOCUMENT_UPLOAD_AI_ANALYSIS=True
+DOCUMENT_UPLOAD_NOTIFY_REVIEWERS=True
+DOCUMENT_UPLOAD_NOTIFY_ASYNC=True
+DOCUMENT_TYPE_CONFIDENCE_THRESHOLD=0.75
+DOCUMENT_ENFORCE_TYPE_MATCH=True
+DOCUMENT_REQUIRE_CNN_FOR_TYPE_VALIDATION=True
 
-# Document Storage (AWS S3)
-DOCUMENT_STORAGE_BACKEND=s3
-AWS_REGION=ap-southeast-1
-AWS_S3_BUCKET_NAME=your-msme-documents-prod
-AWS_ACCESS_KEY_ID=AKIAXXXXXXXXXXXXXXXX
-AWS_SECRET_ACCESS_KEY=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
-AWS_S3_PUBLIC_BASE_URL=https://your-msme-documents-prod.s3.ap-southeast-1.amazonaws.com
+# Celery (optional)
+CELERY_BROKER_URL=redis://localhost:6379/0
+CELERY_RESULT_BACKEND=redis://localhost:6379/0
+```
+
+### Frontend Environment Variable (Web)
+
+Set in frontend deployment (Vercel):
+
+```env
+VITE_API_URL=https://your-app.railway.app
 ```
 
 ---
 
-## Production Document Storage (AWS S3)
+## Document Storage Status (Important)
 
-### Why this is required
-- Railway/local container disk is ephemeral; uploaded files can be lost on restart/redeploy.
-- Production uploads must be stored in durable object storage (AWS S3).
+Current backend implementation supports `local` storage only.
 
-### Target Architecture
-- Backend API runs on Railway.
-- Files are uploaded from backend to S3 bucket.
-- Database stores S3 object path/key.
-- API returns a URL that frontend opens for preview.
+- `DOCUMENT_STORAGE_BACKEND` is currently hardcoded to `local` in settings.
+- `S3StorageBackend` and `GCSStorageBackend` are scaffolded but not implemented.
+- `DOCUMENT_STORAGE_BACKEND=s3` is not active yet in runtime code.
 
-### Bucket Setup (AWS Console)
-1. Create an S3 bucket:
-- Name: `your-msme-documents-prod` (globally unique)
-- Region: choose closest to users (example: `ap-southeast-1`)
-- Versioning: `Enabled` (recommended)
-- Default encryption: `SSE-S3` (minimum) or `SSE-KMS`
+Practical production note:
+- Railway filesystem is ephemeral; uploaded files may not persist across redeploys/restarts.
+- If you need durable storage in production, implement and test S3 backend first, then switch.
 
-2. Add folder/prefix strategy:
-- `documents/<customer_id>/<document_type>/<generated_filename>`
+### Planned S3 Migration (Future Work)
 
-3. Configure lifecycle policy:
-- Move older objects to cheaper tier (optional)
-- Retention/expiration for rejected or replaced docs (if policy allows)
-
-### IAM User / Access Policy
-Create a dedicated IAM user for backend (programmatic access only) and attach least-privilege policy:
-
-```json
-{
-  "Version": "2012-10-17",
-  "Statement": [
-    {
-      "Sid": "ListBucketPrefixOnly",
-      "Effect": "Allow",
-      "Action": ["s3:ListBucket"],
-      "Resource": "arn:aws:s3:::your-msme-documents-prod",
-      "Condition": {
-        "StringLike": {
-          "s3:prefix": ["documents/*"]
-        }
-      }
-    },
-    {
-      "Sid": "ObjectCRUDInDocumentsPrefix",
-      "Effect": "Allow",
-      "Action": [
-        "s3:GetObject",
-        "s3:PutObject",
-        "s3:DeleteObject"
-      ],
-      "Resource": "arn:aws:s3:::your-msme-documents-prod/documents/*"
-    }
-  ]
-}
-```
-
-### Bucket CORS (for browser previews/downloads)
-Set S3 bucket CORS:
-
-```json
-[
-  {
-    "AllowedHeaders": ["*"],
-    "AllowedMethods": ["GET", "HEAD"],
-    "AllowedOrigins": [
-      "https://your-frontend.vercel.app",
-      "http://localhost:5173"
-    ],
-    "ExposeHeaders": ["ETag"],
-    "MaxAgeSeconds": 3000
-  }
-]
-```
-
-### Public vs Private Access
-- Recommended long-term: private bucket + signed URLs.
-- If current app expects direct URL preview, configure accessible object URLs for `documents/*` until signed-URL flow is implemented.
-- Do not expose non-document prefixes publicly.
-
-### Railway Environment Variables (S3)
-Set these in Railway service settings:
-- `DOCUMENT_STORAGE_BACKEND=s3`
-- `AWS_REGION=...`
-- `AWS_S3_BUCKET_NAME=...`
-- `AWS_ACCESS_KEY_ID=...`
-- `AWS_SECRET_ACCESS_KEY=...`
-- `AWS_S3_PUBLIC_BASE_URL=...`
-
-### Data Migration Plan (Local -> S3)
-1. Export current local media files from backend server.
-2. Upload to S3 preserving path structure:
-- local `media/documents/...` -> S3 `documents/...`
-3. Keep DB `file_path` values unchanged if path structure is preserved.
-4. Switch env vars to S3 in staging first.
-5. Validate previews/downloads from frontend.
-6. Roll to production.
-
-### Verification Checklist After S3 Cutover
-- Upload new document: appears in S3 under expected prefix.
-- View document from Loan Officer page: opens correct S3 URL.
-- Delete/reupload flow: old object removed/replaced correctly.
-- Existing records from migration open successfully.
-- No local disk dependency for production uploads.
+1. Implement `S3StorageBackend` in `documents/storage/backends.py`.
+2. Add S3 env vars and IAM policy.
+3. Validate upload/read/delete end-to-end in staging.
+4. Migrate existing local files to S3.
+5. Roll out to production.
 
 ---
 
@@ -221,11 +177,11 @@ Set these in Railway service settings:
 python manage.py train_document_classifier
 ```
 
-### Step 3: Configure S3 Storage
+### Step 3: Prepare Production Environment Variables
 ```bash
-# Create bucket + IAM key
-# Add Railway env vars listed above
-# Deploy backend with DOCUMENT_STORAGE_BACKEND=s3
+# Use the canonical env block above
+# Confirm CORS_ALLOWED_ORIGINS and CSRF_TRUSTED_ORIGINS
+# Confirm cookie security values for cross-site deployment
 ```
 
 ### Step 4: Deploy to Railway
@@ -239,6 +195,13 @@ python manage.py train_document_classifier
 ```bash
 # Web: Connect Vercel to GitHub
 # Mobile: expo build:android / expo build:ios
+```
+
+### Step 6: (Optional) Implement S3 Before Durable File Rollout
+```bash
+# Implement S3 backend in documents/storage/backends.py
+# Test in staging
+# Migrate existing files
 ```
 
 ---
