@@ -5,8 +5,9 @@ from bson import ObjectId
 
 from accounts.authentication import CustomJWTAuthentication
 from accounts.utils.response_helpers import success_response, error_response
+from accounts.utils.throttles import PreQualifyRateThrottle
 from loans.models import LoanProduct, LoanApplication
-from loans.serializers import LoanApplicationSerializer
+from loans.serializers import LoanApplicationSerializer, PreQualifyRequestSerializer
 from loans.services import qualify_customer, check_basic_eligibility
 
 from analytics.models import AuditLog
@@ -96,24 +97,28 @@ class PreQualifyView(APIView):
     """
     authentication_classes = [CustomJWTAuthentication]
     permission_classes = [IsAuthenticated]
+    throttle_classes = [PreQualifyRateThrottle]
     
     def post(self, request):
         """Check eligibility for a loan"""
         try:
             user = request.user
             customer_id = user.customer_id
-            
-            product_id = request.data.get('product_id')
-            requested_amount = request.data.get('amount', 0)
-            term_months = request.data.get('term_months', 12)
-            purpose = request.data.get('purpose', '')
-            requirements_scope = request.data.get('requirements_scope')
-            
-            if not product_id:
+
+            serializer = PreQualifyRequestSerializer(data=request.data)
+            if not serializer.is_valid():
                 return error_response(
-                    message="product_id is required",
-                    status_code=status.HTTP_400_BAD_REQUEST
+                    message="Invalid pre-qualification data",
+                    errors=serializer.errors,
+                    status_code=status.HTTP_400_BAD_REQUEST,
                 )
+
+            data = serializer.validated_data
+            product_id = data['product_id']
+            requested_amount = data['amount']
+            term_months = data.get('term_months', 12)
+            purpose = data.get('purpose', '')
+            requirements_scope = data.get('requirements_scope')
             
             product = LoanProduct.find_by_id(product_id)
             if not product or not product.active:
@@ -127,6 +132,16 @@ class PreQualifyView(APIView):
                 return error_response(
                     message=f"Amount must be between ₱{product.min_amount:,.0f} and ₱{product.max_amount:,.0f}",
                     status_code=status.HTTP_400_BAD_REQUEST
+                )
+
+            # Validate term against selected product
+            if term_months < product.min_term_months or term_months > product.max_term_months:
+                return error_response(
+                    message=(
+                        f"Term must be between {product.min_term_months} and "
+                        f"{product.max_term_months} months"
+                    ),
+                    status_code=status.HTTP_400_BAD_REQUEST,
                 )
             
             # Quick eligibility check
@@ -250,13 +265,36 @@ class LoanApplyView(APIView):
                 term_months=data['term_months'],
                 purpose=data.get('purpose', '')
             )
+
+            # Final safety clamp before persisting recommendation.
+            # This guarantees DB values stay within product limits.
+            requested_amount = float(data['requested_amount'])
+            eligible_or_can_apply = bool(
+                qualification.get('can_apply', qualification.get('eligible', False))
+            )
+            recommended_amount = qualification.get('recommended_amount', 0)
+
+            if not eligible_or_can_apply:
+                recommended_amount = 0.0
+            else:
+                try:
+                    recommended_amount = float(recommended_amount)
+                except (TypeError, ValueError):
+                    recommended_amount = 0.0
+
+                lower_bound = float(product.min_amount or 0)
+                upper_bound = min(float(product.max_amount or 0), requested_amount)
+                if upper_bound < lower_bound:
+                    upper_bound = lower_bound
+
+                recommended_amount = max(lower_bound, min(recommended_amount, upper_bound))
             
             # Create application
             application = LoanApplication(
                 customer_id=customer_id,
                 product_id=data['product_id'],
                 requested_amount=data['requested_amount'],
-                recommended_amount=qualification.get('recommended_amount'),
+                recommended_amount=recommended_amount,
                 term_months=data['term_months'],
                 purpose=data.get('purpose', ''),
                 eligibility_score=qualification.get('eligibility_score'),

@@ -62,6 +62,45 @@ class AIInteraction:
         if self._id:
             data['_id'] = self._id
         return data
+
+    @classmethod
+    def _customer_id_candidates(cls, customer_id):
+        """Return customer_id candidates for both ObjectId and string storage."""
+        if customer_id is None:
+            return []
+
+        candidates = []
+
+        if isinstance(customer_id, ObjectId):
+            candidates.append(customer_id)
+            candidates.append(str(customer_id))
+        else:
+            customer_id_str = str(customer_id)
+            candidates.append(customer_id_str)
+            try:
+                candidates.insert(0, ObjectId(customer_id_str))
+            except Exception:
+                pass
+
+        deduped = []
+        seen = set()
+        for value in candidates:
+            marker = (type(value).__name__, str(value))
+            if marker in seen:
+                continue
+            seen.add(marker)
+            deduped.append(value)
+        return deduped
+
+    @classmethod
+    def _customer_query(cls, customer_id):
+        """Build customer filter that supports legacy and current ID shapes."""
+        candidates = cls._customer_id_candidates(customer_id)
+        if not candidates:
+            return {'customer_id': customer_id}
+        if len(candidates) == 1:
+            return {'customer_id': candidates[0]}
+        return {'customer_id': {'$in': candidates}}
     
     @classmethod
     def from_dict(cls, data):
@@ -126,7 +165,7 @@ class AIInteraction:
         page = max(1, int(page))
         limit = max(1, int(limit))
 
-        query = {'customer_id': str(customer_id)}
+        query = cls._customer_query(customer_id)
         if search_query:
             escaped_query = re.escape(search_query)
             query['$or'] = [
@@ -148,10 +187,14 @@ class AIInteraction:
         return interactions, total_count
     
     @classmethod
-    def find_by_conversation(cls, conversation_id):
-        """Get all messages in a conversation"""
+    def find_by_conversation(cls, conversation_id, customer_id=None):
+        """Get all messages in a conversation, optionally scoped to a customer."""
+        query = {'conversation_id': str(conversation_id)}
+        if customer_id is not None:
+            query.update(cls._customer_query(customer_id))
+
         return cls.find(
-            {'conversation_id': str(conversation_id)},
+            query,
             sort=[('timestamp', 1)]
         )
     
@@ -160,7 +203,7 @@ class AIInteraction:
         """Delete all chat history for a customer"""
         db = get_db()
         collection = db[cls.collection_name]
-        result = collection.delete_many({'customer_id': str(customer_id)})
+        result = collection.delete_many(cls._customer_query(customer_id))
         return result.deleted_count
     
     @classmethod
@@ -170,3 +213,4 @@ class AIInteraction:
         collection.create_index('customer_id')
         collection.create_index('conversation_id')
         collection.create_index('timestamp')
+        collection.create_index([('customer_id', 1), ('conversation_id', 1), ('timestamp', 1)])
