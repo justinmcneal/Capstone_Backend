@@ -8,6 +8,12 @@ from bson import ObjectId
 from accounts.models import LoanOfficer
 from accounts.utils.token_utils import TokenUtils
 from accounts.utils.response_helpers import success_response, error_response
+from accounts.utils.auth_cookies import (
+    clear_auth_cookies,
+    get_access_token_from_request,
+    get_refresh_token_from_request,
+    set_auth_cookies,
+)
 from accounts.services import LockoutService
 from accounts.utils.email_utils import EmailUtils
 from accounts.utils.validation_utils import parse_bool
@@ -140,7 +146,7 @@ class LoanOfficerLoginView(APIView):
                 ip_address=request.META.get('REMOTE_ADDR', '')
             )
             
-            return success_response(
+            response = success_response(
                 data={
                     'access_token': tokens['access'],
                     'refresh_token': tokens['refresh'],
@@ -156,6 +162,8 @@ class LoanOfficerLoginView(APIView):
                 },
                 message="Login successful"
             )
+            set_auth_cookies(response, tokens['access'], tokens['refresh'])
+            return response
             
         except Exception as e:
             logger.error(f"Loan officer login error: {str(e)}")
@@ -178,8 +186,8 @@ class LoanOfficerLogoutView(APIView):
     
     def post(self, request):
         try:
-            refresh_token = str(request.data.get('refresh_token') or '').strip()
-            access_token = request.META.get('HTTP_AUTHORIZATION', '').replace('Bearer ', '').strip()
+            refresh_token = get_refresh_token_from_request(request)
+            access_token = get_access_token_from_request(request)
             
             if refresh_token:
                 TokenUtils.blacklist_token(refresh_token, token_type='refresh')
@@ -195,8 +203,12 @@ class LoanOfficerLogoutView(APIView):
                 ip_address=request.META.get('REMOTE_ADDR', '')
             )
             
-            return success_response(message="Logged out successfully")
+            response = success_response(message="Logged out successfully")
+            clear_auth_cookies(response)
+            return response
             
         except Exception as e:
             logger.error(f"Loan officer logout error: {str(e)}")
-            return success_response(message="Logged out successfully")
+            response = success_response(message="Logged out successfully")
+            clear_auth_cookies(response)
+            return response
