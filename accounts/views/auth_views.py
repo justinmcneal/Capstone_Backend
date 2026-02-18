@@ -12,6 +12,12 @@ from accounts.services.lockout_service import LockoutService
 from accounts.utils.email_utils import EmailUtils
 from accounts.utils.response_helpers import APIResponseHelper
 from accounts.utils.token_utils import TokenUtils
+from accounts.utils.auth_cookies import (
+    clear_auth_cookies,
+    get_access_token_from_request,
+    get_refresh_token_from_request,
+    set_auth_cookies,
+)
 from accounts.serializers.auth_serializers import LoginSerializer
 from accounts.utils.throttles import SignUpRateThrottle, LoginRateThrottle, OTPVerificationRateThrottle, OTPResendRateThrottle
 from analytics.models import AuditLog
@@ -194,10 +200,12 @@ class LoginView(APIView):
                 'remember_me': remember_me
             }
             
-            return APIResponseHelper.success_response(
+            response = APIResponseHelper.success_response(
                 data=response_data,
                 message='Login successful'
             )
+            set_auth_cookies(response, tokens['access'], tokens['refresh'])
+            return response
             
         except Exception as e:
             logger.error(f"Login error for {email} from IP {request.META.get('REMOTE_ADDR')}: {str(e)}")
@@ -262,10 +270,12 @@ class VerifyOTP(APIView):
                 'refresh': tokens['refresh']
             }
 
-            return APIResponseHelper.success_response(
+            response = APIResponseHelper.success_response(
                 data=response,
                 message='Account verified successfully'
             )
+            set_auth_cookies(response, tokens['access'], tokens['refresh'])
+            return response
         except Exception as e:
             logger.error(f"OTP verification error for {email} from IP {request.META.get('REMOTE_ADDR')}: {str(e)}")
             return APIResponseHelper.server_error_response('Verification failed')
@@ -316,7 +326,7 @@ class RefreshTokenView(APIView):
     
     def post(self, request):
         """Refresh access token and blacklist old refresh token"""
-        refresh_token = str(request.data.get('refresh') or '').strip()
+        refresh_token = get_refresh_token_from_request(request)
         
         if not refresh_token:
             logger.warning(f"Token refresh missing token from IP {request.META.get('REMOTE_ADDR')}")
@@ -345,10 +355,12 @@ class RefreshTokenView(APIView):
             
             logger.info(f"Token refreshed for user {customer.email} from IP {request.META.get('REMOTE_ADDR')}")
             
-            return APIResponseHelper.success_response(
+            response = APIResponseHelper.success_response(
                 data=new_tokens,
                 message='Token refreshed successfully'
             )
+            set_auth_cookies(response, new_tokens['access'], new_tokens['refresh'])
+            return response
             
         except TokenError as e:
             logger.warning(f"Invalid token refresh attempt from IP {request.META.get('REMOTE_ADDR')}")
@@ -365,14 +377,8 @@ class LogoutView(APIView):
     
     def post(self, request):
         """Logout by blacklisting both access and refresh tokens"""
-        refresh_token = str(request.data.get('refresh') or '').strip()
-        access_token = str(request.data.get('access') or '').strip()
-        
-        # Also try to get access token from Authorization header
-        if not access_token:
-            auth_header = request.META.get('HTTP_AUTHORIZATION', '')
-            if auth_header.startswith('Bearer '):
-                access_token = auth_header[7:]
+        refresh_token = get_refresh_token_from_request(request)
+        access_token = request.data.get('access') or get_access_token_from_request(request)
         
         if not refresh_token:
             logger.warning(f"Logout attempt missing refresh token from IP {request.META.get('REMOTE_ADDR')}")
@@ -391,9 +397,11 @@ class LogoutView(APIView):
                     ip_address=request.META.get('REMOTE_ADDR', '')
                 )
                 
-                return APIResponseHelper.success_response(
+                response = APIResponseHelper.success_response(
                     message='Logged out successfully'
                 )
+                clear_auth_cookies(response)
+                return response
             else:
                 logger.warning(f"Logout failed from IP {request.META.get('REMOTE_ADDR')}")
                 return APIResponseHelper.error_response('Logout failed')
