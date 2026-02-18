@@ -81,7 +81,7 @@ class ChatView(ConsentRequiredMixin, APIView):
             ]
             
             # Get LLM response
-            llm = get_llm_service()
+            llm = get_llm_service(use_case='chat')
             
             # Check if Groq API is available
             if not llm.is_available():
@@ -298,7 +298,7 @@ class AIStatusView(APIView):
     
     def get(self, request):
         """Check if AI service is available"""
-        llm = get_llm_service()
+        llm = get_llm_service(use_case='chat')
         
         is_available = llm.is_available()
         

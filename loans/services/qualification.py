@@ -219,7 +219,7 @@ def qualify_customer(
     )
     
     # Get AI response
-    llm = get_llm_service()
+    llm = get_llm_service(use_case='qualification')
     
     if not llm.is_available():
         # Fallback to rule-based if AI unavailable
