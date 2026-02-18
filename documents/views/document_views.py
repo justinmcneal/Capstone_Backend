@@ -268,8 +268,8 @@ class DocumentUploadView(APIView):
                 document.confidence_score = ai_analysis.get('quality_score', 0)
                 document.ai_analysis = ai_analysis
                 
-                # Auto-flag low quality for review
-                if ai_analysis.get('quality_score', 1) < 0.5:
+                # Auto-flag for review when image quality/type validation fails.
+                if (not ai_analysis.get('is_valid', True)) or ai_analysis.get('quality_score', 1) < 0.5:
                     document.status = 'needs_review'
             
             document.save()
@@ -319,8 +319,12 @@ class DocumentUploadView(APIView):
                     'is_valid': ai_analysis.get('is_valid', True),
                     'quality_issues': ai_analysis.get('quality_issues', []),
                     'analysis_mode': ai_analysis.get('analysis_mode', 'quality_check'),
+                    'expected_type': ai_analysis.get('expected_type'),
                     'predicted_type': ai_analysis.get('predicted_type'),
                     'type_confidence': ai_analysis.get('type_confidence'),
+                    'type_matches_expected': ai_analysis.get('type_matches_expected'),
+                    'type_validation_passed': ai_analysis.get('type_validation_passed'),
+                    'type_confidence_threshold': ai_analysis.get('type_confidence_threshold'),
                     'model_available': ai_analysis.get('model_available', False)
                 }
             
