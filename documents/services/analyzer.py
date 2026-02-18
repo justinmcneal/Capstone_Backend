@@ -21,6 +21,9 @@ logger = logging.getLogger('documents')
 MIN_IMAGE_SIZE = (200, 200)  # Minimum dimensions
 MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB
 BLUR_THRESHOLD = 100  # Laplacian variance threshold
+TYPE_CONFIDENCE_THRESHOLD = float(os.getenv('DOCUMENT_TYPE_CONFIDENCE_THRESHOLD', '0.75'))
+ENFORCE_TYPE_MATCH = os.getenv('DOCUMENT_ENFORCE_TYPE_MATCH', 'True') == 'True'
+REQUIRE_CNN_FOR_TYPE_VALIDATION = os.getenv('DOCUMENT_REQUIRE_CNN_FOR_TYPE_VALIDATION', 'True') == 'True'
 
 
 class DocumentAnalyzer:
@@ -100,18 +103,25 @@ class DocumentAnalyzer:
                 classification = self._classify(image)
             else:
                 classification = {
-                    'predicted_type': expected_type or 'unknown',
+                    'predicted_type': 'unknown',
                     'type_confidence': None,
                     'model_available': False
                 }
+
+            type_validation = self._validate_type(expected_type, classification)
+            combined_issues = quality_result['issues'] + type_validation['issues']
             
             # Combine results
             return {
-                'is_valid': quality_result['is_valid'],
+                'is_valid': quality_result['is_valid'] and type_validation['is_valid'],
                 'quality_score': quality_result['quality_score'],
-                'quality_issues': quality_result['issues'],
+                'quality_issues': combined_issues,
+                'expected_type': expected_type,
                 'predicted_type': classification['predicted_type'],
                 'type_confidence': classification.get('type_confidence'),
+                'type_matches_expected': type_validation['type_matches_expected'],
+                'type_validation_passed': type_validation['is_valid'],
+                'type_confidence_threshold': TYPE_CONFIDENCE_THRESHOLD,
                 'model_available': self.model_loaded,
                 'analysis_mode': 'cnn' if self.model_loaded else 'quality_check'
             }
@@ -246,6 +256,57 @@ class DocumentAnalyzer:
         except Exception as e:
             logger.error(f"Classification error: {e}")
             return {'predicted_type': 'unknown', 'type_confidence': None}
+
+    def _validate_type(self, expected_type, classification):
+        """Validate predicted type against expected upload type."""
+        issues = []
+
+        # No expected type means nothing to validate.
+        if not expected_type:
+            return {
+                'is_valid': True,
+                'issues': issues,
+                'type_matches_expected': None,
+            }
+
+        predicted_type = classification.get('predicted_type')
+        type_confidence = classification.get('type_confidence')
+
+        # If CNN is unavailable, do not treat type as verified.
+        if not self.model_loaded:
+            if REQUIRE_CNN_FOR_TYPE_VALIDATION:
+                issues.append('CNN model unavailable; document type could not be validated')
+                return {
+                    'is_valid': False,
+                    'issues': issues,
+                    'type_matches_expected': None,
+                }
+            return {
+                'is_valid': True,
+                'issues': issues,
+                'type_matches_expected': None,
+            }
+
+        type_matches_expected = predicted_type == expected_type
+
+        if ENFORCE_TYPE_MATCH and not type_matches_expected:
+            issues.append(
+                f'Document type mismatch (expected: {expected_type}, predicted: {predicted_type})'
+            )
+
+        if type_confidence is None:
+            issues.append('CNN type confidence unavailable')
+        elif type_confidence < TYPE_CONFIDENCE_THRESHOLD:
+            issues.append(
+                f'Low type confidence ({type_confidence:.2f} < {TYPE_CONFIDENCE_THRESHOLD:.2f})'
+            )
+
+        is_valid = not issues
+        return {
+            'is_valid': is_valid,
+            'issues': issues,
+            'type_matches_expected': type_matches_expected,
+        }
 
 
 # Singleton instance
