@@ -21,41 +21,42 @@ class SecurityHeadersMiddleware:
         if not request.get_host().startswith('localhost'):
             response['Strict-Transport-Security'] = 'max-age=31536000; includeSubDomains'
         
-        # Content Security Policy - relaxed for development
-        # In production, remove 'unsafe-eval' and localhost references
-        is_development = request.get_host().startswith('localhost') or request.get_host().startswith('127.0.0.1')
-        
-        if is_development:
-            # Relaxed CSP for development (allows Vite HMR, eval for dev tools)
+        # Strict API-first CSP.
+        # This backend serves JSON APIs; it does not require inline/eval script execution.
+        is_local = request.get_host().startswith('localhost') or request.get_host().startswith('127.0.0.1')
+
+        if is_local:
+            # Keep localhost connect targets for local tooling, while still blocking script execution.
             response['Content-Security-Policy'] = (
-                "default-src 'self' http://localhost:* ws://localhost:*; "
-                "script-src 'self' 'unsafe-inline' 'unsafe-eval'; "
-                "style-src 'self' 'unsafe-inline'; "
-                "img-src 'self' data: https: http://localhost:*; "
-                "font-src 'self' data:; "
-                "base-uri 'self'; "
-                "form-action 'self'; "
-                "frame-src 'none'; "
-                "manifest-src 'self'; "
-                "worker-src 'self' blob:; "
+                "default-src 'none'; "
+                "base-uri 'none'; "
+                "frame-ancestors 'none'; "
+                "form-action 'none'; "
+                "object-src 'none'; "
+                "script-src 'none'; "
+                "style-src 'none'; "
+                "img-src 'self' data: http://localhost:*; "
+                "font-src 'none'; "
                 "connect-src 'self' http://localhost:* ws://localhost:*; "
-                "frame-ancestors 'none'; object-src 'none'"
+                "frame-src 'none'; "
+                "manifest-src 'none'; "
+                "worker-src 'none'"
             )
         else:
-            # Strict CSP for production
             response['Content-Security-Policy'] = (
-                "default-src 'self'; "
-                "script-src 'self'; "
-                "style-src 'self' 'unsafe-inline'; "
+                "default-src 'none'; "
+                "base-uri 'none'; "
+                "frame-ancestors 'none'; "
+                "form-action 'none'; "
+                "object-src 'none'; "
+                "script-src 'none'; "
+                "style-src 'none'; "
                 "img-src 'self' data: https:; "
-                "font-src 'self' data:; "
-                "base-uri 'self'; "
-                "form-action 'self'; "
-                "frame-src 'none'; "
-                "manifest-src 'self'; "
-                "worker-src 'self' blob:; "
+                "font-src 'none'; "
                 "connect-src 'self'; "
-                "frame-ancestors 'none'; object-src 'none'"
+                "frame-src 'none'; "
+                "manifest-src 'none'; "
+                "worker-src 'none'"
             )
         
         # Referrer Policy
