@@ -345,15 +345,66 @@ class RefreshTokenView(APIView):
             TokenUtils.blacklist_token(refresh_token)
             
             customer_id = token['customer_id']
-            customer = AuthService.get_customer_by_id(customer_id)
+            role = token.get('role', 'customer')
+
+            if role == 'customer':
+                customer = AuthService.get_customer_by_id(customer_id)
+                if not customer:
+                    logger.warning(
+                        f"Token refresh for non-existent customer {customer_id} from IP {request.META.get('REMOTE_ADDR')}"
+                    )
+                    return APIResponseHelper.error_response('User not found')
+                new_tokens = AuthService.create_customer_tokens(customer, token_type='no_remember_me')
+                user_email = customer.email
+            else:
+                from bson import ObjectId
+                from accounts.models import Admin, LoanOfficer
+
+                try:
+                    object_id = ObjectId(customer_id)
+                except Exception:
+                    logger.warning(
+                        f"Token refresh received invalid user id {customer_id} from IP {request.META.get('REMOTE_ADDR')}"
+                    )
+                    return APIResponseHelper.error_response(
+                        'Invalid token payload',
+                        status.HTTP_401_UNAUTHORIZED
+                    )
+
+                if role == 'admin':
+                    user = Admin.find_one({'_id': object_id})
+                elif role == 'loan_officer':
+                    user = LoanOfficer.find_one({'_id': object_id})
+                else:
+                    logger.warning(
+                        f"Token refresh received unsupported role {role} from IP {request.META.get('REMOTE_ADDR')}"
+                    )
+                    return APIResponseHelper.error_response(
+                        'Invalid token payload',
+                        status.HTTP_401_UNAUTHORIZED
+                    )
+
+                if not user:
+                    logger.warning(
+                        f"Token refresh for non-existent {role} {customer_id} from IP {request.META.get('REMOTE_ADDR')}"
+                    )
+                    return APIResponseHelper.error_response('User not found')
+
+                # Keep role-based session durations for non-customer users.
+                refresh_days = 1
+                if role == 'loan_officer':
+                    refresh_days = 3
+
+                new_tokens = TokenUtils.generate_tokens(
+                    user_id=user.id,
+                    email=user.email,
+                    verified=getattr(user, 'verified', True),
+                    role=role,
+                    refresh_token_days=refresh_days
+                )
+                user_email = user.email
             
-            if not customer:
-                logger.warning(f"Token refresh for non-existent user {customer_id} from IP {request.META.get('REMOTE_ADDR')}")
-                return APIResponseHelper.error_response('User not found')
-            
-            new_tokens = AuthService.create_customer_tokens(customer, token_type='no_remember_me')
-            
-            logger.info(f"Token refreshed for user {customer.email} from IP {request.META.get('REMOTE_ADDR')}")
+            logger.info(f"Token refreshed for user {user_email} ({role}) from IP {request.META.get('REMOTE_ADDR')}")
             
             response = APIResponseHelper.success_response(
                 data=new_tokens,
