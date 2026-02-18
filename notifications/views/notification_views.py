@@ -33,6 +33,14 @@ def _build_notification_owner_query(user):
     user_email = str(getattr(user, 'email', '') or '').strip().lower()
     user_role = str(getattr(user, 'role', 'customer') or 'customer').strip()
 
+    # Customers must be isolated strictly by immutable user_id.
+    # Using recipient_email allows recreated accounts (same email, new user_id)
+    # to see historical notifications that belong to a deleted account.
+    if user_role == 'customer':
+        if user_id:
+            return {'user_id': user_id}
+        return {'_id': None}
+
     owner_conditions = []
     if user_id:
         owner_conditions.append({'user_id': user_id})

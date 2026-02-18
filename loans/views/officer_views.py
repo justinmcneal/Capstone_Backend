@@ -568,7 +568,8 @@ class OfficerRequestMissingDocumentsView(LoanOfficerRequiredMixin, APIView):
                     customer_name=f"{customer.first_name} {customer.last_name}".strip() or "Customer",
                     loan_id=app.id,
                     missing_documents=app.missing_documents_requested,
-                    reason=app.missing_documents_reason
+                    reason=app.missing_documents_reason,
+                    customer_id=app.customer_id,
                 )
             except Exception as e:
                 logger.warning(f"Failed to send missing documents email: {e}")
@@ -668,7 +669,8 @@ class OfficerReviewView(LoanOfficerRequiredMixin, APIView):
                         customer_email=customer_email,
                         customer_name=customer_name,
                         loan_id=app.id,
-                        approved_amount=data['approved_amount']
+                        approved_amount=data['approved_amount'],
+                        customer_id=app.customer_id,
                     )
                 except Exception as e:
                     logger.warning(f"Failed to send approval email: {e}")
@@ -702,7 +704,8 @@ class OfficerReviewView(LoanOfficerRequiredMixin, APIView):
                         customer_email=customer_email,
                         customer_name=customer_name,
                         loan_id=app.id,
-                        reason=data['rejection_reason']
+                        reason=data['rejection_reason'],
+                        customer_id=app.customer_id,
                     )
                 except Exception as e:
                     logger.warning(f"Failed to send rejection email: {e}")
@@ -808,7 +811,8 @@ class DisburseView(LoanOfficerRequiredMixin, APIView):
                         loan_id=app.id,
                         amount=amount,
                         method=method,
-                        reference=reference
+                        reference=reference,
+                        customer_id=app.customer_id,
                     )
                 except Exception as e:
                     logger.warning(f"Failed to send disbursement email: {e}")
@@ -975,7 +979,8 @@ class RecordPaymentView(LoanOfficerRequiredMixin, APIView):
                     loan_id=loan_id,
                     amount=amount,
                     installment=installment_number,
-                    remaining=schedule.get_remaining_balance()
+                    remaining=schedule.get_remaining_balance(),
+                    customer_id=schedule.customer_id,
                 )
         except Exception as e:
             logger.warning(f"Failed to send payment email: {e}")
