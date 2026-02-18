@@ -5,6 +5,8 @@ from django.utils.html import strip_tags
 # Unicode-aware: allows letters with optional separators between words.
 _PERSON_NAME_PATTERN = re.compile(r"^[^\W\d_]+(?:[ .'-][^\W\d_]+)*$", re.UNICODE)
 _CONTROL_CHARS_PATTERN = re.compile(r"[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]")
+_TRUE_VALUES = {"1", "true", "yes", "on"}
+_FALSE_VALUES = {"0", "false", "no", "off"}
 
 
 def normalize_text(value):
@@ -25,6 +27,40 @@ def sanitize_text(value):
     cleaned = strip_tags(str(value))
     cleaned = _CONTROL_CHARS_PATTERN.sub("", cleaned)
     return normalize_text(cleaned)
+
+
+def parse_bool(value, field_name="value"):
+    """
+    Strictly parse a boolean-like value.
+
+    Returns:
+        tuple[bool, bool|None, str|None]: (is_valid, parsed_value, error_message)
+    """
+    if isinstance(value, bool):
+        return True, value, None
+
+    normalized = normalize_text(value).lower()
+    if normalized in _TRUE_VALUES:
+        return True, True, None
+    if normalized in _FALSE_VALUES:
+        return True, False, None
+
+    return False, None, f"{field_name} must be a boolean (true/false)"
+
+
+def parse_optional_bool(value, field_name="value"):
+    """
+    Parse optional booleans from query/body values.
+
+    Returns:
+        tuple[bool, bool|None, str|None]: (is_valid, parsed_or_none, error_message)
+    """
+    if value is None:
+        return True, None, None
+    if isinstance(value, str) and not normalize_text(value):
+        return True, None, None
+
+    return parse_bool(value, field_name)
 
 
 def validate_person_name(value, field_name="Name", allow_blank=False, max_length=None):

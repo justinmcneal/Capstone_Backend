@@ -6,7 +6,8 @@ from bson import ObjectId
 from accounts.authentication import CustomJWTAuthentication
 from accounts.utils.response_helpers import success_response, error_response
 from accounts.utils.throttles import PreQualifyRateThrottle
-from loans.models import LoanProduct, LoanApplication
+from accounts.utils.validation_utils import sanitize_text
+from loans.models import LoanProduct, LoanApplication, APPLICATION_STATUSES
 from loans.serializers import LoanApplicationSerializer, PreQualifyRequestSerializer
 from loans.services import qualify_customer, check_basic_eligibility
 
@@ -378,10 +379,43 @@ class MyApplicationsView(APIView):
         customer_id = user.customer_id
         
         # Get query parameters
-        search_query = request.query_params.get('search', '').strip().lower()
-        status_filter = request.query_params.get('status', '').strip().lower()
-        page = int(request.query_params.get('page', 1))
-        page_size = min(int(request.query_params.get('page_size', 20)), 100)
+        search_query = sanitize_text(request.query_params.get('search', '')).lower()
+        status_filter = sanitize_text(request.query_params.get('status', '')).lower()
+        allowed_status_filters = set(APPLICATION_STATUSES) | {'pending'}
+        if status_filter and status_filter not in allowed_status_filters:
+            return error_response(
+                message="Invalid status filter",
+                errors={'status': f"status must be one of: {', '.join(sorted(allowed_status_filters))}"},
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+        try:
+            page = int(request.query_params.get('page', 1))
+        except (TypeError, ValueError):
+            return error_response(
+                message="Invalid page parameter",
+                errors={'page': 'page must be an integer'},
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+        try:
+            page_size = min(int(request.query_params.get('page_size', 20)), 100)
+        except (TypeError, ValueError):
+            return error_response(
+                message="Invalid page_size parameter",
+                errors={'page_size': 'page_size must be an integer'},
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+        if page < 1:
+            return error_response(
+                message="Invalid page parameter",
+                errors={'page': 'page must be at least 1'},
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+        if page_size < 1:
+            return error_response(
+                message="Invalid page_size parameter",
+                errors={'page_size': 'page_size must be at least 1'},
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
         
         applications = LoanApplication.find_by_customer(customer_id)
         
@@ -395,8 +429,13 @@ class MyApplicationsView(APIView):
                 continue
             
             # Apply status filter
-            if status_filter and app.status.lower() != status_filter:
-                continue
+            if status_filter:
+                app_status = (app.status or '').lower()
+                if status_filter == 'pending':
+                    if app_status not in {'submitted', 'under_review'}:
+                        continue
+                elif app_status != status_filter:
+                    continue
             
             apps_data.append({
                 'id': app.id,

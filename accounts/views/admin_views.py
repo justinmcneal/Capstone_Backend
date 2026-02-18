@@ -12,7 +12,14 @@ from accounts.models import Admin, LoanOfficer, ADMIN_PERMISSIONS
 from accounts.authentication import CustomJWTAuthentication
 from accounts.utils.token_utils import TokenUtils
 from accounts.utils.response_helpers import success_response, error_response
-from accounts.utils.validation_utils import validate_person_name, normalize_text
+from accounts.utils.email_utils import EmailUtils
+from accounts.utils.validation_utils import (
+    validate_person_name,
+    normalize_text,
+    sanitize_text,
+    parse_bool,
+    parse_optional_bool,
+)
 from analytics.models import AuditLog
 import logging
 
@@ -80,8 +87,19 @@ class AdminLoginView(APIView):
     
     def post(self, request):
         try:
-            username = request.data.get('username', '').strip()
+            raw_username = request.data.get('username', '')
             password = request.data.get('password', '')
+            if not isinstance(raw_username, str):
+                return error_response(
+                    message="username must be a string",
+                    status_code=status.HTTP_400_BAD_REQUEST
+                )
+            if not isinstance(password, str):
+                return error_response(
+                    message="password must be a string",
+                    status_code=status.HTTP_400_BAD_REQUEST
+                )
+            username = normalize_text(raw_username)
             
             if not username or not password:
                 return error_response(
@@ -206,8 +224,8 @@ class AdminLogoutView(APIView):
     
     def post(self, request):
         try:
-            refresh_token = request.data.get('refresh_token')
-            access_token = request.META.get('HTTP_AUTHORIZATION', '').replace('Bearer ', '')
+            refresh_token = str(request.data.get('refresh_token') or '').strip()
+            access_token = request.META.get('HTTP_AUTHORIZATION', '').replace('Bearer ', '').strip()
             
             if refresh_token:
                 TokenUtils.blacklist_token(refresh_token, token_type='refresh')
@@ -282,19 +300,62 @@ class LoanOfficerManagementView(AdminRequiredMixin, APIView):
                 return result
             
             # Get query parameters
-            search = request.query_params.get('search', '').strip()
-            active_param = request.query_params.get('active')  # None means all, 'true'/'false' for filter
-            department = request.query_params.get('department')
-            page = int(request.query_params.get('page', 1))
-            page_size = min(int(request.query_params.get('page_size', 20)), 100)
-            sort_by = request.query_params.get('sort_by', 'created_at')
-            sort_order = request.query_params.get('sort_order', 'desc')
+            search = sanitize_text(request.query_params.get('search', ''))
+            active_raw = request.query_params.get('active')
+            department = sanitize_text(request.query_params.get('department', ''))
+            try:
+                page = int(request.query_params.get('page', 1))
+            except (TypeError, ValueError):
+                return error_response(
+                    message="Invalid page parameter",
+                    errors={'page': 'page must be an integer'},
+                    status_code=status.HTTP_400_BAD_REQUEST
+                )
+            try:
+                page_size = min(int(request.query_params.get('page_size', 20)), 100)
+            except (TypeError, ValueError):
+                return error_response(
+                    message="Invalid page_size parameter",
+                    errors={'page_size': 'page_size must be an integer'},
+                    status_code=status.HTTP_400_BAD_REQUEST
+                )
+            if page < 1:
+                return error_response(
+                    message="Invalid page parameter",
+                    errors={'page': 'page must be at least 1'},
+                    status_code=status.HTTP_400_BAD_REQUEST
+                )
+            if page_size < 1:
+                return error_response(
+                    message="Invalid page_size parameter",
+                    errors={'page_size': 'page_size must be at least 1'},
+                    status_code=status.HTTP_400_BAD_REQUEST
+                )
+            sort_by = sanitize_text(request.query_params.get('sort_by', 'created_at'))
+            sort_order = sanitize_text(request.query_params.get('sort_order', 'desc')).lower()
+            if sort_order not in {'asc', 'desc'}:
+                return error_response(
+                    message="Invalid sort_order parameter",
+                    errors={'sort_order': 'sort_order must be asc or desc'},
+                    status_code=status.HTTP_400_BAD_REQUEST
+                )
             
             query = {}
             
             # Active filter - only apply if explicitly provided
+            active_param = None
+            if active_raw is not None:
+                active_text = sanitize_text(active_raw).lower()
+                if active_text != 'all':
+                    active_valid, active_param, active_error = parse_optional_bool(active_raw, 'active')
+                    if not active_valid:
+                        return error_response(
+                            message="Invalid active filter",
+                            errors={'active': active_error},
+                            status_code=status.HTTP_400_BAD_REQUEST
+                        )
             if active_param is not None:
-                query['active'] = active_param.lower() == 'true'
+                query['active'] = active_param
             
             if department:
                 query['department'] = department
@@ -374,23 +435,27 @@ class LoanOfficerManagementView(AdminRequiredMixin, APIView):
             
             admin = result  # result is the admin object when has_perm is True
             
+            employee_id = normalize_text(request.data.get('employee_id', ''))
+            first_name = request.data.get('first_name', '')
+            last_name = request.data.get('last_name', '')
+            email = EmailUtils.normalize_email(str(request.data.get('email') or ''))
+
             # Validate required fields
-            required_fields = ['employee_id', 'first_name', 'last_name', 'email']
             missing_errors = {}
-            for field in required_fields:
-                if not request.data.get(field):
-                    missing_errors[field] = f"{field.replace('_', ' ').title()} is required"
+            if not employee_id:
+                missing_errors['employee_id'] = "Employee Id is required"
+            if not normalize_text(first_name):
+                missing_errors['first_name'] = "First Name is required"
+            if not normalize_text(last_name):
+                missing_errors['last_name'] = "Last Name is required"
+            if not email:
+                missing_errors['email'] = "Email is required"
             if missing_errors:
                 return error_response(
                     message="Validation failed",
                     errors=missing_errors,
                     status_code=status.HTTP_400_BAD_REQUEST
                 )
-            
-            email = request.data.get('email', '').lower().strip()
-            employee_id = request.data.get('employee_id', '').strip()
-            first_name = request.data.get('first_name', '')
-            last_name = request.data.get('last_name', '')
 
             first_name_valid, first_name_error, first_name_normalized = validate_person_name(
                 first_name,
@@ -439,8 +504,8 @@ class LoanOfficerManagementView(AdminRequiredMixin, APIView):
                 first_name=first_name_normalized,
                 last_name=last_name_normalized,
                 email=email,
-                phone=request.data.get('phone', ''),
-                department=request.data.get('department', ''),
+                phone=sanitize_text(request.data.get('phone', '')),
+                department=sanitize_text(request.data.get('department', '')),
                 created_by=ObjectId(admin.id),
                 must_change_password=True
             )
@@ -590,8 +655,23 @@ class LoanOfficerDetailView(AdminRequiredMixin, APIView):
                                 status_code=status.HTTP_400_BAD_REQUEST
                             )
                         new_value = normalized_name
+                    elif field == 'active':
+                        is_valid, parsed_active, parse_error = parse_bool(new_value, 'active')
+                        if not is_valid:
+                            return error_response(
+                                message="Invalid active value",
+                                errors={'active': parse_error},
+                                status_code=status.HTTP_400_BAD_REQUEST
+                            )
+                        new_value = parsed_active
                     elif isinstance(new_value, str):
                         new_value = normalize_text(new_value)
+                    elif field in ['phone', 'department'] and new_value is not None:
+                        return error_response(
+                            message=f"{field} must be a string",
+                            errors={field: f"{field} must be a string"},
+                            status_code=status.HTTP_400_BAD_REQUEST
+                        )
 
                     if old_value != new_value:
                         changes[field] = {'old': old_value, 'new': new_value}
@@ -728,18 +808,61 @@ class AdminManagementView(SuperAdminRequiredMixin, APIView):
             current_admin = result
             
             # Get query parameters
-            search = request.query_params.get('search', '').strip()
-            active_param = request.query_params.get('active')  # None means all
-            page = int(request.query_params.get('page', 1))
-            page_size = min(int(request.query_params.get('page_size', 20)), 100)
-            sort_by = request.query_params.get('sort_by', 'created_at')
-            sort_order = request.query_params.get('sort_order', 'desc')
+            search = sanitize_text(request.query_params.get('search', ''))
+            active_raw = request.query_params.get('active')
+            try:
+                page = int(request.query_params.get('page', 1))
+            except (TypeError, ValueError):
+                return error_response(
+                    message="Invalid page parameter",
+                    errors={'page': 'page must be an integer'},
+                    status_code=status.HTTP_400_BAD_REQUEST
+                )
+            try:
+                page_size = min(int(request.query_params.get('page_size', 20)), 100)
+            except (TypeError, ValueError):
+                return error_response(
+                    message="Invalid page_size parameter",
+                    errors={'page_size': 'page_size must be an integer'},
+                    status_code=status.HTTP_400_BAD_REQUEST
+                )
+            if page < 1:
+                return error_response(
+                    message="Invalid page parameter",
+                    errors={'page': 'page must be at least 1'},
+                    status_code=status.HTTP_400_BAD_REQUEST
+                )
+            if page_size < 1:
+                return error_response(
+                    message="Invalid page_size parameter",
+                    errors={'page_size': 'page_size must be at least 1'},
+                    status_code=status.HTTP_400_BAD_REQUEST
+                )
+            sort_by = sanitize_text(request.query_params.get('sort_by', 'created_at'))
+            sort_order = sanitize_text(request.query_params.get('sort_order', 'desc')).lower()
+            if sort_order not in {'asc', 'desc'}:
+                return error_response(
+                    message="Invalid sort_order parameter",
+                    errors={'sort_order': 'sort_order must be asc or desc'},
+                    status_code=status.HTTP_400_BAD_REQUEST
+                )
             
             query = {}
             
             # Active filter - only apply if explicitly provided
+            active_param = None
+            if active_raw is not None:
+                active_text = sanitize_text(active_raw).lower()
+                if active_text != 'all':
+                    active_valid, active_param, active_error = parse_optional_bool(active_raw, 'active')
+                    if not active_valid:
+                        return error_response(
+                            message="Invalid active filter",
+                            errors={'active': active_error},
+                            status_code=status.HTTP_400_BAD_REQUEST
+                        )
             if active_param is not None:
-                query['active'] = active_param.lower() == 'true'
+                query['active'] = active_param
             
             # Search filter - search in username, name, email
             if search:

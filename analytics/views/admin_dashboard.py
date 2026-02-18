@@ -9,6 +9,7 @@ from bson import ObjectId
 
 from accounts.authentication import CustomJWTAuthentication
 from accounts.utils.response_helpers import success_response, error_response
+from accounts.utils.validation_utils import sanitize_text
 from accounts.views.admin_views import AdminRequiredMixin
 from analytics.models import AuditLog
 import logging
@@ -143,29 +144,37 @@ class AuditLogsView(AdminRequiredMixin, APIView):
         try:
             page = max(int(request.query_params.get('page', 1)), 1)
         except (TypeError, ValueError):
-            page = 1
+            return error_response(
+                message="Invalid page parameter",
+                errors={'page': 'page must be an integer'},
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
         try:
             page_size = min(max(int(request.query_params.get('page_size', 20)), 1), 200)
         except (TypeError, ValueError):
-            page_size = 20
+            return error_response(
+                message="Invalid page_size parameter",
+                errors={'page_size': 'page_size must be an integer'},
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
         
         # Filter parameters
-        action_filter = request.query_params.get('action')
-        action_group = request.query_params.get('action_group')
-        user_id = request.query_params.get('user_id')
-        user_type = request.query_params.get('user_type')
-        date_from = request.query_params.get('date_from')
-        date_to = request.query_params.get('date_to')
-        search = request.query_params.get('search', '').strip()
+        action_filter = sanitize_text(request.query_params.get('action', ''))
+        action_group = sanitize_text(request.query_params.get('action_group', ''))
+        user_id = sanitize_text(request.query_params.get('user_id', ''))
+        user_type = sanitize_text(request.query_params.get('user_type', ''))
+        date_from = sanitize_text(request.query_params.get('date_from', ''))
+        date_to = sanitize_text(request.query_params.get('date_to', ''))
+        search = sanitize_text(request.query_params.get('search', ''))
         
         # Get all logs with filters (no limit to get accurate total)
         logs = AuditLog.find_with_filters(
-            action=action_filter,
-            action_group=action_group,
-            user_id=user_id,
-            user_type=user_type,
-            date_from=date_from,
-            date_to=date_to,
+            action=action_filter or None,
+            action_group=action_group or None,
+            user_id=user_id or None,
+            user_type=user_type or None,
+            date_from=date_from or None,
+            date_to=date_to or None,
             limit=10000
         )
         
@@ -227,21 +236,26 @@ class AuditLogUsersView(AdminRequiredMixin, APIView):
 
     def get(self, request):
         from django.conf import settings
+        import re
 
         has_permission, result = self.check_admin_permission(request)
         if not has_permission:
             return result
 
-        search = request.query_params.get('search', '').strip()
+        search = sanitize_text(request.query_params.get('search', ''))
         try:
             limit = min(max(int(request.query_params.get('limit', 200)), 1), 500)
         except (TypeError, ValueError):
-            limit = 200
+            return error_response(
+                message="Invalid limit parameter",
+                errors={'limit': 'limit must be an integer'},
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
 
         collection = settings.MONGODB['audit_logs']
         match_stage = {'user_id': {'$nin': [None, '']}}
         if search:
-            regex = {'$regex': search, '$options': 'i'}
+            regex = {'$regex': re.escape(search), '$options': 'i'}
             match_stage['$or'] = [
                 {'user_email': regex},
                 {'user_type': regex},

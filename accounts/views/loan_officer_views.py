@@ -9,6 +9,8 @@ from accounts.models import LoanOfficer
 from accounts.utils.token_utils import TokenUtils
 from accounts.utils.response_helpers import success_response, error_response
 from accounts.services import LockoutService
+from accounts.utils.email_utils import EmailUtils
+from accounts.utils.validation_utils import parse_bool
 from analytics.models import AuditLog
 import logging
 
@@ -30,9 +32,21 @@ class LoanOfficerLoginView(APIView):
     
     def post(self, request):
         try:
-            email = request.data.get('email', '').lower().strip()
+            email = EmailUtils.normalize_email(str(request.data.get('email') or ''))
             password = request.data.get('password', '')
-            remember_me = request.data.get('remember_me', False)
+            if not isinstance(password, str):
+                return error_response(
+                    message="password must be a string",
+                    status_code=status.HTTP_400_BAD_REQUEST
+                )
+            remember_me_raw = request.data.get('remember_me', False)
+            remember_valid, remember_me, remember_error = parse_bool(remember_me_raw, 'remember_me')
+            if not remember_valid:
+                return error_response(
+                    message="Invalid remember_me value",
+                    errors={'remember_me': remember_error},
+                    status_code=status.HTTP_400_BAD_REQUEST
+                )
             
             if not email or not password:
                 return error_response(
@@ -164,8 +178,8 @@ class LoanOfficerLogoutView(APIView):
     
     def post(self, request):
         try:
-            refresh_token = request.data.get('refresh_token')
-            access_token = request.META.get('HTTP_AUTHORIZATION', '').replace('Bearer ', '')
+            refresh_token = str(request.data.get('refresh_token') or '').strip()
+            access_token = request.META.get('HTTP_AUTHORIZATION', '').replace('Bearer ', '').strip()
             
             if refresh_token:
                 TokenUtils.blacklist_token(refresh_token, token_type='refresh')

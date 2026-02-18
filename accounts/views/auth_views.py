@@ -209,12 +209,16 @@ class VerifyOTP(APIView):
     throttle_classes = [OTPVerificationRateThrottle]
     
     def post(self, request):
-        email = request.data.get('email')
-        otp = request.data.get('otp')
+        email = EmailUtils.normalize_email(str(request.data.get('email') or ''))
+        otp = str(request.data.get('otp') or '').strip()
 
         if not email or not otp:
             logger.warning(f"OTP verification missing required fields from IP {request.META.get('REMOTE_ADDR')}")
             return APIResponseHelper.validation_error_response('Email and OTP are required')
+        if not otp.isdigit() or len(otp) != 6:
+            return APIResponseHelper.validation_error_response(
+                {'otp': 'OTP must be exactly 6 digits'}
+            )
         
         try:
             customer = AuthService.get_customer_by_email(email)
@@ -268,7 +272,7 @@ class ResendOTP(APIView):
     throttle_classes = [OTPResendRateThrottle]
 
     def post(self, request):
-        email = request.data.get('email')
+        email = EmailUtils.normalize_email(str(request.data.get('email') or ''))
         
         if not email:
             logger.warning(f"OTP resend missing email from IP {request.META.get('REMOTE_ADDR')}")
@@ -309,7 +313,7 @@ class RefreshTokenView(APIView):
     
     def post(self, request):
         """Refresh access token and blacklist old refresh token"""
-        refresh_token = request.data.get('refresh')
+        refresh_token = str(request.data.get('refresh') or '').strip()
         
         if not refresh_token:
             logger.warning(f"Token refresh missing token from IP {request.META.get('REMOTE_ADDR')}")
@@ -358,8 +362,8 @@ class LogoutView(APIView):
     
     def post(self, request):
         """Logout by blacklisting both access and refresh tokens"""
-        refresh_token = request.data.get('refresh')
-        access_token = request.data.get('access')
+        refresh_token = str(request.data.get('refresh') or '').strip()
+        access_token = str(request.data.get('access') or '').strip()
         
         # Also try to get access token from Authorization header
         if not access_token:
@@ -393,5 +397,4 @@ class LogoutView(APIView):
                 
         except Exception as e:
             logger.error(f"Logout error from IP {request.META.get('REMOTE_ADDR')}: {str(e)}")
-            return APIResponseHelper.server_error_response('Logout failed')
             return APIResponseHelper.server_error_response('Logout failed')
