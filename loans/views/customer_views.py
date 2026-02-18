@@ -263,13 +263,36 @@ class LoanApplyView(APIView):
                 term_months=data['term_months'],
                 purpose=data.get('purpose', '')
             )
+
+            # Final safety clamp before persisting recommendation.
+            # This guarantees DB values stay within product limits.
+            requested_amount = float(data['requested_amount'])
+            eligible_or_can_apply = bool(
+                qualification.get('can_apply', qualification.get('eligible', False))
+            )
+            recommended_amount = qualification.get('recommended_amount', 0)
+
+            if not eligible_or_can_apply:
+                recommended_amount = 0.0
+            else:
+                try:
+                    recommended_amount = float(recommended_amount)
+                except (TypeError, ValueError):
+                    recommended_amount = 0.0
+
+                lower_bound = float(product.min_amount or 0)
+                upper_bound = min(float(product.max_amount or 0), requested_amount)
+                if upper_bound < lower_bound:
+                    upper_bound = lower_bound
+
+                recommended_amount = max(lower_bound, min(recommended_amount, upper_bound))
             
             # Create application
             application = LoanApplication(
                 customer_id=customer_id,
                 product_id=data['product_id'],
                 requested_amount=data['requested_amount'],
-                recommended_amount=qualification.get('recommended_amount'),
+                recommended_amount=recommended_amount,
                 term_months=data['term_months'],
                 purpose=data.get('purpose', ''),
                 eligibility_score=qualification.get('eligibility_score'),
