@@ -7,12 +7,14 @@ import math
 from accounts.authentication import CustomJWTAuthentication
 from accounts.utils.response_helpers import success_response, error_response
 from accounts.utils.throttles import ChatRateThrottle
+from accounts.utils.validation_utils import sanitize_text
 from accounts.models import Consent
 from ai_assistant.models import AIInteraction
 from ai_assistant.services import get_llm_service
 import logging
 
 logger = logging.getLogger('ai_assistant')
+ALLOWED_LANGUAGES = {'en', 'tl'}
 
 
 class ConsentRequiredMixin:
@@ -64,7 +66,7 @@ class ChatView(ConsentRequiredMixin, APIView):
             customer_id = user.customer_id
             
             # Get message from request
-            message = request.data.get('message', '').strip()
+            message = sanitize_text(request.data.get('message', ''))
             if not message:
                 return error_response(
                     message="Message is required",
@@ -85,7 +87,16 @@ class ChatView(ConsentRequiredMixin, APIView):
                     )
             else:
                 conversation_id = str(uuid.uuid4())
-            language = request.data.get('language', user.language if hasattr(user, 'language') else 'en')
+            requested_language = sanitize_text(
+                request.data.get('language', user.language if hasattr(user, 'language') else 'en')
+            ).lower()
+            if requested_language not in ALLOWED_LANGUAGES:
+                return error_response(
+                    message="Invalid language value",
+                    errors={'language': f"language must be one of: {', '.join(sorted(ALLOWED_LANGUAGES))}"},
+                    status_code=status.HTTP_400_BAD_REQUEST
+                )
+            language = requested_language
             
             # Get conversation history for context
             history = AIInteraction.find_by_conversation(
@@ -175,7 +186,7 @@ class ChatHistoryView(ConsentRequiredMixin, APIView):
     authentication_classes = [CustomJWTAuthentication]
     permission_classes = [IsAuthenticated]
 
-    def _parse_positive_int(self, value, default):
+    def _parse_positive_int(self, value, default=None):
         try:
             parsed = int(value)
             return parsed if parsed > 0 else default
@@ -193,12 +204,22 @@ class ChatHistoryView(ConsentRequiredMixin, APIView):
             customer_id = user.customer_id
             
             # Query params
-            page = self._parse_positive_int(request.query_params.get('page', 1), 1)
-            limit = min(
-                self._parse_positive_int(request.query_params.get('limit', 50), 50),
-                100,
-            )
-            search_query = request.query_params.get('search', '').strip()
+            page = self._parse_positive_int(request.query_params.get('page', 1))
+            if page is None:
+                return error_response(
+                    message="Invalid page parameter",
+                    errors={'page': 'page must be a positive integer'},
+                    status_code=status.HTTP_400_BAD_REQUEST
+                )
+            limit = self._parse_positive_int(request.query_params.get('limit', 50))
+            if limit is None:
+                return error_response(
+                    message="Invalid limit parameter",
+                    errors={'limit': 'limit must be a positive integer'},
+                    status_code=status.HTTP_400_BAD_REQUEST
+                )
+            limit = min(limit, 100)
+            search_query = sanitize_text(request.query_params.get('search', ''))
 
             interactions, total_messages = AIInteraction.find_by_customer_paginated(
                 customer_id=customer_id,
@@ -278,8 +299,16 @@ class SuggestionsView(ConsentRequiredMixin, APIView):
     def get(self, request):
         """Get conversation starters"""
         user = request.user
-        language = request.query_params.get('language', 
-            user.language if hasattr(user, 'language') else 'en')
+        requested_language = sanitize_text(
+            request.query_params.get('language', user.language if hasattr(user, 'language') else 'en')
+        ).lower()
+        if requested_language not in ALLOWED_LANGUAGES:
+            return error_response(
+                message="Invalid language value",
+                errors={'language': f"language must be one of: {', '.join(sorted(ALLOWED_LANGUAGES))}"},
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+        language = requested_language
         
         if language == 'tl':
             suggestions = [

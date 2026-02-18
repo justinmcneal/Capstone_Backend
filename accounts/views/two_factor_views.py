@@ -13,6 +13,7 @@ from accounts.utils.response_helpers import APIResponseHelper
 from accounts.utils.throttles import TwoFactorRateThrottle
 from accounts.utils.token_utils import TokenUtils
 from accounts.utils.user_detection import get_authenticated_user
+from accounts.utils.validation_utils import parse_bool
 from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.exceptions import TokenError
 from bson import ObjectId
@@ -66,10 +67,14 @@ class Confirm2FASetupView(APIView):
     throttle_classes = [TwoFactorRateThrottle]
     
     def post(self, request):
-        code = request.data.get('code')
+        code = str(request.data.get('code') or '').strip()
         
         if not code:
             return APIResponseHelper.validation_error_response('Verification code is required')
+        if not code.isdigit() or len(code) != 6:
+            return APIResponseHelper.validation_error_response(
+                {'code': 'Verification code must be exactly 6 digits'}
+            )
         
         try:
             user, user_type = get_authenticated_user(request)
@@ -110,13 +115,25 @@ class Verify2FAView(APIView):
     throttle_classes = [TwoFactorRateThrottle]
     
     def post(self, request):
-        temp_token = request.data.get('temp_token')
-        code = request.data.get('code')
-        use_backup = request.data.get('use_backup', False)
+        temp_token = str(request.data.get('temp_token') or '').strip()
+        code = str(request.data.get('code') or '').strip()
+        use_backup_raw = request.data.get('use_backup', False)
+        use_backup_valid, use_backup, use_backup_error = parse_bool(use_backup_raw, 'use_backup')
+        if not use_backup_valid:
+            return APIResponseHelper.validation_error_response({'use_backup': use_backup_error})
         
         if not temp_token or not code:
             return APIResponseHelper.validation_error_response(
                 'Temporary token and verification code are required'
+            )
+        if use_backup:
+            if len(code) > 64:
+                return APIResponseHelper.validation_error_response(
+                    {'code': 'Backup code must be at most 64 characters'}
+                )
+        elif not code.isdigit() or len(code) != 6:
+            return APIResponseHelper.validation_error_response(
+                {'code': 'Verification code must be exactly 6 digits'}
             )
         
         try:
@@ -233,6 +250,12 @@ class Disable2FAView(APIView):
     
     def post(self, request):
         password = request.data.get('password')
+        if password is None:
+            password = ''
+        if not isinstance(password, str):
+            return APIResponseHelper.validation_error_response(
+                {'password': 'Password must be a string'}
+            )
         
         if not password:
             return APIResponseHelper.validation_error_response('Password is required')
@@ -273,6 +296,12 @@ class RegenerateBackupCodesView(APIView):
     
     def post(self, request):
         password = request.data.get('password')
+        if password is None:
+            password = ''
+        if not isinstance(password, str):
+            return APIResponseHelper.validation_error_response(
+                {'password': 'Password must be a string'}
+            )
         
         if not password:
             return APIResponseHelper.validation_error_response('Password is required')

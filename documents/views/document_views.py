@@ -10,8 +10,9 @@ import threading
 
 from accounts.authentication import CustomJWTAuthentication
 from accounts.utils.response_helpers import success_response, error_response
+from accounts.utils.validation_utils import sanitize_text
 from accounts.models import Admin, Customer, LoanOfficer
-from documents.models import Document, DOCUMENT_TYPES
+from documents.models import Document, DOCUMENT_TYPES, DOCUMENT_STATUSES
 
 from documents.serializers import (
     DocumentUploadSerializer,
@@ -365,32 +366,54 @@ class DocumentListView(APIView):
             try:
                 page = int(request.query_params.get('page', 1))
             except (TypeError, ValueError):
-                page = 1
+                return error_response(
+                    message="Invalid page parameter",
+                    errors={'page': 'page must be an integer'},
+                    status_code=status.HTTP_400_BAD_REQUEST
+                )
             try:
                 page_size = min(int(request.query_params.get('page_size', 20)), 200)
             except (TypeError, ValueError):
-                page_size = 20
+                return error_response(
+                    message="Invalid page_size parameter",
+                    errors={'page_size': 'page_size must be an integer'},
+                    status_code=status.HTTP_400_BAD_REQUEST
+                )
             if page < 1:
-                page = 1
+                return error_response(
+                    message="Invalid page parameter",
+                    errors={'page': 'page must be at least 1'},
+                    status_code=status.HTTP_400_BAD_REQUEST
+                )
             if page_size < 1:
-                page_size = 20
+                return error_response(
+                    message="Invalid page_size parameter",
+                    errors={'page_size': 'page_size must be at least 1'},
+                    status_code=status.HTTP_400_BAD_REQUEST
+                )
             
             # Optional filter by document type
-            document_type = request.query_params.get('type')
-            status_filter = request.query_params.get('status')
-            allowed_status_filters = {
-                'pending',
-                'needs_review',
-                'approved',
-                'rejected',
-                'expired',
-            }
+            document_type = sanitize_text(request.query_params.get('type', '')).lower()
+            status_filter = sanitize_text(request.query_params.get('status', '')).lower()
+            allowed_status_filters = set(DOCUMENT_STATUSES)
+            if document_type and document_type not in DOCUMENT_TYPES:
+                return error_response(
+                    message="Invalid document type filter",
+                    errors={'type': f"type must be one of: {', '.join(DOCUMENT_TYPES)}"},
+                    status_code=status.HTTP_400_BAD_REQUEST
+                )
+            if status_filter and status_filter not in allowed_status_filters:
+                return error_response(
+                    message="Invalid status filter",
+                    errors={'status': f"status must be one of: {', '.join(sorted(allowed_status_filters))}"},
+                    status_code=status.HTTP_400_BAD_REQUEST
+                )
             
             # Optional filter by customer_id (for officers/admins)
-            customer_id_filter = request.query_params.get('customer_id')
+            customer_id_filter = sanitize_text(request.query_params.get('customer_id', ''))
             
             # Optional search term
-            search = request.query_params.get('search', '').strip()
+            search = sanitize_text(request.query_params.get('search', ''))
             
             # Determine which documents to show based on role
             if hasattr(user, 'role') and user.role in ['loan_officer', 'admin', 'super_admin']:
@@ -406,7 +429,7 @@ class DocumentListView(APIView):
             else:
                 # Customers can only see their own documents
                 customer_id = user.customer_id
-                documents = Document.find_by_customer(customer_id, document_type)
+                documents = Document.find_by_customer(customer_id, document_type or None)
                 if status_filter in allowed_status_filters:
                     documents = [doc for doc in documents if doc.status == status_filter]
             
@@ -724,12 +747,17 @@ class DocumentTypesView(APIView):
         """Get available document types with descriptions"""
         from loans.services.qualification import resolve_required_document_types
 
-        product_id = (request.query_params.get('product_id') or '').strip()
+        product_id = sanitize_text(request.query_params.get('product_id', ''))
         requirement_source = 'baseline'
         required_document_set = set(resolve_required_document_types(None, 'baseline'))
 
         if product_id:
             from loans.models import LoanProduct
+            if not ObjectId.is_valid(product_id):
+                return error_response(
+                    message="Invalid product_id format",
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                )
 
             product = LoanProduct.find_by_id(product_id)
             if not product or not product.active:
@@ -791,10 +819,15 @@ class RequestReuploadView(APIView):
                 status_code=status.HTTP_404_NOT_FOUND
             )
         
-        reason = request.data.get('reason', '')
+        reason = sanitize_text(request.data.get('reason', ''))
         if not reason:
             return error_response(
                 message="reason is required",
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+        if len(reason) > 1000:
+            return error_response(
+                message="reason must be at most 1000 characters",
                 status_code=status.HTTP_400_BAD_REQUEST
             )
         

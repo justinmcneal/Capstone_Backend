@@ -5,6 +5,7 @@ from rest_framework.permissions import IsAuthenticated
 
 from accounts.authentication import CustomJWTAuthentication
 from accounts.utils.response_helpers import success_response, error_response
+from accounts.utils.validation_utils import parse_bool
 from profiles.models import CustomerProfile, BusinessProfile, AlternativeData
 from profiles.serializers import (
     CustomerProfileSerializer,
@@ -505,14 +506,34 @@ class NotificationPreferencesView(APIView):
         
         # Get preferences from request
         prefs = request.data.get('preferences', {})
+        if not isinstance(prefs, dict):
+            return error_response(
+                message="preferences must be an object",
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
         
         # Validate and update
         valid_keys = ['email_loan_updates', 'email_payment_reminders', 'email_promotions']
+        unknown_keys = [key for key in prefs.keys() if key not in valid_keys]
+        if unknown_keys:
+            return error_response(
+                message="Unknown notification preference keys",
+                errors={'preferences': f"Unsupported keys: {', '.join(sorted(unknown_keys))}"},
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+
         current_prefs = getattr(customer, 'notification_preferences', {})
         
         for key in valid_keys:
             if key in prefs:
-                current_prefs[key] = bool(prefs[key])
+                is_valid, parsed_value, parse_error = parse_bool(prefs[key], f"preferences.{key}")
+                if not is_valid:
+                    return error_response(
+                        message="Invalid notification preference value",
+                        errors={key: parse_error},
+                        status_code=status.HTTP_400_BAD_REQUEST
+                    )
+                current_prefs[key] = parsed_value
         
         customer.notification_preferences = current_prefs
         customer.save()
