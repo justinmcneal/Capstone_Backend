@@ -7,7 +7,7 @@ import math
 from accounts.authentication import CustomJWTAuthentication
 from accounts.utils.response_helpers import success_response, error_response
 from accounts.utils.throttles import ChatRateThrottle
-from accounts.utils.validation_utils import sanitize_text
+from accounts.utils.validation_utils import sanitize_text, sanitize_multiline_text
 from accounts.models import Consent
 from ai_assistant.models import AIInteraction
 from ai_assistant.services import get_llm_service
@@ -130,6 +130,13 @@ class ChatView(ConsentRequiredMixin, APIView):
                     message=result.get('error', 'Failed to get AI response'),
                     status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
                 )
+
+            ai_response = sanitize_multiline_text(result.get('response', ''))
+            if not ai_response:
+                return error_response(
+                    message="AI returned an empty response",
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
+                )
             
             # Save user message
             user_interaction = AIInteraction(
@@ -146,7 +153,7 @@ class ChatView(ConsentRequiredMixin, APIView):
             ai_interaction = AIInteraction(
                 customer_id=customer_id,
                 message='',
-                response=result['response'],
+                response=ai_response,
                 language=language,
                 conversation_id=conversation_id,
                 role='assistant',
@@ -160,7 +167,7 @@ class ChatView(ConsentRequiredMixin, APIView):
             
             return success_response(
                 data={
-                    'response': result['response'],
+                    'response': ai_response,
                     'conversation_id': conversation_id,
                     'model': result.get('model'),
                     'response_time_ms': result.get('response_time_ms')

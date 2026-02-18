@@ -10,7 +10,7 @@ import threading
 
 from accounts.authentication import CustomJWTAuthentication
 from accounts.utils.response_helpers import success_response, error_response
-from accounts.utils.validation_utils import sanitize_text
+from accounts.utils.validation_utils import sanitize_text, sanitize_filename
 from accounts.models import Admin, Customer, LoanOfficer
 from documents.models import Document, DOCUMENT_TYPES, DOCUMENT_STATUSES
 
@@ -201,6 +201,7 @@ class DocumentUploadView(APIView):
                 )
             
             file = request.FILES['file']
+            safe_original_filename = sanitize_filename(file.name)
             
             # Validate file
             is_valid, error_msg = validate_uploaded_file(file)
@@ -228,7 +229,7 @@ class DocumentUploadView(APIView):
                 file=file,
                 customer_id=customer_id,
                 document_type=document_type,
-                original_filename=file.name
+                original_filename=safe_original_filename
             )
             
             ai_analysis = None
@@ -257,7 +258,7 @@ class DocumentUploadView(APIView):
             document = Document(
                 customer_id=customer_id,
                 document_type=document_type,
-                original_filename=file.name,
+                original_filename=safe_original_filename,
                 file_path=file_info['file_path'],
                 file_size=file_info['size'],
                 mime_type=file.content_type,
@@ -282,10 +283,10 @@ class DocumentUploadView(APIView):
                 action='document_uploaded',
                 user_id=customer_id,
                 user_type='customer',
-                description=f'Document uploaded: {document_type} - {file.name}',
+                description=f'Document uploaded: {document_type} - {safe_original_filename}',
                 resource_type='document',
                 resource_id=document.id,
-                details={'document_type': document_type, 'filename': file.name, 'size': document.file_size},
+                details={'document_type': document_type, 'filename': safe_original_filename, 'size': document.file_size},
                 ip_address=request.META.get('REMOTE_ADDR', '')
             )
 
