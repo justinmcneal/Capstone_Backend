@@ -37,11 +37,21 @@ logger = logging.getLogger('ai_assistant')
 # Your Groq API key (get free at https://console.groq.com)
 GROQ_API_KEY = getattr(settings, 'GROQ_API_KEY', os.environ.get('GROQ_API_KEY', ''))
 
-# The AI model to use (llama-3.1-8b-instant is fast and supports Tagalog)
+# The default AI model to use (llama-3.1-8b-instant is fast and supports Tagalog)
 GROQ_MODEL = getattr(settings, 'GROQ_MODEL', os.environ.get('GROQ_MODEL', 'llama-3.1-8b-instant'))
+GROQ_CHAT_MODEL = getattr(settings, 'GROQ_CHAT_MODEL', os.environ.get('GROQ_CHAT_MODEL', GROQ_MODEL))
+GROQ_QUALIFICATION_MODEL = getattr(
+    settings, 'GROQ_QUALIFICATION_MODEL', os.environ.get('GROQ_QUALIFICATION_MODEL', GROQ_MODEL)
+)
 
 # Groq API endpoint (don't change this)
 GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
+
+MODEL_BY_USE_CASE = {
+    'default': GROQ_MODEL,
+    'chat': GROQ_CHAT_MODEL,
+    'qualification': GROQ_QUALIFICATION_MODEL,
+}
 
 
 # =============================================================================
@@ -232,7 +242,7 @@ class GroqService:
 # FACTORY FUNCTION - Gets the LLM service instance
 # =============================================================================
 
-def get_llm_service():
+def get_llm_service(use_case='default', model=None):
     """
     Factory function to get the LLM service.
     
@@ -242,7 +252,17 @@ def get_llm_service():
         llm = get_llm_service()
         result = llm.chat("Hello!")
     
+    Args:
+        use_case: Routing key ('default', 'chat', 'qualification')
+        model: Optional explicit model override
+
     Returns:
         GroqService instance
     """
-    return GroqService()
+    if model:
+        selected_model = model
+    else:
+        normalized_use_case = str(use_case or 'default').strip().lower()
+        selected_model = MODEL_BY_USE_CASE.get(normalized_use_case, GROQ_MODEL)
+
+    return GroqService(model=selected_model)

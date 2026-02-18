@@ -57,6 +57,8 @@ CORS_ALLOWED_ORIGINS=http://localhost:3000,http://localhost:5173
 # Get free key at: https://console.groq.com
 GROQ_API_KEY=gsk_your_key_here
 GROQ_MODEL=llama-3.1-8b-instant
+GROQ_CHAT_MODEL=llama-3.1-8b-instant
+GROQ_QUALIFICATION_MODEL=llama-3.1-8b-instant
 
 # Email (Gmail)
 EMAIL_HOST_USER=your-email@gmail.com
@@ -105,6 +107,8 @@ ALLOWED_HOSTS=your-app.railway.app
 MONGODB_URI=<your-mongodb-atlas-uri>
 MONGODB_NAME=capstone_db
 GROQ_API_KEY=<your-groq-key>
+GROQ_CHAT_MODEL=llama-3.1-8b-instant
+GROQ_QUALIFICATION_MODEL=llama-3.1-8b-instant
 EMAIL_HOST_USER=<your-email>
 EMAIL_HOST_PASSWORD=<your-app-password>
 CORS_ALLOWED_ORIGINS=https://your-frontend.vercel.app
