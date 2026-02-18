@@ -93,18 +93,26 @@ class AdminLoginView(APIView):
             if not isinstance(raw_username, str):
                 return error_response(
                     message="username must be a string",
+                    errors={'username': 'username must be a string'},
                     status_code=status.HTTP_400_BAD_REQUEST
                 )
             if not isinstance(password, str):
                 return error_response(
                     message="password must be a string",
+                    errors={'password': 'password must be a string'},
                     status_code=status.HTTP_400_BAD_REQUEST
                 )
             username = normalize_text(raw_username)
             
             if not username or not password:
+                errors = {}
+                if not username:
+                    errors['username'] = 'Username is required'
+                if not password:
+                    errors['password'] = 'Password is required'
                 return error_response(
                     message="Username and password are required",
+                    errors=errors,
                     status_code=status.HTTP_400_BAD_REQUEST
                 )
             

@@ -70,7 +70,9 @@ class Confirm2FASetupView(APIView):
         code = str(request.data.get('code') or '').strip()
         
         if not code:
-            return APIResponseHelper.validation_error_response('Verification code is required')
+            return APIResponseHelper.validation_error_response(
+                {'code': 'Verification code is required'}
+            )
         if not code.isdigit() or len(code) != 6:
             return APIResponseHelper.validation_error_response(
                 {'code': 'Verification code must be exactly 6 digits'}
@@ -124,7 +126,10 @@ class Verify2FAView(APIView):
         
         if not temp_token or not code:
             return APIResponseHelper.validation_error_response(
-                'Temporary token and verification code are required'
+                {
+                    'temp_token': 'Temporary token is required',
+                    'code': 'Verification code is required',
+                }
             )
         if use_backup:
             if len(code) > 64:
@@ -258,7 +263,9 @@ class Disable2FAView(APIView):
             )
         
         if not password:
-            return APIResponseHelper.validation_error_response('Password is required')
+            return APIResponseHelper.validation_error_response(
+                {'password': 'Password is required'}
+            )
         
         try:
             user, user_type = get_authenticated_user(request)
@@ -304,7 +311,9 @@ class RegenerateBackupCodesView(APIView):
             )
         
         if not password:
-            return APIResponseHelper.validation_error_response('Password is required')
+            return APIResponseHelper.validation_error_response(
+                {'password': 'Password is required'}
+            )
         
         try:
             user, user_type = get_authenticated_user(request)
