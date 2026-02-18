@@ -1,7 +1,9 @@
 """
 AI Qualification Service - Uses Groq LLM to analyze customer eligibility.
 """
+import json
 import logging
+import re
 from ai_assistant.services import get_llm_service
 from accounts.models import Consent
 from profiles.models import CustomerProfile, BusinessProfile, AlternativeData
@@ -75,9 +77,23 @@ def resolve_required_document_types(product=None, requirements_scope='product'):
     return resolved
 
 
-QUALIFICATION_PROMPT = """You are a loan qualification assistant for MSME (Micro, Small, Medium Enterprise) customers.
+QUALIFICATION_SYSTEM_PROMPT = """You are a strict loan pre-qualification engine.
 
-Analyze the following customer profile and provide a loan qualification assessment.
+Return ONLY a valid JSON object, with no markdown, no code fences, and no extra text.
+Use exactly this schema:
+{
+  "eligible": boolean,
+  "eligibility_score": number,      // 0-100
+  "risk_category": "low|medium|high",
+  "recommended_amount": number,     // PHP
+  "reasoning": string,
+  "strengths": [string],
+  "concerns": [string],
+  "missing_requirements": [string]
+}
+"""
+
+QUALIFICATION_USER_PROMPT = """Analyze this MSME loan request and return your result in the required JSON schema.
 
 CUSTOMER PROFILE:
 {profile_data}
@@ -101,21 +117,19 @@ PRODUCT REQUIREMENTS:
 - Minimum monthly income: ₱{min_income:,.2f}
 - Minimum business operation: {min_months} months
 - Required documents: {required_docs}
-
-Provide your assessment in the following JSON format:
-{{
-    "eligible": true/false,
-    "eligibility_score": 0-100,
-    "risk_category": "low/medium/high",
-    "recommended_amount": <amount in PHP>,
-    "reasoning": "<brief explanation>",
-    "strengths": ["<strength1>", "<strength2>"],
-    "concerns": ["<concern1>", "<concern2>"],
-    "missing_requirements": ["<missing1>", "<missing2>"]
-}}
-
-Be realistic but supportive. Consider the informal nature of MSME businesses.
 """
+
+QUALIFICATION_REQUIRED_FIELDS = {
+    'eligible',
+    'eligibility_score',
+    'risk_category',
+    'recommended_amount',
+    'reasoning',
+    'strengths',
+    'concerns',
+    'missing_requirements',
+}
+QUALIFICATION_RISK_LEVELS = {'low', 'medium', 'high'}
 
 
 def get_customer_data(customer_id):
@@ -140,6 +154,159 @@ def has_ai_consent(customer_id):
     """Check if customer granted AI consent."""
     consent = Consent.find_by_user(customer_id, 'customer')
     return bool(consent and consent.ai_consent)
+
+
+def _extract_first_json_object(text):
+    """Extract the first JSON object from model output."""
+    raw = str(text or '').strip()
+    if not raw:
+        return None
+
+    # Fast path: response is already raw JSON.
+    try:
+        candidate = json.loads(raw)
+        if isinstance(candidate, dict):
+            return candidate
+    except json.JSONDecodeError:
+        pass
+
+    # Common path: response wrapped in a markdown json code fence.
+    fenced_match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", raw, flags=re.IGNORECASE | re.DOTALL)
+    if fenced_match:
+        try:
+            candidate = json.loads(fenced_match.group(1))
+            if isinstance(candidate, dict):
+                return candidate
+        except json.JSONDecodeError:
+            pass
+
+    # Fallback: scan for first decodable JSON object.
+    decoder = json.JSONDecoder()
+    for index, char in enumerate(raw):
+        if char != '{':
+            continue
+        try:
+            candidate, _ = decoder.raw_decode(raw[index:])
+            if isinstance(candidate, dict):
+                return candidate
+        except json.JSONDecodeError:
+            continue
+
+    return None
+
+
+def _coerce_bool(value, field_name):
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {'true', '1', 'yes'}:
+            return True
+        if normalized in {'false', '0', 'no'}:
+            return False
+    raise ValueError(f"{field_name} must be boolean")
+
+
+def _coerce_number(value, field_name):
+    if isinstance(value, bool):
+        raise ValueError(f"{field_name} must be numeric")
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        raise ValueError(f"{field_name} must be numeric")
+
+
+def _normalize_string_list(value, field_name):
+    if not isinstance(value, list):
+        raise ValueError(f"{field_name} must be a list of strings")
+
+    normalized = []
+    for item in value:
+        text = str(item).strip()
+        if text:
+            normalized.append(text)
+    return normalized
+
+
+def _derive_risk_category(score):
+    if score >= 75:
+        return 'low'
+    if score >= 50:
+        return 'medium'
+    return 'high'
+
+
+def _normalize_recommended_amount(raw_amount, eligible, product, requested_amount):
+    if not eligible:
+        return 0.0
+
+    requested = max(0.0, _coerce_number(requested_amount, 'requested_amount'))
+    model_amount = max(0.0, _coerce_number(raw_amount, 'recommended_amount'))
+
+    lower_bound = float(product.min_amount or 0.0)
+    upper_bound = min(float(product.max_amount or 0.0), requested)
+    if upper_bound < lower_bound:
+        upper_bound = lower_bound
+
+    bounded = max(lower_bound, min(model_amount, upper_bound))
+    return round(bounded, 2)
+
+
+def _validate_and_normalize_ai_qualification(payload, product, requested_amount, required_doc_types, scope):
+    """Strict schema validation + deterministic normalization for AI output."""
+    if not isinstance(payload, dict):
+        raise ValueError("Qualification response must be a JSON object")
+
+    missing_fields = [field for field in QUALIFICATION_REQUIRED_FIELDS if field not in payload]
+    if missing_fields:
+        raise ValueError(f"Missing required fields: {', '.join(sorted(missing_fields))}")
+
+    eligible = _coerce_bool(payload.get('eligible'), 'eligible')
+    score = _coerce_number(payload.get('eligibility_score'), 'eligibility_score')
+    score = round(max(0.0, min(100.0, score)), 2)
+
+    risk_category = str(payload.get('risk_category', '')).strip().lower()
+    if risk_category not in QUALIFICATION_RISK_LEVELS:
+        risk_category = _derive_risk_category(score)
+
+    recommended_amount = _normalize_recommended_amount(
+        payload.get('recommended_amount'),
+        eligible,
+        product,
+        requested_amount,
+    )
+
+    reasoning = str(payload.get('reasoning', '')).strip()
+    if not reasoning:
+        raise ValueError("reasoning must be a non-empty string")
+
+    strengths = _normalize_string_list(payload.get('strengths'), 'strengths')
+    concerns = _normalize_string_list(payload.get('concerns'), 'concerns')
+    missing_requirements = _normalize_string_list(
+        payload.get('missing_requirements'),
+        'missing_requirements',
+    )
+
+    can_apply = eligible and len(missing_requirements) == 0
+    if not can_apply:
+        recommended_amount = 0.0
+
+    return {
+        'eligible': eligible,
+        'eligibility_score': score,
+        'risk_category': risk_category,
+        'recommended_amount': recommended_amount,
+        'reasoning': reasoning,
+        'strengths': strengths,
+        'concerns': concerns,
+        'missing_requirements': missing_requirements,
+        'can_apply': can_apply,
+        'ai_used': True,
+        'required_documents_resolved': required_doc_types,
+        'requirements_scope': scope,
+    }
 
 
 def format_profile_for_ai(data):
@@ -222,7 +389,7 @@ def qualify_customer(
         )
     
     # Build prompt
-    prompt = QUALIFICATION_PROMPT.format(
+    prompt = QUALIFICATION_USER_PROMPT.format(
         profile_data=profile_str,
         business_data=business_str,
         alternative_data=alt_str,
@@ -249,7 +416,14 @@ def qualify_customer(
             reason='Rule-based assessment (AI unavailable)',
         )
         
-    result = llm.chat(message=prompt, language='en')
+    result = llm.chat(
+        message=prompt,
+        language='en',
+        system_prompt=QUALIFICATION_SYSTEM_PROMPT,
+        temperature=0.1,
+        max_tokens=600,
+        top_p=0.9,
+    )
     
     if not result['success']:
         logger.error(f"AI qualification failed: {result.get('error')}")
@@ -261,24 +435,28 @@ def qualify_customer(
             reason='Rule-based assessment (AI request failed)',
         )
     
-    # Parse AI response (extract JSON)
+    payload = _extract_first_json_object(result.get('response'))
+    if payload is None:
+        logger.error("AI qualification response did not contain a valid JSON object")
+        return rule_based_qualification(
+            data,
+            product,
+            requested_amount,
+            requirements_scope=scope,
+            reason='Rule-based assessment (AI response parsing failed)',
+        )
+
     try:
-        import json
-        response_text = result['response']
-        # Find JSON in response
-        start = response_text.find('{')
-        end = response_text.rfind('}') + 1
-        if start >= 0 and end > start:
-            json_str = response_text[start:end]
-            parsed = json.loads(json_str)
-            parsed['can_apply'] = parsed.get('can_apply', parsed.get('eligible', False))
-            parsed['required_documents_resolved'] = required_doc_types
-            parsed['requirements_scope'] = scope
-            parsed['ai_used'] = True
-            return parsed
-    except Exception as e:
-        logger.error(f"Failed to parse AI response: {e}")
-    
+        return _validate_and_normalize_ai_qualification(
+            payload=payload,
+            product=product,
+            requested_amount=requested_amount,
+            required_doc_types=required_doc_types,
+            scope=scope,
+        )
+    except ValueError as e:
+        logger.error(f"AI qualification schema validation failed: {e}")
+
     return rule_based_qualification(
         data,
         product,
