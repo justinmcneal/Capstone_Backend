@@ -70,11 +70,26 @@ class ChatView(ConsentRequiredMixin, APIView):
                 )
             
             # Get optional parameters
-            conversation_id = request.data.get('conversation_id') or str(uuid.uuid4())
+            raw_conversation_id = request.data.get('conversation_id')
+            if raw_conversation_id:
+                try:
+                    # Normalize client-provided conversation IDs to canonical UUID format
+                    conversation_id = str(uuid.UUID(str(raw_conversation_id)))
+                except (ValueError, TypeError):
+                    return error_response(
+                        message="conversation_id must be a valid UUID",
+                        errors={'conversation_id': 'Invalid format'},
+                        status_code=status.HTTP_400_BAD_REQUEST
+                    )
+            else:
+                conversation_id = str(uuid.uuid4())
             language = request.data.get('language', user.language if hasattr(user, 'language') else 'en')
             
             # Get conversation history for context
-            history = AIInteraction.find_by_conversation(conversation_id)
+            history = AIInteraction.find_by_conversation(
+                conversation_id=conversation_id,
+                customer_id=customer_id,
+            )
             conversation_history = [
                 {'role': h.role, 'content': h.message if h.role == 'user' else h.response}
                 for h in history[-10:]  # Last 10 messages

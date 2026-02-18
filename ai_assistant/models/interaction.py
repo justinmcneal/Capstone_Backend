@@ -148,10 +148,14 @@ class AIInteraction:
         return interactions, total_count
     
     @classmethod
-    def find_by_conversation(cls, conversation_id):
-        """Get all messages in a conversation"""
+    def find_by_conversation(cls, conversation_id, customer_id=None):
+        """Get all messages in a conversation, optionally scoped to a customer."""
+        query = {'conversation_id': str(conversation_id)}
+        if customer_id is not None:
+            query['customer_id'] = str(customer_id)
+
         return cls.find(
-            {'conversation_id': str(conversation_id)},
+            query,
             sort=[('timestamp', 1)]
         )
     
@@ -170,3 +174,4 @@ class AIInteraction:
         collection.create_index('customer_id')
         collection.create_index('conversation_id')
         collection.create_index('timestamp')
+        collection.create_index([('customer_id', 1), ('conversation_id', 1), ('timestamp', 1)])
