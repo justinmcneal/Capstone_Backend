@@ -1,5 +1,4 @@
 from datetime import datetime
-import bcrypt
 from bson import ObjectId
 from django.conf import settings
 
@@ -117,12 +116,14 @@ class Customer:
         return cls(**data)
     
     def set_password(self, raw_password):
-        """Hash and set password"""
-        self.password = bcrypt.hashpw(raw_password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+        """Hash and set password (peppered + bcrypt)"""
+        from accounts.utils.pepper_utils import hash_password
+        self.password = hash_password(raw_password)
     
     def check_password(self, raw_password):
-        """Verify password"""
-        return bcrypt.checkpw(raw_password.encode('utf-8'), self.password.encode('utf-8'))
+        """Verify password (peppered + bcrypt)"""
+        from accounts.utils.pepper_utils import verify_password
+        return verify_password(raw_password, self.password)
     
     def save(self):
         """Save customer to database"""
