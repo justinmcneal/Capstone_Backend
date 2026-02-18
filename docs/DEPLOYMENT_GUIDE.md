@@ -78,6 +78,8 @@ MONGODB_URI=mongodb+srv://...
 # LLM (Groq Cloud - already configured)
 GROQ_API_KEY=gsk_xxxxxxxxxxxx
 GROQ_MODEL=llama-3.1-8b-instant
+GROQ_CHAT_MODEL=llama-3.1-8b-instant
+GROQ_QUALIFICATION_MODEL=llama-3.1-8b-instant
 
 # Email
 EMAIL_HOST_USER=your-email@gmail.com

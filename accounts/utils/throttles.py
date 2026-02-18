@@ -1,4 +1,4 @@
-from rest_framework.throttling import AnonRateThrottle
+from rest_framework.throttling import AnonRateThrottle, UserRateThrottle
 
 
 class SignUpRateThrottle(AnonRateThrottle):
@@ -34,3 +34,13 @@ class PasswordResetRateThrottle(AnonRateThrottle):
 class ForgotPasswordRateThrottle(AnonRateThrottle):
     """IP-based throttling for forgot password: 5 requests per hour"""
     rate = '5/hour'
+
+
+class ChatRateThrottle(UserRateThrottle):
+    """User-based throttling for AI chat endpoint."""
+    rate = '60/hour'
+
+
+class PreQualifyRateThrottle(UserRateThrottle):
+    """User-based throttling for pre-qualification endpoint."""
+    rate = '20/hour'

@@ -318,3 +318,5 @@ if not DEBUG:
 # Groq LLM Configuration
 GROQ_API_KEY = os.getenv('GROQ_API_KEY', '')
 GROQ_MODEL = os.getenv('GROQ_MODEL', 'llama-3.1-8b-instant')
+GROQ_CHAT_MODEL = os.getenv('GROQ_CHAT_MODEL', GROQ_MODEL)
+GROQ_QUALIFICATION_MODEL = os.getenv('GROQ_QUALIFICATION_MODEL', GROQ_MODEL)

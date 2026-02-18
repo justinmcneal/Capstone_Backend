@@ -57,6 +57,20 @@ class LoanApplicationSerializer(serializers.Serializer):
     purpose = serializers.CharField(max_length=500, required=False, allow_blank=True)
 
 
+class PreQualifyRequestSerializer(serializers.Serializer):
+    """Serializer for pre-qualification request"""
+    product_id = serializers.CharField(required=True)
+    amount = serializers.FloatField(min_value=1000)
+    term_months = serializers.IntegerField(min_value=1, required=False, default=12)
+    purpose = serializers.CharField(max_length=500, required=False, allow_blank=True, default='')
+    requirements_scope = serializers.ChoiceField(
+        choices=['baseline', 'product'],
+        required=False,
+        allow_null=True,
+        default='product',
+    )
+
+
 class LoanApplicationResponseSerializer(serializers.Serializer):
     """Serializer for application response"""
     id = serializers.CharField()
