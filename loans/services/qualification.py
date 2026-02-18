@@ -3,6 +3,7 @@ AI Qualification Service - Uses Groq LLM to analyze customer eligibility.
 """
 import logging
 from ai_assistant.services import get_llm_service
+from accounts.models import Consent
 from profiles.models import CustomerProfile, BusinessProfile, AlternativeData
 from documents.models import Document, DOCUMENT_TYPES
 
@@ -135,6 +136,12 @@ def get_customer_data(customer_id):
     }
 
 
+def has_ai_consent(customer_id):
+    """Check if customer granted AI consent."""
+    consent = Consent.find_by_user(customer_id, 'customer')
+    return bool(consent and consent.ai_consent)
+
+
 def format_profile_for_ai(data):
     """Format customer data for AI prompt"""
     personal = data.get('personal')
@@ -202,6 +209,17 @@ def qualify_customer(
     
     # Format for AI
     profile_str, business_str, alt_str, docs_str = format_profile_for_ai(data)
+
+    # Never send profile data to external AI if consent is not granted.
+    if not has_ai_consent(customer_id):
+        logger.info(f"AI consent not granted for customer {customer_id}; using rule-based qualification")
+        return rule_based_qualification(
+            data,
+            product,
+            requested_amount,
+            requirements_scope=scope,
+            reason='Rule-based assessment (AI consent not granted)',
+        )
     
     # Build prompt
     prompt = QUALIFICATION_PROMPT.format(
@@ -228,6 +246,7 @@ def qualify_customer(
             product,
             requested_amount,
             requirements_scope=scope,
+            reason='Rule-based assessment (AI unavailable)',
         )
         
     result = llm.chat(message=prompt, language='en')
@@ -239,6 +258,7 @@ def qualify_customer(
             product,
             requested_amount,
             requirements_scope=scope,
+            reason='Rule-based assessment (AI request failed)',
         )
     
     # Parse AI response (extract JSON)
@@ -254,6 +274,7 @@ def qualify_customer(
             parsed['can_apply'] = parsed.get('can_apply', parsed.get('eligible', False))
             parsed['required_documents_resolved'] = required_doc_types
             parsed['requirements_scope'] = scope
+            parsed['ai_used'] = True
             return parsed
     except Exception as e:
         logger.error(f"Failed to parse AI response: {e}")
@@ -263,6 +284,7 @@ def qualify_customer(
         product,
         requested_amount,
         requirements_scope=scope,
+        reason='Rule-based assessment (AI response parsing failed)',
     )
 
 
@@ -271,6 +293,7 @@ def rule_based_qualification(
     product,
     requested_amount,
     requirements_scope='product',
+    reason='Rule-based assessment (AI unavailable)',
 ):
     """
     Fallback rule-based qualification when AI is unavailable.
@@ -361,11 +384,12 @@ def rule_based_qualification(
         'eligibility_score': score,
         'risk_category': risk,
         'recommended_amount': recommended,
-        'reasoning': 'Rule-based assessment (AI unavailable)',
+        'reasoning': reason,
         'strengths': strengths,
         'concerns': concerns,
         'missing_requirements': missing,
         'can_apply': eligible,
+        'ai_used': False,
         'required_documents_resolved': required_doc_types,
         'requirements_scope': scope,
     }
