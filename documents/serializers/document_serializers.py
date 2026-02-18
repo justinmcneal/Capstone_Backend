@@ -1,6 +1,34 @@
 from rest_framework import serializers
 from documents.models import DOCUMENT_TYPES, ALLOWED_MIME_TYPES, MAX_FILE_SIZE
 from accounts.serializers.base_serializers import InputSanitizationMixin
+from PIL import Image, UnidentifiedImageError
+
+
+FILE_SIGNATURES = {
+    'image/jpeg': [b'\xff\xd8\xff'],
+    'image/jpg': [b'\xff\xd8\xff'],
+    'image/png': [b'\x89PNG\r\n\x1a\n'],
+    'application/pdf': [b'%PDF-'],
+}
+
+EXECUTABLE_SIGNATURES = [
+    b'MZ',                   # Windows PE
+    b'\x7fELF',              # Linux ELF
+    b'\xfe\xed\xfa\xce',     # Mach-O (32-bit)
+    b'\xfe\xed\xfa\xcf',     # Mach-O (64-bit)
+    b'\xcf\xfa\xed\xfe',     # Mach-O reverse endian
+    b'\xca\xfe\xba\xbe',     # Fat binary / Java class
+]
+
+PDF_DANGEROUS_PATTERNS = (
+    '/javascript',
+    '/js',
+    '/openaction',
+    '/launch',
+    '/aa',
+    '/richmedia',
+    '/embeddedfile',
+)
 
 
 class DocumentUploadSerializer(InputSanitizationMixin, serializers.Serializer):
@@ -135,5 +163,61 @@ def validate_uploaded_file(file):
     content_type = file.content_type
     if content_type not in ALLOWED_MIME_TYPES:
         return False, f"Invalid file type. Allowed types: JPEG, PNG, PDF"
-    
+
+    # Scan file content for malicious or mismatched content.
+    safe, scan_error = _scan_uploaded_file(file, content_type)
+    if not safe:
+        return False, scan_error
+
+    return True, None
+
+
+def _scan_uploaded_file(file, content_type):
+    """
+    Lightweight upload scanner:
+    1) Signature validation (content matches declared MIME)
+    2) Executable signature detection
+    3) Image integrity verification
+    4) PDF active-content pattern scan
+    """
+    try:
+        file.seek(0)
+        head = file.read(8192) or b''
+        file.seek(0)
+    except Exception:
+        return False, "Unable to scan file content"
+
+    if not head:
+        return False, "Uploaded file is empty"
+
+    # Reject known executable signatures.
+    for signature in EXECUTABLE_SIGNATURES:
+        if head.startswith(signature):
+            return False, "Potentially unsafe file content detected"
+
+    # Ensure file bytes match claimed MIME type.
+    expected_signatures = FILE_SIGNATURES.get(content_type, [])
+    if expected_signatures and not any(head.startswith(sig) for sig in expected_signatures):
+        return False, "File content does not match the declared file type"
+
+    if content_type in ('image/jpeg', 'image/jpg', 'image/png'):
+        try:
+            file.seek(0)
+            with Image.open(file) as img:
+                img.verify()
+            file.seek(0)
+        except (UnidentifiedImageError, OSError):
+            return False, "Corrupted or invalid image file"
+
+    if content_type == 'application/pdf':
+        try:
+            file.seek(0)
+            pdf_sample = file.read(2 * 1024 * 1024).decode('latin-1', errors='ignore').lower()
+            file.seek(0)
+        except Exception:
+            return False, "Unable to scan PDF content"
+
+        if any(pattern in pdf_sample for pattern in PDF_DANGEROUS_PATTERNS):
+            return False, "Potentially unsafe PDF content detected"
+
     return True, None
