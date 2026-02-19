@@ -52,6 +52,7 @@ DEBUG=True
 SECRET_KEY=your-secret-key
 ALLOWED_HOSTS=localhost,127.0.0.1
 SECRET_PEPPER=generate-a-64-char-hex-pepper
+FIELD_ENCRYPTION_KEY=generate-a-fernet-key
 
 # MongoDB Atlas
 MONGODB_URI=mongodb+srv://user:pass@cluster.mongodb.net/
@@ -122,6 +123,7 @@ In Railway dashboard, add:
 DEBUG=False
 SECRET_KEY=<generate-strong-key>
 SECRET_PEPPER=<generate-strong-pepper>
+FIELD_ENCRYPTION_KEY=<generate-fernet-key>
 ALLOWED_HOSTS=your-app.railway.app
 MONGODB_URI=<your-mongodb-atlas-uri>
 MONGODB_NAME=capstone_db

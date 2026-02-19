@@ -4,6 +4,7 @@ LoanApplication Model - Customer loan applications.
 from datetime import datetime
 from bson import ObjectId
 from django.conf import settings
+from config.field_encryption import decrypt_fields, encrypt_fields
 
 
 def get_db():
@@ -27,6 +28,13 @@ class LoanApplication:
     Customer loan application.
     """
     collection_name = 'loan_applications'
+    encrypted_fields = (
+        'purpose',
+        'officer_notes',
+        'rejection_reason',
+        'missing_documents_reason',
+        'disbursement_reference',
+    )
     
     def __init__(self, **kwargs):
         self._id = kwargs.get('_id')
@@ -112,13 +120,13 @@ class LoanApplication:
         }
         if self._id:
             data['_id'] = self._id
-        return data
+        return encrypt_fields(data, self.encrypted_fields)
     
     @classmethod
     def from_dict(cls, data):
         if not data:
             return None
-        return cls(**data)
+        return cls(**decrypt_fields(data, cls.encrypted_fields))
     
     def save(self):
         db = get_db()

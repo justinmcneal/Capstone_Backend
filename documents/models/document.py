@@ -6,6 +6,7 @@ Stores document metadata and references to uploaded files.
 from datetime import datetime
 from bson import ObjectId
 from django.conf import settings
+from config.field_encryption import decrypt_fields, encrypt_fields
 
 
 def get_db():
@@ -50,6 +51,14 @@ class Document:
     Document model for storing uploaded files metadata.
     """
     collection_name = 'documents'
+    encrypted_fields = (
+        'original_filename',
+        'file_path',
+        'rejection_reason',
+        'notes',
+        'description',
+        'reupload_reason',
+    )
     
     def __init__(self, **kwargs):
         self._id = kwargs.get('_id')
@@ -129,7 +138,7 @@ class Document:
         }
         if self._id:
             data['_id'] = self._id
-        return data
+        return encrypt_fields(data, self.encrypted_fields)
     
     def request_reupload(self, officer_id, reason):
         """Officer requests customer to re-upload this document"""
@@ -144,7 +153,7 @@ class Document:
     def from_dict(cls, data):
         if not data:
             return None
-        return cls(**data)
+        return cls(**decrypt_fields(data, cls.encrypted_fields))
     
     def save(self):
         db = get_db()

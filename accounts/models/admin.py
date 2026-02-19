@@ -1,6 +1,7 @@
 from datetime import datetime
 from bson import ObjectId
 from django.conf import settings
+from config.field_encryption import decrypt_fields, encrypt_fields
 
 
 def get_db():
@@ -32,6 +33,10 @@ class Admin:
     Super admins have all permissions automatically.
     """
     collection_name = 'admins'
+    encrypted_fields = (
+        'two_factor_secret',
+        'password_reset_otp',
+    )
     
     def __init__(self, **kwargs):
         self._id = kwargs.get('_id')
@@ -123,14 +128,14 @@ class Admin:
         }
         if self._id:
             data['_id'] = self._id
-        return data
+        return encrypt_fields(data, self.encrypted_fields)
     
     @classmethod
     def from_dict(cls, data):
         """Create Admin instance from MongoDB document"""
         if not data:
             return None
-        return cls(**data)
+        return cls(**decrypt_fields(data, cls.encrypted_fields))
     
     def set_password(self, raw_password):
         """Hash and set password (peppered + bcrypt)"""
