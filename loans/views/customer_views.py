@@ -4,6 +4,7 @@ from rest_framework.permissions import IsAuthenticated
 from bson import ObjectId
 
 from accounts.authentication import CustomJWTAuthentication
+from accounts.utils.access_control import AccessControlMixin
 from accounts.utils.response_helpers import success_response, error_response
 from accounts.utils.throttles import PreQualifyRateThrottle
 from accounts.utils.validation_utils import sanitize_text
@@ -17,7 +18,14 @@ import logging
 logger = logging.getLogger('loans')
 
 
-class LoanProductListView(APIView):
+class CustomerRoleRequiredMixin(AccessControlMixin):
+    """Require customer role for customer-facing loan endpoints."""
+
+    def check_customer_permission(self, request):
+        return self.require_customer(request)
+
+
+class LoanProductListView(CustomerRoleRequiredMixin, APIView):
     """
     List available loan products.
     
@@ -28,6 +36,10 @@ class LoanProductListView(APIView):
     
     def get(self, request):
         """Get all active loan products"""
+        has_permission, result = self.check_customer_permission(request)
+        if not has_permission:
+            return result
+
         products = LoanProduct.find(active_only=True)
         
         products_data = [{
@@ -51,7 +63,7 @@ class LoanProductListView(APIView):
         )
 
 
-class LoanProductDetailView(APIView):
+class LoanProductDetailView(CustomerRoleRequiredMixin, APIView):
     """
     Get loan product details.
     
@@ -61,6 +73,10 @@ class LoanProductDetailView(APIView):
     permission_classes = [IsAuthenticated]
     
     def get(self, request, product_id):
+        has_permission, result = self.check_customer_permission(request)
+        if not has_permission:
+            return result
+
         product = LoanProduct.find_by_id(product_id)
         
         if not product or not product.active:
@@ -89,7 +105,7 @@ class LoanProductDetailView(APIView):
         )
 
 
-class PreQualifyView(APIView):
+class PreQualifyView(CustomerRoleRequiredMixin, APIView):
     """
     Check customer eligibility for a loan product.
     Uses AI to analyze profile and provide recommendations.
@@ -103,6 +119,10 @@ class PreQualifyView(APIView):
     def post(self, request):
         """Check eligibility for a loan"""
         try:
+            has_permission, result = self.check_customer_permission(request)
+            if not has_permission:
+                return result
+
             user = request.user
             customer_id = user.customer_id
 
@@ -215,7 +235,7 @@ class PreQualifyView(APIView):
             )
 
 
-class LoanApplyView(APIView):
+class LoanApplyView(CustomerRoleRequiredMixin, APIView):
     """
     Submit a loan application.
     
@@ -227,6 +247,10 @@ class LoanApplyView(APIView):
     def post(self, request):
         """Submit loan application"""
         try:
+            has_permission, result = self.check_customer_permission(request)
+            if not has_permission:
+                return result
+
             user = request.user
             customer_id = user.customer_id
             
@@ -358,7 +382,7 @@ class LoanApplyView(APIView):
             )
 
 
-class MyApplicationsView(APIView):
+class MyApplicationsView(CustomerRoleRequiredMixin, APIView):
     """
     List customer's loan applications.
     
@@ -375,6 +399,10 @@ class MyApplicationsView(APIView):
     
     def get(self, request):
         """Get all applications for current customer with optional filtering"""
+        has_permission, result = self.check_customer_permission(request)
+        if not has_permission:
+            return result
+
         user = request.user
         customer_id = user.customer_id
         
@@ -471,7 +499,7 @@ class MyApplicationsView(APIView):
         )
 
 
-class ApplicationDetailView(APIView):
+class ApplicationDetailView(CustomerRoleRequiredMixin, APIView):
     """
     Get application details.
     
@@ -481,6 +509,10 @@ class ApplicationDetailView(APIView):
     permission_classes = [IsAuthenticated]
     
     def get(self, request, application_id):
+        has_permission, result = self.check_customer_permission(request)
+        if not has_permission:
+            return result
+
         user = request.user
         customer_id = user.customer_id
         
@@ -518,7 +550,7 @@ class ApplicationDetailView(APIView):
         )
 
 
-class RepaymentScheduleView(APIView):
+class RepaymentScheduleView(CustomerRoleRequiredMixin, APIView):
     """
     Get repayment schedule for a loan application.
     
@@ -528,6 +560,10 @@ class RepaymentScheduleView(APIView):
     permission_classes = [IsAuthenticated]
     
     def get(self, request, application_id):
+        has_permission, result = self.check_customer_permission(request)
+        if not has_permission:
+            return result
+
         user = request.user
         customer_id = user.customer_id
         
@@ -587,7 +623,7 @@ class RepaymentScheduleView(APIView):
         )
 
 
-class PaymentHistoryView(APIView):
+class PaymentHistoryView(CustomerRoleRequiredMixin, APIView):
     """
     Get payment history for a loan application.
     
@@ -597,6 +633,10 @@ class PaymentHistoryView(APIView):
     permission_classes = [IsAuthenticated]
     
     def get(self, request, application_id):
+        has_permission, result = self.check_customer_permission(request)
+        if not has_permission:
+            return result
+
         user = request.user
         customer_id = user.customer_id
         
@@ -633,7 +673,7 @@ class PaymentHistoryView(APIView):
         )
 
 
-class ResubmitApplicationView(APIView):
+class ResubmitApplicationView(CustomerRoleRequiredMixin, APIView):
     """
     Resubmit a rejected application.
     
@@ -643,6 +683,10 @@ class ResubmitApplicationView(APIView):
     permission_classes = [IsAuthenticated]
     
     def post(self, request, application_id):
+        has_permission, result = self.check_customer_permission(request)
+        if not has_permission:
+            return result
+
         user = request.user
         customer_id = user.customer_id
         
@@ -672,7 +716,7 @@ class ResubmitApplicationView(APIView):
         )
 
 
-class RejectionFeedbackView(APIView):
+class RejectionFeedbackView(CustomerRoleRequiredMixin, APIView):
     """
     Get AI-powered friendly feedback about why application was rejected.
     
@@ -682,6 +726,10 @@ class RejectionFeedbackView(APIView):
     permission_classes = [IsAuthenticated]
     
     def get(self, request, application_id):
+        has_permission, result = self.check_customer_permission(request)
+        if not has_permission:
+            return result
+
         user = request.user
         customer_id = user.customer_id
         

@@ -25,8 +25,13 @@ class AdminDashboardView(AdminRequiredMixin, APIView):
     """
     authentication_classes = [CustomJWTAuthentication]
     permission_classes = [IsAuthenticated]
+    required_permissions = ['view_analytics']
     
     def get(self, request):
+        has_permission, result = self.check_admin_permission(request)
+        if not has_permission:
+            return result
+
         from accounts.models import Customer, Admin, LoanOfficer
         from loans.models import LoanApplication, LoanProduct
         from documents.models import Document
