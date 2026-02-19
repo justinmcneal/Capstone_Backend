@@ -96,6 +96,8 @@ class AdminLoginView(APIView):
         try:
             raw_username = request.data.get('username', '')
             password = request.data.get('password', '')
+            client_ip = request.META.get('REMOTE_ADDR', '')
+            user_agent = request.META.get('HTTP_USER_AGENT', '')
             if not isinstance(raw_username, str):
                 return error_response(
                     message="username must be a string",
@@ -128,6 +130,17 @@ class AdminLoginView(APIView):
                 admin = Admin.find_one({'email': username.lower()})
             
             if not admin:
+                AuditLog.log_action(
+                    action='user_login_failed',
+                    user_type='admin',
+                    user_email=username.lower(),
+                    description='Admin login failed',
+                    ip_address=client_ip,
+                    details={
+                        'reason': 'account_not_found',
+                        'user_agent': user_agent,
+                    }
+                )
                 return error_response(
                     message="Invalid credentials",
                     status_code=status.HTTP_401_UNAUTHORIZED
@@ -135,17 +148,42 @@ class AdminLoginView(APIView):
             
             # Check if account is active
             if not admin.active:
+                AuditLog.log_action(
+                    action='user_login_failed',
+                    user_id=admin.id,
+                    user_type='admin' if not admin.super_admin else 'super_admin',
+                    user_email=admin.email,
+                    description='Admin login failed',
+                    ip_address=client_ip,
+                    details={
+                        'reason': 'account_inactive',
+                        'user_agent': user_agent,
+                    }
+                )
                 return error_response(
-                    message="Account has been deactivated",
-                    status_code=status.HTTP_403_FORBIDDEN
+                    message="Invalid credentials",
+                    status_code=status.HTTP_401_UNAUTHORIZED
                 )
             
             # Check lockout
             if admin.locked_until and admin.locked_until > datetime.utcnow():
                 remaining = (admin.locked_until - datetime.utcnow()).seconds // 60
+                AuditLog.log_action(
+                    action='user_login_failed',
+                    user_id=admin.id,
+                    user_type='admin' if not admin.super_admin else 'super_admin',
+                    user_email=admin.email,
+                    description='Admin login failed',
+                    ip_address=client_ip,
+                    details={
+                        'reason': 'account_locked',
+                        'minutes_remaining': remaining,
+                        'user_agent': user_agent,
+                    }
+                )
                 return error_response(
-                    message=f"Account is locked. Try again in {remaining} minutes.",
-                    status_code=status.HTTP_403_FORBIDDEN
+                    message="Invalid credentials",
+                    status_code=status.HTTP_401_UNAUTHORIZED
                 )
             
             # Verify password
@@ -155,12 +193,40 @@ class AdminLoginView(APIView):
                 if admin.failed_login_attempts >= 5:
                     admin.locked_until = datetime.utcnow() + timedelta(minutes=30)
                     admin.save()
+                    AuditLog.log_action(
+                        action='user_login_failed',
+                        user_id=admin.id,
+                        user_type='admin' if not admin.super_admin else 'super_admin',
+                        user_email=admin.email,
+                        description='Admin login failed',
+                        ip_address=client_ip,
+                        details={
+                            'reason': 'password_mismatch',
+                            'failed_attempts': admin.failed_login_attempts,
+                            'account_locked_after_attempt': True,
+                            'user_agent': user_agent,
+                        }
+                    )
                     return error_response(
-                        message="Account locked due to too many failed attempts. Try again in 30 minutes.",
-                        status_code=status.HTTP_403_FORBIDDEN
+                        message="Invalid credentials",
+                        status_code=status.HTTP_401_UNAUTHORIZED
                     )
                 
                 admin.save()
+                AuditLog.log_action(
+                    action='user_login_failed',
+                    user_id=admin.id,
+                    user_type='admin' if not admin.super_admin else 'super_admin',
+                    user_email=admin.email,
+                    description='Admin login failed',
+                    ip_address=client_ip,
+                    details={
+                        'reason': 'password_mismatch',
+                        'failed_attempts': admin.failed_login_attempts,
+                        'account_locked_after_attempt': False,
+                        'user_agent': user_agent,
+                    }
+                )
                 return error_response(
                     message="Invalid credentials",
                     status_code=status.HTTP_401_UNAUTHORIZED
@@ -203,7 +269,10 @@ class AdminLoginView(APIView):
                 user_type='admin' if not admin.super_admin else 'super_admin',
                 user_email=admin.email,
                 description=f'Admin {admin.username} logged in',
-                ip_address=request.META.get('REMOTE_ADDR', '')
+                ip_address=client_ip,
+                details={
+                    'user_agent': user_agent,
+                }
             )
             
             response = success_response(

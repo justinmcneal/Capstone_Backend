@@ -40,6 +40,8 @@ class LoanOfficerLoginView(APIView):
         try:
             email = EmailUtils.normalize_email(str(request.data.get('email') or ''))
             password = request.data.get('password', '')
+            client_ip = request.META.get('REMOTE_ADDR', '')
+            user_agent = request.META.get('HTTP_USER_AGENT', '')
             if not isinstance(password, str):
                 return error_response(
                     message="password must be a string",
@@ -64,6 +66,17 @@ class LoanOfficerLoginView(APIView):
             officer = LoanOfficer.find_one({'email': email})
             
             if not officer:
+                AuditLog.log_action(
+                    action='user_login_failed',
+                    user_type='loan_officer',
+                    user_email=email,
+                    description='Loan officer login failed',
+                    ip_address=client_ip,
+                    details={
+                        'reason': 'account_not_found',
+                        'user_agent': user_agent,
+                    }
+                )
                 return error_response(
                     message="Invalid credentials",
                     status_code=status.HTTP_401_UNAUTHORIZED
@@ -71,17 +84,42 @@ class LoanOfficerLoginView(APIView):
             
             # Check if account is active
             if not officer.active:
+                AuditLog.log_action(
+                    action='user_login_failed',
+                    user_id=officer.id,
+                    user_type='loan_officer',
+                    user_email=officer.email,
+                    description='Loan officer login failed',
+                    ip_address=client_ip,
+                    details={
+                        'reason': 'account_inactive',
+                        'user_agent': user_agent,
+                    }
+                )
                 return error_response(
-                    message="Account has been deactivated. Contact your administrator.",
-                    status_code=status.HTTP_403_FORBIDDEN
+                    message="Invalid credentials",
+                    status_code=status.HTTP_401_UNAUTHORIZED
                 )
             
             # Check lockout
             if officer.locked_until and officer.locked_until > datetime.utcnow():
                 remaining = (officer.locked_until - datetime.utcnow()).seconds // 60
+                AuditLog.log_action(
+                    action='user_login_failed',
+                    user_id=officer.id,
+                    user_type='loan_officer',
+                    user_email=officer.email,
+                    description='Loan officer login failed',
+                    ip_address=client_ip,
+                    details={
+                        'reason': 'account_locked',
+                        'minutes_remaining': remaining,
+                        'user_agent': user_agent,
+                    }
+                )
                 return error_response(
-                    message=f"Account is locked. Try again in {remaining} minutes.",
-                    status_code=status.HTTP_403_FORBIDDEN
+                    message="Invalid credentials",
+                    status_code=status.HTTP_401_UNAUTHORIZED
                 )
             
             # Verify password
@@ -92,12 +130,40 @@ class LoanOfficerLoginView(APIView):
                 if officer.failed_login_attempts >= 5:
                     officer.locked_until = datetime.utcnow() + timedelta(minutes=15)
                     officer.save()
+                    AuditLog.log_action(
+                        action='user_login_failed',
+                        user_id=officer.id,
+                        user_type='loan_officer',
+                        user_email=officer.email,
+                        description='Loan officer login failed',
+                        ip_address=client_ip,
+                        details={
+                            'reason': 'password_mismatch',
+                            'failed_attempts': officer.failed_login_attempts,
+                            'account_locked_after_attempt': True,
+                            'user_agent': user_agent,
+                        }
+                    )
                     return error_response(
-                        message="Account locked due to too many failed attempts. Try again in 15 minutes.",
-                        status_code=status.HTTP_403_FORBIDDEN
+                        message="Invalid credentials",
+                        status_code=status.HTTP_401_UNAUTHORIZED
                     )
                 
                 officer.save()
+                AuditLog.log_action(
+                    action='user_login_failed',
+                    user_id=officer.id,
+                    user_type='loan_officer',
+                    user_email=officer.email,
+                    description='Loan officer login failed',
+                    ip_address=client_ip,
+                    details={
+                        'reason': 'password_mismatch',
+                        'failed_attempts': officer.failed_login_attempts,
+                        'account_locked_after_attempt': False,
+                        'user_agent': user_agent,
+                    }
+                )
                 return error_response(
                     message="Invalid credentials",
                     status_code=status.HTTP_401_UNAUTHORIZED
@@ -143,7 +209,10 @@ class LoanOfficerLoginView(APIView):
                 user_type='loan_officer',
                 user_email=officer.email,
                 description=f'Loan officer {officer.full_name} logged in',
-                ip_address=request.META.get('REMOTE_ADDR', '')
+                ip_address=client_ip,
+                details={
+                    'user_agent': user_agent,
+                }
             )
             
             response = success_response(

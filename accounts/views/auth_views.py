@@ -106,56 +106,121 @@ class LoginView(APIView):
         email = serializer.validated_data['email']
         password = serializer.validated_data['password']
         remember_me = serializer.validated_data.get('remember_me', False)
+        client_ip = request.META.get('REMOTE_ADDR', '')
+        user_agent = request.META.get('HTTP_USER_AGENT', '')
         
         try:
             customer = AuthService.get_customer_by_email(email)
             if not customer:
-                logger.warning(f"Login attempt for non-existent email: {email} from IP {request.META.get('REMOTE_ADDR')}")
+                logger.warning(f"Login attempt for non-existent email: {email} from IP {client_ip}")
+                AuditLog.log_action(
+                    action='user_login_failed',
+                    user_type='customer',
+                    user_email=email,
+                    description='Customer login failed',
+                    ip_address=client_ip,
+                    details={
+                        'reason': 'account_not_found',
+                        'user_agent': user_agent,
+                    }
+                )
                 return APIResponseHelper.error_response(
-                    'Invalid email or password',
+                    'Invalid credentials',
                     status.HTTP_401_UNAUTHORIZED
                 )
             
             # Check account lockout
             is_locked, lockout_seconds = LockoutService.is_account_locked(customer)
             if is_locked:
-                logger.warning(f"Login attempt for locked account: {email} from IP {request.META.get('REMOTE_ADDR')}")
+                logger.warning(f"Login attempt for locked account: {email} from IP {client_ip}")
+                AuditLog.log_action(
+                    action='user_login_failed',
+                    user_id=customer.id,
+                    user_type='customer',
+                    user_email=customer.email,
+                    description='Customer login failed',
+                    ip_address=client_ip,
+                    details={
+                        'reason': 'account_locked',
+                        'user_agent': user_agent,
+                    }
+                )
                 return APIResponseHelper.error_response(
-                    f'Account is locked. Please try again in {lockout_seconds // 60} minutes.',
-                    status.HTTP_423_LOCKED
+                    'Invalid credentials',
+                    status.HTTP_401_UNAUTHORIZED
                 )
             
             # Check rate limiting
             allowed, seconds_remaining = AuthService.check_login_rate_limit(customer)
             if not allowed:
-                logger.warning(f"Rate limit exceeded for user {email} from IP {request.META.get('REMOTE_ADDR')}")
+                logger.warning(f"Rate limit exceeded for user {email} from IP {client_ip}")
+                AuditLog.log_action(
+                    action='user_login_failed',
+                    user_id=customer.id,
+                    user_type='customer',
+                    user_email=customer.email,
+                    description='Customer login failed',
+                    ip_address=client_ip,
+                    details={
+                        'reason': 'rate_limited',
+                        'seconds_remaining': seconds_remaining,
+                        'user_agent': user_agent,
+                    }
+                )
                 return APIResponseHelper.error_response(
-                    f'Too many login attempts. Please try again in {seconds_remaining} seconds.',
-                    status.HTTP_429_TOO_MANY_REQUESTS
+                    'Invalid credentials',
+                    status.HTTP_401_UNAUTHORIZED
                 )
             
             AuthService.update_login_attempt(customer)
             
             if not customer.verified:
-                logger.warning(f"Login attempt for unverified account: {email} from IP {request.META.get('REMOTE_ADDR')}")
+                logger.warning(f"Login attempt for unverified account: {email} from IP {client_ip}")
+                AuditLog.log_action(
+                    action='user_login_failed',
+                    user_id=customer.id,
+                    user_type='customer',
+                    user_email=customer.email,
+                    description='Customer login failed',
+                    ip_address=client_ip,
+                    details={
+                        'reason': 'account_unverified',
+                        'user_agent': user_agent,
+                    }
+                )
                 return APIResponseHelper.error_response(
-                    'Please verify your email before logging in'
+                    'Invalid credentials',
+                    status.HTTP_401_UNAUTHORIZED
                 )
             
             # Verify password
             if not customer.check_password(password):
                 # Record failed attempt for lockout
                 is_now_locked, attempts_remaining = LockoutService.record_failed_attempt(customer)
-                logger.warning(f"Failed login attempt for {email} from IP {request.META.get('REMOTE_ADDR')}")
+                logger.warning(f"Failed login attempt for {email} from IP {client_ip}")
+                AuditLog.log_action(
+                    action='user_login_failed',
+                    user_id=customer.id,
+                    user_type='customer',
+                    user_email=customer.email,
+                    description='Customer login failed',
+                    ip_address=client_ip,
+                    details={
+                        'reason': 'password_mismatch',
+                        'attempts_remaining': attempts_remaining,
+                        'account_locked_after_attempt': is_now_locked,
+                        'user_agent': user_agent,
+                    }
+                )
                 
                 if is_now_locked:
                     return APIResponseHelper.error_response(
-                        'Account locked due to too many failed attempts. Please try again in 15 minutes.',
-                        status.HTTP_423_LOCKED
+                        'Invalid credentials',
+                        status.HTTP_401_UNAUTHORIZED
                     )
                 
                 return APIResponseHelper.error_response(
-                    f'Invalid email or password. {attempts_remaining} attempts remaining.',
+                    'Invalid credentials',
                     status.HTTP_401_UNAUTHORIZED
                 )
             
@@ -181,7 +246,7 @@ class LoginView(APIView):
             token_type = 'remember_me' if remember_me else 'no_remember_me'
             tokens = AuthService.create_customer_tokens(customer, token_type=token_type)
             
-            logger.info(f"Successful login for user {email} from IP {request.META.get('REMOTE_ADDR')}")
+            logger.info(f"Successful login for user {email} from IP {client_ip}")
             
             # Log audit event
             AuditLog.log_action(
@@ -190,7 +255,10 @@ class LoginView(APIView):
                 user_type='customer',
                 user_email=customer.email,
                 description=f'User {customer.email} logged in successfully',
-                ip_address=request.META.get('REMOTE_ADDR', '')
+                ip_address=client_ip,
+                details={
+                    'user_agent': user_agent,
+                }
             )
             
             response_data = {
@@ -208,7 +276,7 @@ class LoginView(APIView):
             return response
             
         except Exception as e:
-            logger.error(f"Login error for {email} from IP {request.META.get('REMOTE_ADDR')}: {str(e)}")
+            logger.error(f"Login error for {email} from IP {client_ip}: {str(e)}")
             return APIResponseHelper.server_error_response('Login failed')
 
 
