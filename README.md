@@ -239,6 +239,16 @@ python manage.py collectstatic
 curl http://localhost:8000/api/health/
 ```
 
+### Encrypted Backup and Restore
+
+```bash
+# Create encrypted backup archive (uses MONGODB_URI + BACKUP_ENCRYPTION_PASSPHRASE)
+python scripts/create_encrypted_backup.py
+
+# Restore encrypted backup into restore test DB
+python scripts/restore_encrypted_backup.py /path/to/backup.archive.gz.enc
+```
+
 ---
 
 ## Documentation
