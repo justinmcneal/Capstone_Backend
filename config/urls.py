@@ -19,9 +19,11 @@ from django.conf import settings
 from django.conf.urls.static import static
 
 from config.views import HealthCheckView
+from config.certificate_pinning import ServerPinsView
 
 urlpatterns = [
     path('api/health/', HealthCheckView.as_view(), name='health-check'),
+    path('api/auth/server-pins/', ServerPinsView.as_view(), name='server-pins'),
     path('api/auth/', include('accounts.urls')),
     path('api/profile/', include('profiles.urls')),
     path('api/documents/', include('documents.urls')),

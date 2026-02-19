@@ -70,6 +70,7 @@ MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
     'whitenoise.middleware.WhiteNoiseMiddleware',  # Serve static files in production
     'config.middleware.SecurityHeadersMiddleware',
+    'config.mtls.MutualTLSMiddleware',  # mTLS client certificate verification
     'django.contrib.sessions.middleware.SessionMiddleware',
     'corsheaders.middleware.CorsMiddleware',  
     'django.middleware.common.CommonMiddleware',
@@ -344,3 +345,21 @@ GROQ_API_KEY = os.getenv('GROQ_API_KEY', '')
 GROQ_MODEL = os.getenv('GROQ_MODEL', 'llama-3.1-8b-instant')
 GROQ_CHAT_MODEL = os.getenv('GROQ_CHAT_MODEL', GROQ_MODEL)
 GROQ_QUALIFICATION_MODEL = os.getenv('GROQ_QUALIFICATION_MODEL', GROQ_MODEL)
+
+# =============================================================================
+# MUTUAL TLS (mTLS) + CERTIFICATE PINNING
+# =============================================================================
+# Enable mTLS client certificate verification
+MTLS_ENABLED = env_bool('MTLS_ENABLED', False)
+
+# Path to the CA certificate used to verify client certificates
+MTLS_CA_CERT_PATH = os.getenv('MTLS_CA_CERT_PATH', 'certs/ca.crt')
+
+# Path to the server certificate (for SPKI pin computation)
+MTLS_SERVER_CERT_PATH = os.getenv('MTLS_SERVER_CERT_PATH', 'certs/server.crt')
+
+# Paths exempt from mTLS verification (always accessible without client cert)
+MTLS_EXEMPT_PATHS = [
+    '/api/health/',
+    '/api/auth/server-pins/',
+]
