@@ -17,6 +17,7 @@ from accounts.utils.user_detection import get_authenticated_user
 from accounts.utils.validation_utils import parse_bool
 from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.exceptions import TokenError
+from analytics.models import AuditLog
 from bson import ObjectId
 import logging
 
@@ -49,6 +50,7 @@ class Setup2FAView(APIView):
                 data={
                     'provisioning_uri': setup_data['provisioning_uri'],
                     'manual_entry_key': setup_data['manual_entry_key'],
+                    'qr_code_data_url': setup_data.get('qr_code_data_url', ''),
                     'message': 'Scan the QR code with your authenticator app, then verify with a code'
                 },
                 message='2FA setup initiated'
@@ -145,6 +147,12 @@ class Verify2FAView(APIView):
         try:
             # Decode temp token to get user ID and role
             token = RefreshToken(temp_token)
+            is_temp_token = bool(token.get('is_2fa_temp') or token.get('temp_2fa'))
+            if not is_temp_token:
+                return APIResponseHelper.error_response(
+                    'Invalid temporary token',
+                    status.HTTP_401_UNAUTHORIZED
+                )
             user_id = token.get('customer_id')  # All users store ID in customer_id
             role = token.get('role', 'customer')
             
@@ -172,19 +180,36 @@ class Verify2FAView(APIView):
                     'Invalid temporary token',
                     status.HTTP_401_UNAUTHORIZED
                 )
-            
-            # Verify 2FA code
-            if use_backup:
-                is_valid = TwoFactorService.use_backup_code(user, code)
+
+            initial_admin_setup = role == 'admin' and not user.two_factor_enabled
+            setup_backup_codes = None
+
+            # Admin bootstrap: first successful code confirms 2FA setup and completes login.
+            if initial_admin_setup:
+                if use_backup:
+                    return APIResponseHelper.validation_error_response(
+                        {'use_backup': 'Backup codes are available only after 2FA setup is complete'}
+                    )
+                setup_confirmed, setup_backup_codes = TwoFactorService.confirm_2fa_setup(user, code)
+                if not setup_confirmed:
+                    logger.warning(f"Invalid 2FA setup/verification code for {user.email} ({user_type})")
+                    return APIResponseHelper.error_response(
+                        'Invalid verification code',
+                        status.HTTP_401_UNAUTHORIZED
+                    )
             else:
-                is_valid = TwoFactorService.verify_totp(user.two_factor_secret, code)
-            
-            if not is_valid:
-                logger.warning(f"Invalid 2FA code for {user.email} ({user_type})")
-                return APIResponseHelper.error_response(
-                    'Invalid verification code',
-                    status.HTTP_401_UNAUTHORIZED
-                )
+                # Standard 2FA verification for already-enrolled users.
+                if use_backup:
+                    is_valid = TwoFactorService.use_backup_code(user, code)
+                else:
+                    is_valid = TwoFactorService.verify_totp(user.two_factor_secret, code)
+                
+                if not is_valid:
+                    logger.warning(f"Invalid 2FA code for {user.email} ({user_type})")
+                    return APIResponseHelper.error_response(
+                        'Invalid verification code',
+                        status.HTTP_401_UNAUTHORIZED
+                    )
             
             # Generate full tokens after successful 2FA
             if user_type == 'customer':
@@ -226,15 +251,37 @@ class Verify2FAView(APIView):
                     'role': 'loan_officer'
                 }
             
-            logger.info(f"2FA verified for {user.email} ({user_type})")
+            if initial_admin_setup:
+                logger.info(f"2FA setup and verification completed for {user.email} ({user_type})")
+            else:
+                logger.info(f"2FA verified for {user.email} ({user_type})")
+
+            try:
+                audit_user_type = 'super_admin' if (user_type == 'admin' and getattr(user, 'super_admin', False)) else user_type
+                AuditLog.log_action(
+                    action='user_login',
+                    user_id=user.id,
+                    user_type=audit_user_type,
+                    user_email=user.email,
+                    description=f'User {user.email} logged in successfully via 2FA',
+                    ip_address=request.META.get('REMOTE_ADDR', '')
+                )
+            except Exception as log_error:
+                logger.error(
+                    f"Failed to write login audit after 2FA for {user.email} ({user_type}): {str(log_error)}"
+                )
             
+            response_payload = {
+                'user': user_data,
+                'access': tokens['access'],
+                'refresh': tokens['refresh']
+            }
+            if initial_admin_setup and setup_backup_codes:
+                response_payload['backup_codes'] = setup_backup_codes
+
             response = APIResponseHelper.success_response(
-                data={
-                    'user': user_data,
-                    'access': tokens['access'],
-                    'refresh': tokens['refresh']
-                },
-                message='2FA verification successful'
+                data=response_payload,
+                message='2FA setup completed and login successful' if initial_admin_setup else '2FA verification successful'
             )
             set_auth_cookies(response, tokens['access'], tokens['refresh'])
             return response
@@ -274,6 +321,13 @@ class Disable2FAView(APIView):
             user, user_type = get_authenticated_user(request)
             if not user:
                 return APIResponseHelper.error_response('User not found')
+
+            if user_type == 'admin':
+                return APIResponseHelper.error_response(
+                    '2FA is mandatory for administrator accounts and cannot be disabled.',
+                    error_code=status.HTTP_403_FORBIDDEN,
+                    code='admin_2fa_mandatory'
+                )
             
             if not user.two_factor_enabled:
                 return APIResponseHelper.error_response('2FA is not enabled')
