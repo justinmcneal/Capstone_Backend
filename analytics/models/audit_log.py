@@ -14,6 +14,7 @@ def get_db():
 AUDIT_ACTIONS = [
     # Authentication
     'user_login',
+    'user_login_failed',
     'user_logout',
     'user_registered',
     # Profile
@@ -35,7 +36,7 @@ AUDIT_ACTIONS = [
 
 # High-level action group mapping for analytics filtering.
 ACTION_GROUPS = {
-    'login': ['user_login', 'user_logout'],
+    'login': ['user_login', 'user_login_failed', 'user_logout'],
     'create': [
         'user_registered',
         'loan_submitted',

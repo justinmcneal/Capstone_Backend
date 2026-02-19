@@ -31,6 +31,48 @@ from analytics.models import AuditLog
 import logging
 
 logger = logging.getLogger('admin_auth')
+GENERIC_LOGIN_ERROR_MESSAGE = "Invalid email/username or password."
+
+
+def _get_client_ip(request):
+    forwarded = request.META.get('HTTP_X_FORWARDED_FOR')
+    if forwarded:
+        return forwarded.split(',')[0].strip()
+    return request.META.get('REMOTE_ADDR', '')
+
+
+def _log_admin_login_failure(request, login_identifier, reason, admin=None):
+    ip_address = _get_client_ip(request)
+    logger.warning(
+        "login_failed role=admin reason=%s identifier=%s ip=%s",
+        reason,
+        login_identifier,
+        ip_address,
+    )
+    attempted_email = (
+        login_identifier.lower()
+        if isinstance(login_identifier, str) and '@' in login_identifier
+        else ''
+    )
+    try:
+        AuditLog.log_action(
+            action='user_login_failed',
+            user_id=getattr(admin, 'id', None),
+            user_type='admin',
+            user_email=getattr(admin, 'email', '') if admin else attempted_email,
+            description='Admin login failed',
+            details={
+                'reason': reason,
+                'identifier': login_identifier,
+            },
+            ip_address=ip_address,
+        )
+    except Exception as log_error:
+        logger.error(
+            "failed_to_write_audit action=user_login_failed role=admin identifier=%s error=%s",
+            login_identifier,
+            str(log_error),
+        )
 
 
 def generate_temp_password(length=12):
@@ -128,24 +170,37 @@ class AdminLoginView(APIView):
                 admin = Admin.find_one({'email': username.lower()})
             
             if not admin:
+                _log_admin_login_failure(request, username, 'user_not_found')
                 return error_response(
-                    message="Invalid credentials",
+                    message=GENERIC_LOGIN_ERROR_MESSAGE,
                     status_code=status.HTTP_401_UNAUTHORIZED
                 )
             
             # Check if account is active
             if not admin.active:
+                _log_admin_login_failure(
+                    request,
+                    username,
+                    'account_deactivated',
+                    admin=admin,
+                )
                 return error_response(
-                    message="Account has been deactivated",
-                    status_code=status.HTTP_403_FORBIDDEN
+                    message=GENERIC_LOGIN_ERROR_MESSAGE,
+                    status_code=status.HTTP_401_UNAUTHORIZED
                 )
             
             # Check lockout
             if admin.locked_until and admin.locked_until > datetime.utcnow():
                 remaining = (admin.locked_until - datetime.utcnow()).seconds // 60
+                _log_admin_login_failure(
+                    request,
+                    username,
+                    f'account_locked_{remaining}m_remaining',
+                    admin=admin,
+                )
                 return error_response(
-                    message=f"Account is locked. Try again in {remaining} minutes.",
-                    status_code=status.HTTP_403_FORBIDDEN
+                    message=GENERIC_LOGIN_ERROR_MESSAGE,
+                    status_code=status.HTTP_401_UNAUTHORIZED
                 )
             
             # Verify password
@@ -155,14 +210,26 @@ class AdminLoginView(APIView):
                 if admin.failed_login_attempts >= 5:
                     admin.locked_until = datetime.utcnow() + timedelta(minutes=30)
                     admin.save()
+                    _log_admin_login_failure(
+                        request,
+                        username,
+                        'password_incorrect_account_locked',
+                        admin=admin,
+                    )
                     return error_response(
-                        message="Account locked due to too many failed attempts. Try again in 30 minutes.",
-                        status_code=status.HTTP_403_FORBIDDEN
+                        message=GENERIC_LOGIN_ERROR_MESSAGE,
+                        status_code=status.HTTP_401_UNAUTHORIZED
                     )
                 
                 admin.save()
+                _log_admin_login_failure(
+                    request,
+                    username,
+                    f'password_incorrect_{5 - admin.failed_login_attempts}_attempts_remaining',
+                    admin=admin,
+                )
                 return error_response(
-                    message="Invalid credentials",
+                    message=GENERIC_LOGIN_ERROR_MESSAGE,
                     status_code=status.HTTP_401_UNAUTHORIZED
                 )
             
