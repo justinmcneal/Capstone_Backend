@@ -308,6 +308,16 @@ LOGGING = {
             'level': 'INFO',
             'propagate': False,
         },
+        'admin_auth': {
+            'handlers': ['console', 'file'],
+            'level': 'INFO',
+            'propagate': False,
+        },
+        'loan_officer_auth': {
+            'handlers': ['console', 'file'],
+            'level': 'INFO',
+            'propagate': False,
+        },
     },
 }
 
@@ -337,7 +347,8 @@ if not DEBUG:
             'formatter': 'simple',
         },
     }
-    LOGGING['loggers']['authentication']['handlers'] = ['console']
+    for logger_name in ('authentication', 'admin_auth', 'loan_officer_auth'):
+        LOGGING['loggers'][logger_name]['handlers'] = ['console']
 
 # Groq LLM Configuration
 GROQ_API_KEY = os.getenv('GROQ_API_KEY', '')

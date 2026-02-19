@@ -21,6 +21,43 @@ from analytics.models import AuditLog
 import logging
 
 logger = logging.getLogger('loan_officer_auth')
+GENERIC_LOGIN_ERROR_MESSAGE = "Invalid email/username or password."
+
+
+def _get_client_ip(request):
+    forwarded = request.META.get('HTTP_X_FORWARDED_FOR')
+    if forwarded:
+        return forwarded.split(',')[0].strip()
+    return request.META.get('REMOTE_ADDR', '')
+
+
+def _log_loan_officer_login_failure(request, email, reason, officer=None):
+    ip_address = _get_client_ip(request)
+    logger.warning(
+        "login_failed role=loan_officer reason=%s email=%s ip=%s",
+        reason,
+        email,
+        ip_address,
+    )
+    try:
+        AuditLog.log_action(
+            action='user_login_failed',
+            user_id=getattr(officer, 'id', None),
+            user_type='loan_officer',
+            user_email=getattr(officer, 'email', '') if officer else email,
+            description='Loan officer login failed',
+            details={
+                'reason': reason,
+                'email': email,
+            },
+            ip_address=ip_address,
+        )
+    except Exception as log_error:
+        logger.error(
+            "failed_to_write_audit action=user_login_failed role=loan_officer email=%s error=%s",
+            email,
+            str(log_error),
+        )
 
 
 class LoanOfficerLoginView(APIView):
@@ -64,24 +101,37 @@ class LoanOfficerLoginView(APIView):
             officer = LoanOfficer.find_one({'email': email})
             
             if not officer:
+                _log_loan_officer_login_failure(request, email, 'user_not_found')
                 return error_response(
-                    message="Invalid credentials",
+                    message=GENERIC_LOGIN_ERROR_MESSAGE,
                     status_code=status.HTTP_401_UNAUTHORIZED
                 )
             
             # Check if account is active
             if not officer.active:
+                _log_loan_officer_login_failure(
+                    request,
+                    email,
+                    'account_deactivated',
+                    officer=officer,
+                )
                 return error_response(
-                    message="Account has been deactivated. Contact your administrator.",
-                    status_code=status.HTTP_403_FORBIDDEN
+                    message=GENERIC_LOGIN_ERROR_MESSAGE,
+                    status_code=status.HTTP_401_UNAUTHORIZED
                 )
             
             # Check lockout
             if officer.locked_until and officer.locked_until > datetime.utcnow():
                 remaining = (officer.locked_until - datetime.utcnow()).seconds // 60
+                _log_loan_officer_login_failure(
+                    request,
+                    email,
+                    f'account_locked_{remaining}m_remaining',
+                    officer=officer,
+                )
                 return error_response(
-                    message=f"Account is locked. Try again in {remaining} minutes.",
-                    status_code=status.HTTP_403_FORBIDDEN
+                    message=GENERIC_LOGIN_ERROR_MESSAGE,
+                    status_code=status.HTTP_401_UNAUTHORIZED
                 )
             
             # Verify password
@@ -92,14 +142,26 @@ class LoanOfficerLoginView(APIView):
                 if officer.failed_login_attempts >= 5:
                     officer.locked_until = datetime.utcnow() + timedelta(minutes=15)
                     officer.save()
+                    _log_loan_officer_login_failure(
+                        request,
+                        email,
+                        'password_incorrect_account_locked',
+                        officer=officer,
+                    )
                     return error_response(
-                        message="Account locked due to too many failed attempts. Try again in 15 minutes.",
-                        status_code=status.HTTP_403_FORBIDDEN
+                        message=GENERIC_LOGIN_ERROR_MESSAGE,
+                        status_code=status.HTTP_401_UNAUTHORIZED
                     )
                 
                 officer.save()
+                _log_loan_officer_login_failure(
+                    request,
+                    email,
+                    f'password_incorrect_{5 - officer.failed_login_attempts}_attempts_remaining',
+                    officer=officer,
+                )
                 return error_response(
-                    message="Invalid credentials",
+                    message=GENERIC_LOGIN_ERROR_MESSAGE,
                     status_code=status.HTTP_401_UNAUTHORIZED
                 )
             
