@@ -40,10 +40,15 @@ class AdminProductListView(AdminRequiredMixin, APIView):
     """
     authentication_classes = [CustomJWTAuthentication]
     permission_classes = [IsAuthenticated]
+    required_permissions = ['manage_system']
     
     def get(self, request):
         """List all products including inactive"""
         import re
+
+        has_permission, result = self.check_admin_permission(request)
+        if not has_permission:
+            return result
         
         active_param = sanitize_text(request.query_params.get('active', 'all')).lower()
         if active_param in {'true', '1', 'yes', 'on'}:
@@ -94,6 +99,10 @@ class AdminProductListView(AdminRequiredMixin, APIView):
     
     def post(self, request):
         """Create a new loan product"""
+        has_permission, result = self.check_admin_permission(request)
+        if not has_permission:
+            return result
+
         serializer = LoanProductSerializer(data=request.data)
         if not serializer.is_valid():
             return error_response(
@@ -146,8 +155,13 @@ class AdminProductDetailView(AdminRequiredMixin, APIView):
     """
     authentication_classes = [CustomJWTAuthentication]
     permission_classes = [IsAuthenticated]
+    required_permissions = ['manage_system']
     
     def get(self, request, product_id):
+        has_permission, result = self.check_admin_permission(request)
+        if not has_permission:
+            return result
+
         product = LoanProduct.find_by_id(product_id)
         if not product:
             return error_response(message="Product not found", status_code=status.HTTP_404_NOT_FOUND)
@@ -173,6 +187,10 @@ class AdminProductDetailView(AdminRequiredMixin, APIView):
     
     def put(self, request, product_id):
         from loans.models.application import LoanApplication
+
+        has_permission, result = self.check_admin_permission(request)
+        if not has_permission:
+            return result
         
         product = LoanProduct.find_by_id(product_id)
         if not product:
@@ -246,6 +264,10 @@ class AdminProductDetailView(AdminRequiredMixin, APIView):
     
     def delete(self, request, product_id):
         from loans.models.application import LoanApplication
+
+        has_permission, result = self.check_admin_permission(request)
+        if not has_permission:
+            return result
         
         product = LoanProduct.find_by_id(product_id)
         if not product:
@@ -289,8 +311,13 @@ class AssignApplicationView(AdminRequiredMixin, APIView):
     """
     authentication_classes = [CustomJWTAuthentication]
     permission_classes = [IsAuthenticated]
+    required_permissions = ['manage_loan_officers']
     
     def post(self, request, application_id):
+        has_permission, result = self.check_admin_permission(request)
+        if not has_permission:
+            return result
+
         app = LoanApplication.find_by_id(application_id)
         if not app:
             return error_response(
@@ -344,8 +371,13 @@ class ReassignApplicationView(AdminRequiredMixin, APIView):
     """
     authentication_classes = [CustomJWTAuthentication]
     permission_classes = [IsAuthenticated]
+    required_permissions = ['manage_loan_officers']
     
     def post(self, request, application_id):
+        has_permission, result = self.check_admin_permission(request)
+        if not has_permission:
+            return result
+
         app = LoanApplication.find_by_id(application_id)
         if not app:
             return error_response(
@@ -409,9 +441,14 @@ class OfficerWorkloadView(AdminRequiredMixin, APIView):
     """
     authentication_classes = [CustomJWTAuthentication]
     permission_classes = [IsAuthenticated]
+    required_permissions = ['manage_loan_officers']
     
     def get(self, request):
         from loans.services import get_officers_workload
+
+        has_permission, result = self.check_admin_permission(request)
+        if not has_permission:
+            return result
         
         # Get query parameters for officers
         search = sanitize_text(request.query_params.get('search', ''))

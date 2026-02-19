@@ -17,6 +17,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework import status as http_status
 
 from accounts.authentication import CustomJWTAuthentication
+from accounts.utils.access_control import AccessControlMixin
 from accounts.utils.validation_utils import sanitize_text, parse_optional_bool
 from config.views import success_response, error_response
 from notifications.models.notification import Notification, get_db
@@ -64,7 +65,7 @@ def _serialize_related_id(value):
     return value
 
 
-class NotificationListView(APIView):
+class NotificationListView(AccessControlMixin, APIView):
     """
     List notifications with pagination.
     
@@ -79,6 +80,13 @@ class NotificationListView(APIView):
     permission_classes = [IsAuthenticated]
     
     def get(self, request):
+        has_permission, result = self.require_roles(
+            request,
+            {'customer', 'loan_officer', 'admin', 'super_admin'},
+        )
+        if not has_permission:
+            return result
+
         # Parse query params
         try:
             page = int(request.query_params.get('page', 1))
@@ -171,7 +179,7 @@ class NotificationListView(APIView):
         )
 
 
-class NotificationMarkReadView(APIView):
+class NotificationMarkReadView(AccessControlMixin, APIView):
     """
     Mark a single notification as read.
     
@@ -181,6 +189,13 @@ class NotificationMarkReadView(APIView):
     permission_classes = [IsAuthenticated]
     
     def post(self, request, notification_id):
+        has_permission, result = self.require_roles(
+            request,
+            {'customer', 'loan_officer', 'admin', 'super_admin'},
+        )
+        if not has_permission:
+            return result
+
         # Find notification
         db = get_db()
         collection = db[Notification.collection_name]
@@ -222,7 +237,7 @@ class NotificationMarkReadView(APIView):
         )
 
 
-class NotificationMarkAllReadView(APIView):
+class NotificationMarkAllReadView(AccessControlMixin, APIView):
     """
     Mark all notifications as read.
     
@@ -232,6 +247,13 @@ class NotificationMarkAllReadView(APIView):
     permission_classes = [IsAuthenticated]
     
     def post(self, request):
+        has_permission, result = self.require_roles(
+            request,
+            {'customer', 'loan_officer', 'admin', 'super_admin'},
+        )
+        if not has_permission:
+            return result
+
         # Mark all as read
         db = get_db()
         collection = db[Notification.collection_name]
@@ -252,7 +274,7 @@ class NotificationMarkAllReadView(APIView):
         )
 
 
-class NotificationUnreadCountView(APIView):
+class NotificationUnreadCountView(AccessControlMixin, APIView):
     """
     Get unread notification count (for badge updates).
     
@@ -262,6 +284,13 @@ class NotificationUnreadCountView(APIView):
     permission_classes = [IsAuthenticated]
     
     def get(self, request):
+        has_permission, result = self.require_roles(
+            request,
+            {'customer', 'loan_officer', 'admin', 'super_admin'},
+        )
+        if not has_permission:
+            return result
+
         db = get_db()
         collection = db[Notification.collection_name]
 

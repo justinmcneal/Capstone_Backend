@@ -6,6 +6,7 @@ from datetime import datetime
 from django.conf import settings
 
 from accounts.authentication import CustomJWTAuthentication
+from accounts.utils.access_control import AccessControlMixin
 from accounts.utils.response_helpers import success_response, error_response
 from accounts.utils.validation_utils import sanitize_text, parse_bool
 from loans.models import LoanProduct, LoanApplication
@@ -46,17 +47,19 @@ def internal_note_summary(app):
     }
 
 
-class LoanOfficerRequiredMixin:
+class LoanOfficerRequiredMixin(AccessControlMixin):
     """Mixin to require loan officer or admin role"""
     
     def check_officer_permission(self, request):
-        user = request.user
-        if not hasattr(user, 'role') or user.role not in ['loan_officer', 'admin']:
-            return False, error_response(
-                message="Loan officer access required",
-                status_code=status.HTTP_403_FORBIDDEN
-            )
-        return True, user
+        return self.require_officer_or_admin(request)
+
+    def check_application_scope(self, request, application, allow_unassigned=True):
+        return self.require_application_scope(
+            request,
+            application,
+            allow_unassigned=allow_unassigned,
+            conceal_existence=True,
+        )
 
 
 class OfficerApplicationListView(LoanOfficerRequiredMixin, APIView):
@@ -89,6 +92,9 @@ class OfficerApplicationListView(LoanOfficerRequiredMixin, APIView):
         has_permission, result = self.check_officer_permission(request)
         if not has_permission:
             return result
+        user = request.user
+        user_role = getattr(user, 'role', '')
+        user_id = str(getattr(user, 'customer_id', '') or '')
         
         # Extract query params
         status_filter = sanitize_text(request.query_params.get('status', 'pending')).lower() or 'pending'
@@ -163,9 +169,18 @@ class OfficerApplicationListView(LoanOfficerRequiredMixin, APIView):
         if status_filter == 'pending':
             query['status'] = {'$in': ['submitted', 'under_review']}
         elif status_filter == 'mine':
-            query['assigned_officer'] = result.customer_id
+            query['assigned_officer'] = user_id
         elif status_filter != 'all':
             query['status'] = status_filter
+
+        # ABAC scope: loan officers can only access their own assigned apps
+        # plus unassigned apps available for pickup.
+        if user_role == 'loan_officer':
+            query['$or'] = [
+                {'assigned_officer': user_id},
+                {'assigned_officer': {'$in': [None, '']}},
+                {'assigned_officer': {'$exists': False}},
+            ]
         
         # Amount range filter
         parsed_min_amount = None
@@ -355,6 +370,13 @@ class OfficerApplicationDetailView(LoanOfficerRequiredMixin, APIView):
                 message="Application not found",
                 status_code=status.HTTP_404_NOT_FOUND
             )
+        has_scope, scope_result = self.check_application_scope(
+            request,
+            app,
+            allow_unassigned=True,
+        )
+        if not has_scope:
+            return scope_result
         
         product = LoanProduct.find_by_id(app.product_id)
         
@@ -500,6 +522,13 @@ class OfficerApplicationNotesView(LoanOfficerRequiredMixin, APIView):
                 message="Application not found",
                 status_code=status.HTTP_404_NOT_FOUND
             )
+        has_scope, scope_result = self.check_application_scope(
+            request,
+            app,
+            allow_unassigned=True,
+        )
+        if not has_scope:
+            return scope_result
 
         if app.status in ['draft', 'cancelled']:
             return error_response(
@@ -573,6 +602,13 @@ class OfficerRequestMissingDocumentsView(LoanOfficerRequiredMixin, APIView):
                 message="Application not found",
                 status_code=status.HTTP_404_NOT_FOUND
             )
+        has_scope, scope_result = self.check_application_scope(
+            request,
+            app,
+            allow_unassigned=True,
+        )
+        if not has_scope:
+            return scope_result
         
         if app.status not in ['submitted', 'under_review']:
             return error_response(
@@ -693,6 +729,13 @@ class OfficerReviewView(LoanOfficerRequiredMixin, APIView):
                 message="Application not found",
                 status_code=status.HTTP_404_NOT_FOUND
             )
+        has_scope, scope_result = self.check_application_scope(
+            request,
+            app,
+            allow_unassigned=True,
+        )
+        if not has_scope:
+            return scope_result
         
         # Can only review submitted/under_review applications
         if app.status not in ['submitted', 'under_review']:
@@ -824,6 +867,13 @@ class DisburseView(LoanOfficerRequiredMixin, APIView):
                 message="Application not found",
                 status_code=status.HTTP_404_NOT_FOUND
             )
+        has_scope, scope_result = self.check_application_scope(
+            request,
+            app,
+            allow_unassigned=False,
+        )
+        if not has_scope:
+            return scope_result
         
         # Can only disburse approved applications
         if app.status != 'approved':
@@ -1032,6 +1082,20 @@ class RecordPaymentView(LoanOfficerRequiredMixin, APIView):
                 message="Repayment schedule not found",
                 status_code=status.HTTP_404_NOT_FOUND
             )
+
+        app = LoanApplication.find_by_id(loan_id)
+        if not app:
+            return error_response(
+                message="Application not found",
+                status_code=status.HTTP_404_NOT_FOUND
+            )
+        has_scope, scope_result = self.check_application_scope(
+            request,
+            app,
+            allow_unassigned=False,
+        )
+        if not has_scope:
+            return scope_result
         
         # VALIDATION 1: Check if installment exists
         installment = schedule.get_installment(installment_number)
@@ -1149,6 +1213,9 @@ class ActiveLoansView(LoanOfficerRequiredMixin, APIView):
         has_permission, result = self.check_officer_permission(request)
         if not has_permission:
             return result
+        user = request.user
+        user_role = getattr(user, 'role', '')
+        user_id = str(getattr(user, 'customer_id', '') or '')
         
         from loans.models import RepaymentSchedule, LoanProduct
         from accounts.models import Customer
@@ -1219,6 +1286,12 @@ class ActiveLoansView(LoanOfficerRequiredMixin, APIView):
 
             # Get application for product info
             app = LoanApplication.find_by_id(schedule.loan_id)
+            if not app:
+                return
+            if user_role == 'loan_officer':
+                assigned_officer = str(getattr(app, 'assigned_officer', '') or '')
+                if assigned_officer and assigned_officer != user_id:
+                    return
             product = None
             if app:
                 product = LoanProduct.find_by_id(app.product_id)
@@ -1294,6 +1367,13 @@ class OfficerScheduleView(LoanOfficerRequiredMixin, APIView):
                 message="Application not found",
                 status_code=status.HTTP_404_NOT_FOUND
             )
+        has_scope, scope_result = self.check_application_scope(
+            request,
+            app,
+            allow_unassigned=False,
+        )
+        if not has_scope:
+            return scope_result
         
         # Only disbursed loans have schedules
         if app.status != 'disbursed':
@@ -1375,6 +1455,13 @@ class OfficerPaymentHistoryView(LoanOfficerRequiredMixin, APIView):
                 message="Application not found",
                 status_code=status.HTTP_404_NOT_FOUND
             )
+        has_scope, scope_result = self.check_application_scope(
+            request,
+            app,
+            allow_unassigned=False,
+        )
+        if not has_scope:
+            return scope_result
         
         from loans.models import LoanPayment
         payments = LoanPayment.find_by_loan(application_id)
@@ -1434,6 +1521,9 @@ class PaymentSearchView(LoanOfficerRequiredMixin, APIView):
         has_permission, result = self.check_officer_permission(request)
         if not has_permission:
             return result
+        user = request.user
+        user_role = getattr(user, 'role', '')
+        user_id = str(getattr(user, 'customer_id', '') or '')
         
         # Extract query params
         search_query = sanitize_text(request.query_params.get('search', ''))
@@ -1491,58 +1581,63 @@ class PaymentSearchView(LoanOfficerRequiredMixin, APIView):
                 status_code=status.HTTP_400_BAD_REQUEST
             )
         
+        def _empty_payment_result():
+            return success_response(
+                data={
+                    'payments': [],
+                    'total': 0,
+                    'page': page,
+                    'page_size': page_size,
+                    'total_pages': 0,
+                    'summary': {'total_amount': 0, 'count': 0},
+                },
+                message="Payments retrieved",
+            )
+
         # Build query
         query = {}
-        
-        # Loan ID filter
-        if loan_id:
-            query['loan_id'] = loan_id
-        
-        # Customer ID filter
-        if customer_id:
-            query['customer_id'] = customer_id
+        allowed_loan_ids = None
 
         # Restrict to disbursed loans by default
         if disbursed_only:
             if loan_id:
                 app = LoanApplication.find_by_id(loan_id)
                 if not app or app.status != 'disbursed':
-                    return success_response(
-                        data={
-                            'payments': [],
-                            'total': 0,
-                            'page': page,
-                            'page_size': page_size,
-                            'total_pages': 0,
-                            'summary': {
-                                'total_amount': 0,
-                                'count': 0
-                            }
-                        },
-                        message="Payments retrieved"
-                    )
+                    return _empty_payment_result()
+                allowed_loan_ids = [loan_id]
             else:
                 app_collection = settings.MONGODB['loan_applications']
                 disbursed_ids = app_collection.distinct('_id', {'status': 'disbursed'})
-                disbursed_loan_ids = [str(app_id) for app_id in disbursed_ids]
+                allowed_loan_ids = [str(app_id) for app_id in disbursed_ids]
+                if not allowed_loan_ids:
+                    return _empty_payment_result()
 
-                if not disbursed_loan_ids:
-                    return success_response(
-                        data={
-                            'payments': [],
-                            'total': 0,
-                            'page': page,
-                            'page_size': page_size,
-                            'total_pages': 0,
-                            'summary': {
-                                'total_amount': 0,
-                                'count': 0
-                            }
-                        },
-                        message="Payments retrieved"
-                    )
+        # ABAC scope for loan officers: only payments for assigned applications.
+        if user_role == 'loan_officer':
+            app_collection = settings.MONGODB['loan_applications']
+            officer_assigned_ids = [
+                str(doc['_id'])
+                for doc in app_collection.find({'assigned_officer': user_id}, {'_id': 1})
+            ]
+            if allowed_loan_ids is None:
+                allowed_loan_ids = officer_assigned_ids
+            else:
+                officer_set = set(officer_assigned_ids)
+                allowed_loan_ids = [loan for loan in allowed_loan_ids if loan in officer_set]
+            if not allowed_loan_ids:
+                return _empty_payment_result()
 
-                query['loan_id'] = {'$in': disbursed_loan_ids}
+        # Loan scope filter after deriving all constraints.
+        if loan_id:
+            if allowed_loan_ids is not None and loan_id not in set(allowed_loan_ids):
+                return _empty_payment_result()
+            query['loan_id'] = loan_id
+        elif allowed_loan_ids is not None:
+            query['loan_id'] = {'$in': allowed_loan_ids}
+
+        # Customer ID filter
+        if customer_id:
+            query['customer_id'] = customer_id
         
         # Payment method filter
         valid_methods = ['cash', 'bank_transfer', 'gcash', 'maya', 'check', 'other']

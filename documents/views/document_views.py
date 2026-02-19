@@ -9,6 +9,7 @@ from datetime import datetime
 import threading
 
 from accounts.authentication import CustomJWTAuthentication
+from accounts.utils.access_control import AccessControlMixin
 from accounts.utils.response_helpers import success_response, error_response
 from accounts.utils.validation_utils import sanitize_text, sanitize_filename
 from accounts.models import Admin, Customer, LoanOfficer
@@ -169,7 +170,7 @@ def notify_reviewers_document_pending_async(document):
     thread.start()
 
 
-class DocumentUploadView(APIView):
+class DocumentUploadView(AccessControlMixin, APIView):
     """
     Upload documents for customers.
     
@@ -182,15 +183,11 @@ class DocumentUploadView(APIView):
     def post(self, request):
         """Upload a document"""
         try:
+            has_permission, result = self.require_customer(request)
+            if not has_permission:
+                return result
+
             user = request.user
-            
-            # Only customers can upload documents
-            if hasattr(user, 'role') and user.role != 'customer':
-                return error_response(
-                    message="Only customers can upload documents",
-                    status_code=status.HTTP_403_FORBIDDEN
-                )
-            
             customer_id = str(user.customer_id)
             
             # Check for file in request
@@ -345,7 +342,7 @@ class DocumentUploadView(APIView):
 
 
 
-class DocumentListView(APIView):
+class DocumentListView(AccessControlMixin, APIView):
     """
     List documents based on user role.
     - Customers: Only their own documents
@@ -361,7 +358,15 @@ class DocumentListView(APIView):
         import re
         
         try:
+            has_permission, result = self.require_roles(
+                request,
+                {'customer', 'loan_officer', 'admin', 'super_admin'},
+            )
+            if not has_permission:
+                return result
+
             user = request.user
+            user_role = str(getattr(user, 'role', '') or '').strip().lower()
             
             # Pagination parameters
             try:
@@ -417,8 +422,8 @@ class DocumentListView(APIView):
             search = sanitize_text(request.query_params.get('search', ''))
             
             # Determine which documents to show based on role
-            if hasattr(user, 'role') and user.role in ['loan_officer', 'admin', 'super_admin']:
-                # Loan officers and admins can see all documents
+            if user_role in ['admin', 'super_admin']:
+                # Admin and super admin can see all documents.
                 query = {}
                 if document_type:
                     query['document_type'] = document_type
@@ -427,6 +432,41 @@ class DocumentListView(APIView):
                 if customer_id_filter:
                     query.update(Document._customer_query(customer_id_filter))
                 documents = Document.find(query, sort=[('uploaded_at', -1)])
+            elif user_role == 'loan_officer':
+                # ABAC scope: officers can only see documents belonging to customers
+                # they are allowed to handle via application assignment scope.
+                has_scope, scope_result = self.get_officer_scoped_customer_ids(
+                    request,
+                    include_unassigned=True,
+                )
+                if not has_scope:
+                    return scope_result
+
+                scoped_customer_ids = scope_result or set()
+                if customer_id_filter:
+                    if customer_id_filter not in scoped_customer_ids:
+                        documents = []
+                    else:
+                        query = Document._customer_query(customer_id_filter)
+                        if document_type:
+                            query['document_type'] = document_type
+                        if status_filter in allowed_status_filters:
+                            query['status'] = status_filter
+                        documents = Document.find(query, sort=[('uploaded_at', -1)])
+                elif not scoped_customer_ids:
+                    documents = []
+                else:
+                    scope_values = []
+                    for customer_id in scoped_customer_ids:
+                        scope_values.extend(self._id_variants(customer_id))
+                    query = {
+                        'customer_id': {'$in': scope_values},
+                    }
+                    if document_type:
+                        query['document_type'] = document_type
+                    if status_filter in allowed_status_filters:
+                        query['status'] = status_filter
+                    documents = Document.find(query, sort=[('uploaded_at', -1)])
             else:
                 # Customers can only see their own documents
                 customer_id = user.customer_id
@@ -496,7 +536,7 @@ class DocumentListView(APIView):
             )
 
 
-class DocumentDetailView(APIView):
+class DocumentDetailView(AccessControlMixin, APIView):
     """
     Get, delete a specific document.
     
@@ -509,6 +549,13 @@ class DocumentDetailView(APIView):
     def get(self, request, document_id):
         """Get document details"""
         try:
+            has_permission, result = self.require_roles(
+                request,
+                {'customer', 'loan_officer', 'admin', 'super_admin'},
+            )
+            if not has_permission:
+                return result
+
             user = request.user
             customer_id = user.customer_id
             
@@ -520,13 +567,26 @@ class DocumentDetailView(APIView):
                     status_code=status.HTTP_404_NOT_FOUND
                 )
             
+            user_role = str(getattr(user, 'role', '') or '').strip().lower()
+
             # Check ownership (customers can only see their own)
-            if hasattr(user, 'role') and user.role == 'customer':
-                if str(document.customer_id) != str(customer_id):
-                    return error_response(
-                        message="Document not found",
-                        status_code=status.HTTP_404_NOT_FOUND
-                    )
+            if user_role == 'customer':
+                has_owner, owner_result = self.require_owner(
+                    request,
+                    document.customer_id,
+                    conceal_existence=True,
+                )
+                if not has_owner:
+                    return owner_result
+            elif user_role == 'loan_officer':
+                has_scope, scope_result = self.require_customer_scope_for_officer(
+                    request,
+                    document.customer_id,
+                    include_unassigned=True,
+                    conceal_existence=True,
+                )
+                if not has_scope:
+                    return scope_result
             
             storage = get_storage_backend()
             
@@ -562,6 +622,10 @@ class DocumentDetailView(APIView):
     def delete(self, request, document_id):
         """Delete a document"""
         try:
+            has_permission, result = self.require_customer(request)
+            if not has_permission:
+                return result
+
             user = request.user
             customer_id = user.customer_id
             
@@ -574,11 +638,13 @@ class DocumentDetailView(APIView):
                 )
             
             # Only owner can delete
-            if str(document.customer_id) != str(customer_id):
-                return error_response(
-                    message="Document not found",
-                    status_code=status.HTTP_404_NOT_FOUND
-                )
+            has_owner, owner_result = self.require_owner(
+                request,
+                document.customer_id,
+                conceal_existence=True,
+            )
+            if not has_owner:
+                return owner_result
             
             # Cannot delete verified documents
             if document.verified:
@@ -606,7 +672,7 @@ class DocumentDetailView(APIView):
             )
 
 
-class DocumentVerifyView(APIView):
+class DocumentVerifyView(AccessControlMixin, APIView):
     """
     Loan officer endpoint to verify documents.
     
@@ -625,12 +691,9 @@ class DocumentVerifyView(APIView):
             logger.info(f"Request data: {request.data}")
             logger.info(f"User role: {user.role if hasattr(user, 'role') else 'No role'}")
             
-            # Only loan officers, admins, and super admins can verify
-            if not hasattr(user, 'role') or user.role not in ['loan_officer', 'admin', 'super_admin']:
-                return error_response(
-                    message="Only loan officers can verify documents",
-                    status_code=status.HTTP_403_FORBIDDEN
-                )
+            has_permission, result = self.require_officer_or_admin(request)
+            if not has_permission:
+                return result
             
             document = Document.find_one({'_id': ObjectId(document_id)})
             
@@ -639,6 +702,17 @@ class DocumentVerifyView(APIView):
                     message="Document not found",
                     status_code=status.HTTP_404_NOT_FOUND
                 )
+
+            user_role = str(getattr(user, 'role', '') or '').strip().lower()
+            if user_role == 'loan_officer':
+                has_scope, scope_result = self.require_customer_scope_for_officer(
+                    request,
+                    document.customer_id,
+                    include_unassigned=True,
+                    conceal_existence=True,
+                )
+                if not has_scope:
+                    return scope_result
             
             serializer = DocumentVerifySerializer(data=request.data)
             if not serializer.is_valid():
@@ -735,7 +809,7 @@ class DocumentVerifyView(APIView):
             )
 
 
-class DocumentTypesView(APIView):
+class DocumentTypesView(AccessControlMixin, APIView):
     """
     Get list of available document types.
     
@@ -747,6 +821,13 @@ class DocumentTypesView(APIView):
     def get(self, request):
         """Get available document types with descriptions"""
         from loans.services.qualification import resolve_required_document_types
+
+        has_permission, result = self.require_roles(
+            request,
+            {'customer', 'loan_officer', 'admin', 'super_admin'},
+        )
+        if not has_permission:
+            return result
 
         product_id = sanitize_text(request.query_params.get('product_id', ''))
         requirement_source = 'baseline'
@@ -790,7 +871,7 @@ class DocumentTypesView(APIView):
         )
 
 
-class RequestReuploadView(APIView):
+class RequestReuploadView(AccessControlMixin, APIView):
     """
     Officer requests customer to re-upload a document.
     
@@ -800,14 +881,10 @@ class RequestReuploadView(APIView):
     permission_classes = [IsAuthenticated]
     
     def post(self, request, document_id):
+        has_permission, result = self.require_officer_or_admin(request)
+        if not has_permission:
+            return result
         user = request.user
-        
-        # Only officers/admins/super admins can request re-upload
-        if not hasattr(user, 'role') or user.role not in ['loan_officer', 'admin', 'super_admin']:
-            return error_response(
-                message="Only officers can request document re-upload",
-                status_code=status.HTTP_403_FORBIDDEN
-            )
         
         doc = None
         try:
@@ -819,6 +896,17 @@ class RequestReuploadView(APIView):
                 message="Document not found",
                 status_code=status.HTTP_404_NOT_FOUND
             )
+
+        user_role = str(getattr(user, 'role', '') or '').strip().lower()
+        if user_role == 'loan_officer':
+            has_scope, scope_result = self.require_customer_scope_for_officer(
+                request,
+                doc.customer_id,
+                include_unassigned=True,
+                conceal_existence=True,
+            )
+            if not has_scope:
+                return scope_result
         
         reason = sanitize_text(request.data.get('reason', ''))
         if not reason:

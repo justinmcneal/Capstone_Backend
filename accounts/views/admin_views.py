@@ -26,6 +26,7 @@ from accounts.utils.validation_utils import (
     parse_bool,
     parse_optional_bool,
 )
+from accounts.utils.access_control import AccessControlMixin
 from accounts.services.two_factor_service import TwoFactorService
 from analytics.models import AuditLog
 import logging
@@ -313,44 +314,17 @@ class AdminLogoutView(APIView):
             return response
 
 
-class AdminRequiredMixin:
+class AdminRequiredMixin(AccessControlMixin):
     """Mixin to require admin authentication and permissions"""
     required_permissions = []
     
     def check_admin_permission(self, request):
         """Check if authenticated user is admin with required permissions"""
-        user = request.user
-        
-        if not hasattr(user, 'role') or user.role != 'admin':
-            return False, error_response(
-                message="Admin access required",
-                status_code=status.HTTP_403_FORBIDDEN
-            )
-        
-        # Get admin from database to check permissions
-        admin = Admin.find_one({'_id': ObjectId(user.customer_id)})
-        
-        if not admin:
-            return False, error_response(
-                message="Admin not found",
-                status_code=status.HTTP_404_NOT_FOUND
-            )
-        
-        if not admin.active:
-            return False, error_response(
-                message="Admin account is deactivated",
-                status_code=status.HTTP_403_FORBIDDEN
-            )
-        
-        # Check permissions
-        if self.required_permissions:
-            if not admin.has_all_permissions(self.required_permissions):
-                return False, error_response(
-                    message="Insufficient permissions",
-                    status_code=status.HTTP_403_FORBIDDEN
-                )
-        
-        return True, admin
+        return self.require_admin(
+            request,
+            required_permissions=self.required_permissions,
+            super_admin_only=False,
+        )
 
 
 class LoanOfficerManagementView(AdminRequiredMixin, APIView):
@@ -833,40 +807,16 @@ class LoanOfficerDetailView(AdminRequiredMixin, APIView):
 # ADMIN MANAGEMENT (Super Admin Only)
 # =============================================================================
 
-class SuperAdminRequiredMixin:
+class SuperAdminRequiredMixin(AccessControlMixin):
     """Mixin to require super admin access"""
     
     def check_super_admin(self, request):
         """Check if authenticated user is a super admin"""
-        user = request.user
-        
-        if not hasattr(user, 'role') or user.role != 'admin':
-            return False, error_response(
-                message="Admin access required",
-                status_code=status.HTTP_403_FORBIDDEN
-            )
-        
-        admin = Admin.find_one({'_id': ObjectId(user.customer_id)})
-        
-        if not admin:
-            return False, error_response(
-                message="Admin not found",
-                status_code=status.HTTP_404_NOT_FOUND
-            )
-        
-        if not admin.active:
-            return False, error_response(
-                message="Admin account is deactivated",
-                status_code=status.HTTP_403_FORBIDDEN
-            )
-        
-        if not admin.super_admin:
-            return False, error_response(
-                message="Super admin access required",
-                status_code=status.HTTP_403_FORBIDDEN
-            )
-        
-        return True, admin
+        return self.require_admin(
+            request,
+            required_permissions=[],
+            super_admin_only=True,
+        )
 
 
 class AdminManagementView(SuperAdminRequiredMixin, APIView):

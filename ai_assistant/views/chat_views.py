@@ -5,6 +5,7 @@ import uuid
 import math
 
 from accounts.authentication import CustomJWTAuthentication
+from accounts.utils.access_control import AccessControlMixin
 from accounts.utils.response_helpers import success_response, error_response
 from accounts.utils.throttles import ChatRateThrottle
 from accounts.utils.validation_utils import sanitize_text, sanitize_multiline_text
@@ -17,11 +18,15 @@ logger = logging.getLogger('ai_assistant')
 ALLOWED_LANGUAGES = {'en', 'tl'}
 
 
-class ConsentRequiredMixin:
+class ConsentRequiredMixin(AccessControlMixin):
     """Mixin to enforce AI consent before allowing AI features"""
     
     def check_ai_consent(self, request):
         """Check if user has given AI consent"""
+        has_permission, result = self.require_customer(request)
+        if not has_permission:
+            return False, result
+
         user = request.user
         customer_id = user.customer_id
         
@@ -305,6 +310,10 @@ class SuggestionsView(ConsentRequiredMixin, APIView):
     
     def get(self, request):
         """Get conversation starters"""
+        has_permission, result = self.require_customer(request)
+        if not has_permission:
+            return result
+
         user = request.user
         requested_language = sanitize_text(
             request.query_params.get('language', user.language if hasattr(user, 'language') else 'en')
@@ -340,7 +349,7 @@ class SuggestionsView(ConsentRequiredMixin, APIView):
         )
 
 
-class AIStatusView(APIView):
+class AIStatusView(AccessControlMixin, APIView):
     """
     Check AI service status.
     
@@ -351,6 +360,10 @@ class AIStatusView(APIView):
     
     def get(self, request):
         """Check if AI service is available"""
+        has_permission, result = self.require_customer(request)
+        if not has_permission:
+            return result
+
         llm = get_llm_service(use_case='chat')
         
         is_available = llm.is_available()
@@ -366,7 +379,7 @@ class AIStatusView(APIView):
         )
 
 
-class EducationView(APIView):
+class EducationView(AccessControlMixin, APIView):
     """
     Get loan education content.
     
@@ -378,6 +391,9 @@ class EducationView(APIView):
     
     def get(self, request, topic=None):
         """Get education content on loan topics"""
+        has_permission, result = self.require_customer(request)
+        if not has_permission:
+            return result
         
         topics = {
             'what_is_a_loan': {
@@ -448,7 +464,7 @@ class EducationView(APIView):
         )
 
 
-class FAQsView(APIView):
+class FAQsView(AccessControlMixin, APIView):
     """
     Get frequently asked questions.
     
@@ -459,6 +475,9 @@ class FAQsView(APIView):
     
     def get(self, request):
         """Get FAQs"""
+        has_permission, result = self.require_customer(request)
+        if not has_permission:
+            return result
         
         faqs = [
             {
