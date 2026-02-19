@@ -8,6 +8,12 @@ _PERSON_NAME_PATTERN = re.compile(r"^[^\W\d_]+(?:[ .'-][^\W\d_]+)*$", re.UNICODE
 _EMPLOYEE_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]*$")
 _CONTROL_CHARS_PATTERN = re.compile(r"[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]")
 _MULTI_NEWLINE_PATTERN = re.compile(r"\n{3,}")
+_DANGEROUS_BLOCK_TAG_PATTERN = re.compile(
+    r"(?is)<\s*(script|style|iframe|object|embed|svg|math)\b[^>]*>.*?<\s*/\s*\1\s*>"
+)
+_DANGEROUS_UNCLOSED_TAG_PATTERN = re.compile(
+    r"(?is)<\s*(script|style|iframe|object|embed|svg|math)\b[^>]*>.*$"
+)
 _TRUE_VALUES = {"1", "true", "yes", "on"}
 _FALSE_VALUES = {"0", "false", "no", "off"}
 
@@ -19,6 +25,16 @@ def normalize_text(value):
     return " ".join(str(value).strip().split())
 
 
+def _remove_dangerous_html_blocks(value):
+    """
+    Remove dangerous HTML blocks together with their inner content.
+    """
+    cleaned = str(value)
+    cleaned = _DANGEROUS_BLOCK_TAG_PATTERN.sub(" ", cleaned)
+    cleaned = _DANGEROUS_UNCLOSED_TAG_PATTERN.sub(" ", cleaned)
+    return cleaned
+
+
 def sanitize_text(value):
     """
     Sanitize free-text input by stripping HTML tags, removing control chars,
@@ -27,7 +43,8 @@ def sanitize_text(value):
     if value is None:
         return ""
 
-    cleaned = strip_tags(str(value))
+    cleaned = _remove_dangerous_html_blocks(value)
+    cleaned = strip_tags(cleaned)
     cleaned = _CONTROL_CHARS_PATTERN.sub("", cleaned)
     return normalize_text(cleaned)
 
@@ -39,7 +56,8 @@ def sanitize_multiline_text(value):
     if value is None:
         return ""
 
-    cleaned = strip_tags(str(value))
+    cleaned = _remove_dangerous_html_blocks(value)
+    cleaned = strip_tags(cleaned)
     cleaned = _CONTROL_CHARS_PATTERN.sub("", cleaned)
     cleaned = cleaned.replace("\r\n", "\n").replace("\r", "\n")
     cleaned = "\n".join(" ".join(line.split()) for line in cleaned.split("\n"))
