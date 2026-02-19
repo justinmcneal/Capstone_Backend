@@ -112,6 +112,7 @@ DATABASES = {
 # MongoDB Configuration
 MONGODB_URI = os.getenv('MONGODB_URI', '')
 MONGODB_NAME = os.getenv('MONGODB_NAME', 'capstone_db')
+FIELD_ENCRYPTION_KEY = os.getenv('FIELD_ENCRYPTION_KEY', '').strip()
 
 # Initialize PyMongo client
 if MONGODB_URI:

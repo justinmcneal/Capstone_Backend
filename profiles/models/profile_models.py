@@ -9,6 +9,7 @@ Collections:
 from datetime import datetime, date, time
 from bson import ObjectId
 from django.conf import settings
+from config.field_encryption import decrypt_fields, encrypt_fields
 
 
 def get_db():
@@ -106,6 +107,16 @@ class CustomerProfile:
     Stores additional personal information for loan pre-qualification.
     """
     collection_name = 'customer_profiles'
+    encrypted_fields = (
+        'address_line1',
+        'address_line2',
+        'barangay',
+        'city_municipality',
+        'province',
+        'zip_code',
+        'emergency_contact_name',
+        'emergency_contact_phone',
+    )
     
     def __init__(self, **kwargs):
         self._id = kwargs.get('_id')
@@ -170,13 +181,13 @@ class CustomerProfile:
         }
         if self._id:
             data['_id'] = self._id
-        return data
+        return encrypt_fields(data, self.encrypted_fields)
     
     @classmethod
     def from_dict(cls, data):
         if not data:
             return None
-        return cls(**data)
+        return cls(**decrypt_fields(data, cls.encrypted_fields))
     
     def calculate_completion(self):
         """Calculate profile completion percentage"""
@@ -235,6 +246,13 @@ class BusinessProfile:
     Business/MSME information for loan pre-qualification.
     """
     collection_name = 'business_profiles'
+    encrypted_fields = (
+        'business_address',
+        'business_barangay',
+        'business_city',
+        'business_province',
+        'registration_number',
+    )
     
     def __init__(self, **kwargs):
         self._id = kwargs.get('_id')
@@ -296,13 +314,13 @@ class BusinessProfile:
         }
         if self._id:
             data['_id'] = self._id
-        return data
+        return encrypt_fields(data, self.encrypted_fields)
     
     @classmethod
     def from_dict(cls, data):
         if not data:
             return None
-        return cls(**data)
+        return cls(**decrypt_fields(data, cls.encrypted_fields))
     
     def save(self):
         db = get_db()
