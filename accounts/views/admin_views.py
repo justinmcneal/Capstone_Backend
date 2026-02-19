@@ -17,7 +17,6 @@ from accounts.utils.auth_cookies import (
     clear_auth_cookies,
     get_access_token_from_request,
     get_refresh_token_from_request,
-    set_auth_cookies,
 )
 from accounts.utils.validation_utils import (
     validate_employee_id,
@@ -27,6 +26,7 @@ from accounts.utils.validation_utils import (
     parse_bool,
     parse_optional_bool,
 )
+from accounts.services.two_factor_service import TwoFactorService
 from analytics.models import AuditLog
 import logging
 
@@ -239,58 +239,43 @@ class AdminLoginView(APIView):
             admin.last_login_attempt = datetime.utcnow()
             admin.save()
             
-            # Check if 2FA is enabled
-            if admin.two_factor_enabled:
+            # MFA / 2FA is mandatory for all administrator accounts.
+            if not admin.two_factor_enabled:
+                setup_data = TwoFactorService.setup_2fa(admin)
                 temp_token = TokenUtils.generate_2fa_temp_token(
                     user_id=admin.id,
                     email=admin.email,
                     role='admin'
                 )
+                logger.info(
+                    "Admin 2FA bootstrap required for %s from IP %s",
+                    admin.email,
+                    request.META.get('REMOTE_ADDR', '')
+                )
                 return success_response(
                     data={
                         'requires_2fa': True,
-                        'temp_token': temp_token
+                        'requires_2fa_setup': True,
+                        'temp_token': temp_token,
+                        'provisioning_uri': setup_data['provisioning_uri'],
+                        'manual_entry_key': setup_data['manual_entry_key'],
+                        'qr_code_data_url': setup_data.get('qr_code_data_url', ''),
                     },
-                    message="2FA verification required"
+                    message="2FA setup required before first login"
                 )
-            
-            # Generate tokens
-            tokens = TokenUtils.generate_tokens(
+
+            temp_token = TokenUtils.generate_2fa_temp_token(
                 user_id=admin.id,
                 email=admin.email,
-                verified=True,
-                role='admin',
-                refresh_token_days=1  # Shorter session for admins
+                role='admin'
             )
-            
-            # Audit log for admin login
-            AuditLog.log_action(
-                action='user_login',
-                user_id=admin.id,
-                user_type='admin' if not admin.super_admin else 'super_admin',
-                user_email=admin.email,
-                description=f'Admin {admin.username} logged in',
-                ip_address=request.META.get('REMOTE_ADDR', '')
-            )
-            
-            response = success_response(
+            return success_response(
                 data={
-                    'access_token': tokens['access'],
-                    'refresh_token': tokens['refresh'],
-                    'user': {
-                        'id': admin.id,
-                        'username': admin.username,
-                        'email': admin.email,
-                        'full_name': admin.full_name,
-                        'role': 'admin',
-                        'permissions': admin.permissions if not admin.super_admin else ['*'],
-                        'super_admin': admin.super_admin
-                    }
+                    'requires_2fa': True,
+                    'temp_token': temp_token
                 },
-                message="Login successful"
+                message="2FA verification required"
             )
-            set_auth_cookies(response, tokens['access'], tokens['refresh'])
-            return response
             
         except Exception as e:
             logger.error(f"Admin login error: {str(e)}")
