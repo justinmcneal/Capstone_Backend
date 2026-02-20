@@ -1,6 +1,6 @@
 """
 Initialize MongoDB database by creating required indexes.
-This is OPTIONAL - your app works without it.
+This should be run for production deployments to enforce uniqueness and TTL expectations.
 
 Usage:
     python init_db.py
@@ -13,7 +13,14 @@ import django
 os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'config.settings')
 django.setup()
 
-from accounts.models import Customer, BlacklistedToken, RefreshTokenEntry
+from accounts.models import (
+    Admin,
+    BlacklistedToken,
+    Consent,
+    Customer,
+    LoanOfficer,
+    RefreshTokenEntry,
+)
 from pymongo.errors import DuplicateKeyError, OperationFailure
 from django.conf import settings
 
@@ -70,6 +77,36 @@ def create_indexes():
         print("⚠ RefreshTokenEntry indexes already exist, skipping")
     except Exception as e:
         print(f"✗ RefreshTokenEntry error: {e}")
+
+    # LoanOfficer indexes
+    try:
+        print("Creating indexes for LoanOfficer collection...")
+        LoanOfficer.create_indexes()
+        print("✓ LoanOfficer indexes created")
+    except (DuplicateKeyError, OperationFailure):
+        print("⚠ LoanOfficer indexes already exist, skipping")
+    except Exception as e:
+        print(f"✗ LoanOfficer error: {e}")
+
+    # Admin indexes
+    try:
+        print("Creating indexes for Admin collection...")
+        Admin.create_indexes()
+        print("✓ Admin indexes created")
+    except (DuplicateKeyError, OperationFailure):
+        print("⚠ Admin indexes already exist, skipping")
+    except Exception as e:
+        print(f"✗ Admin error: {e}")
+
+    # Consent indexes
+    try:
+        print("Creating indexes for Consent collection...")
+        Consent.create_indexes()
+        print("✓ Consent indexes created")
+    except (DuplicateKeyError, OperationFailure):
+        print("⚠ Consent indexes already exist, skipping")
+    except Exception as e:
+        print(f"✗ Consent error: {e}")
     
     print("-" * 50)
     print("Done! (Warnings are OK - indexes may already exist)")

@@ -8,6 +8,10 @@ logger = logging.getLogger('authentication')
 
 
 class PasswordService:
+    GENERIC_RESET_INIT_MESSAGE = (
+        'If an account with this email exists, a password reset OTP has been sent.'
+    )
+    GENERIC_RESET_VERIFY_ERROR = 'Invalid email or OTP'
 
     @staticmethod
     def _find_user_by_email(email):
@@ -38,11 +42,13 @@ class PasswordService:
     def initiate_password_reset(email):
         user, user_type = PasswordService._find_user_by_email(email)
         if not user:
-            return (False, 'No account found with this email')
+            logger.info(f"Password reset requested for unknown email: {email}")
+            return (True, PasswordService.GENERIC_RESET_INIT_MESSAGE)
 
         # Check if account is active (for LoanOfficer and Admin)
         if user_type in ('loan_officer', 'admin') and hasattr(user, 'active') and not user.active:
-            return (False, 'This account has been deactivated. Contact your administrator.')
+            logger.info(f"Password reset requested for inactive account: {email} ({user_type})")
+            return (True, PasswordService.GENERIC_RESET_INIT_MESSAGE)
 
         # Use password reset expiry (15 minutes) instead of default (10 minutes)
         otp = OTPService.set_otp(
@@ -65,13 +71,13 @@ class PasswordService:
         )
         
         logger.info(f"Password reset OTP sent for {email} ({user_type})")
-        return (True, 'OTP has been sent to your email')
+        return (True, PasswordService.GENERIC_RESET_INIT_MESSAGE)
 
     @staticmethod
     def verify_reset_otp(email, otp):
         user, user_type = PasswordService._find_user_by_email(email)
         if not user:
-            return (False, 'No account found with this email')
+            return (False, PasswordService.GENERIC_RESET_VERIFY_ERROR)
 
         valid, message = OTPService.validate_otp(
             user, 
@@ -81,7 +87,7 @@ class PasswordService:
         )
         
         if not valid:
-            return (False, message)
+            return (False, PasswordService.GENERIC_RESET_VERIFY_ERROR)
         
         return (True, 'OTP verified successfully')
     
@@ -89,7 +95,7 @@ class PasswordService:
     def reset_password(email, otp, new_password):
         user, user_type = PasswordService._find_user_by_email(email)
         if not user:
-            return (False, 'No account found with this email')
+            return (False, PasswordService.GENERIC_RESET_VERIFY_ERROR)
         
         valid, message = OTPService.validate_otp(
             user, 
@@ -99,7 +105,7 @@ class PasswordService:
         )
         
         if not valid:
-            return (False, message)
+            return (False, PasswordService.GENERIC_RESET_VERIFY_ERROR)
         
         if user.check_password(new_password):
             return (False, 'New password must be different from the old password')
