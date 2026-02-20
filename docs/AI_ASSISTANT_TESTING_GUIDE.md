@@ -1,158 +1,73 @@
 # AI Assistant API Testing Guide
 
-Complete guide to test the AI chatbot endpoints.
+## Prerequisites
+- Base URL: `http://localhost:8000/api/ai`
+- `.env` contains `GROQ_API_KEY=gsk_your_key_here`
+- Server restarted after `.env` changes (`python manage.py runserver`)
+- Authenticated customer token
+- Customer consent must include `ai_consent: true`
 
----
-
-## Setup
-
-**Base URL:** `http://localhost:8000/api/ai`
-
-**Requirements:**
-1. Groq API key: Get free at https://console.groq.com
-2. Set in `.env`: `GROQ_API_KEY=gsk_your_key_here`
-3. No local installation needed - cloud-based!
-
-**Headers:**
-```
+Headers:
+```http
 Authorization: Bearer <customer_access_token>
 Content-Type: application/json
 ```
 
-> ⚠️ **Requires AI consent.** Customer must have `ai_consent: true`.
+## Endpoint Reference
+1. `GET /status/`
+Returns service health (`available`, `provider`, `current_model`, `api_configured`).
 
----
+2. `GET /suggestions/?language=en|tl`
+Returns starter prompts for the requested language (`en` or `tl`).
 
-## Endpoints
-
-### 1. Check AI Status
-
-```
-GET /api/ai/status/
-```
-
-**Response:**
+3. `POST /chat/`
+Sends a message to the assistant.
 ```json
 {
-    "status": "success",
-    "data": {
-        "available": true,
-        "provider": "groq",
-        "current_model": "llama-3.1-8b-instant",
-        "api_configured": true
+  "message": "What documents do I need for a loan?",
+  "language": "en",
+  "conversation_id": "optional-uuid"
+}
+```
+`message` is required. `conversation_id` must be a valid UUID when provided.
+
+4. `GET /history/?page=1&limit=20&search=term`
+Returns paginated chat history (`history`, `page`, `limit`, `total_messages`, `total_pages`, `has_more`).
+
+5. `DELETE /history/`
+Clears all customer chat history (`deleted_count`).
+
+## Smoke Test Order
+1. `GET /status/` and confirm `available: true` and `api_configured: true`.
+2. `GET /suggestions/?language=en`.
+3. `POST /chat/` with a sample message.
+4. `GET /history/?limit=20` and confirm returned messages.
+5. `DELETE /history/`, then re-run history check.
+
+## Common Errors
+1. `403 CONSENT_REQUIRED`
+```json
+{
+  "status": "error",
+  "message": "AI consent is required to use this feature",
+  "errors": {
+    "code": "CONSENT_REQUIRED",
+    "action_required": {
+      "endpoint": "/api/auth/consent/",
+      "method": "POST",
+      "required_fields": ["ai_consent"]
     }
+  }
 }
 ```
 
----
-
-### 2. Get Suggestions
-
-```
-GET /api/ai/suggestions/
-GET /api/ai/suggestions/?language=tl
-```
-
-**Response:**
+2. `503 Service Unavailable` (missing `GROQ_API_KEY`)
 ```json
 {
-    "status": "success",
-    "data": {
-        "suggestions": [
-            "What is a loan and how does it work?",
-            "How do I apply for a small business loan?",
-            ...
-        ],
-        "language": "en"
-    }
-}
-```
-
----
-
-### 3. Send Chat Message
-
-```
-POST /api/ai/chat/
-```
-
-**Body:**
-```json
-{
-    "message": "What documents do I need for a loan?",
-    "language": "en",
-    "conversation_id": "optional-uuid"
-}
-```
-
-**Response:**
-```json
-{
-    "status": "success",
-    "data": {
-        "response": "To apply for a loan, you'll need...",
-        "conversation_id": "abc123...",
-        "model": "llama3.2",
-        "response_time_ms": 1234
-    }
-}
-```
-
----
-
-### 4. Get Chat History
-
-```
-GET /api/ai/history/
-GET /api/ai/history/?limit=20
-```
-
----
-
-### 5. Clear Chat History
-
-```
-DELETE /api/ai/history/
-```
-
----
-
-## Testing Flow
-
-1. **Get Groq API key:** Sign up free at https://console.groq.com
-2. **Add to .env:** `GROQ_API_KEY=gsk_your_key_here`
-3. **Restart server:** `python manage.py runserver`
-4. **Login as customer** with AI consent
-5. **Check status:** `GET /api/ai/status/`
-6. **Get suggestions:** `GET /api/ai/suggestions/`
-7. **Send message:** `POST /api/ai/chat/`
-
----
-
-## Error Responses
-
-### No AI Consent
-```json
-{
-    "status": "error",
-    "message": "AI consent is required to use this feature",
-    "errors": {
-        "code": "CONSENT_REQUIRED",
-        "action_required": {
-            "endpoint": "/api/auth/consent/",
-            "method": "POST"
-        }
-    }
-}
-```
-
-### API Key Not Configured
-```json
-{
-    "status": "error",
-    "message": "AI service is currently unavailable. Please configure GROQ_API_KEY.",
-    "errors": {
-        "hint": "Get free API key at https://console.groq.com"
-    }
+  "status": "error",
+  "message": "AI service is currently unavailable. Please configure GROQ_API_KEY.",
+  "errors": {
+    "hint": "Get free API key at https://console.groq.com"
+  }
 }
 ```
