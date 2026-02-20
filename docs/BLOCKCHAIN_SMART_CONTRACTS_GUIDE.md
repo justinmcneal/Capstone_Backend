@@ -1,145 +1,75 @@
-# Smart Contracts Overview
+# Blockchain Smart Contracts Guide
 
-> Blockchain-based audit trail and loan verification for MSME Pathways
+## Scope
+This guide covers the on-chain subsystem in `smartcontracts/` and how it maps to backend loan workflows.
 
----
-
-## Overview
-
-The `/smartcontracts/` directory contains 5 Solidity smart contracts that provide immutable, auditable record-keeping for the loan management system.
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│                    SMART CONTRACTS                           │
-├─────────────────────────────────────────────────────────────┤
-│  LoanAccessControl  →  Role-based permissions               │
-│  AuditRegistry      →  Immutable audit logs                 │
-│  LoanCore           →  Loan lifecycle management            │
-│  Disbursement       →  Fund release tracking                │
-│  Repayment          →  Payment recording                    │
-└─────────────────────────────────────────────────────────────┘
-```
-
----
-
-## Contract Summary
-
-| Contract | Purpose | Key Functions |
-|----------|---------|---------------|
-| `LoanAccessControl.sol` | Role management (officer, borrower) | `registerOfficer()`, `registerBorrower()` |
-| `AuditRegistry.sol` | Immutable event logging | `logEvent()`, `getEventsByLoan()` |
-| `LoanCore.sol` | Loan CRUD and status transitions | `createLoan()`, `approveLoan()`, `rejectLoan()` |
-| `Disbursement.sol` | Disbursement tracking | `initiateDisbursement()`, `completeDisbursement()` |
-| `Repayment.sol` | Payment schedules and recording | `createSchedule()`, `recordPayment()` |
-
----
-
-## Status Mapping (Django ↔ Smart Contract)
-
-### Loan Status
-
-| Django | Smart Contract | Value |
-|--------|---------------|-------|
-| `draft` | `Draft` | 0 |
-| `submitted` | `Submitted` | 1 |
-| `under_review` | `UnderReview` | 2 |
-| `approved` | `Approved` | 3 |
-| `rejected` | `Rejected` | 4 |
-| `disbursed` | `Disbursed` | 5 |
-| `active` | `Active` | 6 |
-| `completed` | `Completed` | 7 |
-| `defaulted` | `Defaulted` | 8 |
-| `cancelled` | `Cancelled` | 9 |
-
-### Installment Status
-
-| Django | Smart Contract | Value |
-|--------|---------------|-------|
-| `pending` | `Pending` | 0 |
-| `paid` | `Paid` | 1 |
-| `partial` | `Partial` | 2 |
-| `overdue` | `Overdue` | 3 |
-
-### Payment Methods
-
-| Django | Smart Contract | Value |
-|--------|---------------|-------|
-| `cash` | `Cash` | 0 |
-| `bank_transfer` | `BankTransfer` | 1 |
-| `gcash` | `GCash` | 2 |
-| `maya` | `Maya` | 3 |
-| `other` | `Other` | 4 |
-
----
-
-## Integration Status
-
+## Current Status
 | Component | Status |
-|-----------|--------|
-| Smart Contracts | ✅ Developed |
-| Local Testing | ✅ Hardhat node |
-| Testnet Deployment | ⚠️ Optional |
-| **Django Integration** | ❌ **Not Implemented** |
+|---|---|
+| Smart contracts | Implemented |
+| Local test suite | Implemented (`hardhat test`) |
+| Local deployment | Implemented (`deploy:local`) |
+| Django/Web3 bridge | Not implemented |
 
-> **Important:** The smart contracts are fully functional but the Django backend does not currently call them. A `BlockchainService` bridge needs to be implemented using `web3.py`.
+The backend currently does not call contracts directly. A bridge service is still required.
 
----
+## Contract Inventory
+| Contract | Purpose | Core Operations |
+|---|---|---|
+| `LoanAccessControl.sol` | Officer and borrower identity/role checks | registration and role validation |
+| `AuditRegistry.sol` | Immutable activity/event log | append and query audit entries |
+| `LoanCore.sol` | Loan lifecycle state machine | create, submit, assign, approve, reject, cancel |
+| `Disbursement.sol` | Disbursement execution and tracking | initiate and complete disbursement |
+| `Repayment.sol` | Schedules and payment records | create schedule, record payments |
 
-## Local Development
+Interfaces used across contracts:
+- `ILoanAccessControl.sol`
+- `IAuditRegistry.sol`
+- `ILoanCore.sol`
 
-### Prerequisites
+## Canonical Enum Mappings
+Use contract enums as source of truth to avoid status drift.
 
+### Loan Status (`LoanCore.sol`)
+| Value | On-chain Enum | Backend Status |
+|---|---|---|
+| `0` | `Draft` | `draft` |
+| `1` | `Submitted` | `submitted` |
+| `2` | `UnderReview` | `under_review` |
+| `3` | `Approved` | `approved` |
+| `4` | `Rejected` | `rejected` |
+| `5` | `Disbursed` | `disbursed` |
+| `6` | `Cancelled` | `cancelled` |
+
+Note: `ILoanCore.sol` still contains legacy enum values (`Active`, `Completed`, `Defaulted`) that are not present in `LoanCore.sol`. Align this interface before backend integration.
+
+### Installment Status (`Repayment.sol`)
+| Value | On-chain Enum | Backend Status |
+|---|---|---|
+| `0` | `Pending` | `pending` |
+| `1` | `Paid` | `paid` |
+| `2` | `Partial` | `partial` |
+| `3` | `Overdue` | `overdue` |
+
+### Method Enums (Ordering Matters)
+- `Repayment.PaymentMethod`: `Cash(0)`, `BankTransfer(1)`, `GCash(2)`, `Maya(3)`, `Other(4)`
+- `Disbursement.DisbursementMethod`: `BankTransfer(0)`, `Cash(1)`, `GCash(2)`, `Maya(3)`, `Other(4)`
+
+## Local Development and Testing
 ```bash
 cd smartcontracts
 npm install
-```
-
-### Start Local Blockchain
-
-```bash
-npm run node
-```
-
-### Deploy Contracts
-
-```bash
-npm run deploy:local
-```
-
-### Run Tests
-
-```bash
+npm run compile
 npm test
 ```
 
----
-
-## Future Integration
-
-When implementing Django ↔ Smart Contract integration:
-
-```python
-# Example: loans/services/blockchain_service.py
-from web3 import Web3
-
-class BlockchainService:
-    def __init__(self):
-        self.w3 = Web3(Web3.HTTPProvider(
-            os.getenv('BLOCKCHAIN_RPC_URL', 'http://127.0.0.1:8545')
-        ))
-    
-    def create_loan_on_chain(self, loan):
-        loan_id = Web3.keccak(text=str(loan.id))
-        # Call LoanCore.createLoan(...)
-        
-    def record_payment_on_chain(self, payment):
-        loan_id = Web3.keccak(text=str(payment.loan_application.id))
-        # Call Repayment.recordPayment(...)
+Optional local deployment:
+```bash
+npm run node        # terminal 1
+npm run deploy:local  # terminal 2
 ```
 
----
-
-## Related Documentation
-
-- [smartcontracts/README.md](../smartcontracts/README.md) — Full contract documentation
-- [smartcontracts/docs/](../smartcontracts/docs/) — Detailed testing guides
+## References
+- [smartcontracts/README.md](../smartcontracts/README.md)
+- [smartcontracts/docs/TESTING_GUIDE.md](../smartcontracts/docs/TESTING_GUIDE.md)
+- [smartcontracts/docs/SMART_CONTRACT_ARCHITECTURE.md](../smartcontracts/docs/SMART_CONTRACT_ARCHITECTURE.md)
