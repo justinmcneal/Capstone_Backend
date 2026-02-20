@@ -2,28 +2,31 @@
 
 > **Base URL:** `http://localhost:8000`  
 > **Version:** 1.0.0  
-> **Last Updated:** January 2026
+> **Last Updated:** February 20, 2026
 
 ---
 
 ## Quick Reference
 
-| Module | Endpoints | Auth Required |
-|--------|-----------|---------------|
-| [System](#system) | 1 | ❌ |
-| [Authentication](#authentication) | 25 | Mixed |
-| [Profiles](#profiles) | 5 | ✅ Customer |
-| [Documents](#documents) | 6 | ✅ Mixed |
-| [Loans](#loans) | 23 | ✅ Mixed |
-| [AI Assistant](#ai-assistant) | 7 | ✅ Customer |
-| [Analytics](#analytics) | 4 | ✅ Mixed |
-| **Total** | **71 endpoints** | |
+Counts below are based on backend route definitions in `config/urls.py` and module `urls.py` files.
+
+| Module | URL Paths | Method Entries | Auth Required |
+|--------|-----------|----------------|---------------|
+| [System](#system) | 1 | 1 | ❌ |
+| [Authentication](#authentication) | 27 | 35 | Mixed |
+| [Profiles](#profiles) | 5 | 9 | ✅ Customer |
+| [Documents](#documents) | 6 | 7 | ✅ Mixed |
+| [Loans](#loans) | 26 | 29 | ✅ Mixed |
+| [AI Assistant](#ai-assistant) | 7 | 8 | ✅ Customer |
+| [Analytics](#analytics) | 6 | 6 | ✅ Mixed |
+| [Notifications](#notifications) | 4 | 4 | ✅ Mixed |
+| **Total** | **82** | **99** | |
 
 ---
 
 ## Authentication Headers
 
-```
+```http
 Authorization: Bearer <jwt_token>
 Content-Type: application/json
 ```
@@ -32,12 +35,9 @@ Content-Type: application/json
 
 ## System
 
-### Health Check
-```
-GET /api/health/
-```
-**Auth:** None  
-**Response:** MongoDB status, AI status
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/api/health/` | Health check (MongoDB/AI status) |
 
 ---
 
@@ -47,11 +47,12 @@ GET /api/health/
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| `POST` | `/api/auth/signup/` | Register new customer |
-| `POST` | `/api/auth/verify-email/` | Verify email with OTP |
+| `GET` | `/api/auth/csrf-token/` | Get CSRF token |
+| `POST` | `/api/auth/signup/` | Register customer |
+| `POST` | `/api/auth/verify-email/` | Verify email OTP |
 | `POST` | `/api/auth/resend-otp/` | Resend verification OTP |
 | `POST` | `/api/auth/login/` | Customer login |
-| `POST` | `/api/auth/logout/` | Logout (invalidate token) |
+| `POST` | `/api/auth/logout/` | Customer logout |
 | `POST` | `/api/auth/refresh-token/` | Refresh JWT token |
 
 ### Password Management
@@ -60,33 +61,34 @@ GET /api/health/
 |--------|----------|-------------|
 | `POST` | `/api/auth/forgot-password/` | Request password reset OTP |
 | `POST` | `/api/auth/verify-reset-otp/` | Verify reset OTP |
-| `POST` | `/api/auth/reset-password/` | Set new password |
-| `POST` | `/api/auth/change-password/` | Change password (logged in) |
+| `POST` | `/api/auth/reset-password/` | Reset password |
+| `POST` | `/api/auth/change-password/` | Change password |
 
 ### Two-Factor Authentication (2FA)
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| `POST` | `/api/auth/2fa/setup/` | Start 2FA setup (get QR code) |
-| `POST` | `/api/auth/2fa/confirm/` | Confirm 2FA with TOTP code |
-| `POST` | `/api/auth/2fa/verify/` | Verify 2FA during login |
+| `POST` | `/api/auth/2fa/setup/` | Start 2FA setup |
+| `POST` | `/api/auth/2fa/confirm/` | Confirm 2FA setup |
+| `POST` | `/api/auth/2fa/verify/` | Verify 2FA code |
 | `POST` | `/api/auth/2fa/disable/` | Disable 2FA |
 | `POST` | `/api/auth/2fa/backup-codes/` | Regenerate backup codes |
-| `GET` | `/api/auth/2fa/status/` | Check 2FA status |
+| `GET` | `/api/auth/2fa/status/` | Get 2FA status |
 
 ### Consent
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | `GET` | `/api/auth/consent/` | Get consent status |
-| `POST` | `/api/auth/consent/` | Update consent |
+| `POST` | `/api/auth/consent/` | Record consent |
+| `PUT` | `/api/auth/consent/` | Update consent |
 
 ### Loan Officer Auth
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| `POST` | `/api/auth/loan-officer/login/` | Officer login |
-| `POST` | `/api/auth/loan-officer/logout/` | Officer logout |
+| `POST` | `/api/auth/loan-officer/login/` | Loan officer login |
+| `POST` | `/api/auth/loan-officer/logout/` | Loan officer logout |
 
 ### Admin Auth
 
@@ -95,25 +97,30 @@ GET /api/health/
 | `POST` | `/api/auth/admin/login/` | Admin login |
 | `POST` | `/api/auth/admin/logout/` | Admin logout |
 
-### Admin - User Management
+### Admin - Loan Officer Management
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| `GET` | `/api/auth/admin/loan-officers/` | List all officers |
-| `POST` | `/api/auth/admin/loan-officers/` | Create officer |
-| `GET` | `/api/auth/admin/loan-officers/<id>/` | Get officer details |
-| `PUT` | `/api/auth/admin/loan-officers/<id>/` | Update officer |
-| `DELETE` | `/api/auth/admin/loan-officers/<id>/` | Deactivate officer |
-| `GET` | `/api/auth/admin/admins/` | List all admins |
+| `GET` | `/api/auth/admin/loan-officers/` | List loan officers |
+| `POST` | `/api/auth/admin/loan-officers/` | Create loan officer |
+| `GET` | `/api/auth/admin/loan-officers/<str:officer_id>/` | Get loan officer detail |
+| `PUT` | `/api/auth/admin/loan-officers/<str:officer_id>/` | Update loan officer |
+| `DELETE` | `/api/auth/admin/loan-officers/<str:officer_id>/` | Deactivate loan officer |
+
+### Admin - Admin Management
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/api/auth/admin/admins/` | List admins |
 | `POST` | `/api/auth/admin/admins/` | Create admin |
-| `GET` | `/api/auth/admin/admins/<id>/` | Get admin details |
-| `PUT` | `/api/auth/admin/admins/<id>/permissions/` | Update permissions |
+| `GET` | `/api/auth/admin/admins/<str:admin_id>/` | Get admin detail |
+| `PUT` | `/api/auth/admin/admins/<str:admin_id>/` | Update admin |
+| `DELETE` | `/api/auth/admin/admins/<str:admin_id>/` | Deactivate admin |
+| `PUT` | `/api/auth/admin/admins/<str:admin_id>/permissions/` | Update admin permissions |
 
 ---
 
 ## Profiles
-
-**Auth:** Customer JWT required
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
@@ -122,8 +129,8 @@ GET /api/health/
 | `GET` | `/api/profile/business/` | Get business profile |
 | `PUT` | `/api/profile/business/` | Update business profile |
 | `GET` | `/api/profile/alternative-data/` | Get alternative credit data |
-| `PUT` | `/api/profile/alternative-data/` | Update alternative data |
-| `GET` | `/api/profile/summary/` | Get complete profile summary |
+| `PUT` | `/api/profile/alternative-data/` | Update alternative credit data |
+| `GET` | `/api/profile/summary/` | Get profile summary |
 | `GET` | `/api/profile/notifications/` | Get notification preferences |
 | `PUT` | `/api/profile/notifications/` | Update notification preferences |
 
@@ -131,22 +138,15 @@ GET /api/health/
 
 ## Documents
 
-### Customer Endpoints
-
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | `POST` | `/api/documents/upload/` | Upload document |
-| `GET` | `/api/documents/` | List my documents |
-| `GET` | `/api/documents/types/` | Get document types |
-| `GET` | `/api/documents/<id>/` | Get document details |
-| `DELETE` | `/api/documents/<id>/` | Delete document |
-
-### Officer Endpoints
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `POST` | `/api/documents/<id>/verify/` | Verify/reject document |
-| `POST` | `/api/documents/<id>/request-reupload/` | Request re-upload |
+| `GET` | `/api/documents/` | List documents |
+| `GET` | `/api/documents/types/` | List allowed document types |
+| `GET` | `/api/documents/<str:document_id>/` | Get document detail |
+| `DELETE` | `/api/documents/<str:document_id>/` | Delete document |
+| `PUT` | `/api/documents/<str:document_id>/verify/` | Verify/reject document |
+| `POST` | `/api/documents/<str:document_id>/request-reupload/` | Request document re-upload |
 
 ---
 
@@ -157,15 +157,15 @@ GET /api/health/
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | `GET` | `/api/loans/products/` | List loan products |
-| `GET` | `/api/loans/products/<id>/` | Product details |
-| `POST` | `/api/loans/pre-qualify/` | AI pre-qualification check |
+| `GET` | `/api/loans/products/<str:product_id>/` | Get product detail |
+| `POST` | `/api/loans/pre-qualify/` | Run pre-qualification |
 | `POST` | `/api/loans/apply/` | Submit loan application |
 | `GET` | `/api/loans/applications/` | List my applications |
-| `GET` | `/api/loans/applications/<id>/` | Application details |
-| `GET` | `/api/loans/applications/<id>/schedule/` | Get repayment schedule |
-| `GET` | `/api/loans/applications/<id>/payments/` | Get payment history |
-| `POST` | `/api/loans/applications/<id>/resubmit/` | Resubmit rejected app |
-| `GET` | `/api/loans/applications/<id>/feedback/` | Get rejection feedback |
+| `GET` | `/api/loans/applications/<str:application_id>/` | Get application detail |
+| `GET` | `/api/loans/applications/<str:application_id>/schedule/` | Get repayment schedule |
+| `GET` | `/api/loans/applications/<str:application_id>/payments/` | Get payment history |
+| `POST` | `/api/loans/applications/<str:application_id>/resubmit/` | Resubmit rejected application |
+| `GET` | `/api/loans/applications/<str:application_id>/feedback/` | Get rejection feedback |
 
 ### Admin Endpoints
 
@@ -173,125 +173,88 @@ GET /api/health/
 |--------|----------|-------------|
 | `GET` | `/api/loans/admin/products/` | List all products |
 | `POST` | `/api/loans/admin/products/` | Create product |
-| `GET` | `/api/loans/admin/products/<id>/` | Product details |
-| `PUT` | `/api/loans/admin/products/<id>/` | Update product |
-| `DELETE` | `/api/loans/admin/products/<id>/` | Delete product |
-| `POST` | `/api/loans/admin/applications/<id>/assign/` | Assign to officer |
-| `GET` | `/api/loans/admin/officers/workload/` | View officer workloads |
+| `GET` | `/api/loans/admin/products/<str:product_id>/` | Get product detail |
+| `PUT` | `/api/loans/admin/products/<str:product_id>/` | Update product |
+| `DELETE` | `/api/loans/admin/products/<str:product_id>/` | Delete/deactivate product |
+| `POST` | `/api/loans/admin/applications/<str:application_id>/assign/` | Assign application to officer |
+| `POST` | `/api/loans/admin/applications/<str:application_id>/reassign/` | Reassign application |
+| `GET` | `/api/loans/admin/officers/workload/` | View officer workload |
 
 ### Loan Officer Endpoints
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| `GET` | `/api/loans/officer/applications/` | List assigned applications |
-| `GET` | `/api/loans/officer/applications/<id>/` | Application detail |
-| `POST` | `/api/loans/officer/applications/<id>/review/` | Approve/reject |
-| `POST` | `/api/loans/officer/applications/<id>/disburse/` | Disburse loan |
-| `GET` | `/api/loans/officer/applications/<id>/schedule/` | View repayment schedule |
-| `GET` | `/api/loans/officer/applications/<id>/payments/` | View payment history |
-| `GET` | `/api/loans/officer/active-loans/` | List active/disbursed loans |
+| `GET` | `/api/loans/officer/applications/` | List officer applications |
+| `GET` | `/api/loans/officer/applications/<str:application_id>/` | Get officer application detail |
+| `POST` | `/api/loans/officer/applications/<str:application_id>/notes/` | Add application notes |
+| `POST` | `/api/loans/officer/applications/<str:application_id>/request-missing-documents/` | Request missing documents |
+| `PUT` | `/api/loans/officer/applications/<str:application_id>/review/` | Approve/reject application |
+| `POST` | `/api/loans/officer/applications/<str:application_id>/disburse/` | Disburse approved loan |
 | `POST` | `/api/loans/officer/payments/` | Record payment |
 | `GET` | `/api/loans/officer/payments/search/` | Search payments |
+| `GET` | `/api/loans/officer/active-loans/` | List active/disbursed loans |
+| `GET` | `/api/loans/officer/applications/<str:application_id>/schedule/` | Get repayment schedule (officer view) |
+| `GET` | `/api/loans/officer/applications/<str:application_id>/payments/` | Get payment history (officer view) |
 
 ---
 
 ## AI Assistant
 
-**Auth:** Customer JWT + AI Consent required
+**Auth:** Customer JWT + AI consent required
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | `POST` | `/api/ai/chat/` | Send message to AI |
 | `GET` | `/api/ai/history/` | Get chat history |
 | `DELETE` | `/api/ai/history/` | Clear chat history |
-| `GET` | `/api/ai/suggestions/` | Get conversation starters |
-| `GET` | `/api/ai/status/` | Check AI availability |
+| `GET` | `/api/ai/suggestions/` | Get chat suggestions |
+| `GET` | `/api/ai/status/` | Get AI service status |
 | `GET` | `/api/ai/education/` | List education topics |
-| `GET` | `/api/ai/education/<topic>/` | Get topic content |
+| `GET` | `/api/ai/education/<str:topic>/` | Get specific education topic |
 | `GET` | `/api/ai/faqs/` | Get FAQs |
 
 ---
 
 ## Analytics
 
-### Admin Dashboard
-
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| `GET` | `/api/analytics/admin/` | System-wide statistics |
-| `GET` | `/api/analytics/audit-logs/` | View audit logs |
-
-### Officer Dashboard
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `GET` | `/api/analytics/officer/` | Officer performance stats |
-
-### Customer Dashboard
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `GET` | `/api/analytics/customer/` | Personal loan statistics |
+| `GET` | `/api/analytics/admin/` | Admin dashboard metrics |
+| `GET` | `/api/analytics/audit-logs/` | List audit logs |
+| `GET` | `/api/analytics/audit-logs/users/` | List users present in audit logs |
+| `GET` | `/api/analytics/audit-logs/<str:log_id>/` | Get audit log detail |
+| `GET` | `/api/analytics/officer/` | Officer dashboard metrics |
+| `GET` | `/api/analytics/customer/` | Customer dashboard metrics |
 
 ---
 
-## Frontend Implementation Checklist
+## Notifications
 
-### Mobile/Web Screens Needed
-
-#### Public (No Auth)
-- [ ] Landing page
-- [ ] Login screen
-- [ ] Signup screen
-- [ ] Email verification (OTP input)
-- [ ] Forgot password flow
-
-#### Customer App
-- [ ] Dashboard (analytics)
-- [ ] Profile management (3 sections)
-- [ ] Document upload/list
-- [ ] Loan products browsing
-- [ ] Pre-qualification check
-- [ ] Loan application form
-- [ ] My applications list
-- [ ] Application status details
-- [ ] Repayment schedule view
-- [ ] Payment history
-- [ ] AI chat interface
-- [ ] Settings (notifications, 2FA)
-
-#### Officer Portal
-- [ ] Dashboard
-- [ ] Application queue
-- [ ] Application review screen
-- [ ] Document verification
-- [ ] Disbursement form
-- [ ] Payment recording
-
-#### Admin Portal
-- [ ] System dashboard
-- [ ] User management (officers/admins)
-- [ ] Product management
-- [ ] Audit logs
-- [ ] Officer workload view
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/api/notifications/` | List notifications |
+| `GET` | `/api/notifications/unread-count/` | Get unread notification count |
+| `POST` | `/api/notifications/mark-all-read/` | Mark all notifications as read |
+| `POST` | `/api/notifications/<str:notification_id>/read/` | Mark one notification as read |
 
 ---
 
 ## Response Format
 
 All endpoints return:
+
 ```json
 {
   "status": "success" | "error",
   "data": { ... },
   "message": "Human readable message",
-  "errors": { ... }  // Only on error
+  "errors": { ... }
 }
 ```
 
 ---
 
-## Status Codes
+## Common Status Codes
 
 | Code | Meaning |
 |------|---------|
