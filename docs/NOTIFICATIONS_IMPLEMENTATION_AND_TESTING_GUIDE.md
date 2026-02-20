@@ -1,210 +1,93 @@
 # Notifications Implementation and Testing Guide
 
-Merged documentation for notification service behavior and API testing flow.
-
-## Wave
-
-- Wave: 4
-- Status: Done
-
-## Navigation
-
-1. [Email Notification Service](#section-1-notificationsmd)
-2. [Notifications API Testing Guide](#section-2-notifications_testing_guidemd)
-
-## Source Files
-
-1. `NOTIFICATIONS.md`
-2. `NOTIFICATIONS_TESTING_GUIDE.md`
-
----
-
-## Section 1: NOTIFICATIONS.md
-
-# Email Notification Service
-
-## Overview
-
-Email notifications for loan lifecycle events using Gmail SMTP.
-
----
-
-## Notification Types
-
-| Type | Trigger | Recipient | Template |
-|------|---------|-----------|----------|
-| `loan_submitted` | Customer submits application | Customer | `loan_submitted.html` |
-| `loan_approved` | Officer approves application | Customer | `loan_approved.html` |
-| `loan_rejected` | Officer rejects application | Customer | `loan_rejected.html` |
-| `loan_disbursed` | Officer disburses funds | Customer | `loan_disbursed.html` |
-| `payment_received` | Payment recorded | Customer | `payment_received.html` |
-| `document_flagged` | Re-upload requested | Customer | `document_flagged.html` |
-| `new_application` | Application assigned | Loan Officer | `new_application.html` |
-
----
+## Scope
+Notifications in this project have two parts:
+- Automatic email notifications triggered by loan/document workflows.
+- Notification inbox APIs under `/api/notifications/` for reading and managing notification records.
 
 ## Configuration
-
-Set these in your `.env` file:
-
+Set in `.env`:
 ```env
+EMAIL_BACKEND=django.core.mail.backends.smtp.EmailBackend
+EMAIL_HOST=smtp.gmail.com
+EMAIL_PORT=587
+EMAIL_USE_TLS=True
 EMAIL_HOST_USER=your-email@gmail.com
 EMAIL_HOST_PASSWORD=your-app-password
 DEFAULT_FROM_EMAIL=your-email@gmail.com
 ```
+Use app passwords for Gmail. Do not commit real credentials.
 
-> **Security Note:** Never commit real credentials. Use app-specific passwords for Gmail.
+## Delivery Model
+- Each send attempt creates a record in MongoDB `notifications`.
+- Status lifecycle is typically: `pending` -> `sent` or `failed`.
+- Inbox APIs can mark records as `read`.
 
----
+## Automatic Trigger Map
+| Notification Type | Triggering Action | Endpoint |
+|---|---|---|
+| `loan_submitted` | Customer submits application | `POST /api/loans/apply/` |
+| `loan_approved` / `loan_rejected` | Officer reviews application | `PUT /api/loans/officer/applications/<application_id>/review/` |
+| `loan_disbursed` | Officer disburses approved loan | `POST /api/loans/officer/applications/<application_id>/disburse/` |
+| `payment_received` | Officer records payment | `POST /api/loans/officer/payments/` |
+| `missing_documents_requested` | Officer requests missing docs | `POST /api/loans/officer/applications/<application_id>/request-missing-documents/` |
+| `document_pending_review` | Customer uploads document (reviewer notification) | `POST /api/documents/upload/` |
+| `document_verified` / `document_flagged` | Reviewer approves/rejects document | `PUT /api/documents/<document_id>/verify/` |
+| `document_flagged` | Reviewer requests re-upload | `POST /api/documents/<document_id>/request-reupload/` |
+| `new_application` | Admin assigns/reassigns application | `POST /api/loans/admin/applications/<application_id>/assign/` and `POST /api/loans/admin/applications/<application_id>/reassign/` |
 
-## Email Templates
+## Notification Inbox API
+Base URL: `http://localhost:8000/api/notifications`
 
-Located in `notifications/templates/email/`:
-
-| Template | Description |
-|----------|-------------|
-| `loan_submitted.html/.txt` | Confirmation of submission |
-| `loan_approved.html/.txt` | Approval notification |
-| `loan_rejected.html/.txt` | Rejection with reason |
-| `loan_disbursed.html/.txt` | Disbursement confirmation |
-| `payment_received.html/.txt` | Payment acknowledgment |
-| `document_flagged.html/.txt` | Re-upload request |
-| `new_application.html/.txt` | Officer assignment alert |
-
----
-
-## Usage
-
-```python
-from notifications.services import get_email_sender
-
-sender = get_email_sender()
-
-# Send approval email
-sender.send_loan_approved(
-    customer_email="customer@example.com",
-    customer_name="Juan Dela Cruz",
-    loan_id="abc123",
-    approved_amount=25000
-)
+Required headers:
+```http
+Authorization: Bearer <access_token>
+Content-Type: application/json
 ```
 
----
+Allowed roles: `customer`, `loan_officer`, `admin`, `super_admin`.
 
-## Automatic Triggers
+1. `GET /api/notifications/`
+- List notifications (newest first).
+- Query params:
+  - `page` (default `1`)
+  - `page_size` (default `20`, max `100`)
+  - `unread` (`true|false`)
+  - `channel` (`email|in_app`)
+- Returns:
+  - `notifications`
+  - `unread_count`
+  - `pagination` (`page`, `page_size`, `total_items`, `total_pages`, `has_next`, `has_previous`)
 
-Emails are sent automatically at these events:
+2. `GET /api/notifications/unread-count/`
+- Returns `unread_count`.
 
-| Event | Trigger Location | Email Sent To |
-|-------|------------------|---------------|
-| Loan Application Submitted | `loans/views/customer_views.py` | Customer |
-| Loan Approved | `loans/views/officer_views.py` | Customer |
-| Loan Rejected | `loans/views/officer_views.py` | Customer |
-| Loan Disbursed | `loans/views/officer_views.py` | Customer |
-| Payment Recorded | `loans/views/officer_views.py` | Customer |
-| Document Re-upload Requested | `documents/views/document_views.py` | Customer |
-| Application Assigned (auto) | `loans/services/assignment.py` | Loan Officer |
-| Application Assigned (manual) | `loans/services/assignment.py` | Loan Officer |
+3. `POST /api/notifications/mark-all-read/`
+- Marks all owned unread notifications as read.
+- Returns `marked_count`.
 
----
+4. `POST /api/notifications/<notification_id>/read/`
+- Marks one owned notification as read.
+- Returns `notification_id` and `status`.
 
-## Testing
+## Smoke Test Sequence
+1. Configure email env vars and restart server.
+2. Trigger one notification event (fastest: `POST /api/loans/apply/` as customer).
+3. Call `GET /api/notifications/` for that user and verify a new entry exists.
+4. Call `GET /api/notifications/unread-count/` and note count.
+5. Call `POST /api/notifications/<notification_id>/read/` on one item.
+6. Call `POST /api/notifications/mark-all-read/` and verify `marked_count`.
+7. Re-check `GET /api/notifications/unread-count/` and confirm `0` (or expected remaining).
 
-```bash
-# Start Django server
-python manage.py runserver
+## Common Error Cases
+1. `400 Bad Request`
+- Invalid pagination values.
+- Invalid `unread` boolean.
+- Invalid `channel` value.
+- Invalid `notification_id` format.
 
-# Approve a loan via API (email will be sent)
-PUT /api/loans/officer/applications/<id>/review/
-{
-    "action": "approve",
-    "approved_amount": 20000
-}
-```
+2. `404 Not Found`
+- Notification does not exist or is not owned by current user.
 
----
-
-## Section 2: NOTIFICATIONS_TESTING_GUIDE.md
-
-# Notifications API Testing Guide
-
-## Overview
-
-Email notifications are sent automatically on loan events. No manual API calls needed.
-
----
-
-## Automatic Email Triggers
-
-| Event | When | Email Sent To |
-|-------|------|---------------|
-| Loan Submitted | Customer submits application | Customer |
-| Loan Approved | Officer approves loan | Customer |
-| Loan Rejected | Officer rejects loan | Customer |
-| Loan Disbursed | Officer disburses funds | Customer |
-| Payment Received | Payment recorded | Customer |
-| Document Flagged | Re-upload requested | Customer |
-| New Application | Application assigned | Loan Officer |
-
----
-
-## Testing
-
-### 1. Configure Email in `.env`
-
-```env
-EMAIL_HOST_USER=your-email@gmail.com
-EMAIL_HOST_PASSWORD=your-app-password
-DEFAULT_FROM_EMAIL=your-email@gmail.com
-```
-
-> **Security Note:** Use app-specific passwords for Gmail. Never commit real credentials.
-
-### 2. Start Server
-```bash
-python manage.py runserver
-```
-
-### 3. Approve a Loan
-```bash
-# Login as loan officer, then:
-curl -X PUT http://localhost:8000/api/loans/officer/applications/<app_id>/review/ \
-  -H "Authorization: Bearer <officer_token>" \
-  -H "Content-Type: application/json" \
-  -d '{"action": "approve", "approved_amount": 20000}'
-```
-
-### 4. Check Customer Email
-The customer should receive an approval email.
-
----
-
-## Manual Email Test (Optional)
-
-```python
-# Django shell
-python manage.py shell
-
-from notifications.services import get_email_sender
-sender = get_email_sender()
-sender.send_loan_approved(
-    customer_email="test@example.com",
-    customer_name="Test User",
-    loan_id="test123",
-    approved_amount=25000
-)
-```
-
----
-
-## Notification Log
-
-Sent notifications are stored in MongoDB `notifications` collection:
-```json
-{
-    "recipient_email": "customer@example.com",
-    "notification_type": "loan_approved",
-    "status": "sent",
-    "sent_at": "2026-01-07T10:00:00Z"
-}
-```
+3. `401/403`
+- Missing auth token or role access denied.

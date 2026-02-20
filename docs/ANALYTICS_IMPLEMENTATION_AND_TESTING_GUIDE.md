@@ -1,247 +1,96 @@
 # Analytics Implementation and Testing Guide
 
-Merged documentation for analytics endpoints, audit logs, and role-based testing flow.
+## Scope
+This guide covers analytics dashboards and audit log APIs under `/api/analytics/`.
 
-## Wave
-
-- Wave: 5
-- Status: Done
-
-## Navigation
-
-1. [Analytics & Audit Logs](#section-1-analyticsmd)
-2. [Analytics API Testing Guide](#section-2-analytics_testing_guidemd)
-
-## Source Files
-
-1. `ANALYTICS.md`
-2. `ANALYTICS_TESTING_GUIDE.md`
-
----
-
-## Section 1: ANALYTICS.md
-
-# Analytics & Audit Logs
-
-## Overview
-
-Role-specific dashboards and action tracking for all user types.
-
----
-
-## Endpoints
-
-| Endpoint | Role | Description |
-|----------|------|-------------|
-| `GET /api/analytics/admin/` | Admin | System-wide stats |
-| `GET /api/analytics/officer/` | Loan Officer | Review activity |
-| `GET /api/analytics/customer/` | Customer | Personal stats |
-| `GET /api/analytics/audit-logs/` | Admin | Action history |
-
----
-
-## Admin Dashboard Response
-
-```json
-{
-    "users": {
-        "customers": 150,
-        "loan_officers": 5,
-        "admins": 2,
-        "total": 157
-    },
-    "loans": {
-        "total": 45,
-        "pending": 12,
-        "approved": 28,
-        "rejected": 5
-    },
-    "documents": {
-        "total": 200,
-        "verified": 150
-    },
-    "products": [
-        {"name": "Micro Loan", "applications": 30, "approved": 25}
-    ]
-}
+## Base URL and Auth
+- Base URL: `http://localhost:8000/api/analytics`
+- Required headers:
+```http
+Authorization: Bearer <access_token>
+Content-Type: application/json
 ```
+- All endpoints require authenticated JWT access.
 
----
+## Role and Permission Rules
+| Endpoint | Allowed Role | Required Admin Permission |
+|---|---|---|
+| `GET /admin/` | Admin | `view_analytics` |
+| `GET /audit-logs/` | Admin | `view_logs` |
+| `GET /audit-logs/users/` | Admin | `view_logs` |
+| `GET /audit-logs/<log_id>/` | Admin | `view_logs` |
+| `GET /officer/` | Loan Officer, Admin | None |
+| `GET /customer/` | Customer | None |
 
-## Loan Officer Dashboard Response
+## Endpoint Reference
+1. `GET /admin/`
+Returns system-wide metrics:
+- `users`: `customers`, `loan_officers`, `admins`, `total`
+- `loans`: `total`, `draft`, `pending`, `under_review`, `approved`, `rejected`, `disbursed`, `cancelled`
+- `documents`: `total`, `pending`, `verified`
+- `ai_usage`: `sessions_last_7_days`
+- `products`: product-level application stats
+- `recent_activity`: recent audit-log summaries
 
-```json
-{
-    "my_reviews": {
-        "total_approved": 28,
-        "total_rejected": 5,
-        "approved_today": 3
-    },
-    "queue": {
-        "pending_total": 12,
-        "assigned_to_me": 4
-    },
-    "performance": {
-        "approval_rate": "84.8%"
-    }
-}
-```
+2. `GET /officer/`
+Returns loan officer performance:
+- `my_reviews`: `total_approved`, `total_rejected`, `approved_today`, `rejected_today`
+- `queue`: `pending_total`, `assigned_to_me`
+- `performance`: `total_reviewed`, `approval_rate`
 
----
+3. `GET /customer/`
+Returns customer-specific analytics:
+- `applications`: `total`, `pending`, `approved`, `rejected`
+- `documents`: `total`, `verified`, `pending`
+- `profile_completion`: `percentage`, `personal_profile`, `business_profile`, `alternative_data`, `valid_id_uploaded`
+- `ai_sessions`
 
-## Customer Dashboard Response
+4. `GET /audit-logs/`
+Returns paginated, filterable audit logs.
 
-```json
-{
-    "applications": {
-        "total": 2,
-        "approved": 1,
-        "pending": 1
-    },
-    "documents": {
-        "total": 4,
-        "verified": 3
-    },
-    "profile_completion": {
-        "percentage": "75%",
-        "personal_profile": true,
-        "business_profile": true,
-        "valid_id_uploaded": true
-    }
-}
-```
+Supported query params:
+- `page` (default `1`, integer, minimum `1`)
+- `page_size` (default `20`, integer, clamped to `1..200`)
+- `action`
+- `action_group` (`login`, `create`, `update`, `delete`)
+- `user_id`
+- `user_type`
+- `date_from` (`YYYY-MM-DD`)
+- `date_to` (`YYYY-MM-DD`)
+- `search` (matches description, email, action, user ID, user type)
 
----
+Response data keys:
+- `logs`, `total`, `page`, `page_size`, `total_pages`
 
-## Audit Logs
+5. `GET /audit-logs/users/`
+Returns unique users from audit logs for filter UIs.
 
-Tracked actions:
-- User login
-- Loan submitted/approved/rejected
-- Document uploaded
-- Profile updated
+Supported query params:
+- `search`
+- `limit` (default `200`, integer, clamped to `1..500`)
 
----
+Response data keys:
+- `users` (`user_id`, `user_type`, `user_email`, `label`)
 
-## Section 2: ANALYTICS_TESTING_GUIDE.md
+6. `GET /audit-logs/<log_id>/`
+Returns full detail for one audit log record.
 
-# Analytics API Testing Guide
+## Smoke Test Sequence
+1. Login as admin with `view_analytics` and `view_logs`.
+2. Call `GET /admin/` and verify all top-level sections are present.
+3. Call `GET /audit-logs/?page=1&page_size=20`.
+4. Call `GET /audit-logs/users/?limit=50`.
+5. Pick one log ID from step 3 and call `GET /audit-logs/<log_id>/`.
+6. Login as loan officer and call `GET /officer/`.
+7. Login as customer and call `GET /customer/`.
+8. Negative test: customer/officer calls admin endpoint and receives `403`.
 
-## Base URL
-`http://localhost:8000/api/analytics`
+## Common Error Cases
+1. `403 Forbidden`
+- Missing role or missing admin permission (`view_analytics` or `view_logs`).
 
----
+2. `400 Bad Request`
+- Invalid query params: `page`, `page_size`, `limit`, or invalid `<log_id>`.
 
-## Endpoints by Role
-
-### 1. Admin Dashboard
-```
-GET /api/analytics/admin/
-Authorization: Bearer <admin_access_token>
-```
-
-**Response:**
-```json
-{
-    "status": "success",
-    "data": {
-        "users": {
-            "customers": 150,
-            "loan_officers": 5,
-            "admins": 2
-        },
-        "loans": {
-            "total": 45,
-            "pending": 12,
-            "approved": 28,
-            "rejected": 5
-        },
-        "documents": {
-            "total": 200,
-            "verified": 150
-        }
-    }
-}
-```
-
----
-
-### 2. Audit Logs (Admin Only)
-```
-GET /api/analytics/audit-logs/
-GET /api/analytics/audit-logs/?limit=100
-GET /api/analytics/audit-logs/?action=loan_approved
-Authorization: Bearer <admin_access_token>
-```
-
----
-
-### 3. Loan Officer Dashboard
-```
-GET /api/analytics/officer/
-Authorization: Bearer <loan_officer_access_token>
-```
-
-**Response:**
-```json
-{
-    "status": "success",
-    "data": {
-        "my_reviews": {
-            "total_approved": 28,
-            "approved_today": 3
-        },
-        "queue": {
-            "pending_total": 12,
-            "assigned_to_me": 4
-        },
-        "performance": {
-            "approval_rate": "84.8%"
-        }
-    }
-}
-```
-
----
-
-### 4. Customer Dashboard
-```
-GET /api/analytics/customer/
-Authorization: Bearer <customer_access_token>
-```
-
-**Response:**
-```json
-{
-    "status": "success",
-    "data": {
-        "applications": {
-            "total": 2,
-            "approved": 1
-        },
-        "documents": {
-            "total": 4,
-            "verified": 3
-        },
-        "profile_completion": {
-            "percentage": "75%"
-        }
-    }
-}
-```
-
----
-
-## Testing Flow
-
-1. Login as Admin → Call `/api/analytics/admin/`
-2. Login as Loan Officer → Call `/api/analytics/officer/`
-3. Login as Customer → Call `/api/analytics/customer/`
-
-## cURL Example
-
-```bash
-# Admin Dashboard
-curl -X GET http://localhost:8000/api/analytics/admin/ \
-  -H "Authorization: Bearer <admin_token>"
-```
+3. `404 Not Found`
+- Audit log ID does not exist for `GET /audit-logs/<log_id>/`.
