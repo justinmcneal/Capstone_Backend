@@ -14,6 +14,7 @@ from pathlib import Path
 import os
 from dotenv import load_dotenv
 from pymongo import MongoClient
+from cryptography.fernet import Fernet
 from django.core.exceptions import ImproperlyConfigured
 from django.core.management.utils import get_random_secret_key
 
@@ -113,6 +114,18 @@ DATABASES = {
 MONGODB_URI = os.getenv('MONGODB_URI', '')
 MONGODB_NAME = os.getenv('MONGODB_NAME', 'capstone_db')
 FIELD_ENCRYPTION_KEY = os.getenv('FIELD_ENCRYPTION_KEY', '').strip()
+
+# Fail fast in production: sensitive fields must never be stored plaintext.
+if not DEBUG:
+    if not FIELD_ENCRYPTION_KEY:
+        raise ImproperlyConfigured("FIELD_ENCRYPTION_KEY must be set when DEBUG=False")
+    try:
+        Fernet(FIELD_ENCRYPTION_KEY.encode('utf-8'))
+    except Exception as exc:
+        raise ImproperlyConfigured(
+            'FIELD_ENCRYPTION_KEY is invalid. Generate one with: '
+            'python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"'
+        ) from exc
 
 # Initialize PyMongo client
 if MONGODB_URI:

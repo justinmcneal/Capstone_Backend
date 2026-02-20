@@ -5,7 +5,8 @@ from django.conf import settings
 from django.middleware.csrf import get_token
 from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.exceptions import TokenError
-from accounts.models import Customer
+from bson import ObjectId
+from accounts.models import Admin, Customer, LoanOfficer
 from accounts.serializers import SignUpSerializer
 from accounts.services import AuthService
 from accounts.services.lockout_service import LockoutService
@@ -25,6 +26,8 @@ import logging
 
 logger = logging.getLogger('authentication')
 GENERIC_LOGIN_ERROR_MESSAGE = 'Invalid email/username or password.'
+GENERIC_OTP_VERIFY_ERROR_MESSAGE = 'Invalid OTP'
+GENERIC_OTP_RESEND_MESSAGE = 'If an unverified account exists, an OTP has been sent.'
 
 
 def _get_client_ip(request):
@@ -298,10 +301,16 @@ class VerifyOTP(APIView):
             customer = AuthService.get_customer_by_email(email)
             if not customer:
                 logger.warning(f"OTP verification for non-existent account: {email} from IP {request.META.get('REMOTE_ADDR')}")
-                return APIResponseHelper.error_response('Account not found')
+                return APIResponseHelper.error_response(
+                    GENERIC_OTP_VERIFY_ERROR_MESSAGE,
+                    status.HTTP_400_BAD_REQUEST
+                )
             
             if customer.verified:
-                return APIResponseHelper.success_response('Account already verified')
+                return APIResponseHelper.error_response(
+                    GENERIC_OTP_VERIFY_ERROR_MESSAGE,
+                    status.HTTP_400_BAD_REQUEST
+                )
             
             allowed, seconds_remaining = AuthService.check_otp_rate_limit(customer)
             if not allowed:
@@ -359,24 +368,23 @@ class ResendOTP(APIView):
             
             if not customer:
                 logger.warning(f"OTP resend for non-existent account: {email} from IP {request.META.get('REMOTE_ADDR')}")
-                return APIResponseHelper.error_response('Account not found')
+                return APIResponseHelper.success_response(message=GENERIC_OTP_RESEND_MESSAGE)
             
             if customer.verified:
-                return APIResponseHelper.error_response('Account already verified')
+                logger.info(f"OTP resend ignored for already verified account: {email}")
+                return APIResponseHelper.success_response(message=GENERIC_OTP_RESEND_MESSAGE)
             
             # Check resend limit (max 2 times)
             if customer.verification_resend_count >= 2:
                 logger.warning(f"OTP resend limit exceeded for {email} from IP {request.META.get('REMOTE_ADDR')}")
-                return APIResponseHelper.error_response(
-                    'Maximum resend limit reached. Please contact support.'
-                )
+                return APIResponseHelper.success_response(message=GENERIC_OTP_RESEND_MESSAGE)
             
             customer = AuthService.resend_customer_otp(customer)
             
             logger.info(f"OTP resent for {email} from IP {request.META.get('REMOTE_ADDR')}")
             
             return APIResponseHelper.success_response(
-                message=f'OTP resent successfully. {2 - customer.verification_resend_count} attempts remaining.'
+                message=GENERIC_OTP_RESEND_MESSAGE
             )
             
         except Exception as e:
@@ -396,19 +404,43 @@ class RefreshTokenView(APIView):
             return APIResponseHelper.error_response('Refresh token is required')
         
         try:
+            token = RefreshToken(refresh_token)
+            if bool(token.get('is_2fa_temp') or token.get('temp_2fa')):
+                logger.warning(
+                    f"Attempt to use temporary 2FA token in refresh flow from IP {request.META.get('REMOTE_ADDR')}"
+                )
+                return APIResponseHelper.error_response(
+                    'Invalid token type',
+                    status.HTTP_401_UNAUTHORIZED
+                )
+
+            customer_id = token.get('customer_id')
+            role = token.get('role', 'customer')
+            if not customer_id:
+                logger.warning(
+                    f"Token refresh missing customer_id claim from IP {request.META.get('REMOTE_ADDR')}"
+                )
+                return APIResponseHelper.error_response(
+                    'Invalid token payload',
+                    status.HTTP_401_UNAUTHORIZED
+                )
+
             if TokenUtils.is_token_blacklisted(refresh_token):
                 logger.warning(f"Attempt to use blacklisted token from IP {request.META.get('REMOTE_ADDR')}")
                 return APIResponseHelper.error_response(
                     'Token has been revoked',
                     status.HTTP_401_UNAUTHORIZED
                 )
-            
-            token = RefreshToken(refresh_token)
-            
-            TokenUtils.blacklist_token(refresh_token)
-            
-            customer_id = token['customer_id']
-            role = token.get('role', 'customer')
+
+            if not TokenUtils.is_refresh_token_valid(customer_id, refresh_token, role=role):
+                logger.warning(
+                    f"Token refresh failed membership validation for user {customer_id} ({role}) "
+                    f"from IP {request.META.get('REMOTE_ADDR')}"
+                )
+                return APIResponseHelper.error_response(
+                    'Token is no longer valid',
+                    status.HTTP_401_UNAUTHORIZED
+                )
 
             if role == 'customer':
                 customer = AuthService.get_customer_by_id(customer_id)
@@ -417,12 +449,18 @@ class RefreshTokenView(APIView):
                         f"Token refresh for non-existent customer {customer_id} from IP {request.META.get('REMOTE_ADDR')}"
                     )
                     return APIResponseHelper.error_response('User not found')
+                if not getattr(customer, 'active', True):
+                    logger.warning(
+                        f"Token refresh for inactive customer {customer_id} from IP {request.META.get('REMOTE_ADDR')}"
+                    )
+                    TokenUtils.blacklist_token(refresh_token)
+                    return APIResponseHelper.error_response(
+                        'Account is inactive',
+                        status.HTTP_401_UNAUTHORIZED
+                    )
                 new_tokens = AuthService.create_customer_tokens(customer, token_type='no_remember_me')
                 user_email = customer.email
             else:
-                from bson import ObjectId
-                from accounts.models import Admin, LoanOfficer
-
                 try:
                     object_id = ObjectId(customer_id)
                 except Exception:
@@ -452,6 +490,15 @@ class RefreshTokenView(APIView):
                         f"Token refresh for non-existent {role} {customer_id} from IP {request.META.get('REMOTE_ADDR')}"
                     )
                     return APIResponseHelper.error_response('User not found')
+                if not getattr(user, 'active', True):
+                    logger.warning(
+                        f"Token refresh for inactive {role} {customer_id} from IP {request.META.get('REMOTE_ADDR')}"
+                    )
+                    TokenUtils.blacklist_token(refresh_token)
+                    return APIResponseHelper.error_response(
+                        'Account is inactive',
+                        status.HTTP_401_UNAUTHORIZED
+                    )
 
                 # Keep role-based session durations for non-customer users.
                 refresh_days = 1
@@ -466,6 +513,13 @@ class RefreshTokenView(APIView):
                     refresh_token_days=refresh_days
                 )
                 user_email = user.email
+
+            if not TokenUtils.blacklist_token(refresh_token):
+                logger.error(
+                    f"Failed to rotate refresh token for user {customer_id} ({role}) "
+                    f"from IP {request.META.get('REMOTE_ADDR')}"
+                )
+                return APIResponseHelper.server_error_response('Token refresh failed')
             
             logger.info(f"Token refreshed for user {user_email} ({role}) from IP {request.META.get('REMOTE_ADDR')}")
             
