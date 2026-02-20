@@ -1,3 +1,332 @@
+# Loan Lifecycle Testing Guide
+
+Merged documentation for loan module testing, assignment workflows, disbursement, repayment schedules, payment recording, and remaining endpoints.
+
+## Wave
+
+- Wave: 3
+- Status: Done
+
+## Navigation
+
+1. [Loan Module API Testing Guide](#section-1-loans_testing_guidemd)
+2. [Officer Assignment Testing Guide](#section-2-officer_assignment_testing_guidemd)
+3. [P3.A8 Assign Application Testing Guide](#section-3-assignment_testing_flowmd)
+4. [Loan Disbursement Testing Guide](#section-4-disbursement_testing_guidemd)
+5. [Repayment Schedule Testing Guide](#section-5-repayment_schedule_testing_guidemd)
+6. [Loan Payment Recording Testing Guide](#section-6-payment_recording_testing_guidemd)
+7. [Remaining Features Testing Guide](#section-7-remaining_features_testing_guidemd)
+
+## Source Files
+
+1. `LOANS_TESTING_GUIDE.md`
+2. `OFFICER_ASSIGNMENT_TESTING_GUIDE.md`
+3. `ASSIGNMENT_TESTING_FLOW.md`
+4. `DISBURSEMENT_TESTING_GUIDE.md`
+5. `REPAYMENT_SCHEDULE_TESTING_GUIDE.md`
+6. `PAYMENT_RECORDING_TESTING_GUIDE.md`
+7. `REMAINING_FEATURES_TESTING_GUIDE.md`
+
+---
+
+## Section 1: LOANS_TESTING_GUIDE.md
+
+# Loan Module API Testing Guide
+
+Complete guide to test loan endpoints.
+
+---
+
+## Setup
+
+**Base URL:** `http://localhost:8000/api/loans`
+
+---
+
+## Customer Endpoints
+
+### 1. List Loan Products
+
+```
+GET /api/loans/products/
+```
+
+**Headers:** `Authorization: Bearer <customer_access_token>`
+
+---
+
+### 2. Get Product Details
+
+```
+GET /api/loans/products/<product_id>/
+```
+
+---
+
+### 3. Pre-Qualify (AI Assessment)
+
+```
+POST /api/loans/pre-qualify/
+```
+
+**Body:**
+```json
+{
+    "product_id": "...",
+    "amount": 25000,
+    "term_months": 12,
+    "purpose": "Expand inventory"
+}
+```
+
+**Response:**
+```json
+{
+    "status": "success",
+    "data": {
+        "eligible": true,
+        "eligibility_score": 72,
+        "risk_category": "medium",
+        "recommended_amount": 20000,
+        "strengths": ["Has bank account", "Good payment history"],
+        "concerns": ["Limited business history"],
+        "can_apply": true
+    }
+}
+```
+
+---
+
+### 4. Submit Application
+
+```
+POST /api/loans/apply/
+```
+
+**Body:**
+```json
+{
+    "product_id": "...",
+    "requested_amount": 25000,
+    "term_months": 12,
+    "purpose": "Business expansion"
+}
+```
+
+---
+
+### 5. List My Applications
+
+```
+GET /api/loans/applications/
+```
+
+---
+
+### 6. Get Application Status
+
+```
+GET /api/loans/applications/<application_id>/
+```
+
+---
+
+## Admin Endpoints (Product Management)
+
+### 7. List All Products
+
+```
+GET /api/loans/admin/products/
+```
+
+**Headers:** `Authorization: Bearer <admin_access_token>`
+
+---
+
+### 8. Create Loan Product
+
+```
+POST /api/loans/admin/products/
+```
+
+**Body:**
+```json
+{
+    "name": "Micro Business Loan",
+    "code": "MBL001",
+    "description": "For small business needs",
+    "min_amount": 5000,
+    "max_amount": 50000,
+    "interest_rate": 0.015,
+    "min_term_months": 3,
+    "max_term_months": 24,
+    "required_documents": ["valid_id"],
+    "min_business_months": 6,
+    "min_monthly_income": 5000
+}
+```
+
+---
+
+### 9. Update Product
+
+```
+PUT /api/loans/admin/products/<product_id>/
+```
+
+---
+
+### 10. Deactivate Product
+
+```
+DELETE /api/loans/admin/products/<product_id>/
+```
+
+---
+
+## Loan Officer Endpoints
+
+### 11. List Pending Applications
+
+```
+GET /api/loans/officer/applications/
+GET /api/loans/officer/applications/?status=pending
+GET /api/loans/officer/applications/?status=mine
+```
+
+**Headers:** `Authorization: Bearer <loan_officer_access_token>`
+
+---
+
+### 12. View Application Details
+
+```
+GET /api/loans/officer/applications/<application_id>/
+```
+
+---
+
+### 13. Approve Application
+
+```
+PUT /api/loans/officer/applications/<application_id>/review/
+```
+
+**Body:**
+```json
+{
+    "action": "approve",
+    "approved_amount": 20000,
+    "notes": "Good business profile"
+}
+```
+
+---
+
+### 14. Reject Application
+
+```
+PUT /api/loans/officer/applications/<application_id>/review/
+```
+
+**Body:**
+```json
+{
+    "action": "reject",
+    "rejection_reason": "Incomplete documentation",
+    "notes": "Missing business permit"
+}
+```
+
+---
+
+## Testing Flow
+
+1. **Admin:** Create loan product
+2. **Customer:** View products
+3. **Customer:** Complete profile + upload documents
+4. **Customer:** Pre-qualify (AI assessment)
+5. **Customer:** Submit application
+6. **Loan Officer:** Review applications
+7. **Loan Officer:** Approve/reject
+8. **Customer:** Check application status
+
+---
+
+## Section 2: OFFICER_ASSIGNMENT_TESTING_GUIDE.md
+
+# Officer Assignment Testing Guide
+
+## Overview
+
+Assign loan applications to officers for review.
+
+---
+
+## Endpoints
+
+### 1. Manual Assignment (Admin)
+```
+POST /api/loans/admin/applications/<id>/assign/
+Authorization: Bearer <admin_token>
+Content-Type: application/json
+
+{
+    "officer_id": "<officer_id>"
+}
+```
+
+**Response:**
+```json
+{
+    "status": "success",
+    "data": {
+        "application_id": "abc123",
+        "assigned_officer": "def456",
+        "officer_name": "John Doe",
+        "status": "under_review"
+    },
+    "message": "Application assigned successfully"
+}
+```
+
+---
+
+### 2. View Officer Workloads (Admin)
+```
+GET /api/loans/admin/officers/workload/
+Authorization: Bearer <admin_token>
+```
+
+**Response:**
+```json
+{
+    "status": "success",
+    "data": {
+        "officers": [
+            {
+                "id": "def456",
+                "employee_id": "EMP001",
+                "name": "John Doe",
+                "pending_count": 5,
+                "active": true
+            }
+        ],
+        "total": 1
+    }
+}
+```
+
+---
+
+## Auto-Assignment
+
+On loan submission, applications are automatically assigned to the officer with fewest pending applications. Officer receives email notification.
+
+---
+
+## Section 3: ASSIGNMENT_TESTING_FLOW.md
+
 # P3.A8 - Assign Application Testing Guide
 
 Complete step-by-step guide to test the application assignment flow in Insomnia/Postman.
@@ -633,3 +962,336 @@ For P3.A8 to pass, you should see:
 - Assignment can only be done by admin users
 - Applications must be in `pending` status to be assigned
 - You can reassign applications to different officers if needed
+
+---
+
+## Section 4: DISBURSEMENT_TESTING_GUIDE.md
+
+# Loan Disbursement Testing Guide
+
+## Overview
+
+Mark approved loans as disbursed and notify customers.
+
+---
+
+## Endpoint
+
+```
+POST /api/loans/officer/applications/<id>/disburse/
+Authorization: Bearer <officer_token>
+Content-Type: application/json
+
+{
+    "amount": 25000,
+    "method": "bank_transfer",
+    "reference": "TXN-2026-001234"
+}
+```
+
+---
+
+## Request Fields
+
+| Field | Required | Default | Description |
+|-------|----------|---------|-------------|
+| `amount` | No | approved_amount | Disbursed amount |
+| `method` | No | bank_transfer | Method: bank_transfer, cash, etc. |
+| `reference` | **Yes** | - | Transaction reference number |
+
+---
+
+## Response
+
+```json
+{
+    "status": "success",
+    "data": {
+        "id": "abc123",
+        "status": "disbursed",
+        "disbursed_amount": 25000,
+        "disbursement_method": "bank_transfer",
+        "disbursement_reference": "TXN-2026-001234",
+        "disbursed_at": "2026-01-07T11:18:00Z"
+    },
+    "message": "Loan disbursed successfully"
+}
+```
+
+---
+
+## Validation
+
+- Only **approved** loans can be disbursed
+- `reference` is required
+- Officer/Admin authentication required
+
+---
+
+## Email Notification
+
+Customer receives email with:
+- Disbursed amount
+- Disbursement method
+- Reference number
+
+---
+
+## Section 5: REPAYMENT_SCHEDULE_TESTING_GUIDE.md
+
+# Repayment Schedule Testing Guide
+
+## Overview
+
+View payment schedule for disbursed loans.
+
+---
+
+## How It Works
+
+1. Loan officer disburses loan → Schedule auto-generated
+2. Customer views schedule via API
+
+---
+
+## Customer Endpoint
+
+```
+GET /api/loans/applications/<id>/schedule/
+Authorization: Bearer <customer_token>
+```
+
+**Response:**
+```json
+{
+    "status": "success",
+    "data": {
+        "loan_id": "abc123",
+        "principal": 25000,
+        "interest_rate": 0.015,
+        "term_months": 12,
+        "monthly_payment": 2458.33,
+        "total_amount": 29500,
+        "total_interest": 4500,
+        "paid_count": 0,
+        "remaining_balance": 29500,
+        "next_payment": {
+            "number": 1,
+            "due_date": "2026-02-12",
+            "total_amount": 2458.33
+        },
+        "installments": [
+            {
+                "number": 1,
+                "due_date": "2026-02-12",
+                "principal": 2083.33,
+                "interest": 375.00,
+                "total_amount": 2458.33,
+                "status": "pending"
+            }
+        ]
+    }
+}
+```
+
+---
+
+## Calculation
+
+**Simple Interest:**
+- Monthly Interest = Principal × Interest Rate
+- Monthly Payment = (Principal / Term) + Monthly Interest
+- Total = Principal + (Monthly Interest × Term)
+
+**Example (₱25,000 at 1.5%/month for 12 months):**
+- Monthly Interest: ₱25,000 × 0.015 = ₱375
+- Monthly Principal: ₱25,000 / 12 = ₱2,083.33
+- Monthly Payment: ₱2,458.33
+- Total Interest: ₱4,500
+- Total: ₱29,500
+
+---
+
+## Validation
+
+- Only disbursed loans have schedules
+- Customer can only view their own schedules
+
+---
+
+## Section 6: PAYMENT_RECORDING_TESTING_GUIDE.md
+
+# Loan Payment Recording Testing Guide
+
+## Overview
+
+Record customer payments against repayment schedules.
+
+---
+
+## Endpoints
+
+### 1. Record Payment (Officer)
+```
+POST /api/loans/officer/payments/
+Authorization: Bearer <officer_token>
+Content-Type: application/json
+
+{
+    "loan_id": "abc123",
+    "installment_number": 1,
+    "amount": 2500,
+    "payment_method": "cash",
+    "reference": "REC-2026-001"
+}
+```
+
+**Response:**
+```json
+{
+    "status": "success",
+    "data": {
+        "payment_id": "xyz789",
+        "loan_id": "abc123",
+        "installment_number": 1,
+        "amount": 2500,
+        "installment_status": "paid",
+        "remaining_balance": 27000
+    },
+    "message": "Payment recorded successfully"
+}
+```
+
+---
+
+### 2. View Payment History (Customer)
+```
+GET /api/loans/applications/<id>/payments/
+Authorization: Bearer <customer_token>
+```
+
+**Response:**
+```json
+{
+    "status": "success",
+    "data": {
+        "payments": [
+            {
+                "id": "xyz789",
+                "amount": 2500,
+                "installment_number": 1,
+                "payment_method": "cash",
+                "reference": "REC-2026-001",
+                "recorded_at": "2026-01-12T08:50:00Z"
+            }
+        ],
+        "total_paid": 2500,
+        "count": 1
+    }
+}
+```
+
+---
+
+## Payment Methods
+
+- `cash`
+- `bank_transfer`
+- `gcash`
+- `maya`
+- `other`
+
+---
+
+## Auto-Update Schedule
+
+When payment recorded:
+- Full payment → installment status = `paid`
+- Partial payment → installment status = `partial`
+
+---
+
+## Section 7: REMAINING_FEATURES_TESTING_GUIDE.md
+
+# Remaining Features Testing Guide
+
+## New Endpoints Summary
+
+### 1. Application Resubmission
+```
+POST /api/loans/applications/<id>/resubmit/
+Authorization: Bearer <customer_token>
+```
+- Only works for `rejected` applications
+- Resets status to `draft`
+
+---
+
+### 2. Rejection Feedback
+```
+GET /api/loans/applications/<id>/feedback/
+Authorization: Bearer <customer_token>
+```
+- AI explains rejection reason
+- Includes improvement suggestions
+
+---
+
+### 3. Document Re-upload Request (Officer)
+```
+POST /api/documents/<id>/request-reupload/
+Authorization: Bearer <officer_token>
+Content-Type: application/json
+
+{"reason": "Image is blurry, please upload a clearer photo"}
+```
+
+---
+
+### 4. Loan Education
+```
+GET /api/ai/education/
+GET /api/ai/education/<topic>/
+```
+Topics: `what_is_a_loan`, `interest_rates`, `loan_process`, `documents_needed`, `improving_chances`
+
+---
+
+### 5. FAQs
+```
+GET /api/ai/faqs/
+```
+
+---
+
+### 6. Health Check
+```
+GET /api/health/
+```
+Returns: MongoDB status, AI status
+
+---
+
+### 7. Notification Preferences
+```
+GET /api/profile/notifications/
+PUT /api/profile/notifications/
+
+Body:
+{
+    "preferences": {
+        "email_loan_updates": true,
+        "email_payment_reminders": true,
+        "email_promotions": false
+    }
+}
+```
+
+---
+
+### 8. Multilingual Support
+Customer model has `language` field (`en` or `tl`). AI responses adapt based on language.
+
+---
+
+## All Features Complete! 🎉
