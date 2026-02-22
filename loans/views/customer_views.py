@@ -29,6 +29,46 @@ class CustomerRoleRequiredMixin(AccessControlMixin):
         return self.require_customer(request)
 
 
+def _serialize_customer_application_detail(app, product):
+    return {
+        'id': app.id,
+        'product': {
+            'id': product.id if product else None,
+            'name': product.name if product else 'Unknown'
+        },
+        'requested_amount': app.requested_amount,
+        'recommended_amount': app.recommended_amount,
+        'approved_amount': app.approved_amount,
+        'term_months': app.term_months,
+        'purpose': app.purpose,
+        'status': app.status,
+        'eligibility_score': app.eligibility_score,
+        'risk_category': app.risk_category,
+        'rejection_reason': app.rejection_reason,
+        'submitted_at': app.submitted_at.isoformat() if app.submitted_at else None,
+        'decision_date': app.decision_date.isoformat() if app.decision_date else None,
+        'created_at': app.created_at.isoformat()
+    }
+
+
+def _safe_customer_display_name(user):
+    full_name = getattr(user, 'full_name', None)
+    if isinstance(full_name, str) and full_name.strip():
+        return full_name.strip()
+
+    first_name = getattr(user, 'first_name', None)
+    last_name = getattr(user, 'last_name', None)
+    name_parts = [part.strip() for part in [first_name, last_name] if isinstance(part, str) and part.strip()]
+    if name_parts:
+        return ' '.join(name_parts)
+
+    email = getattr(user, 'email', None)
+    if isinstance(email, str) and email.strip():
+        return email.strip()
+
+    return 'Customer'
+
+
 class LoanProductListView(CustomerRoleRequiredMixin, APIView):
     """
     List available loan products.
@@ -399,7 +439,7 @@ class LoanApplyView(CustomerRoleRequiredMixin, APIView):
                 sender = get_email_sender()
                 sender.send_loan_submitted(
                     customer_email=user.email if hasattr(user, 'email') else '',
-                    customer_name=user.full_name if hasattr(user, 'full_name') else f"{user.first_name} {user.last_name}",
+                    customer_name=_safe_customer_display_name(user),
                     loan_id=application.id,
                     product_name=product.name,
                     amount=data['requested_amount'],
@@ -586,27 +626,167 @@ class ApplicationDetailView(CustomerRoleRequiredMixin, APIView):
         product = LoanProduct.find_by_id(app.product_id)
         
         return success_response(
-            data={
-                'id': app.id,
-                'product': {
-                    'id': product.id if product else None,
-                    'name': product.name if product else 'Unknown'
-                },
-                'requested_amount': app.requested_amount,
-                'recommended_amount': app.recommended_amount,
-                'approved_amount': app.approved_amount,
-                'term_months': app.term_months,
-                'purpose': app.purpose,
-                'status': app.status,
-                'eligibility_score': app.eligibility_score,
-                'risk_category': app.risk_category,
-                'rejection_reason': app.rejection_reason,
-                'submitted_at': app.submitted_at.isoformat() if app.submitted_at else None,
-                'decision_date': app.decision_date.isoformat() if app.decision_date else None,
-                'created_at': app.created_at.isoformat()
-            },
+            data=_serialize_customer_application_detail(app, product),
             message="Application details retrieved"
         )
+
+    def put(self, request, application_id):
+        """
+        Edit a draft application and submit the same record for review.
+
+        PUT /api/loans/applications/<id>/
+        """
+        try:
+            has_permission, result = self.check_customer_permission(request)
+            if not has_permission:
+                return result
+
+            user = request.user
+            customer_id = user.customer_id
+
+            app = LoanApplication.find_by_id(application_id)
+            if not app or app.customer_id != customer_id:
+                return error_response(
+                    message="Application not found",
+                    status_code=status.HTTP_404_NOT_FOUND
+                )
+
+            if app.status != 'draft':
+                return error_response(
+                    message="Only draft applications can be edited and submitted",
+                    status_code=status.HTTP_400_BAD_REQUEST
+                )
+
+            serializer = LoanApplicationSerializer(data=request.data)
+            if not serializer.is_valid():
+                return error_response(
+                    message="Invalid application data",
+                    errors=serializer.errors,
+                    status_code=status.HTTP_400_BAD_REQUEST
+                )
+
+            data = serializer.validated_data
+            product = LoanProduct.find_by_id(app.product_id)
+            if not product or not product.active:
+                return error_response(
+                    message="Loan product not found",
+                    status_code=status.HTTP_404_NOT_FOUND
+                )
+
+            incoming_product_id = data['product_id']
+            if incoming_product_id != app.product_id:
+                return error_response(
+                    message="Changing the loan product is not allowed for draft resubmission",
+                    errors={'product_id': 'Must match the original draft product'},
+                    status_code=status.HTTP_400_BAD_REQUEST
+                )
+
+            requested_amount = float(data['requested_amount'])
+            term_months = int(data['term_months'])
+
+            if requested_amount < product.min_amount or requested_amount > product.max_amount:
+                return error_response(
+                    message=f"Amount must be between ₱{product.min_amount:,.0f} and ₱{product.max_amount:,.0f}",
+                    status_code=status.HTTP_400_BAD_REQUEST
+                )
+
+            if term_months < product.min_term_months or term_months > product.max_term_months:
+                return error_response(
+                    message=(
+                        f"Term must be between {product.min_term_months} and "
+                        f"{product.max_term_months} months"
+                    ),
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                )
+
+            basic = check_basic_eligibility(
+                customer_id,
+                product,
+                requirements_scope='product',
+                require_approved_documents=True,
+            )
+            if not basic['can_apply']:
+                return error_response(
+                    message="Cannot apply - requirements not met",
+                    errors={'missing': basic['missing_requirements']},
+                    status_code=status.HTTP_400_BAD_REQUEST
+                )
+
+            qualification = qualify_customer(
+                customer_id=customer_id,
+                product=product,
+                requested_amount=requested_amount,
+                term_months=term_months,
+                purpose=data.get('purpose', ''),
+                require_approved_documents=True,
+            )
+
+            eligible_or_can_apply = bool(
+                qualification.get('can_apply', qualification.get('eligible', False))
+            )
+            recommended_amount = qualification.get('recommended_amount', 0)
+
+            if not eligible_or_can_apply:
+                recommended_amount = 0.0
+            else:
+                try:
+                    recommended_amount = float(recommended_amount)
+                except (TypeError, ValueError):
+                    recommended_amount = 0.0
+
+                lower_bound = float(product.min_amount or 0)
+                upper_bound = min(float(product.max_amount or 0), requested_amount)
+                if upper_bound < lower_bound:
+                    upper_bound = lower_bound
+                recommended_amount = max(lower_bound, min(recommended_amount, upper_bound))
+
+            app.requested_amount = requested_amount
+            app.recommended_amount = recommended_amount
+            app.term_months = term_months
+            app.purpose = data.get('purpose', '')
+            app.eligibility_score = qualification.get('eligibility_score')
+            app.ai_recommendation = qualification
+            app.risk_category = qualification.get('risk_category')
+            app.submit()
+
+            logger.info(f"Draft application updated and submitted: {app.id} by {customer_id}")
+
+            try:
+                from notifications.services import get_email_sender
+                sender = get_email_sender()
+                sender.send_loan_submitted(
+                    customer_email=user.email if hasattr(user, 'email') else '',
+                    customer_name=_safe_customer_display_name(user),
+                    loan_id=app.id,
+                    product_name=product.name,
+                    amount=requested_amount,
+                    customer_id=customer_id,
+                )
+            except Exception as e:
+                logger.warning(f"Failed to send loan submitted email: {e}")
+
+            AuditLog.log_action(
+                action='loan_draft_updated_and_submitted',
+                user_id=customer_id,
+                user_type='customer',
+                user_email=user.email if hasattr(user, 'email') else '',
+                description=f'Draft loan application updated and submitted for {product.name} - ₱{requested_amount:,.2f}',
+                resource_type='loan',
+                resource_id=app.id,
+                details={'product': product.name, 'amount': requested_amount, 'term': term_months},
+                ip_address=request.META.get('REMOTE_ADDR', '')
+            )
+
+            return success_response(
+                data=_serialize_customer_application_detail(app, product),
+                message="Application updated and submitted successfully"
+            )
+        except Exception as e:
+            logger.error(f"Draft update submit error: {str(e)}")
+            return error_response(
+                message="Failed to update and submit application",
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 
 
 class RepaymentScheduleView(CustomerRoleRequiredMixin, APIView):
