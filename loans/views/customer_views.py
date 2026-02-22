@@ -864,9 +864,10 @@ class RepaymentScheduleView(CustomerRoleRequiredMixin, APIView):
 
 class PaymentHistoryView(CustomerRoleRequiredMixin, APIView):
     """
-    Get payment history for a loan application.
+    Get or record payments for a loan application.
     
     GET /api/loans/applications/<id>/payments/
+    POST /api/loans/applications/<id>/payments/
     """
     authentication_classes = [CustomJWTAuthentication]
     permission_classes = [IsAuthenticated]
@@ -909,6 +910,169 @@ class PaymentHistoryView(CustomerRoleRequiredMixin, APIView):
                 'count': len(payments_data)
             },
             message="Payment history retrieved"
+        )
+
+    def post(self, request, application_id):
+        has_permission, result = self.check_customer_permission(request)
+        if not has_permission:
+            return result
+
+        user = request.user
+        customer_id = user.customer_id
+
+        app = LoanApplication.find_by_id(application_id)
+        if not app or app.customer_id != customer_id:
+            return error_response(
+                message="Application not found",
+                status_code=status.HTTP_404_NOT_FOUND
+            )
+
+        if app.status != 'disbursed':
+            return error_response(
+                message="Payments can only be recorded for disbursed loans",
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+
+        amount_raw = request.data.get('amount')
+        installment_number_raw = request.data.get('installment_number')
+        payment_method = request.data.get('payment_method', 'bank_transfer')
+        reference = sanitize_text(request.data.get('reference', ''))
+        notes = sanitize_text(request.data.get('notes', ''))
+
+        if installment_number_raw in (None, ''):
+            return error_response(
+                message="installment_number is required",
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+
+        try:
+            installment_number = int(installment_number_raw)
+        except (TypeError, ValueError):
+            return error_response(
+                message="installment_number must be an integer",
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+
+        if installment_number < 1:
+            return error_response(
+                message="installment_number must be at least 1",
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+
+        try:
+            amount = float(amount_raw)
+        except (TypeError, ValueError):
+            return error_response(
+                message="amount must be a valid number",
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+
+        if amount <= 0:
+            return error_response(
+                message="amount must be greater than 0",
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+
+        valid_methods = {'cash', 'bank_transfer', 'gcash', 'maya', 'check', 'other'}
+        if payment_method not in valid_methods:
+            return error_response(
+                message="Invalid payment_method",
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+
+        if not reference:
+            from loans.utils import generate_payment_reference
+            reference = generate_payment_reference()
+
+        from loans.models import RepaymentSchedule, LoanPayment
+
+        schedule = RepaymentSchedule.find_by_loan(application_id)
+        if not schedule:
+            return error_response(
+                message="Repayment schedule not found",
+                status_code=status.HTTP_404_NOT_FOUND
+            )
+
+        if str(schedule.customer_id) != str(customer_id):
+            return error_response(
+                message="Repayment schedule not found",
+                status_code=status.HTTP_404_NOT_FOUND
+            )
+
+        installment = schedule.get_installment(installment_number)
+        if not installment:
+            return error_response(
+                message=f"Installment #{installment_number} not found",
+                status_code=status.HTTP_404_NOT_FOUND
+            )
+
+        if installment.get('status') == 'paid':
+            return error_response(
+                message=f"Installment #{installment_number} is already fully paid",
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+
+        remaining = installment['total_amount'] - installment.get('paid_amount', 0)
+        if amount - remaining > 0.01:
+            return error_response(
+                message=f"Amount exceeds remaining balance of ₱{remaining:.2f}",
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+
+        unpaid_before = schedule.count_unpaid_before(installment_number)
+        updated_installment = schedule.record_payment(installment_number, amount)
+
+        payment = LoanPayment(
+            loan_id=application_id,
+            schedule_id=schedule.id,
+            customer_id=str(customer_id),
+            installment_number=installment_number,
+            amount=amount,
+            payment_method=payment_method,
+            reference=reference,
+            notes=notes,
+            recorded_by=str(customer_id),
+        )
+        payment.save()
+
+        AuditLog.log_action(
+            action='customer_payment_recorded',
+            user_id=str(customer_id),
+            user_type='customer',
+            description=f'Customer payment recorded - ₱{amount:,.2f} for installment #{installment_number}',
+            resource_type='payment',
+            resource_id=payment.id,
+            details={
+                'loan_id': application_id,
+                'amount': amount,
+                'installment': installment_number,
+                'method': payment_method,
+            },
+            ip_address=request.META.get('REMOTE_ADDR', ''),
+        )
+
+        logger.info(
+            "Customer payment recorded: loan=%s installment=%s amount=%s customer=%s",
+            application_id,
+            installment_number,
+            amount,
+            customer_id,
+        )
+
+        return success_response(
+            data={
+                'payment_id': payment.id,
+                'loan_id': application_id,
+                'installment_number': installment_number,
+                'amount': amount,
+                'payment_method': payment_method,
+                'reference': reference,
+                'recorded_at': payment.recorded_at.isoformat() if payment.recorded_at else None,
+                'installment_status': updated_installment['status'],
+                'remaining_balance': schedule.get_remaining_balance(),
+                'skipped_installments': unpaid_before,
+            },
+            message="Payment recorded successfully"
         )
 
 
