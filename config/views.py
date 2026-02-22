@@ -24,7 +24,11 @@ class HealthCheckView(APIView):
         """Check system health"""
         health = {
             'status': 'healthy',
-            'services': {}
+            'services': {},
+            'security': {
+                'field_encryption': 'enabled' if bool(getattr(settings, 'FIELD_ENCRYPTION_KEY', '')) else 'disabled',
+                'tde': 'verify_in_mongodb_atlas_cluster_settings',
+            },
         }
         
         # Check MongoDB

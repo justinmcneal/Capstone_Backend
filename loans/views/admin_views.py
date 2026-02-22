@@ -6,6 +6,7 @@ from datetime import datetime
 
 from accounts.authentication import CustomJWTAuthentication
 from accounts.utils.response_helpers import success_response, error_response
+from accounts.utils.validation_utils import sanitize_text
 from accounts.views.admin_views import AdminRequiredMixin
 from loans.models import LoanProduct, LoanApplication
 from loans.serializers import LoanProductSerializer
@@ -39,13 +40,28 @@ class AdminProductListView(AdminRequiredMixin, APIView):
     """
     authentication_classes = [CustomJWTAuthentication]
     permission_classes = [IsAuthenticated]
+    required_permissions = ['manage_system']
     
     def get(self, request):
         """List all products including inactive"""
         import re
+
+        has_permission, result = self.check_admin_permission(request)
+        if not has_permission:
+            return result
         
-        active_only = request.query_params.get('active', 'all') == 'true'
-        search = request.query_params.get('search', '').strip()
+        active_param = sanitize_text(request.query_params.get('active', 'all')).lower()
+        if active_param in {'true', '1', 'yes', 'on'}:
+            active_only = True
+        elif active_param in {'false', '0', 'no', 'off', 'all', ''}:
+            active_only = False
+        else:
+            return error_response(
+                message="Invalid active filter",
+                errors={'active': 'active must be true, false, or all'},
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+        search = sanitize_text(request.query_params.get('search', ''))
         
         products = LoanProduct.find(active_only=active_only)
         
@@ -83,6 +99,10 @@ class AdminProductListView(AdminRequiredMixin, APIView):
     
     def post(self, request):
         """Create a new loan product"""
+        has_permission, result = self.check_admin_permission(request)
+        if not has_permission:
+            return result
+
         serializer = LoanProductSerializer(data=request.data)
         if not serializer.is_valid():
             return error_response(
@@ -135,8 +155,13 @@ class AdminProductDetailView(AdminRequiredMixin, APIView):
     """
     authentication_classes = [CustomJWTAuthentication]
     permission_classes = [IsAuthenticated]
+    required_permissions = ['manage_system']
     
     def get(self, request, product_id):
+        has_permission, result = self.check_admin_permission(request)
+        if not has_permission:
+            return result
+
         product = LoanProduct.find_by_id(product_id)
         if not product:
             return error_response(message="Product not found", status_code=status.HTTP_404_NOT_FOUND)
@@ -162,6 +187,10 @@ class AdminProductDetailView(AdminRequiredMixin, APIView):
     
     def put(self, request, product_id):
         from loans.models.application import LoanApplication
+
+        has_permission, result = self.check_admin_permission(request)
+        if not has_permission:
+            return result
         
         product = LoanProduct.find_by_id(product_id)
         if not product:
@@ -235,6 +264,10 @@ class AdminProductDetailView(AdminRequiredMixin, APIView):
     
     def delete(self, request, product_id):
         from loans.models.application import LoanApplication
+
+        has_permission, result = self.check_admin_permission(request)
+        if not has_permission:
+            return result
         
         product = LoanProduct.find_by_id(product_id)
         if not product:
@@ -278,8 +311,13 @@ class AssignApplicationView(AdminRequiredMixin, APIView):
     """
     authentication_classes = [CustomJWTAuthentication]
     permission_classes = [IsAuthenticated]
+    required_permissions = ['manage_loan_officers']
     
     def post(self, request, application_id):
+        has_permission, result = self.check_admin_permission(request)
+        if not has_permission:
+            return result
+
         app = LoanApplication.find_by_id(application_id)
         if not app:
             return error_response(
@@ -287,10 +325,15 @@ class AssignApplicationView(AdminRequiredMixin, APIView):
                 status_code=status.HTTP_404_NOT_FOUND
             )
         
-        officer_id = request.data.get('officer_id')
+        officer_id = sanitize_text(request.data.get('officer_id', ''))
         if not officer_id:
             return error_response(
                 message="officer_id is required",
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+        if not ObjectId.is_valid(officer_id):
+            return error_response(
+                message="Invalid officer_id format",
                 status_code=status.HTTP_400_BAD_REQUEST
             )
         
@@ -328,8 +371,13 @@ class ReassignApplicationView(AdminRequiredMixin, APIView):
     """
     authentication_classes = [CustomJWTAuthentication]
     permission_classes = [IsAuthenticated]
+    required_permissions = ['manage_loan_officers']
     
     def post(self, request, application_id):
+        has_permission, result = self.check_admin_permission(request)
+        if not has_permission:
+            return result
+
         app = LoanApplication.find_by_id(application_id)
         if not app:
             return error_response(
@@ -337,10 +385,15 @@ class ReassignApplicationView(AdminRequiredMixin, APIView):
                 status_code=status.HTTP_404_NOT_FOUND
             )
         
-        new_officer_id = request.data.get('officer_id')
+        new_officer_id = sanitize_text(request.data.get('officer_id', ''))
         if not new_officer_id:
             return error_response(
                 message="officer_id is required",
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+        if not ObjectId.is_valid(new_officer_id):
+            return error_response(
+                message="Invalid officer_id format",
                 status_code=status.HTTP_400_BAD_REQUEST
             )
         
@@ -388,54 +441,68 @@ class OfficerWorkloadView(AdminRequiredMixin, APIView):
     """
     authentication_classes = [CustomJWTAuthentication]
     permission_classes = [IsAuthenticated]
+    required_permissions = ['manage_loan_officers']
     
     def get(self, request):
         from loans.services import get_officers_workload
+
+        has_permission, result = self.check_admin_permission(request)
+        if not has_permission:
+            return result
         
         # Get query parameters for officers
-        search = request.query_params.get('search', '').strip()
+        search = sanitize_text(request.query_params.get('search', ''))
         try:
             page = int(request.query_params.get('page', 1))
             page_size = int(request.query_params.get('page_size', 20))
-            
-            # Validate pagination params
-            if page < 1:
-                page = 1
-            if page_size < 1 or page_size > 100:
-                page_size = 20
-        except ValueError:
-            page = 1
-            page_size = 20
+        except (TypeError, ValueError):
+            return error_response(
+                message="Invalid officer pagination parameters",
+                errors={'pagination': 'page and page_size must be integers'},
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+        if page < 1 or page_size < 1 or page_size > 100:
+            return error_response(
+                message="Invalid officer pagination parameters",
+                errors={'pagination': 'page must be >= 1 and page_size must be between 1 and 100'},
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
         
         # Get query parameters for pending applications
-        pending_search = request.query_params.get('pending_search', '').strip()
+        pending_search = sanitize_text(request.query_params.get('pending_search', ''))
         try:
             pending_page = int(request.query_params.get('pending_page', 1))
             pending_page_size = int(request.query_params.get('pending_page_size', 20))
-            
-            # Validate pagination params
-            if pending_page < 1:
-                pending_page = 1
-            if pending_page_size < 1 or pending_page_size > 100:
-                pending_page_size = 20
-        except ValueError:
-            pending_page = 1
-            pending_page_size = 20
+        except (TypeError, ValueError):
+            return error_response(
+                message="Invalid pending pagination parameters",
+                errors={'pending_pagination': 'pending_page and pending_page_size must be integers'},
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+        if pending_page < 1 or pending_page_size < 1 or pending_page_size > 100:
+            return error_response(
+                message="Invalid pending pagination parameters",
+                errors={'pending_pagination': 'pending_page must be >= 1 and pending_page_size must be between 1 and 100'},
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
         
         # Get query parameters for assigned applications
-        assigned_search = request.query_params.get('assigned_search', '').strip()
+        assigned_search = sanitize_text(request.query_params.get('assigned_search', ''))
         try:
             assigned_page = int(request.query_params.get('assigned_page', 1))
             assigned_page_size = int(request.query_params.get('assigned_page_size', 20))
-            
-            # Validate pagination params
-            if assigned_page < 1:
-                assigned_page = 1
-            if assigned_page_size < 1 or assigned_page_size > 100:
-                assigned_page_size = 20
-        except ValueError:
-            assigned_page = 1
-            assigned_page_size = 20
+        except (TypeError, ValueError):
+            return error_response(
+                message="Invalid assigned pagination parameters",
+                errors={'assigned_pagination': 'assigned_page and assigned_page_size must be integers'},
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+        if assigned_page < 1 or assigned_page_size < 1 or assigned_page_size > 100:
+            return error_response(
+                message="Invalid assigned pagination parameters",
+                errors={'assigned_pagination': 'assigned_page must be >= 1 and assigned_page_size must be between 1 and 100'},
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
         
         # Get paginated workload
         workload_data = get_officers_workload(
@@ -513,4 +580,3 @@ class OfficerWorkloadView(AdminRequiredMixin, APIView):
             },
             message="Officer workload retrieved"
         )
-

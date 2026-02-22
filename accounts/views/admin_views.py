@@ -12,11 +12,69 @@ from accounts.models import Admin, LoanOfficer, ADMIN_PERMISSIONS
 from accounts.authentication import CustomJWTAuthentication
 from accounts.utils.token_utils import TokenUtils
 from accounts.utils.response_helpers import success_response, error_response
-from accounts.utils.validation_utils import validate_person_name, normalize_text
+from accounts.utils.email_utils import EmailUtils
+from accounts.utils.auth_cookies import (
+    clear_auth_cookies,
+    get_access_token_from_request,
+    get_refresh_token_from_request,
+)
+from accounts.utils.validation_utils import (
+    validate_employee_id,
+    validate_person_name,
+    normalize_text,
+    sanitize_text,
+    parse_bool,
+    parse_optional_bool,
+)
+from accounts.utils.access_control import AccessControlMixin
+from accounts.utils.throttles import AdminLoginRateThrottle
+from accounts.services.two_factor_service import TwoFactorService
 from analytics.models import AuditLog
 import logging
 
 logger = logging.getLogger('admin_auth')
+GENERIC_LOGIN_ERROR_MESSAGE = "Invalid email/username or password."
+
+
+def _get_client_ip(request):
+    forwarded = request.META.get('HTTP_X_FORWARDED_FOR')
+    if forwarded:
+        return forwarded.split(',')[0].strip()
+    return request.META.get('REMOTE_ADDR', '')
+
+
+def _log_admin_login_failure(request, login_identifier, reason, admin=None):
+    ip_address = _get_client_ip(request)
+    logger.warning(
+        "login_failed role=admin reason=%s identifier=%s ip=%s",
+        reason,
+        login_identifier,
+        ip_address,
+    )
+    attempted_email = (
+        login_identifier.lower()
+        if isinstance(login_identifier, str) and '@' in login_identifier
+        else ''
+    )
+    try:
+        AuditLog.log_action(
+            action='user_login_failed',
+            user_id=getattr(admin, 'id', None),
+            user_type='admin',
+            user_email=getattr(admin, 'email', '') if admin else attempted_email,
+            description='Admin login failed',
+            details={
+                'reason': reason,
+                'identifier': login_identifier,
+            },
+            ip_address=ip_address,
+        )
+    except Exception as log_error:
+        logger.error(
+            "failed_to_write_audit action=user_login_failed role=admin identifier=%s error=%s",
+            login_identifier,
+            str(log_error),
+        )
 
 
 def generate_temp_password(length=12):
@@ -77,15 +135,35 @@ class AdminLoginView(APIView):
     }
     """
     permission_classes = [AllowAny]
+    throttle_classes = [AdminLoginRateThrottle]
     
     def post(self, request):
         try:
-            username = request.data.get('username', '').strip()
+            raw_username = request.data.get('username', '')
             password = request.data.get('password', '')
+            if not isinstance(raw_username, str):
+                return error_response(
+                    message="username must be a string",
+                    errors={'username': 'username must be a string'},
+                    status_code=status.HTTP_400_BAD_REQUEST
+                )
+            if not isinstance(password, str):
+                return error_response(
+                    message="password must be a string",
+                    errors={'password': 'password must be a string'},
+                    status_code=status.HTTP_400_BAD_REQUEST
+                )
+            username = normalize_text(raw_username)
             
             if not username or not password:
+                errors = {}
+                if not username:
+                    errors['username'] = 'Username is required'
+                if not password:
+                    errors['password'] = 'Password is required'
                 return error_response(
                     message="Username and password are required",
+                    errors=errors,
                     status_code=status.HTTP_400_BAD_REQUEST
                 )
             
@@ -95,24 +173,37 @@ class AdminLoginView(APIView):
                 admin = Admin.find_one({'email': username.lower()})
             
             if not admin:
+                _log_admin_login_failure(request, username, 'user_not_found')
                 return error_response(
-                    message="Invalid credentials",
+                    message=GENERIC_LOGIN_ERROR_MESSAGE,
                     status_code=status.HTTP_401_UNAUTHORIZED
                 )
             
             # Check if account is active
             if not admin.active:
+                _log_admin_login_failure(
+                    request,
+                    username,
+                    'account_deactivated',
+                    admin=admin,
+                )
                 return error_response(
-                    message="Account has been deactivated",
-                    status_code=status.HTTP_403_FORBIDDEN
+                    message=GENERIC_LOGIN_ERROR_MESSAGE,
+                    status_code=status.HTTP_401_UNAUTHORIZED
                 )
             
             # Check lockout
             if admin.locked_until and admin.locked_until > datetime.utcnow():
                 remaining = (admin.locked_until - datetime.utcnow()).seconds // 60
+                _log_admin_login_failure(
+                    request,
+                    username,
+                    f'account_locked_{remaining}m_remaining',
+                    admin=admin,
+                )
                 return error_response(
-                    message=f"Account is locked. Try again in {remaining} minutes.",
-                    status_code=status.HTTP_403_FORBIDDEN
+                    message=GENERIC_LOGIN_ERROR_MESSAGE,
+                    status_code=status.HTTP_401_UNAUTHORIZED
                 )
             
             # Verify password
@@ -122,14 +213,26 @@ class AdminLoginView(APIView):
                 if admin.failed_login_attempts >= 5:
                     admin.locked_until = datetime.utcnow() + timedelta(minutes=30)
                     admin.save()
+                    _log_admin_login_failure(
+                        request,
+                        username,
+                        'password_incorrect_account_locked',
+                        admin=admin,
+                    )
                     return error_response(
-                        message="Account locked due to too many failed attempts. Try again in 30 minutes.",
-                        status_code=status.HTTP_403_FORBIDDEN
+                        message=GENERIC_LOGIN_ERROR_MESSAGE,
+                        status_code=status.HTTP_401_UNAUTHORIZED
                     )
                 
                 admin.save()
+                _log_admin_login_failure(
+                    request,
+                    username,
+                    f'password_incorrect_{5 - admin.failed_login_attempts}_attempts_remaining',
+                    admin=admin,
+                )
                 return error_response(
-                    message="Invalid credentials",
+                    message=GENERIC_LOGIN_ERROR_MESSAGE,
                     status_code=status.HTTP_401_UNAUTHORIZED
                 )
             
@@ -139,55 +242,42 @@ class AdminLoginView(APIView):
             admin.last_login_attempt = datetime.utcnow()
             admin.save()
             
-            # Check if 2FA is enabled
-            if admin.two_factor_enabled:
+            # MFA / 2FA is mandatory for all administrator accounts.
+            if not admin.two_factor_enabled:
+                setup_data = TwoFactorService.setup_2fa(admin)
                 temp_token = TokenUtils.generate_2fa_temp_token(
                     user_id=admin.id,
                     email=admin.email,
                     role='admin'
                 )
+                logger.info(
+                    "Admin 2FA bootstrap required for %s from IP %s",
+                    admin.email,
+                    request.META.get('REMOTE_ADDR', '')
+                )
                 return success_response(
                     data={
                         'requires_2fa': True,
-                        'temp_token': temp_token
+                        'requires_2fa_setup': True,
+                        'temp_token': temp_token,
+                        'provisioning_uri': setup_data['provisioning_uri'],
+                        'manual_entry_key': setup_data['manual_entry_key'],
+                        'qr_code_data_url': setup_data.get('qr_code_data_url', ''),
                     },
-                    message="2FA verification required"
+                    message="2FA setup required before first login"
                 )
-            
-            # Generate tokens
-            tokens = TokenUtils.generate_tokens(
+
+            temp_token = TokenUtils.generate_2fa_temp_token(
                 user_id=admin.id,
                 email=admin.email,
-                verified=True,
-                role='admin',
-                refresh_token_days=1  # Shorter session for admins
+                role='admin'
             )
-            
-            # Audit log for admin login
-            AuditLog.log_action(
-                action='user_login',
-                user_id=admin.id,
-                user_type='admin' if not admin.super_admin else 'super_admin',
-                user_email=admin.email,
-                description=f'Admin {admin.username} logged in',
-                ip_address=request.META.get('REMOTE_ADDR', '')
-            )
-            
             return success_response(
                 data={
-                    'access_token': tokens['access'],
-                    'refresh_token': tokens['refresh'],
-                    'user': {
-                        'id': admin.id,
-                        'username': admin.username,
-                        'email': admin.email,
-                        'full_name': admin.full_name,
-                        'role': 'admin',
-                        'permissions': admin.permissions if not admin.super_admin else ['*'],
-                        'super_admin': admin.super_admin
-                    }
+                    'requires_2fa': True,
+                    'temp_token': temp_token
                 },
-                message="Login successful"
+                message="2FA verification required"
             )
             
         except Exception as e:
@@ -206,8 +296,8 @@ class AdminLogoutView(APIView):
     
     def post(self, request):
         try:
-            refresh_token = request.data.get('refresh_token')
-            access_token = request.META.get('HTTP_AUTHORIZATION', '').replace('Bearer ', '')
+            refresh_token = get_refresh_token_from_request(request)
+            access_token = get_access_token_from_request(request)
             
             if refresh_token:
                 TokenUtils.blacklist_token(refresh_token, token_type='refresh')
@@ -215,51 +305,28 @@ class AdminLogoutView(APIView):
             if access_token:
                 TokenUtils.blacklist_token(access_token, token_type='access')
             
-            return success_response(message="Logged out successfully")
+            response = success_response(message="Logged out successfully")
+            clear_auth_cookies(response)
+            return response
             
         except Exception as e:
             logger.error(f"Admin logout error: {str(e)}")
-            return success_response(message="Logged out successfully")
+            response = success_response(message="Logged out successfully")
+            clear_auth_cookies(response)
+            return response
 
 
-class AdminRequiredMixin:
+class AdminRequiredMixin(AccessControlMixin):
     """Mixin to require admin authentication and permissions"""
     required_permissions = []
     
     def check_admin_permission(self, request):
         """Check if authenticated user is admin with required permissions"""
-        user = request.user
-        
-        if not hasattr(user, 'role') or user.role != 'admin':
-            return False, error_response(
-                message="Admin access required",
-                status_code=status.HTTP_403_FORBIDDEN
-            )
-        
-        # Get admin from database to check permissions
-        admin = Admin.find_one({'_id': ObjectId(user.customer_id)})
-        
-        if not admin:
-            return False, error_response(
-                message="Admin not found",
-                status_code=status.HTTP_404_NOT_FOUND
-            )
-        
-        if not admin.active:
-            return False, error_response(
-                message="Admin account is deactivated",
-                status_code=status.HTTP_403_FORBIDDEN
-            )
-        
-        # Check permissions
-        if self.required_permissions:
-            if not admin.has_all_permissions(self.required_permissions):
-                return False, error_response(
-                    message="Insufficient permissions",
-                    status_code=status.HTTP_403_FORBIDDEN
-                )
-        
-        return True, admin
+        return self.require_admin(
+            request,
+            required_permissions=self.required_permissions,
+            super_admin_only=False,
+        )
 
 
 class LoanOfficerManagementView(AdminRequiredMixin, APIView):
@@ -282,19 +349,62 @@ class LoanOfficerManagementView(AdminRequiredMixin, APIView):
                 return result
             
             # Get query parameters
-            search = request.query_params.get('search', '').strip()
-            active_param = request.query_params.get('active')  # None means all, 'true'/'false' for filter
-            department = request.query_params.get('department')
-            page = int(request.query_params.get('page', 1))
-            page_size = min(int(request.query_params.get('page_size', 20)), 100)
-            sort_by = request.query_params.get('sort_by', 'created_at')
-            sort_order = request.query_params.get('sort_order', 'desc')
+            search = sanitize_text(request.query_params.get('search', ''))
+            active_raw = request.query_params.get('active')
+            department = sanitize_text(request.query_params.get('department', ''))
+            try:
+                page = int(request.query_params.get('page', 1))
+            except (TypeError, ValueError):
+                return error_response(
+                    message="Invalid page parameter",
+                    errors={'page': 'page must be an integer'},
+                    status_code=status.HTTP_400_BAD_REQUEST
+                )
+            try:
+                page_size = min(int(request.query_params.get('page_size', 20)), 100)
+            except (TypeError, ValueError):
+                return error_response(
+                    message="Invalid page_size parameter",
+                    errors={'page_size': 'page_size must be an integer'},
+                    status_code=status.HTTP_400_BAD_REQUEST
+                )
+            if page < 1:
+                return error_response(
+                    message="Invalid page parameter",
+                    errors={'page': 'page must be at least 1'},
+                    status_code=status.HTTP_400_BAD_REQUEST
+                )
+            if page_size < 1:
+                return error_response(
+                    message="Invalid page_size parameter",
+                    errors={'page_size': 'page_size must be at least 1'},
+                    status_code=status.HTTP_400_BAD_REQUEST
+                )
+            sort_by = sanitize_text(request.query_params.get('sort_by', 'created_at'))
+            sort_order = sanitize_text(request.query_params.get('sort_order', 'desc')).lower()
+            if sort_order not in {'asc', 'desc'}:
+                return error_response(
+                    message="Invalid sort_order parameter",
+                    errors={'sort_order': 'sort_order must be asc or desc'},
+                    status_code=status.HTTP_400_BAD_REQUEST
+                )
             
             query = {}
             
             # Active filter - only apply if explicitly provided
+            active_param = None
+            if active_raw is not None:
+                active_text = sanitize_text(active_raw).lower()
+                if active_text != 'all':
+                    active_valid, active_param, active_error = parse_optional_bool(active_raw, 'active')
+                    if not active_valid:
+                        return error_response(
+                            message="Invalid active filter",
+                            errors={'active': active_error},
+                            status_code=status.HTTP_400_BAD_REQUEST
+                        )
             if active_param is not None:
-                query['active'] = active_param.lower() == 'true'
+                query['active'] = active_param
             
             if department:
                 query['department'] = department
@@ -374,23 +484,36 @@ class LoanOfficerManagementView(AdminRequiredMixin, APIView):
             
             admin = result  # result is the admin object when has_perm is True
             
+            employee_id_valid, employee_id_error, employee_id = validate_employee_id(
+                request.data.get('employee_id', ''),
+                field_name='Employee ID',
+                max_length=50
+            )
+            first_name = request.data.get('first_name', '')
+            last_name = request.data.get('last_name', '')
+            email = EmailUtils.normalize_email(str(request.data.get('email') or ''))
+
             # Validate required fields
-            required_fields = ['employee_id', 'first_name', 'last_name', 'email']
             missing_errors = {}
-            for field in required_fields:
-                if not request.data.get(field):
-                    missing_errors[field] = f"{field.replace('_', ' ').title()} is required"
+            if not normalize_text(first_name):
+                missing_errors['first_name'] = "First Name is required"
+            if not normalize_text(last_name):
+                missing_errors['last_name'] = "Last Name is required"
+            if not email:
+                missing_errors['email'] = "Email is required"
             if missing_errors:
                 return error_response(
                     message="Validation failed",
                     errors=missing_errors,
                     status_code=status.HTTP_400_BAD_REQUEST
                 )
-            
-            email = request.data.get('email', '').lower().strip()
-            employee_id = request.data.get('employee_id', '').strip()
-            first_name = request.data.get('first_name', '')
-            last_name = request.data.get('last_name', '')
+
+            if not employee_id_valid:
+                return error_response(
+                    message=employee_id_error,
+                    errors={'employee_id': employee_id_error},
+                    status_code=status.HTTP_400_BAD_REQUEST
+                )
 
             first_name_valid, first_name_error, first_name_normalized = validate_person_name(
                 first_name,
@@ -439,8 +562,8 @@ class LoanOfficerManagementView(AdminRequiredMixin, APIView):
                 first_name=first_name_normalized,
                 last_name=last_name_normalized,
                 email=email,
-                phone=request.data.get('phone', ''),
-                department=request.data.get('department', ''),
+                phone=sanitize_text(request.data.get('phone', '')),
+                department=sanitize_text(request.data.get('department', '')),
                 created_by=ObjectId(admin.id),
                 must_change_password=True
             )
@@ -590,8 +713,23 @@ class LoanOfficerDetailView(AdminRequiredMixin, APIView):
                                 status_code=status.HTTP_400_BAD_REQUEST
                             )
                         new_value = normalized_name
+                    elif field == 'active':
+                        is_valid, parsed_active, parse_error = parse_bool(new_value, 'active')
+                        if not is_valid:
+                            return error_response(
+                                message="Invalid active value",
+                                errors={'active': parse_error},
+                                status_code=status.HTTP_400_BAD_REQUEST
+                            )
+                        new_value = parsed_active
                     elif isinstance(new_value, str):
-                        new_value = normalize_text(new_value)
+                        new_value = sanitize_text(new_value)
+                    elif field in ['phone', 'department'] and new_value is not None:
+                        return error_response(
+                            message=f"{field} must be a string",
+                            errors={field: f"{field} must be a string"},
+                            status_code=status.HTTP_400_BAD_REQUEST
+                        )
 
                     if old_value != new_value:
                         changes[field] = {'old': old_value, 'new': new_value}
@@ -671,40 +809,16 @@ class LoanOfficerDetailView(AdminRequiredMixin, APIView):
 # ADMIN MANAGEMENT (Super Admin Only)
 # =============================================================================
 
-class SuperAdminRequiredMixin:
+class SuperAdminRequiredMixin(AccessControlMixin):
     """Mixin to require super admin access"""
     
     def check_super_admin(self, request):
         """Check if authenticated user is a super admin"""
-        user = request.user
-        
-        if not hasattr(user, 'role') or user.role != 'admin':
-            return False, error_response(
-                message="Admin access required",
-                status_code=status.HTTP_403_FORBIDDEN
-            )
-        
-        admin = Admin.find_one({'_id': ObjectId(user.customer_id)})
-        
-        if not admin:
-            return False, error_response(
-                message="Admin not found",
-                status_code=status.HTTP_404_NOT_FOUND
-            )
-        
-        if not admin.active:
-            return False, error_response(
-                message="Admin account is deactivated",
-                status_code=status.HTTP_403_FORBIDDEN
-            )
-        
-        if not admin.super_admin:
-            return False, error_response(
-                message="Super admin access required",
-                status_code=status.HTTP_403_FORBIDDEN
-            )
-        
-        return True, admin
+        return self.require_admin(
+            request,
+            required_permissions=[],
+            super_admin_only=True,
+        )
 
 
 class AdminManagementView(SuperAdminRequiredMixin, APIView):
@@ -728,18 +842,61 @@ class AdminManagementView(SuperAdminRequiredMixin, APIView):
             current_admin = result
             
             # Get query parameters
-            search = request.query_params.get('search', '').strip()
-            active_param = request.query_params.get('active')  # None means all
-            page = int(request.query_params.get('page', 1))
-            page_size = min(int(request.query_params.get('page_size', 20)), 100)
-            sort_by = request.query_params.get('sort_by', 'created_at')
-            sort_order = request.query_params.get('sort_order', 'desc')
+            search = sanitize_text(request.query_params.get('search', ''))
+            active_raw = request.query_params.get('active')
+            try:
+                page = int(request.query_params.get('page', 1))
+            except (TypeError, ValueError):
+                return error_response(
+                    message="Invalid page parameter",
+                    errors={'page': 'page must be an integer'},
+                    status_code=status.HTTP_400_BAD_REQUEST
+                )
+            try:
+                page_size = min(int(request.query_params.get('page_size', 20)), 100)
+            except (TypeError, ValueError):
+                return error_response(
+                    message="Invalid page_size parameter",
+                    errors={'page_size': 'page_size must be an integer'},
+                    status_code=status.HTTP_400_BAD_REQUEST
+                )
+            if page < 1:
+                return error_response(
+                    message="Invalid page parameter",
+                    errors={'page': 'page must be at least 1'},
+                    status_code=status.HTTP_400_BAD_REQUEST
+                )
+            if page_size < 1:
+                return error_response(
+                    message="Invalid page_size parameter",
+                    errors={'page_size': 'page_size must be at least 1'},
+                    status_code=status.HTTP_400_BAD_REQUEST
+                )
+            sort_by = sanitize_text(request.query_params.get('sort_by', 'created_at'))
+            sort_order = sanitize_text(request.query_params.get('sort_order', 'desc')).lower()
+            if sort_order not in {'asc', 'desc'}:
+                return error_response(
+                    message="Invalid sort_order parameter",
+                    errors={'sort_order': 'sort_order must be asc or desc'},
+                    status_code=status.HTTP_400_BAD_REQUEST
+                )
             
             query = {}
             
             # Active filter - only apply if explicitly provided
+            active_param = None
+            if active_raw is not None:
+                active_text = sanitize_text(active_raw).lower()
+                if active_text != 'all':
+                    active_valid, active_param, active_error = parse_optional_bool(active_raw, 'active')
+                    if not active_valid:
+                        return error_response(
+                            message="Invalid active filter",
+                            errors={'active': active_error},
+                            status_code=status.HTTP_400_BAD_REQUEST
+                        )
             if active_param is not None:
-                query['active'] = active_param.lower() == 'true'
+                query['active'] = active_param
             
             # Search filter - search in username, name, email
             if search:

@@ -6,6 +6,7 @@ from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
 
 from accounts.authentication import CustomJWTAuthentication
+from accounts.utils.access_control import AccessControlMixin
 from accounts.utils.response_helpers import success_response, error_response
 from django.conf import settings
 import logging
@@ -13,7 +14,7 @@ import logging
 logger = logging.getLogger('analytics')
 
 
-class CustomerDashboardView(APIView):
+class CustomerDashboardView(AccessControlMixin, APIView):
     """
     Customer dashboard - personal statistics.
     
@@ -23,6 +24,10 @@ class CustomerDashboardView(APIView):
     permission_classes = [IsAuthenticated]
     
     def get(self, request):
+        has_permission, result = self.require_customer(request)
+        if not has_permission:
+            return result
+
         user = request.user
         customer_id = user.customer_id
         db = settings.MONGODB

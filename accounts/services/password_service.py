@@ -8,6 +8,12 @@ logger = logging.getLogger('authentication')
 
 
 class PasswordService:
+    GENERIC_RESET_INIT_MESSAGE = (
+        'If an account with this email exists, a password reset OTP has been sent.'
+    )
+    GENERIC_RESET_VERIFY_ERROR = 'Invalid email or OTP'
+    RESET_ATTEMPT_FIELD = 'password_reset_attempt_count'
+    RESET_LAST_ATTEMPT_FIELD = 'password_reset_last_attempt'
 
     @staticmethod
     def _find_user_by_email(email):
@@ -38,11 +44,13 @@ class PasswordService:
     def initiate_password_reset(email):
         user, user_type = PasswordService._find_user_by_email(email)
         if not user:
-            return (False, 'No account found with this email')
+            logger.info(f"Password reset requested for unknown email: {email}")
+            return (True, PasswordService.GENERIC_RESET_INIT_MESSAGE)
 
         # Check if account is active (for LoanOfficer and Admin)
         if user_type in ('loan_officer', 'admin') and hasattr(user, 'active') and not user.active:
-            return (False, 'This account has been deactivated. Contact your administrator.')
+            logger.info(f"Password reset requested for inactive account: {email} ({user_type})")
+            return (True, PasswordService.GENERIC_RESET_INIT_MESSAGE)
 
         # Use password reset expiry (15 minutes) instead of default (10 minutes)
         otp = OTPService.set_otp(
@@ -65,13 +73,48 @@ class PasswordService:
         )
         
         logger.info(f"Password reset OTP sent for {email} ({user_type})")
-        return (True, 'OTP has been sent to your email')
+        return (True, PasswordService.GENERIC_RESET_INIT_MESSAGE)
+
+    @staticmethod
+    def _check_reset_otp_rate_limit(user):
+        return OTPService.check_otp_rate_limit(
+            user,
+            PasswordService.RESET_ATTEMPT_FIELD,
+            PasswordService.RESET_LAST_ATTEMPT_FIELD
+        )
+
+    @staticmethod
+    def _increment_reset_otp_attempt(user):
+        OTPService.increment_otp_attempt(
+            user,
+            PasswordService.RESET_ATTEMPT_FIELD,
+            PasswordService.RESET_LAST_ATTEMPT_FIELD
+        )
+
+    @staticmethod
+    def _reset_reset_otp_attempts(user):
+        OTPService.reset_otp_attempts(
+            user,
+            PasswordService.RESET_ATTEMPT_FIELD,
+            PasswordService.RESET_LAST_ATTEMPT_FIELD
+        )
 
     @staticmethod
     def verify_reset_otp(email, otp):
         user, user_type = PasswordService._find_user_by_email(email)
         if not user:
-            return (False, 'No account found with this email')
+            return (False, PasswordService.GENERIC_RESET_VERIFY_ERROR)
+
+        allowed, seconds_remaining = PasswordService._check_reset_otp_rate_limit(user)
+        if not allowed:
+            logger.warning(
+                f"Password reset OTP verify rate limit for {email} ({user_type}): "
+                f"{seconds_remaining}s remaining"
+            )
+            return (
+                False,
+                f'Too many OTP attempts. Please try again in {seconds_remaining} seconds.'
+            )
 
         valid, message = OTPService.validate_otp(
             user, 
@@ -81,7 +124,10 @@ class PasswordService:
         )
         
         if not valid:
-            return (False, message)
+            PasswordService._increment_reset_otp_attempt(user)
+            return (False, PasswordService.GENERIC_RESET_VERIFY_ERROR)
+
+        PasswordService._reset_reset_otp_attempts(user)
         
         return (True, 'OTP verified successfully')
     
@@ -89,7 +135,18 @@ class PasswordService:
     def reset_password(email, otp, new_password):
         user, user_type = PasswordService._find_user_by_email(email)
         if not user:
-            return (False, 'No account found with this email')
+            return (False, PasswordService.GENERIC_RESET_VERIFY_ERROR)
+
+        allowed, seconds_remaining = PasswordService._check_reset_otp_rate_limit(user)
+        if not allowed:
+            logger.warning(
+                f"Password reset rate limit for {email} ({user_type}): "
+                f"{seconds_remaining}s remaining"
+            )
+            return (
+                False,
+                f'Too many OTP attempts. Please try again in {seconds_remaining} seconds.'
+            )
         
         valid, message = OTPService.validate_otp(
             user, 
@@ -99,7 +156,10 @@ class PasswordService:
         )
         
         if not valid:
-            return (False, message)
+            PasswordService._increment_reset_otp_attempt(user)
+            return (False, PasswordService.GENERIC_RESET_VERIFY_ERROR)
+
+        PasswordService._reset_reset_otp_attempts(user)
         
         if user.check_password(new_password):
             return (False, 'New password must be different from the old password')

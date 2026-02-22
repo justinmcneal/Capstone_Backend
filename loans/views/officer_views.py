@@ -6,7 +6,9 @@ from datetime import datetime
 from django.conf import settings
 
 from accounts.authentication import CustomJWTAuthentication
+from accounts.utils.access_control import AccessControlMixin
 from accounts.utils.response_helpers import success_response, error_response
+from accounts.utils.validation_utils import sanitize_text, parse_bool
 from loans.models import LoanProduct, LoanApplication
 from loans.serializers import (
     LoanReviewSerializer,
@@ -45,17 +47,19 @@ def internal_note_summary(app):
     }
 
 
-class LoanOfficerRequiredMixin:
+class LoanOfficerRequiredMixin(AccessControlMixin):
     """Mixin to require loan officer or admin role"""
     
     def check_officer_permission(self, request):
-        user = request.user
-        if not hasattr(user, 'role') or user.role not in ['loan_officer', 'admin']:
-            return False, error_response(
-                message="Loan officer access required",
-                status_code=status.HTTP_403_FORBIDDEN
-            )
-        return True, user
+        return self.require_officer_or_admin(request)
+
+    def check_application_scope(self, request, application, allow_unassigned=True):
+        return self.require_application_scope(
+            request,
+            application,
+            allow_unassigned=allow_unassigned,
+            conceal_existence=True,
+        )
 
 
 class OfficerApplicationListView(LoanOfficerRequiredMixin, APIView):
@@ -88,19 +92,75 @@ class OfficerApplicationListView(LoanOfficerRequiredMixin, APIView):
         has_permission, result = self.check_officer_permission(request)
         if not has_permission:
             return result
+        user = request.user
+        user_role = getattr(user, 'role', '')
+        user_id = str(getattr(user, 'customer_id', '') or '')
         
         # Extract query params
-        status_filter = request.query_params.get('status', 'pending')
-        search_query = request.query_params.get('search', '').strip()
-        min_amount = request.query_params.get('min_amount')
-        max_amount = request.query_params.get('max_amount')
-        start_date = request.query_params.get('start_date')
-        end_date = request.query_params.get('end_date')
-        risk_category = request.query_params.get('risk_category')
-        page = int(request.query_params.get('page', 1))
-        page_size = min(int(request.query_params.get('page_size', 20)), 100)
-        sort_by = request.query_params.get('sort_by', 'submitted_at')
-        sort_order = request.query_params.get('sort_order', 'desc')
+        status_filter = sanitize_text(request.query_params.get('status', 'pending')).lower() or 'pending'
+        search_query = sanitize_text(request.query_params.get('search', ''))
+        min_amount = sanitize_text(request.query_params.get('min_amount', ''))
+        max_amount = sanitize_text(request.query_params.get('max_amount', ''))
+        start_date = sanitize_text(request.query_params.get('start_date', ''))
+        end_date = sanitize_text(request.query_params.get('end_date', ''))
+        risk_category = sanitize_text(request.query_params.get('risk_category', '')).lower()
+        try:
+            page = int(request.query_params.get('page', 1))
+        except (TypeError, ValueError):
+            return error_response(
+                message="Invalid page parameter",
+                errors={'page': 'page must be an integer'},
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+        try:
+            page_size = min(int(request.query_params.get('page_size', 20)), 100)
+        except (TypeError, ValueError):
+            return error_response(
+                message="Invalid page_size parameter",
+                errors={'page_size': 'page_size must be an integer'},
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+        sort_by = sanitize_text(request.query_params.get('sort_by', 'submitted_at'))
+        sort_order = sanitize_text(request.query_params.get('sort_order', 'desc')).lower()
+        if page < 1:
+            return error_response(
+                message="Invalid page parameter",
+                errors={'page': 'page must be at least 1'},
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+        if page_size < 1:
+            return error_response(
+                message="Invalid page_size parameter",
+                errors={'page_size': 'page_size must be at least 1'},
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+
+        valid_statuses = {'pending', 'mine', 'submitted', 'under_review', 'approved', 'rejected', 'disbursed', 'all'}
+        if status_filter not in valid_statuses:
+            return error_response(
+                message="Invalid status filter",
+                errors={'status': f"status must be one of: {', '.join(sorted(valid_statuses))}"},
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+        if risk_category and risk_category not in {'low', 'medium', 'high'}:
+            return error_response(
+                message="Invalid risk_category filter",
+                errors={'risk_category': 'risk_category must be one of: low, medium, high'},
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+        valid_sort_fields = {'submitted_at', 'requested_amount', 'eligibility_score', 'created_at'}
+        if sort_by not in valid_sort_fields:
+            return error_response(
+                message="Invalid sort_by parameter",
+                errors={'sort_by': f"sort_by must be one of: {', '.join(sorted(valid_sort_fields))}"},
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+        if sort_order not in {'asc', 'desc'}:
+            return error_response(
+                message="Invalid sort_order parameter",
+                errors={'sort_order': 'sort_order must be asc or desc'},
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
         
         # Build base query
         query = {}
@@ -109,21 +169,52 @@ class OfficerApplicationListView(LoanOfficerRequiredMixin, APIView):
         if status_filter == 'pending':
             query['status'] = {'$in': ['submitted', 'under_review']}
         elif status_filter == 'mine':
-            query['assigned_officer'] = result.customer_id
+            query['assigned_officer'] = user_id
         elif status_filter != 'all':
             query['status'] = status_filter
+
+        # ABAC scope: loan officers can only access their own assigned apps
+        # plus unassigned apps available for pickup.
+        if user_role == 'loan_officer':
+            query['$or'] = [
+                {'assigned_officer': user_id},
+                {'assigned_officer': {'$in': [None, '']}},
+                {'assigned_officer': {'$exists': False}},
+            ]
         
         # Amount range filter
+        parsed_min_amount = None
+        parsed_max_amount = None
         if min_amount:
             try:
-                query.setdefault('requested_amount', {})['$gte'] = float(min_amount)
+                parsed_min_amount = float(min_amount)
             except ValueError:
-                pass
+                return error_response(
+                    message="Invalid min_amount filter",
+                    errors={'min_amount': 'min_amount must be a number'},
+                    status_code=status.HTTP_400_BAD_REQUEST
+                )
+            query.setdefault('requested_amount', {})['$gte'] = parsed_min_amount
         if max_amount:
             try:
-                query.setdefault('requested_amount', {})['$lte'] = float(max_amount)
+                parsed_max_amount = float(max_amount)
             except ValueError:
-                pass
+                return error_response(
+                    message="Invalid max_amount filter",
+                    errors={'max_amount': 'max_amount must be a number'},
+                    status_code=status.HTTP_400_BAD_REQUEST
+                )
+            query.setdefault('requested_amount', {})['$lte'] = parsed_max_amount
+        if (
+            parsed_min_amount is not None and
+            parsed_max_amount is not None and
+            parsed_min_amount > parsed_max_amount
+        ):
+            return error_response(
+                message="Invalid amount range",
+                errors={'amount_range': 'min_amount cannot be greater than max_amount'},
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
         
         # Date range filter
         if start_date:
@@ -131,16 +222,24 @@ class OfficerApplicationListView(LoanOfficerRequiredMixin, APIView):
                 start_dt = datetime.strptime(start_date, '%Y-%m-%d')
                 query.setdefault('submitted_at', {})['$gte'] = start_dt
             except ValueError:
-                pass
+                return error_response(
+                    message="Invalid start_date filter",
+                    errors={'start_date': 'start_date must use YYYY-MM-DD format'},
+                    status_code=status.HTTP_400_BAD_REQUEST
+                )
         if end_date:
             try:
                 end_dt = datetime.strptime(end_date, '%Y-%m-%d').replace(hour=23, minute=59, second=59)
                 query.setdefault('submitted_at', {})['$lte'] = end_dt
             except ValueError:
-                pass
-        
+                return error_response(
+                    message="Invalid end_date filter",
+                    errors={'end_date': 'end_date must use YYYY-MM-DD format'},
+                    status_code=status.HTTP_400_BAD_REQUEST
+                )
+
         # Risk category filter
-        if risk_category and risk_category in ['low', 'medium', 'high']:
+        if risk_category:
             query['risk_category'] = risk_category
         
         # Keyword search - need to handle customer name search
@@ -166,7 +265,7 @@ class OfficerApplicationListView(LoanOfficerRequiredMixin, APIView):
         final_query = query.copy()
         if search_query:
             search_conditions = [
-                {'_id': {'$regex': search_query, '$options': 'i'}} if len(search_query) == 24 else {},
+                {'_id': {'$regex': re.escape(search_query), '$options': 'i'}} if len(search_query) == 24 else {},
             ]
             if customer_ids:
                 search_conditions.append({'customer_id': {'$in': customer_ids}})
@@ -180,7 +279,7 @@ class OfficerApplicationListView(LoanOfficerRequiredMixin, APIView):
             } if customer_ids else query
         
         # Sorting
-        sort_field = sort_by if sort_by in ['submitted_at', 'requested_amount', 'eligibility_score', 'created_at'] else 'submitted_at'
+        sort_field = sort_by
         sort_direction = 1 if sort_order == 'asc' else -1
         
         # Get total count for pagination
@@ -271,6 +370,13 @@ class OfficerApplicationDetailView(LoanOfficerRequiredMixin, APIView):
                 message="Application not found",
                 status_code=status.HTTP_404_NOT_FOUND
             )
+        has_scope, scope_result = self.check_application_scope(
+            request,
+            app,
+            allow_unassigned=True,
+        )
+        if not has_scope:
+            return scope_result
         
         product = LoanProduct.find_by_id(app.product_id)
         
@@ -416,6 +522,13 @@ class OfficerApplicationNotesView(LoanOfficerRequiredMixin, APIView):
                 message="Application not found",
                 status_code=status.HTTP_404_NOT_FOUND
             )
+        has_scope, scope_result = self.check_application_scope(
+            request,
+            app,
+            allow_unassigned=True,
+        )
+        if not has_scope:
+            return scope_result
 
         if app.status in ['draft', 'cancelled']:
             return error_response(
@@ -489,6 +602,13 @@ class OfficerRequestMissingDocumentsView(LoanOfficerRequiredMixin, APIView):
                 message="Application not found",
                 status_code=status.HTTP_404_NOT_FOUND
             )
+        has_scope, scope_result = self.check_application_scope(
+            request,
+            app,
+            allow_unassigned=True,
+        )
+        if not has_scope:
+            return scope_result
         
         if app.status not in ['submitted', 'under_review']:
             return error_response(
@@ -609,6 +729,13 @@ class OfficerReviewView(LoanOfficerRequiredMixin, APIView):
                 message="Application not found",
                 status_code=status.HTTP_404_NOT_FOUND
             )
+        has_scope, scope_result = self.check_application_scope(
+            request,
+            app,
+            allow_unassigned=True,
+        )
+        if not has_scope:
+            return scope_result
         
         # Can only review submitted/under_review applications
         if app.status not in ['submitted', 'under_review']:
@@ -740,6 +867,13 @@ class DisburseView(LoanOfficerRequiredMixin, APIView):
                 message="Application not found",
                 status_code=status.HTTP_404_NOT_FOUND
             )
+        has_scope, scope_result = self.check_application_scope(
+            request,
+            app,
+            allow_unassigned=False,
+        )
+        if not has_scope:
+            return scope_result
         
         # Can only disburse approved applications
         if app.status != 'approved':
@@ -749,10 +883,30 @@ class DisburseView(LoanOfficerRequiredMixin, APIView):
             )
         
         # Get disbursement data
-        amount = request.data.get('amount', app.approved_amount)
-        method = request.data.get('method', 'bank_transfer')
-        reference = request.data.get('reference', '')
-        external_reference = request.data.get('external_reference', '')  # Bank/check number
+        amount_raw = request.data.get('amount', app.approved_amount)
+        method = sanitize_text(request.data.get('method', 'bank_transfer')).lower() or 'bank_transfer'
+        reference = sanitize_text(request.data.get('reference', ''))
+        external_reference = sanitize_text(request.data.get('external_reference', ''))  # Bank/check number
+        try:
+            amount = float(amount_raw)
+        except (TypeError, ValueError):
+            return error_response(
+                message="amount must be a valid number",
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+        if amount <= 0:
+            return error_response(
+                message="amount must be greater than 0",
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+        allowed_methods = {'bank_transfer', 'cash', 'gcash', 'maya', 'check', 'other'}
+        if method not in allowed_methods:
+            return error_response(
+                message="Invalid disbursement method",
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+        if not reference and external_reference:
+            reference = external_reference
         
         # Auto-generate system reference if not provided
         if not reference:
@@ -860,13 +1014,13 @@ class RecordPaymentView(LoanOfficerRequiredMixin, APIView):
             return user
         
         # Required fields
-        loan_id = request.data.get('loan_id')
-        installment_number = request.data.get('installment_number')
-        amount = request.data.get('amount', 0)
-        payment_method = request.data.get('payment_method', 'cash')
-        reference = request.data.get('reference', '')
-        external_reference = request.data.get('external_reference', '')  # GCash/Bank ref
-        notes = request.data.get('notes', '')
+        loan_id = sanitize_text(request.data.get('loan_id', ''))
+        installment_number_raw = request.data.get('installment_number')
+        amount_raw = request.data.get('amount', 0)
+        payment_method = sanitize_text(request.data.get('payment_method', 'cash')).lower() or 'cash'
+        reference = sanitize_text(request.data.get('reference', ''))
+        external_reference = sanitize_text(request.data.get('external_reference', ''))  # GCash/Bank ref
+        notes = sanitize_text(request.data.get('notes', ''))
         
         # Validation
         if not loan_id:
@@ -875,17 +1029,43 @@ class RecordPaymentView(LoanOfficerRequiredMixin, APIView):
                 status_code=status.HTTP_400_BAD_REQUEST
             )
         
-        if not installment_number:
+        if installment_number_raw in (None, ''):
             return error_response(
                 message="installment_number is required",
                 status_code=status.HTTP_400_BAD_REQUEST
             )
-        
+        try:
+            installment_number = int(installment_number_raw)
+        except (TypeError, ValueError):
+            return error_response(
+                message="installment_number must be an integer",
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+        if installment_number < 1:
+            return error_response(
+                message="installment_number must be at least 1",
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+        try:
+            amount = float(amount_raw)
+        except (TypeError, ValueError):
+            return error_response(
+                message="amount must be a valid number",
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
         if amount <= 0:
             return error_response(
                 message="amount must be greater than 0",
                 status_code=status.HTTP_400_BAD_REQUEST
             )
+        valid_methods = {'cash', 'bank_transfer', 'gcash', 'maya', 'check', 'other'}
+        if payment_method not in valid_methods:
+            return error_response(
+                message="Invalid payment_method",
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+        if not reference and external_reference:
+            reference = external_reference
         
         # Auto-generate system reference if not provided
         if not reference:
@@ -902,6 +1082,20 @@ class RecordPaymentView(LoanOfficerRequiredMixin, APIView):
                 message="Repayment schedule not found",
                 status_code=status.HTTP_404_NOT_FOUND
             )
+
+        app = LoanApplication.find_by_id(loan_id)
+        if not app:
+            return error_response(
+                message="Application not found",
+                status_code=status.HTTP_404_NOT_FOUND
+            )
+        has_scope, scope_result = self.check_application_scope(
+            request,
+            app,
+            allow_unassigned=False,
+        )
+        if not has_scope:
+            return scope_result
         
         # VALIDATION 1: Check if installment exists
         installment = schedule.get_installment(installment_number)
@@ -1019,12 +1213,21 @@ class ActiveLoansView(LoanOfficerRequiredMixin, APIView):
         has_permission, result = self.check_officer_permission(request)
         if not has_permission:
             return result
+        user = request.user
+        user_role = getattr(user, 'role', '')
+        user_id = str(getattr(user, 'customer_id', '') or '')
         
         from loans.models import RepaymentSchedule, LoanProduct
         from accounts.models import Customer
         
-        search = request.query_params.get('search', '').strip()
-        customer_id_filter = request.query_params.get('customer_id', '')
+        search = sanitize_text(request.query_params.get('search', ''))
+        customer_id_filter = sanitize_text(request.query_params.get('customer_id', ''))
+        if customer_id_filter and not ObjectId.is_valid(customer_id_filter):
+            return error_response(
+                message="Invalid customer_id filter",
+                errors={'customer_id': 'customer_id must be a valid ID'},
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
         
         # Build customer query and support direct ID lookups
         direct_schedules = []
@@ -1083,6 +1286,12 @@ class ActiveLoansView(LoanOfficerRequiredMixin, APIView):
 
             # Get application for product info
             app = LoanApplication.find_by_id(schedule.loan_id)
+            if not app:
+                return
+            if user_role == 'loan_officer':
+                assigned_officer = str(getattr(app, 'assigned_officer', '') or '')
+                if assigned_officer and assigned_officer != user_id:
+                    return
             product = None
             if app:
                 product = LoanProduct.find_by_id(app.product_id)
@@ -1158,6 +1367,13 @@ class OfficerScheduleView(LoanOfficerRequiredMixin, APIView):
                 message="Application not found",
                 status_code=status.HTTP_404_NOT_FOUND
             )
+        has_scope, scope_result = self.check_application_scope(
+            request,
+            app,
+            allow_unassigned=False,
+        )
+        if not has_scope:
+            return scope_result
         
         # Only disbursed loans have schedules
         if app.status != 'disbursed':
@@ -1239,6 +1455,13 @@ class OfficerPaymentHistoryView(LoanOfficerRequiredMixin, APIView):
                 message="Application not found",
                 status_code=status.HTTP_404_NOT_FOUND
             )
+        has_scope, scope_result = self.check_application_scope(
+            request,
+            app,
+            allow_unassigned=False,
+        )
+        if not has_scope:
+            return scope_result
         
         from loans.models import LoanPayment
         payments = LoanPayment.find_by_loan(application_id)
@@ -1298,96 +1521,168 @@ class PaymentSearchView(LoanOfficerRequiredMixin, APIView):
         has_permission, result = self.check_officer_permission(request)
         if not has_permission:
             return result
+        user = request.user
+        user_role = getattr(user, 'role', '')
+        user_id = str(getattr(user, 'customer_id', '') or '')
         
         # Extract query params
-        search_query = request.query_params.get('search', '').strip()
-        loan_id = request.query_params.get('loan_id', '').strip()
-        customer_id = request.query_params.get('customer_id', '').strip()
-        disbursed_only_raw = request.query_params.get('disbursed_only', 'true').strip().lower()
-        disbursed_only = disbursed_only_raw in ['true', '1', 'yes', 'on']
-        payment_status = request.query_params.get('payment_status', '').strip().lower()
-        payment_method = request.query_params.get('payment_method', '').strip()
-        min_amount = request.query_params.get('min_amount')
-        max_amount = request.query_params.get('max_amount')
-        start_date = request.query_params.get('start_date')
-        end_date = request.query_params.get('end_date')
-        page = int(request.query_params.get('page', 1))
-        page_size = min(int(request.query_params.get('page_size', 20)), 100)
-        sort_by = request.query_params.get('sort_by', 'recorded_at')
-        sort_order = request.query_params.get('sort_order', 'desc')
+        search_query = sanitize_text(request.query_params.get('search', ''))
+        loan_id = sanitize_text(request.query_params.get('loan_id', ''))
+        customer_id = sanitize_text(request.query_params.get('customer_id', ''))
+        disbursed_only_raw = sanitize_text(request.query_params.get('disbursed_only', 'true')).lower()
+        payment_status = sanitize_text(request.query_params.get('payment_status', '')).lower()
+        payment_method = sanitize_text(request.query_params.get('payment_method', '')).lower()
+        min_amount = sanitize_text(request.query_params.get('min_amount', ''))
+        max_amount = sanitize_text(request.query_params.get('max_amount', ''))
+        start_date = sanitize_text(request.query_params.get('start_date', ''))
+        end_date = sanitize_text(request.query_params.get('end_date', ''))
+        try:
+            page = int(request.query_params.get('page', 1))
+        except (TypeError, ValueError):
+            return error_response(
+                message="Invalid page parameter",
+                errors={'page': 'page must be an integer'},
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+        try:
+            page_size = min(int(request.query_params.get('page_size', 20)), 100)
+        except (TypeError, ValueError):
+            return error_response(
+                message="Invalid page_size parameter",
+                errors={'page_size': 'page_size must be an integer'},
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+        sort_by = sanitize_text(request.query_params.get('sort_by', 'recorded_at'))
+        sort_order = sanitize_text(request.query_params.get('sort_order', 'desc')).lower()
+        if page < 1:
+            return error_response(
+                message="Invalid page parameter",
+                errors={'page': 'page must be at least 1'},
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+        if page_size < 1:
+            return error_response(
+                message="Invalid page_size parameter",
+                errors={'page_size': 'page_size must be at least 1'},
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
         valid_payment_statuses = ['on_time', 'late']
+        disbursed_valid, disbursed_only, disbursed_error = parse_bool(disbursed_only_raw, 'disbursed_only')
+        if not disbursed_valid:
+            return error_response(
+                message="Invalid disbursed_only filter",
+                errors={'disbursed_only': disbursed_error},
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+        if payment_status and payment_status not in valid_payment_statuses:
+            return error_response(
+                message="Invalid payment_status filter",
+                errors={'payment_status': 'payment_status must be one of: on_time, late'},
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
         
+        def _empty_payment_result():
+            return success_response(
+                data={
+                    'payments': [],
+                    'total': 0,
+                    'page': page,
+                    'page_size': page_size,
+                    'total_pages': 0,
+                    'summary': {'total_amount': 0, 'count': 0},
+                },
+                message="Payments retrieved",
+            )
+
         # Build query
         query = {}
-        
-        # Loan ID filter
-        if loan_id:
-            query['loan_id'] = loan_id
-        
-        # Customer ID filter
-        if customer_id:
-            query['customer_id'] = customer_id
+        allowed_loan_ids = None
 
         # Restrict to disbursed loans by default
         if disbursed_only:
             if loan_id:
                 app = LoanApplication.find_by_id(loan_id)
                 if not app or app.status != 'disbursed':
-                    return success_response(
-                        data={
-                            'payments': [],
-                            'total': 0,
-                            'page': page,
-                            'page_size': page_size,
-                            'total_pages': 0,
-                            'summary': {
-                                'total_amount': 0,
-                                'count': 0
-                            }
-                        },
-                        message="Payments retrieved"
-                    )
+                    return _empty_payment_result()
+                allowed_loan_ids = [loan_id]
             else:
                 app_collection = settings.MONGODB['loan_applications']
                 disbursed_ids = app_collection.distinct('_id', {'status': 'disbursed'})
-                disbursed_loan_ids = [str(app_id) for app_id in disbursed_ids]
+                allowed_loan_ids = [str(app_id) for app_id in disbursed_ids]
+                if not allowed_loan_ids:
+                    return _empty_payment_result()
 
-                if not disbursed_loan_ids:
-                    return success_response(
-                        data={
-                            'payments': [],
-                            'total': 0,
-                            'page': page,
-                            'page_size': page_size,
-                            'total_pages': 0,
-                            'summary': {
-                                'total_amount': 0,
-                                'count': 0
-                            }
-                        },
-                        message="Payments retrieved"
-                    )
+        # ABAC scope for loan officers: only payments for assigned applications.
+        if user_role == 'loan_officer':
+            app_collection = settings.MONGODB['loan_applications']
+            officer_assigned_ids = [
+                str(doc['_id'])
+                for doc in app_collection.find({'assigned_officer': user_id}, {'_id': 1})
+            ]
+            if allowed_loan_ids is None:
+                allowed_loan_ids = officer_assigned_ids
+            else:
+                officer_set = set(officer_assigned_ids)
+                allowed_loan_ids = [loan for loan in allowed_loan_ids if loan in officer_set]
+            if not allowed_loan_ids:
+                return _empty_payment_result()
 
-                query['loan_id'] = {'$in': disbursed_loan_ids}
+        # Loan scope filter after deriving all constraints.
+        if loan_id:
+            if allowed_loan_ids is not None and loan_id not in set(allowed_loan_ids):
+                return _empty_payment_result()
+            query['loan_id'] = loan_id
+        elif allowed_loan_ids is not None:
+            query['loan_id'] = {'$in': allowed_loan_ids}
+
+        # Customer ID filter
+        if customer_id:
+            query['customer_id'] = customer_id
         
         # Payment method filter
         valid_methods = ['cash', 'bank_transfer', 'gcash', 'maya', 'check', 'other']
-        if payment_method and payment_method in valid_methods:
+        if payment_method:
+            if payment_method not in valid_methods:
+                return error_response(
+                    message="Invalid payment_method filter",
+                    errors={'payment_method': f"payment_method must be one of: {', '.join(valid_methods)}"},
+                    status_code=status.HTTP_400_BAD_REQUEST
+                )
             query['payment_method'] = payment_method
-        if payment_status and payment_status not in valid_payment_statuses:
-            payment_status = ''
         
         # Amount range filter
+        parsed_min_amount = None
+        parsed_max_amount = None
         if min_amount:
             try:
-                query.setdefault('amount', {})['$gte'] = float(min_amount)
+                parsed_min_amount = float(min_amount)
             except ValueError:
-                pass
+                return error_response(
+                    message="Invalid min_amount filter",
+                    errors={'min_amount': 'min_amount must be a number'},
+                    status_code=status.HTTP_400_BAD_REQUEST
+                )
+            query.setdefault('amount', {})['$gte'] = parsed_min_amount
         if max_amount:
             try:
-                query.setdefault('amount', {})['$lte'] = float(max_amount)
+                parsed_max_amount = float(max_amount)
             except ValueError:
-                pass
+                return error_response(
+                    message="Invalid max_amount filter",
+                    errors={'max_amount': 'max_amount must be a number'},
+                    status_code=status.HTTP_400_BAD_REQUEST
+                )
+            query.setdefault('amount', {})['$lte'] = parsed_max_amount
+        if (
+            parsed_min_amount is not None and
+            parsed_max_amount is not None and
+            parsed_min_amount > parsed_max_amount
+        ):
+            return error_response(
+                message="Invalid amount range",
+                errors={'amount_range': 'min_amount cannot be greater than max_amount'},
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
         
         # Date range filter
         if start_date:
@@ -1395,13 +1690,21 @@ class PaymentSearchView(LoanOfficerRequiredMixin, APIView):
                 start_dt = datetime.strptime(start_date, '%Y-%m-%d')
                 query.setdefault('recorded_at', {})['$gte'] = start_dt
             except ValueError:
-                pass
+                return error_response(
+                    message="Invalid start_date filter",
+                    errors={'start_date': 'start_date must use YYYY-MM-DD format'},
+                    status_code=status.HTTP_400_BAD_REQUEST
+                )
         if end_date:
             try:
                 end_dt = datetime.strptime(end_date, '%Y-%m-%d').replace(hour=23, minute=59, second=59)
                 query.setdefault('recorded_at', {})['$lte'] = end_dt
             except ValueError:
-                pass
+                return error_response(
+                    message="Invalid end_date filter",
+                    errors={'end_date': 'end_date must use YYYY-MM-DD format'},
+                    status_code=status.HTTP_400_BAD_REQUEST
+                )
         
         # Keyword search - find customer IDs matching the search
         customer_ids = []
@@ -1429,7 +1732,7 @@ class PaymentSearchView(LoanOfficerRequiredMixin, APIView):
             search_conditions = []
             if customer_ids:
                 search_conditions.append({'customer_id': {'$in': customer_ids}})
-            search_conditions.append({'reference': {'$regex': search_query, '$options': 'i'}})
+            search_conditions.append({'reference': {'$regex': re.escape(search_query), '$options': 'i'}})
             
             if query:
                 final_query = {'$and': [query, {'$or': search_conditions}]}
@@ -1439,7 +1742,20 @@ class PaymentSearchView(LoanOfficerRequiredMixin, APIView):
             final_query = query
         
         # Sorting
-        sort_field = sort_by if sort_by in ['recorded_at', 'amount', 'installment_number'] else 'recorded_at'
+        valid_sort_fields = {'recorded_at', 'amount', 'installment_number'}
+        if sort_by not in valid_sort_fields:
+            return error_response(
+                message="Invalid sort_by parameter",
+                errors={'sort_by': f"sort_by must be one of: {', '.join(sorted(valid_sort_fields))}"},
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+        if sort_order not in {'asc', 'desc'}:
+            return error_response(
+                message="Invalid sort_order parameter",
+                errors={'sort_order': 'sort_order must be asc or desc'},
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+        sort_field = sort_by
         sort_direction = 1 if sort_order == 'asc' else -1
         schedule_cache = {}
 

@@ -8,11 +8,57 @@ from bson import ObjectId
 from accounts.models import LoanOfficer
 from accounts.utils.token_utils import TokenUtils
 from accounts.utils.response_helpers import success_response, error_response
+from accounts.utils.auth_cookies import (
+    clear_auth_cookies,
+    get_access_token_from_request,
+    get_refresh_token_from_request,
+    set_auth_cookies,
+)
 from accounts.services import LockoutService
+from accounts.utils.email_utils import EmailUtils
+from accounts.utils.throttles import LoanOfficerLoginRateThrottle
+from accounts.utils.validation_utils import parse_bool
 from analytics.models import AuditLog
 import logging
 
 logger = logging.getLogger('loan_officer_auth')
+GENERIC_LOGIN_ERROR_MESSAGE = "Invalid email/username or password."
+
+
+def _get_client_ip(request):
+    forwarded = request.META.get('HTTP_X_FORWARDED_FOR')
+    if forwarded:
+        return forwarded.split(',')[0].strip()
+    return request.META.get('REMOTE_ADDR', '')
+
+
+def _log_loan_officer_login_failure(request, email, reason, officer=None):
+    ip_address = _get_client_ip(request)
+    logger.warning(
+        "login_failed role=loan_officer reason=%s email=%s ip=%s",
+        reason,
+        email,
+        ip_address,
+    )
+    try:
+        AuditLog.log_action(
+            action='user_login_failed',
+            user_id=getattr(officer, 'id', None),
+            user_type='loan_officer',
+            user_email=getattr(officer, 'email', '') if officer else email,
+            description='Loan officer login failed',
+            details={
+                'reason': reason,
+                'email': email,
+            },
+            ip_address=ip_address,
+        )
+    except Exception as log_error:
+        logger.error(
+            "failed_to_write_audit action=user_login_failed role=loan_officer email=%s error=%s",
+            email,
+            str(log_error),
+        )
 
 
 class LoanOfficerLoginView(APIView):
@@ -27,12 +73,25 @@ class LoanOfficerLoginView(APIView):
     }
     """
     permission_classes = [AllowAny]
+    throttle_classes = [LoanOfficerLoginRateThrottle]
     
     def post(self, request):
         try:
-            email = request.data.get('email', '').lower().strip()
+            email = EmailUtils.normalize_email(str(request.data.get('email') or ''))
             password = request.data.get('password', '')
-            remember_me = request.data.get('remember_me', False)
+            if not isinstance(password, str):
+                return error_response(
+                    message="password must be a string",
+                    status_code=status.HTTP_400_BAD_REQUEST
+                )
+            remember_me_raw = request.data.get('remember_me', False)
+            remember_valid, remember_me, remember_error = parse_bool(remember_me_raw, 'remember_me')
+            if not remember_valid:
+                return error_response(
+                    message="Invalid remember_me value",
+                    errors={'remember_me': remember_error},
+                    status_code=status.HTTP_400_BAD_REQUEST
+                )
             
             if not email or not password:
                 return error_response(
@@ -44,24 +103,37 @@ class LoanOfficerLoginView(APIView):
             officer = LoanOfficer.find_one({'email': email})
             
             if not officer:
+                _log_loan_officer_login_failure(request, email, 'user_not_found')
                 return error_response(
-                    message="Invalid credentials",
+                    message=GENERIC_LOGIN_ERROR_MESSAGE,
                     status_code=status.HTTP_401_UNAUTHORIZED
                 )
             
             # Check if account is active
             if not officer.active:
+                _log_loan_officer_login_failure(
+                    request,
+                    email,
+                    'account_deactivated',
+                    officer=officer,
+                )
                 return error_response(
-                    message="Account has been deactivated. Contact your administrator.",
-                    status_code=status.HTTP_403_FORBIDDEN
+                    message=GENERIC_LOGIN_ERROR_MESSAGE,
+                    status_code=status.HTTP_401_UNAUTHORIZED
                 )
             
             # Check lockout
             if officer.locked_until and officer.locked_until > datetime.utcnow():
                 remaining = (officer.locked_until - datetime.utcnow()).seconds // 60
+                _log_loan_officer_login_failure(
+                    request,
+                    email,
+                    f'account_locked_{remaining}m_remaining',
+                    officer=officer,
+                )
                 return error_response(
-                    message=f"Account is locked. Try again in {remaining} minutes.",
-                    status_code=status.HTTP_403_FORBIDDEN
+                    message=GENERIC_LOGIN_ERROR_MESSAGE,
+                    status_code=status.HTTP_401_UNAUTHORIZED
                 )
             
             # Verify password
@@ -72,14 +144,26 @@ class LoanOfficerLoginView(APIView):
                 if officer.failed_login_attempts >= 5:
                     officer.locked_until = datetime.utcnow() + timedelta(minutes=15)
                     officer.save()
+                    _log_loan_officer_login_failure(
+                        request,
+                        email,
+                        'password_incorrect_account_locked',
+                        officer=officer,
+                    )
                     return error_response(
-                        message="Account locked due to too many failed attempts. Try again in 15 minutes.",
-                        status_code=status.HTTP_403_FORBIDDEN
+                        message=GENERIC_LOGIN_ERROR_MESSAGE,
+                        status_code=status.HTTP_401_UNAUTHORIZED
                     )
                 
                 officer.save()
+                _log_loan_officer_login_failure(
+                    request,
+                    email,
+                    f'password_incorrect_{5 - officer.failed_login_attempts}_attempts_remaining',
+                    officer=officer,
+                )
                 return error_response(
-                    message="Invalid credentials",
+                    message=GENERIC_LOGIN_ERROR_MESSAGE,
                     status_code=status.HTTP_401_UNAUTHORIZED
                 )
             
@@ -126,7 +210,7 @@ class LoanOfficerLoginView(APIView):
                 ip_address=request.META.get('REMOTE_ADDR', '')
             )
             
-            return success_response(
+            response = success_response(
                 data={
                     'access_token': tokens['access'],
                     'refresh_token': tokens['refresh'],
@@ -142,6 +226,8 @@ class LoanOfficerLoginView(APIView):
                 },
                 message="Login successful"
             )
+            set_auth_cookies(response, tokens['access'], tokens['refresh'])
+            return response
             
         except Exception as e:
             logger.error(f"Loan officer login error: {str(e)}")
@@ -164,8 +250,8 @@ class LoanOfficerLogoutView(APIView):
     
     def post(self, request):
         try:
-            refresh_token = request.data.get('refresh_token')
-            access_token = request.META.get('HTTP_AUTHORIZATION', '').replace('Bearer ', '')
+            refresh_token = get_refresh_token_from_request(request)
+            access_token = get_access_token_from_request(request)
             
             if refresh_token:
                 TokenUtils.blacklist_token(refresh_token, token_type='refresh')
@@ -181,8 +267,12 @@ class LoanOfficerLogoutView(APIView):
                 ip_address=request.META.get('REMOTE_ADDR', '')
             )
             
-            return success_response(message="Logged out successfully")
+            response = success_response(message="Logged out successfully")
+            clear_auth_cookies(response)
+            return response
             
         except Exception as e:
             logger.error(f"Loan officer logout error: {str(e)}")
-            return success_response(message="Logged out successfully")
+            response = success_response(message="Logged out successfully")
+            clear_auth_cookies(response)
+            return response

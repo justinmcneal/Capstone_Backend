@@ -29,13 +29,12 @@ class ForgotPasswordView(APIView):
         
         email = serializer.validated_data['email']
         success, message = PasswordService.initiate_password_reset(email)
-        
-        if success:
-            logger.info(f"Password reset OTP sent for {email} from IP {request.META.get('REMOTE_ADDR')}")
-            return APIResponseHelper.success_response(message=message)
-        
-        logger.warning(f"Password reset failed for {email}: {message}")
-        return APIResponseHelper.error_response(message=message, error_code=status.HTTP_404_NOT_FOUND)
+        if not success:
+            logger.error(f"Password reset initiation failed for {email}: {message}")
+            return APIResponseHelper.server_error_response('Failed to initiate password reset')
+
+        logger.info(f"Password reset request processed for {email} from IP {request.META.get('REMOTE_ADDR')}")
+        return APIResponseHelper.success_response(message=message)
 
 class VerifyResetOTPView(APIView):
     permission_classes = [AllowAny]

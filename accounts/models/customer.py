@@ -1,7 +1,7 @@
 from datetime import datetime
-import bcrypt
 from bson import ObjectId
 from django.conf import settings
+from config.field_encryption import decrypt_fields, encrypt_fields
 
 
 def get_db():
@@ -12,6 +12,11 @@ def get_db():
 class Customer:
     """Customer model using PyMongo - represents MSME users"""
     collection_name = 'customer'
+    encrypted_fields = (
+        'verification_token',
+        'password_reset_otp',
+        'two_factor_secret',
+    )
     
     def __init__(self, **kwargs):
         self._id = kwargs.get('_id')
@@ -107,22 +112,24 @@ class Customer:
         }
         if self._id:
             data['_id'] = self._id
-        return data
+        return encrypt_fields(data, self.encrypted_fields)
     
     @classmethod
     def from_dict(cls, data):
         """Create Customer instance from MongoDB document"""
         if not data:
             return None
-        return cls(**data)
+        return cls(**decrypt_fields(data, cls.encrypted_fields))
     
     def set_password(self, raw_password):
-        """Hash and set password"""
-        self.password = bcrypt.hashpw(raw_password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+        """Hash and set password (peppered + bcrypt)"""
+        from accounts.utils.pepper_utils import hash_password
+        self.password = hash_password(raw_password)
     
     def check_password(self, raw_password):
-        """Verify password"""
-        return bcrypt.checkpw(raw_password.encode('utf-8'), self.password.encode('utf-8'))
+        """Verify password (peppered + bcrypt)"""
+        from accounts.utils.pepper_utils import verify_password
+        return verify_password(raw_password, self.password)
     
     def save(self):
         """Save customer to database"""

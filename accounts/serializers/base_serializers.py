@@ -1,6 +1,7 @@
 from rest_framework import serializers
 from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError
+from accounts.utils.validation_utils import sanitize_text
 
 
 class PasswordValidationMixin:
@@ -41,3 +42,43 @@ class PasswordConfirmationMixin:
                 )
         
         return super().validate(attrs) if hasattr(super(), 'validate') else attrs
+
+
+class InputSanitizationMixin:
+    """
+    Sanitize serializer input for text fields.
+
+    By default, all CharField values are sanitized except security-sensitive
+    fields like passwords and OTP.
+    """
+
+    sanitize_excluded_fields = {
+        'password',
+        'password_confirm',
+        'new_password',
+        'confirm_password',
+        'old_password',
+        'otp',
+    }
+
+    def to_internal_value(self, data):
+        attrs = super().to_internal_value(data)
+        for field_name, value in list(attrs.items()):
+            field = self.fields.get(field_name)
+            if not field or field_name in self.sanitize_excluded_fields:
+                continue
+
+            if isinstance(field, serializers.CharField) and isinstance(value, str):
+                attrs[field_name] = sanitize_text(value)
+                continue
+
+            if (
+                isinstance(field, serializers.ListField)
+                and isinstance(field.child, serializers.CharField)
+                and isinstance(value, list)
+            ):
+                attrs[field_name] = [
+                    sanitize_text(item) if isinstance(item, str) else item for item in value
+                ]
+
+        return attrs

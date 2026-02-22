@@ -14,6 +14,7 @@ from pathlib import Path
 import os
 from dotenv import load_dotenv
 from pymongo import MongoClient
+from cryptography.fernet import Fernet
 from django.core.exceptions import ImproperlyConfigured
 from django.core.management.utils import get_random_secret_key
 
@@ -73,7 +74,9 @@ MIDDLEWARE = [
     'django.contrib.sessions.middleware.SessionMiddleware',
     'corsheaders.middleware.CorsMiddleware',  
     'django.middleware.common.CommonMiddleware',
+    'config.middleware.NoSQLInjectionGuardMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
+    'config.middleware.CSRFSameSiteTokenMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
@@ -110,6 +113,19 @@ DATABASES = {
 # MongoDB Configuration
 MONGODB_URI = os.getenv('MONGODB_URI', '')
 MONGODB_NAME = os.getenv('MONGODB_NAME', 'capstone_db')
+FIELD_ENCRYPTION_KEY = os.getenv('FIELD_ENCRYPTION_KEY', '').strip()
+
+# Fail fast in production: sensitive fields must never be stored plaintext.
+if not DEBUG:
+    if not FIELD_ENCRYPTION_KEY:
+        raise ImproperlyConfigured("FIELD_ENCRYPTION_KEY must be set when DEBUG=False")
+    try:
+        Fernet(FIELD_ENCRYPTION_KEY.encode('utf-8'))
+    except Exception as exc:
+        raise ImproperlyConfigured(
+            'FIELD_ENCRYPTION_KEY is invalid. Generate one with: '
+            'python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"'
+        ) from exc
 
 # Initialize PyMongo client
 if MONGODB_URI:
@@ -218,6 +234,28 @@ TOKEN_LIFETIMES = {
 CORS_ALLOWED_ORIGINS = os.getenv('CORS_ALLOWED_ORIGINS', 'http://localhost:3000,http://localhost:5173').split(',')
 CORS_ALLOW_CREDENTIALS = True
 
+# CSRF / SameSite policy
+SESSION_COOKIE_SAMESITE = os.getenv('SESSION_COOKIE_SAMESITE', 'Lax')
+SESSION_COOKIE_HTTPONLY = env_bool('SESSION_COOKIE_HTTPONLY', True)
+SESSION_COOKIE_SECURE = env_bool('SESSION_COOKIE_SECURE', not DEBUG)
+CSRF_COOKIE_SAMESITE = os.getenv('CSRF_COOKIE_SAMESITE', 'Lax')
+CSRF_COOKIE_HTTPONLY = env_bool('CSRF_COOKIE_HTTPONLY', False)
+CSRF_COOKIE_SECURE = env_bool('CSRF_COOKIE_SECURE', not DEBUG)
+AUTH_ACCESS_COOKIE_NAME = os.getenv('AUTH_ACCESS_COOKIE_NAME', 'access_token')
+AUTH_REFRESH_COOKIE_NAME = os.getenv('AUTH_REFRESH_COOKIE_NAME', 'refresh_token')
+AUTH_COOKIE_SECURE = env_bool('AUTH_COOKIE_SECURE', not DEBUG)
+AUTH_COOKIE_HTTPONLY = env_bool('AUTH_COOKIE_HTTPONLY', True)
+AUTH_COOKIE_SAMESITE = os.getenv('AUTH_COOKIE_SAMESITE', 'Lax')
+AUTH_COOKIE_PATH = os.getenv('AUTH_COOKIE_PATH', '/')
+CSRF_TRUSTED_ORIGINS = [
+    origin.strip()
+    for origin in os.getenv(
+        'CSRF_TRUSTED_ORIGINS',
+        'http://localhost:3000,http://localhost:5173,http://127.0.0.1:3000,http://127.0.0.1:5173'
+    ).split(',')
+    if origin.strip()
+]
+
 # Email configuration
 EMAIL_BACKEND = os.getenv('EMAIL_BACKEND', 'django.core.mail.backends.smtp.EmailBackend')
 EMAIL_HOST = os.getenv('EMAIL_HOST', 'smtp.gmail.com')
@@ -284,6 +322,16 @@ LOGGING = {
             'level': 'INFO',
             'propagate': False,
         },
+        'admin_auth': {
+            'handlers': ['console', 'file'],
+            'level': 'INFO',
+            'propagate': False,
+        },
+        'loan_officer_auth': {
+            'handlers': ['console', 'file'],
+            'level': 'INFO',
+            'propagate': False,
+        },
     },
 }
 
@@ -313,7 +361,8 @@ if not DEBUG:
             'formatter': 'simple',
         },
     }
-    LOGGING['loggers']['authentication']['handlers'] = ['console']
+    for logger_name in ('authentication', 'admin_auth', 'loan_officer_auth'):
+        LOGGING['loggers'][logger_name]['handlers'] = ['console']
 
 # Groq LLM Configuration
 GROQ_API_KEY = os.getenv('GROQ_API_KEY', '')
