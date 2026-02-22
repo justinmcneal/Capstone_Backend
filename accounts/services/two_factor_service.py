@@ -1,8 +1,11 @@
 import pyotp
 import secrets
 import hashlib
+import base64
+import io
 from typing import List, Tuple, Optional
 import logging
+import qrcode
 
 logger = logging.getLogger('authentication')
 
@@ -141,6 +144,7 @@ class TwoFactorService:
             email=customer.email,
             secret=secret
         )
+        qr_code_data_url = TwoFactorService.generate_qr_code_data_url(provisioning_uri)
         
         # Store secret temporarily (not enabled until verified)
         customer.two_factor_secret = secret
@@ -151,8 +155,37 @@ class TwoFactorService:
         return {
             'secret': secret,
             'provisioning_uri': provisioning_uri,
-            'manual_entry_key': secret  # For manual entry if QR scan fails
+            'manual_entry_key': secret,  # For manual entry if QR scan fails
+            'qr_code_data_url': qr_code_data_url
         }
+
+    @staticmethod
+    def generate_qr_code_data_url(content: str) -> str:
+        """
+        Generate a PNG QR code as a data URL so frontend does not depend on
+        third-party QR image services.
+        """
+        if not content:
+            return ''
+
+        try:
+            qr = qrcode.QRCode(
+                version=1,
+                error_correction=qrcode.constants.ERROR_CORRECT_M,
+                box_size=8,
+                border=2,
+            )
+            qr.add_data(content)
+            qr.make(fit=True)
+
+            image = qr.make_image(fill_color='black', back_color='white')
+            buffer = io.BytesIO()
+            image.save(buffer, format='PNG')
+            encoded = base64.b64encode(buffer.getvalue()).decode('ascii')
+            return f'data:image/png;base64,{encoded}'
+        except Exception as e:
+            logger.error(f"QR code generation error: {str(e)}")
+            return ''
     
     @staticmethod
     def confirm_2fa_setup(customer, code: str) -> Tuple[bool, Optional[List[str]]]:

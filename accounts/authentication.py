@@ -1,5 +1,6 @@
 from rest_framework_simplejwt.authentication import JWTAuthentication
 from rest_framework_simplejwt.exceptions import InvalidToken, AuthenticationFailed
+from django.conf import settings
 from accounts.utils.token_utils import TokenUtils
 import logging
 
@@ -71,16 +72,29 @@ class CustomJWTAuthentication(JWTAuthentication):
         """
         Authenticate the request and check if token is blacklisted.
         """
+        raw_token = None
+
+        # 1) Standard Bearer token authentication.
         header = self.get_header(request)
-        if header is None:
-            return None
-        
-        raw_token = self.get_raw_token(header)
+        if header is not None:
+            header_token = self.get_raw_token(header)
+            if header_token is not None:
+                raw_token = header_token.decode()
+
+        # 2) Fallback to HttpOnly auth cookie for browser-based sessions.
+        if raw_token is None:
+            access_cookie_name = getattr(
+                settings,
+                'AUTH_ACCESS_COOKIE_NAME',
+                'access_token',
+            )
+            raw_token = request.COOKIES.get(access_cookie_name)
+
         if raw_token is None:
             return None
         
         # Check if access token is blacklisted
-        if TokenUtils.is_token_blacklisted(raw_token.decode(), token_type='access'):
+        if TokenUtils.is_token_blacklisted(raw_token, token_type='access'):
             logger.warning(f"Attempt to use blacklisted access token")
             raise AuthenticationFailed('Token has been revoked')
         

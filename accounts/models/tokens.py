@@ -86,9 +86,12 @@ class RefreshTokenEntry:
     def __init__(self, **kwargs):
         self._id = kwargs.get('_id')
         self.customer = kwargs.get('customer')
+        self.role = kwargs.get('role', 'customer')
         self.token_hash = kwargs.get('token_hash')
         self.issued_at = kwargs.get('issued_at', datetime.utcnow())
         self.expires_at = kwargs.get('expires_at')
+        self.is_active = kwargs.get('is_active', True)
+        self.revoked_at = kwargs.get('revoked_at')
     
     @property
     def id(self):
@@ -97,9 +100,12 @@ class RefreshTokenEntry:
     def to_dict(self):
         data = {
             'customer': self.customer,
+            'role': self.role,
             'token_hash': self.token_hash,
             'issued_at': self.issued_at,
             'expires_at': self.expires_at,
+            'is_active': self.is_active,
+            'revoked_at': self.revoked_at,
         }
         if self._id:
             data['_id'] = self._id
@@ -153,11 +159,19 @@ class RefreshTokenEntry:
         db = get_db()
         collection = db[cls.collection_name]
         return collection.delete_many(query)
+
+    @classmethod
+    def update_many(cls, query, update):
+        db = get_db()
+        collection = db[cls.collection_name]
+        return collection.update_many(query, update)
     
     @classmethod
     def create_indexes(cls):
         db = get_db()
         collection = db[cls.collection_name]
         collection.create_index('customer')
+        collection.create_index('role')
         collection.create_index('token_hash')
+        collection.create_index('is_active')
         collection.create_index('expires_at', expireAfterSeconds=0)

@@ -4,9 +4,11 @@ from rest_framework.permissions import IsAuthenticated
 from bson import ObjectId
 
 from accounts.authentication import CustomJWTAuthentication
+from accounts.utils.access_control import AccessControlMixin
 from accounts.utils.response_helpers import success_response, error_response
 from accounts.utils.throttles import PreQualifyRateThrottle
-from loans.models import LoanProduct, LoanApplication
+from accounts.utils.validation_utils import sanitize_text
+from loans.models import LoanProduct, LoanApplication, APPLICATION_STATUSES
 from loans.serializers import LoanApplicationSerializer, PreQualifyRequestSerializer
 from loans.services import qualify_customer, check_basic_eligibility
 
@@ -16,7 +18,14 @@ import logging
 logger = logging.getLogger('loans')
 
 
-class LoanProductListView(APIView):
+class CustomerRoleRequiredMixin(AccessControlMixin):
+    """Require customer role for customer-facing loan endpoints."""
+
+    def check_customer_permission(self, request):
+        return self.require_customer(request)
+
+
+class LoanProductListView(CustomerRoleRequiredMixin, APIView):
     """
     List available loan products.
     
@@ -27,6 +36,10 @@ class LoanProductListView(APIView):
     
     def get(self, request):
         """Get all active loan products"""
+        has_permission, result = self.check_customer_permission(request)
+        if not has_permission:
+            return result
+
         products = LoanProduct.find(active_only=True)
         
         products_data = [{
@@ -50,7 +63,7 @@ class LoanProductListView(APIView):
         )
 
 
-class LoanProductDetailView(APIView):
+class LoanProductDetailView(CustomerRoleRequiredMixin, APIView):
     """
     Get loan product details.
     
@@ -60,6 +73,10 @@ class LoanProductDetailView(APIView):
     permission_classes = [IsAuthenticated]
     
     def get(self, request, product_id):
+        has_permission, result = self.check_customer_permission(request)
+        if not has_permission:
+            return result
+
         product = LoanProduct.find_by_id(product_id)
         
         if not product or not product.active:
@@ -88,7 +105,7 @@ class LoanProductDetailView(APIView):
         )
 
 
-class PreQualifyView(APIView):
+class PreQualifyView(CustomerRoleRequiredMixin, APIView):
     """
     Check customer eligibility for a loan product.
     Uses AI to analyze profile and provide recommendations.
@@ -102,6 +119,10 @@ class PreQualifyView(APIView):
     def post(self, request):
         """Check eligibility for a loan"""
         try:
+            has_permission, result = self.check_customer_permission(request)
+            if not has_permission:
+                return result
+
             user = request.user
             customer_id = user.customer_id
 
@@ -214,7 +235,7 @@ class PreQualifyView(APIView):
             )
 
 
-class LoanApplyView(APIView):
+class LoanApplyView(CustomerRoleRequiredMixin, APIView):
     """
     Submit a loan application.
     
@@ -226,6 +247,10 @@ class LoanApplyView(APIView):
     def post(self, request):
         """Submit loan application"""
         try:
+            has_permission, result = self.check_customer_permission(request)
+            if not has_permission:
+                return result
+
             user = request.user
             customer_id = user.customer_id
             
@@ -357,7 +382,7 @@ class LoanApplyView(APIView):
             )
 
 
-class MyApplicationsView(APIView):
+class MyApplicationsView(CustomerRoleRequiredMixin, APIView):
     """
     List customer's loan applications.
     
@@ -374,14 +399,51 @@ class MyApplicationsView(APIView):
     
     def get(self, request):
         """Get all applications for current customer with optional filtering"""
+        has_permission, result = self.check_customer_permission(request)
+        if not has_permission:
+            return result
+
         user = request.user
         customer_id = user.customer_id
         
         # Get query parameters
-        search_query = request.query_params.get('search', '').strip().lower()
-        status_filter = request.query_params.get('status', '').strip().lower()
-        page = int(request.query_params.get('page', 1))
-        page_size = min(int(request.query_params.get('page_size', 20)), 100)
+        search_query = sanitize_text(request.query_params.get('search', '')).lower()
+        status_filter = sanitize_text(request.query_params.get('status', '')).lower()
+        allowed_status_filters = set(APPLICATION_STATUSES) | {'pending'}
+        if status_filter and status_filter not in allowed_status_filters:
+            return error_response(
+                message="Invalid status filter",
+                errors={'status': f"status must be one of: {', '.join(sorted(allowed_status_filters))}"},
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+        try:
+            page = int(request.query_params.get('page', 1))
+        except (TypeError, ValueError):
+            return error_response(
+                message="Invalid page parameter",
+                errors={'page': 'page must be an integer'},
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+        try:
+            page_size = min(int(request.query_params.get('page_size', 20)), 100)
+        except (TypeError, ValueError):
+            return error_response(
+                message="Invalid page_size parameter",
+                errors={'page_size': 'page_size must be an integer'},
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+        if page < 1:
+            return error_response(
+                message="Invalid page parameter",
+                errors={'page': 'page must be at least 1'},
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+        if page_size < 1:
+            return error_response(
+                message="Invalid page_size parameter",
+                errors={'page_size': 'page_size must be at least 1'},
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
         
         applications = LoanApplication.find_by_customer(customer_id)
         
@@ -395,8 +457,13 @@ class MyApplicationsView(APIView):
                 continue
             
             # Apply status filter
-            if status_filter and app.status.lower() != status_filter:
-                continue
+            if status_filter:
+                app_status = (app.status or '').lower()
+                if status_filter == 'pending':
+                    if app_status not in {'submitted', 'under_review'}:
+                        continue
+                elif app_status != status_filter:
+                    continue
             
             apps_data.append({
                 'id': app.id,
@@ -432,7 +499,7 @@ class MyApplicationsView(APIView):
         )
 
 
-class ApplicationDetailView(APIView):
+class ApplicationDetailView(CustomerRoleRequiredMixin, APIView):
     """
     Get application details.
     
@@ -442,6 +509,10 @@ class ApplicationDetailView(APIView):
     permission_classes = [IsAuthenticated]
     
     def get(self, request, application_id):
+        has_permission, result = self.check_customer_permission(request)
+        if not has_permission:
+            return result
+
         user = request.user
         customer_id = user.customer_id
         
@@ -479,7 +550,7 @@ class ApplicationDetailView(APIView):
         )
 
 
-class RepaymentScheduleView(APIView):
+class RepaymentScheduleView(CustomerRoleRequiredMixin, APIView):
     """
     Get repayment schedule for a loan application.
     
@@ -489,6 +560,10 @@ class RepaymentScheduleView(APIView):
     permission_classes = [IsAuthenticated]
     
     def get(self, request, application_id):
+        has_permission, result = self.check_customer_permission(request)
+        if not has_permission:
+            return result
+
         user = request.user
         customer_id = user.customer_id
         
@@ -548,7 +623,7 @@ class RepaymentScheduleView(APIView):
         )
 
 
-class PaymentHistoryView(APIView):
+class PaymentHistoryView(CustomerRoleRequiredMixin, APIView):
     """
     Get payment history for a loan application.
     
@@ -558,6 +633,10 @@ class PaymentHistoryView(APIView):
     permission_classes = [IsAuthenticated]
     
     def get(self, request, application_id):
+        has_permission, result = self.check_customer_permission(request)
+        if not has_permission:
+            return result
+
         user = request.user
         customer_id = user.customer_id
         
@@ -594,7 +673,7 @@ class PaymentHistoryView(APIView):
         )
 
 
-class ResubmitApplicationView(APIView):
+class ResubmitApplicationView(CustomerRoleRequiredMixin, APIView):
     """
     Resubmit a rejected application.
     
@@ -604,6 +683,10 @@ class ResubmitApplicationView(APIView):
     permission_classes = [IsAuthenticated]
     
     def post(self, request, application_id):
+        has_permission, result = self.check_customer_permission(request)
+        if not has_permission:
+            return result
+
         user = request.user
         customer_id = user.customer_id
         
@@ -633,7 +716,7 @@ class ResubmitApplicationView(APIView):
         )
 
 
-class RejectionFeedbackView(APIView):
+class RejectionFeedbackView(CustomerRoleRequiredMixin, APIView):
     """
     Get AI-powered friendly feedback about why application was rejected.
     
@@ -643,6 +726,10 @@ class RejectionFeedbackView(APIView):
     permission_classes = [IsAuthenticated]
     
     def get(self, request, application_id):
+        has_permission, result = self.check_customer_permission(request)
+        if not has_permission:
+            return result
+
         user = request.user
         customer_id = user.customer_id
         

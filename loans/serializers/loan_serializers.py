@@ -1,9 +1,10 @@
 from rest_framework import serializers
 from loans.models import APPLICATION_STATUSES
 from documents.models import DOCUMENT_TYPES
+from accounts.serializers.base_serializers import InputSanitizationMixin
 
 
-class LoanProductSerializer(serializers.Serializer):
+class LoanProductSerializer(InputSanitizationMixin, serializers.Serializer):
     """Serializer for loan product data"""
     id = serializers.CharField(read_only=True)
     name = serializers.CharField(max_length=100)
@@ -49,7 +50,7 @@ class LoanProductSerializer(serializers.Serializer):
         return data
 
 
-class LoanApplicationSerializer(serializers.Serializer):
+class LoanApplicationSerializer(InputSanitizationMixin, serializers.Serializer):
     """Serializer for loan application submission"""
     product_id = serializers.CharField(required=True)
     requested_amount = serializers.FloatField(min_value=1000)
@@ -57,7 +58,7 @@ class LoanApplicationSerializer(serializers.Serializer):
     purpose = serializers.CharField(max_length=500, required=False, allow_blank=True)
 
 
-class PreQualifyRequestSerializer(serializers.Serializer):
+class PreQualifyRequestSerializer(InputSanitizationMixin, serializers.Serializer):
     """Serializer for pre-qualification request"""
     product_id = serializers.CharField(required=True)
     amount = serializers.FloatField(min_value=1000)
@@ -88,7 +89,7 @@ class LoanApplicationResponseSerializer(serializers.Serializer):
     created_at = serializers.DateTimeField()
 
 
-class LoanReviewSerializer(serializers.Serializer):
+class LoanReviewSerializer(InputSanitizationMixin, serializers.Serializer):
     """Serializer for loan officer review"""
     action = serializers.ChoiceField(choices=['approve', 'reject'])
     approved_amount = serializers.FloatField(min_value=0, required=False)
@@ -107,7 +108,7 @@ class LoanReviewSerializer(serializers.Serializer):
         return data
 
 
-class MissingDocumentsRequestSerializer(serializers.Serializer):
+class MissingDocumentsRequestSerializer(InputSanitizationMixin, serializers.Serializer):
     """Serializer for requesting missing (not-yet-uploaded) documents"""
     missing_documents = serializers.ListField(
         child=serializers.ChoiceField(choices=DOCUMENT_TYPES),
@@ -123,7 +124,7 @@ class MissingDocumentsRequestSerializer(serializers.Serializer):
         return unique
 
 
-class ApplicationInternalNoteSerializer(serializers.Serializer):
+class ApplicationInternalNoteSerializer(InputSanitizationMixin, serializers.Serializer):
     """Serializer for adding standalone internal notes on an application."""
     note = serializers.CharField(max_length=1000, required=True)
 

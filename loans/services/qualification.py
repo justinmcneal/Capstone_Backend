@@ -6,6 +6,7 @@ import logging
 import re
 from ai_assistant.services import get_llm_service
 from accounts.models import Consent
+from accounts.utils.validation_utils import sanitize_multiline_text, sanitize_text
 from profiles.models import CustomerProfile, BusinessProfile, AlternativeData
 from documents.models import Document, DOCUMENT_TYPES
 
@@ -224,7 +225,7 @@ def _normalize_string_list(value, field_name):
 
     normalized = []
     for item in value:
-        text = str(item).strip()
+        text = sanitize_text(item)
         if text:
             normalized.append(text)
     return normalized
@@ -278,7 +279,7 @@ def _validate_and_normalize_ai_qualification(payload, product, requested_amount,
         requested_amount,
     )
 
-    reasoning = str(payload.get('reasoning', '')).strip()
+    reasoning = sanitize_multiline_text(payload.get('reasoning', ''))
     if not reasoning:
         raise ValueError("reasoning must be a non-empty string")
 

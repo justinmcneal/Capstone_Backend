@@ -4,7 +4,9 @@ from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
 
 from accounts.authentication import CustomJWTAuthentication
+from accounts.utils.access_control import AccessControlMixin
 from accounts.utils.response_helpers import success_response, error_response
+from accounts.utils.validation_utils import parse_bool
 from profiles.models import CustomerProfile, BusinessProfile, AlternativeData
 from profiles.serializers import (
     CustomerProfileSerializer,
@@ -17,7 +19,14 @@ import logging
 logger = logging.getLogger('profiles')
 
 
-class CustomerProfileView(APIView):
+class CustomerProfileAccessMixin(AccessControlMixin):
+    """Restrict profile endpoints to customer accounts."""
+
+    def check_customer_permission(self, request):
+        return self.require_customer(request)
+
+
+class CustomerProfileView(CustomerProfileAccessMixin, APIView):
     """
     API view for managing customer personal profile.
     
@@ -30,6 +39,10 @@ class CustomerProfileView(APIView):
     def get(self, request):
         """Get customer profile"""
         try:
+            has_permission, result = self.check_customer_permission(request)
+            if not has_permission:
+                return result
+
             user = request.user
             customer_id = user.customer_id
             
@@ -67,6 +80,10 @@ class CustomerProfileView(APIView):
     def put(self, request):
         """Update customer profile"""
         try:
+            has_permission, result = self.check_customer_permission(request)
+            if not has_permission:
+                return result
+
             serializer = CustomerProfileSerializer(data=request.data)
             if not serializer.is_valid():
                 return error_response(
@@ -117,7 +134,7 @@ class CustomerProfileView(APIView):
             )
 
 
-class BusinessProfileView(APIView):
+class BusinessProfileView(CustomerProfileAccessMixin, APIView):
     """
     API view for managing business/MSME profile.
     
@@ -130,6 +147,10 @@ class BusinessProfileView(APIView):
     def get(self, request):
         """Get business profile"""
         try:
+            has_permission, result = self.check_customer_permission(request)
+            if not has_permission:
+                return result
+
             user = request.user
             customer_id = user.customer_id
             
@@ -168,6 +189,10 @@ class BusinessProfileView(APIView):
     def put(self, request):
         """Update business profile"""
         try:
+            has_permission, result = self.check_customer_permission(request)
+            if not has_permission:
+                return result
+
             serializer = BusinessProfileSerializer(data=request.data)
             if not serializer.is_valid():
                 return error_response(
@@ -213,7 +238,7 @@ class BusinessProfileView(APIView):
             )
 
 
-class AlternativeDataView(APIView):
+class AlternativeDataView(CustomerProfileAccessMixin, APIView):
     """
     API view for managing alternative credit data.
     
@@ -226,6 +251,10 @@ class AlternativeDataView(APIView):
     def get(self, request):
         """Get alternative credit data"""
         try:
+            has_permission, result = self.check_customer_permission(request)
+            if not has_permission:
+                return result
+
             user = request.user
             customer_id = user.customer_id
             
@@ -279,6 +308,10 @@ class AlternativeDataView(APIView):
     def put(self, request):
         """Update alternative credit data"""
         try:
+            has_permission, result = self.check_customer_permission(request)
+            if not has_permission:
+                return result
+
             serializer = AlternativeDataSerializer(data=request.data)
             if not serializer.is_valid():
                 return error_response(
@@ -324,7 +357,7 @@ class AlternativeDataView(APIView):
             )
 
 
-class ProfileSummaryView(APIView):
+class ProfileSummaryView(CustomerProfileAccessMixin, APIView):
     """
     API view for getting a summary of all profile data.
     
@@ -336,6 +369,10 @@ class ProfileSummaryView(APIView):
     def get(self, request):
         """Get complete profile summary including completion status"""
         try:
+            has_permission, result = self.check_customer_permission(request)
+            if not has_permission:
+                return result
+
             user = request.user
             customer_id = user.customer_id
             
@@ -456,7 +493,7 @@ class ProfileSummaryView(APIView):
 
 
 
-class NotificationPreferencesView(APIView):
+class NotificationPreferencesView(CustomerProfileAccessMixin, APIView):
     """
     Manage notification preferences.
     
@@ -469,6 +506,10 @@ class NotificationPreferencesView(APIView):
     def get(self, request):
         """Get notification preferences"""
         from accounts.services import AuthService
+
+        has_permission, result = self.check_customer_permission(request)
+        if not has_permission:
+            return result
         
         user = request.user
         customer = AuthService.get_customer_by_id(user.customer_id)
@@ -493,6 +534,10 @@ class NotificationPreferencesView(APIView):
     def put(self, request):
         """Update notification preferences"""
         from accounts.services import AuthService
+
+        has_permission, result = self.check_customer_permission(request)
+        if not has_permission:
+            return result
         
         user = request.user
         customer = AuthService.get_customer_by_id(user.customer_id)
@@ -505,14 +550,34 @@ class NotificationPreferencesView(APIView):
         
         # Get preferences from request
         prefs = request.data.get('preferences', {})
+        if not isinstance(prefs, dict):
+            return error_response(
+                message="preferences must be an object",
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
         
         # Validate and update
         valid_keys = ['email_loan_updates', 'email_payment_reminders', 'email_promotions']
+        unknown_keys = [key for key in prefs.keys() if key not in valid_keys]
+        if unknown_keys:
+            return error_response(
+                message="Unknown notification preference keys",
+                errors={'preferences': f"Unsupported keys: {', '.join(sorted(unknown_keys))}"},
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+
         current_prefs = getattr(customer, 'notification_preferences', {})
         
         for key in valid_keys:
             if key in prefs:
-                current_prefs[key] = bool(prefs[key])
+                is_valid, parsed_value, parse_error = parse_bool(prefs[key], f"preferences.{key}")
+                if not is_valid:
+                    return error_response(
+                        message="Invalid notification preference value",
+                        errors={key: parse_error},
+                        status_code=status.HTTP_400_BAD_REQUEST
+                    )
+                current_prefs[key] = parsed_value
         
         customer.notification_preferences = current_prefs
         customer.save()

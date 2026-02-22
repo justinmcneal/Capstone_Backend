@@ -7,6 +7,7 @@ from rest_framework.permissions import IsAuthenticated
 from datetime import datetime, timedelta
 
 from accounts.authentication import CustomJWTAuthentication
+from accounts.utils.access_control import AccessControlMixin
 from accounts.utils.response_helpers import success_response, error_response
 from django.conf import settings
 import logging
@@ -14,17 +15,11 @@ import logging
 logger = logging.getLogger('analytics')
 
 
-class LoanOfficerRequiredMixin:
+class LoanOfficerRequiredMixin(AccessControlMixin):
     """Mixin to require loan officer role"""
     
     def check_officer_permission(self, request):
-        user = request.user
-        if not hasattr(user, 'role') or user.role not in ['loan_officer', 'admin']:
-            return False, error_response(
-                message="Loan officer access required",
-                status_code=status.HTTP_403_FORBIDDEN
-            )
-        return True, user
+        return self.require_officer_or_admin(request)
 
 
 class OfficerDashboardView(LoanOfficerRequiredMixin, APIView):
