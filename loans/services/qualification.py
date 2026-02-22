@@ -18,13 +18,13 @@ DOCUMENT_TYPE_ALIASES = {
     'business_registration': 'business_permit',
 }
 DOCUMENT_TYPE_LABELS = {
-    'valid_id': 'valid_id',
-    'selfie_with_id': 'selfie_with_id',
-    'proof_of_address': 'proof_of_address',
-    'business_permit': 'business_permit',
-    'business_photo': 'business_photo',
-    'income_proof': 'proof_of_income',
-    'other': 'other',
+    'valid_id': 'Valid Government ID',
+    'selfie_with_id': 'Selfie with ID',
+    'proof_of_address': 'Proof of Address',
+    'business_permit': 'Business Permit',
+    'business_photo': 'Business Photo',
+    'income_proof': 'Proof of Income',
+    'other': 'Other',
 }
 
 
@@ -58,13 +58,22 @@ def resolve_required_document_types(product=None, requirements_scope='product'):
     """
     Resolve required documents with normalization and sane fallback.
     - baseline scope: always baseline required docs
-    - product scope: product.required_documents when available; falls back to baseline
+    - product scope:
+        * explicit [] means no product documents required
+        * missing/None falls back to baseline defaults
     """
     scope = _normalize_scope(requirements_scope)
+    explicit_product_docs = False
     if scope == 'baseline':
         source = BASELINE_REQUIRED_DOCUMENTS
     else:
-        source = getattr(product, 'required_documents', None) or BASELINE_REQUIRED_DOCUMENTS
+        product_required_documents = getattr(product, 'required_documents', None)
+        explicit_product_docs = product_required_documents is not None
+        source = (
+            product_required_documents
+            if explicit_product_docs
+            else BASELINE_REQUIRED_DOCUMENTS
+        )
 
     resolved = []
     for raw_type in source:
@@ -73,7 +82,11 @@ def resolve_required_document_types(product=None, requirements_scope='product'):
             resolved.append(canonical)
 
     if not resolved:
-        resolved = list(BASELINE_REQUIRED_DOCUMENTS)
+        if scope == 'baseline' or not explicit_product_docs:
+            resolved = list(BASELINE_REQUIRED_DOCUMENTS)
+        else:
+            # Explicit empty product config means no required documents.
+            resolved = []
 
     return resolved
 

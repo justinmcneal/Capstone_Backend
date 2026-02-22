@@ -7,5 +7,6 @@ from .assignment import (
 
 from .qualification import (
     qualify_customer,
-    check_basic_eligibility
+    check_basic_eligibility,
+    resolve_required_document_types,
 )
