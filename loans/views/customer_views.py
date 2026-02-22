@@ -50,10 +50,12 @@ class LoanProductListView(CustomerRoleRequiredMixin, APIView):
             'min_amount': p.min_amount,
             'max_amount': p.max_amount,
             'interest_rate': p.interest_rate,
+            'interest_rate_unit': 'decimal',
+            'interest_rate_period': 'monthly',
             'interest_rate_display': f"{p.interest_rate * 100:.1f}% monthly",
             'min_term_months': p.min_term_months,
             'max_term_months': p.max_term_months,
-            'required_documents': [],
+            'required_documents': p.required_documents or [],
             'target_description': p.target_description
         } for p in products]
         
@@ -94,9 +96,12 @@ class LoanProductDetailView(CustomerRoleRequiredMixin, APIView):
                 'min_amount': product.min_amount,
                 'max_amount': product.max_amount,
                 'interest_rate': product.interest_rate,
+                'interest_rate_unit': 'decimal',
+                'interest_rate_period': 'monthly',
+                'interest_rate_display': f"{product.interest_rate * 100:.1f}% monthly",
                 'min_term_months': product.min_term_months,
                 'max_term_months': product.max_term_months,
-                'required_documents': [],
+                'required_documents': product.required_documents or [],
                 'min_business_months': product.min_business_months,
                 'min_monthly_income': product.min_monthly_income,
                 'target_description': product.target_description
@@ -195,6 +200,23 @@ class PreQualifyView(CustomerRoleRequiredMixin, APIView):
                 requirements_scope=requirements_scope,
                 require_approved_documents=False,
             )
+
+            recommended_amount = qualification.get('recommended_amount') or 0
+            quote_amount = 0.0
+            monthly_payment = 0.0
+            total_interest = 0.0
+            total_repayment = 0.0
+            if qualification.get('eligible') and qualification.get('can_apply'):
+                try:
+                    quote_amount = float(recommended_amount)
+                except (TypeError, ValueError):
+                    quote_amount = 0.0
+
+                if quote_amount > 0 and term_months > 0:
+                    monthly_interest = quote_amount * float(product.interest_rate or 0.0)
+                    total_interest = monthly_interest * term_months
+                    total_repayment = quote_amount + total_interest
+                    monthly_payment = total_repayment / term_months
             
             return success_response(
                 data={
@@ -203,10 +225,18 @@ class PreQualifyView(CustomerRoleRequiredMixin, APIView):
                         'name': product.name
                     },
                     'requested_amount': requested_amount,
+                    'term_months': term_months,
                     'eligible': qualification.get('eligible', False),
                     'eligibility_score': qualification.get('eligibility_score'),
                     'risk_category': qualification.get('risk_category'),
                     'recommended_amount': qualification.get('recommended_amount'),
+                    'interest_rate': product.interest_rate,
+                    'interest_rate_unit': 'decimal',
+                    'interest_rate_period': 'monthly',
+                    'interest_rate_display': f"{product.interest_rate * 100:.1f}% monthly",
+                    'monthly_payment': round(monthly_payment, 2) if monthly_payment else 0.0,
+                    'total_interest': round(total_interest, 2) if total_interest else 0.0,
+                    'total_repayment': round(total_repayment, 2) if total_repayment else 0.0,
                     'reasoning': qualification.get('reasoning'),
                     'strengths': qualification.get('strengths', []),
                     'concerns': qualification.get('concerns', []),
