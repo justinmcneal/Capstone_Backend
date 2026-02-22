@@ -10,7 +10,11 @@ from accounts.utils.throttles import PreQualifyRateThrottle
 from accounts.utils.validation_utils import sanitize_text
 from loans.models import LoanProduct, LoanApplication, APPLICATION_STATUSES
 from loans.serializers import LoanApplicationSerializer, PreQualifyRequestSerializer
-from loans.services import qualify_customer, check_basic_eligibility
+from loans.services import (
+    qualify_customer,
+    check_basic_eligibility,
+    resolve_required_document_types,
+)
 
 from analytics.models import AuditLog
 import logging
@@ -55,7 +59,10 @@ class LoanProductListView(CustomerRoleRequiredMixin, APIView):
             'interest_rate_display': f"{p.interest_rate * 100:.1f}% monthly",
             'min_term_months': p.min_term_months,
             'max_term_months': p.max_term_months,
-            'required_documents': p.required_documents or [],
+            'required_documents': resolve_required_document_types(
+                p,
+                requirements_scope='product',
+            ),
             'target_description': p.target_description
         } for p in products]
         
@@ -101,7 +108,10 @@ class LoanProductDetailView(CustomerRoleRequiredMixin, APIView):
                 'interest_rate_display': f"{product.interest_rate * 100:.1f}% monthly",
                 'min_term_months': product.min_term_months,
                 'max_term_months': product.max_term_months,
-                'required_documents': product.required_documents or [],
+                'required_documents': resolve_required_document_types(
+                    product,
+                    requirements_scope='product',
+                ),
                 'min_business_months': product.min_business_months,
                 'min_monthly_income': product.min_monthly_income,
                 'target_description': product.target_description
