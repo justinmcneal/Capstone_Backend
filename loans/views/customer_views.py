@@ -310,6 +310,26 @@ class LoanApplyView(CustomerRoleRequiredMixin, APIView):
                     message="Loan product not found",
                     status_code=status.HTTP_404_NOT_FOUND
                 )
+
+            requested_amount = float(data['requested_amount'])
+            term_months = int(data['term_months'])
+
+            # Validate amount against selected product
+            if requested_amount < product.min_amount or requested_amount > product.max_amount:
+                return error_response(
+                    message=f"Amount must be between ₱{product.min_amount:,.0f} and ₱{product.max_amount:,.0f}",
+                    status_code=status.HTTP_400_BAD_REQUEST
+                )
+
+            # Validate term against selected product
+            if term_months < product.min_term_months or term_months > product.max_term_months:
+                return error_response(
+                    message=(
+                        f"Term must be between {product.min_term_months} and "
+                        f"{product.max_term_months} months"
+                    ),
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                )
             
             # Check basic eligibility
             basic = check_basic_eligibility(
@@ -329,15 +349,14 @@ class LoanApplyView(CustomerRoleRequiredMixin, APIView):
             qualification = qualify_customer(
                 customer_id=customer_id,
                 product=product,
-                requested_amount=data['requested_amount'],
-                term_months=data['term_months'],
+                requested_amount=requested_amount,
+                term_months=term_months,
                 purpose=data.get('purpose', ''),
                 require_approved_documents=True,
             )
 
             # Final safety clamp before persisting recommendation.
             # This guarantees DB values stay within product limits.
-            requested_amount = float(data['requested_amount'])
             eligible_or_can_apply = bool(
                 qualification.get('can_apply', qualification.get('eligible', False))
             )
@@ -362,9 +381,9 @@ class LoanApplyView(CustomerRoleRequiredMixin, APIView):
             application = LoanApplication(
                 customer_id=customer_id,
                 product_id=data['product_id'],
-                requested_amount=data['requested_amount'],
+                requested_amount=requested_amount,
                 recommended_amount=recommended_amount,
-                term_months=data['term_months'],
+                term_months=term_months,
                 purpose=data.get('purpose', ''),
                 eligibility_score=qualification.get('eligibility_score'),
                 ai_recommendation=qualification,
