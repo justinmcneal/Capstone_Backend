@@ -11,6 +11,16 @@ class LoginRateThrottle(AnonRateThrottle):
     rate = '10/hour'
 
 
+class LoanOfficerLoginRateThrottle(AnonRateThrottle):
+    """IP-based throttling for loan officer login endpoint: 10 requests per hour"""
+    rate = '10/hour'
+
+
+class AdminLoginRateThrottle(AnonRateThrottle):
+    """IP-based throttling for admin login endpoint: 5 requests per hour"""
+    rate = '5/hour'
+
+
 class OTPVerificationRateThrottle(AnonRateThrottle):
     """IP-based throttling for OTP verification: 5 requests per hour (production)"""
     rate = '5/hour'

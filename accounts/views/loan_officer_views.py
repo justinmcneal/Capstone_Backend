@@ -16,6 +16,7 @@ from accounts.utils.auth_cookies import (
 )
 from accounts.services import LockoutService
 from accounts.utils.email_utils import EmailUtils
+from accounts.utils.throttles import LoanOfficerLoginRateThrottle
 from accounts.utils.validation_utils import parse_bool
 from analytics.models import AuditLog
 import logging
@@ -72,6 +73,7 @@ class LoanOfficerLoginView(APIView):
     }
     """
     permission_classes = [AllowAny]
+    throttle_classes = [LoanOfficerLoginRateThrottle]
     
     def post(self, request):
         try:
