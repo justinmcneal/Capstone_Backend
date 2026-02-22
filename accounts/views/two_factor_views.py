@@ -145,6 +145,12 @@ class Verify2FAView(APIView):
             )
         
         try:
+            if TokenUtils.is_token_blacklisted(temp_token, token_type='refresh'):
+                return APIResponseHelper.error_response(
+                    'Invalid or expired temporary token',
+                    status.HTTP_401_UNAUTHORIZED
+                )
+
             # Decode temp token to get user ID and role
             token = RefreshToken(temp_token)
             is_temp_token = bool(token.get('is_2fa_temp') or token.get('temp_2fa'))
@@ -210,6 +216,13 @@ class Verify2FAView(APIView):
                         'Invalid verification code',
                         status.HTTP_401_UNAUTHORIZED
                     )
+
+            # Consume the temporary 2FA token so it cannot be replayed.
+            if not TokenUtils.blacklist_token(temp_token, token_type='refresh'):
+                logger.error(
+                    f"Failed to revoke temporary 2FA token for {user.email} ({user_type})"
+                )
+                return APIResponseHelper.server_error_response('2FA verification failed')
             
             # Generate full tokens after successful 2FA
             if user_type == 'customer':

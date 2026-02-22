@@ -27,6 +27,7 @@ from accounts.utils.validation_utils import (
     parse_optional_bool,
 )
 from accounts.utils.access_control import AccessControlMixin
+from accounts.utils.throttles import AdminLoginRateThrottle
 from accounts.services.two_factor_service import TwoFactorService
 from analytics.models import AuditLog
 import logging
@@ -134,6 +135,7 @@ class AdminLoginView(APIView):
     }
     """
     permission_classes = [AllowAny]
+    throttle_classes = [AdminLoginRateThrottle]
     
     def post(self, request):
         try:

@@ -255,17 +255,27 @@ class ConsentRequiredMixin:
         return True, None
     
     def dispatch(self, request, *args, **kwargs):
-        """Override dispatch to check consent before processing request"""
-        # First run normal authentication
-        response = super().dispatch(request, *args, **kwargs)
-        
-        # If authentication failed, return that response
-        if response.status_code == 401:
-            return response
-        
-        # Check consent
-        has_consent, error = self.check_consent(request)
-        if not has_consent:
-            return error
-        
-        return response
+        """Run consent gate after DRF auth/permission checks but before handler execution."""
+        self.args = args
+        self.kwargs = kwargs
+        request = self.initialize_request(request, *args, **kwargs)
+        self.request = request
+        self.headers = self.default_response_headers
+
+        try:
+            self.initial(request, *args, **kwargs)
+
+            has_consent, error = self.check_consent(request)
+            if not has_consent:
+                response = error
+            else:
+                if request.method.lower() in self.http_method_names:
+                    handler = getattr(self, request.method.lower(), self.http_method_not_allowed)
+                else:
+                    handler = self.http_method_not_allowed
+                response = handler(request, *args, **kwargs)
+        except Exception as exc:
+            response = self.handle_exception(exc)
+
+        self.response = self.finalize_response(request, response, *args, **kwargs)
+        return self.response

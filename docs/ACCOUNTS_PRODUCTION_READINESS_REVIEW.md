@@ -31,19 +31,20 @@ The `accounts/` module has strong foundations (peppered password hashing, lockou
 1. Account enumeration signals exist. (DONE)
 - Non-existent account responses are explicit in reset/OTP paths (`accounts/services/password_service.py:41`, `accounts/views/password_views.py:38`, `accounts/views/auth_views.py:301`, `accounts/views/auth_views.py:362`).
 
-2. Admin and loan-officer login endpoints have no DRF throttle classes.
-- Customer login has throttle (`accounts/views/auth_views.py:135`).
-- Admin/officer login views do not (`accounts/views/admin_views.py:126`, `accounts/views/loan_officer_views.py:63`).
+2. Admin and loan-officer login endpoints have no DRF throttle classes. (DONE)
+- Customer login throttle is present (`accounts/views/auth_views.py:138`).
+- Admin/loan-officer login throttles are now implemented (`accounts/views/admin_views.py:138`, `accounts/views/loan_officer_views.py:76`).
+- Dedicated throttle classes were added (`accounts/utils/throttles.py:14`, `accounts/utils/throttles.py:19`).
 
-3. Password-reset OTP attempt controls are incomplete.
+3. Password-reset OTP attempt controls are incomplete. (DONE)
 - Models include reset-attempt fields (`accounts/models/customer.py:53`, `accounts/models/admin.py:71`, `accounts/models/loan_officer.py:65`).
-- Reset OTP verify path does not increment/enforce per-account cooldown (`accounts/services/password_service.py:71`, `accounts/services/otp_service.py:64`).
+- Per-account cooldown/attempt enforcement is now applied in verify/reset flows (`accounts/services/password_service.py:79`, `accounts/services/password_service.py:108`, `accounts/services/password_service.py:127`, `accounts/services/password_service.py:140`, `accounts/services/password_service.py:159`).
 
-4. 2FA temp tokens are not consumed after successful verification.
-- Temp tokens are accepted and final tokens issued (`accounts/views/two_factor_views.py:149`, `accounts/views/two_factor_views.py:282`) without one-time consumption tracking.
+4. 2FA temp tokens are not consumed after successful verification. (DONE)
+- Temp token replay is now blocked via blacklist check before verification and revocation on successful use (`accounts/views/two_factor_views.py:148`, `accounts/views/two_factor_views.py:221`).
 
-5. `accounts` consent mixin checks consent after handler dispatch.
-- `dispatch()` executes `super().dispatch()` before `check_consent()` (`accounts/views/consent_views.py:260`, `accounts/views/consent_views.py:267`).
+5. `accounts` consent mixin checks consent after handler dispatch. (DONE)
+- Consent is now enforced after DRF `initial()` and before handler execution in the mixin dispatch path (`accounts/views/consent_views.py:257`, `accounts/views/consent_views.py:266`, `accounts/views/consent_views.py:268`).
 - Note: AI assistant app appears to use a different consent mixin (`ai_assistant/views/chat_views.py:21`), so impact depends on usage.
 
 ## Current Strengths
@@ -79,9 +80,9 @@ The `accounts/` module has strong foundations (peppered password hashing, lockou
 - [ ] Fail startup in production when `FIELD_ENCRYPTION_KEY` is missing/invalid.
 - [ ] Ensure index bootstrap is mandatory in deploy pipeline for all account-related models.
 - [ ] Normalize auth/reset/OTP failure messaging to prevent enumeration.
-- [ ] Add throttles to admin/loan-officer login and refresh endpoints.
-- [ ] Add per-account password-reset OTP cooldown and attempt limits.
-- [ ] Make 2FA temp tokens one-time-use.
+- [ ] Add throttles to admin/loan-officer refresh endpoints.
+- [x] Add per-account password-reset OTP cooldown and attempt limits.
+- [x] Make 2FA temp tokens one-time-use.
 - [ ] Add automated tests for `accounts` auth/security flows.
 
 ## Recommended Implementation Order
