@@ -37,7 +37,12 @@ class OfficerDashboardView(LoanOfficerRequiredMixin, APIView):
             return result
         
         user = result
-        officer_id = user.customer_id
+        officer_id = str(getattr(user, 'id', '') or '').strip()
+        if not officer_id:
+            return error_response(
+                message="Authenticated account not found",
+                status_code=status.HTTP_404_NOT_FOUND
+            )
         db = settings.MONGODB
         
         # Today's date range
