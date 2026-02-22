@@ -53,6 +53,22 @@ class LoanOfficerRequiredMixin(AccessControlMixin):
     def check_officer_permission(self, request):
         return self.require_officer_or_admin(request)
 
+    @staticmethod
+    def _actor_id(actor):
+        """
+        Resolve a stable actor ID across auth/user object types.
+
+        - AuthenticatedUser wrapper uses `customer_id` for all roles
+        - LoanOfficer/Admin domain models expose `.id`
+        """
+        value = (
+            getattr(actor, 'customer_id', None)
+            or getattr(actor, 'user_id', None)
+            or getattr(actor, 'id', None)
+            or getattr(actor, '_id', None)
+        )
+        return str(value or '')
+
     def check_application_scope(self, request, application, allow_unassigned=True):
         return self.require_application_scope(
             request,
@@ -94,7 +110,7 @@ class OfficerApplicationListView(LoanOfficerRequiredMixin, APIView):
             return result
         user = request.user
         user_role = getattr(user, 'role', '')
-        user_id = str(getattr(user, 'customer_id', '') or '')
+        user_id = self._actor_id(user)
         
         # Extract query params
         status_filter = sanitize_text(request.query_params.get('status', 'pending')).lower() or 'pending'
@@ -546,7 +562,7 @@ class OfficerApplicationNotesView(LoanOfficerRequiredMixin, APIView):
 
         try:
             app.add_internal_note(
-                author_id=user.customer_id,
+                author_id=self._actor_id(user),
                 author_role=getattr(user, 'role', 'loan_officer'),
                 content=serializer.validated_data['note']
             )
@@ -559,7 +575,7 @@ class OfficerApplicationNotesView(LoanOfficerRequiredMixin, APIView):
         latest_note = serialize_internal_note((app.internal_notes or [])[-1])
         AuditLog.log_action(
             action='loan_internal_note_added',
-            user_id=user.customer_id,
+            user_id=self._actor_id(user),
             user_type=getattr(user, 'role', 'loan_officer'),
             description='Added internal note to loan application',
             resource_type='loan',
@@ -625,7 +641,7 @@ class OfficerRequestMissingDocumentsView(LoanOfficerRequiredMixin, APIView):
             )
         
         data = serializer.validated_data
-        officer_id = user.customer_id
+        officer_id = self._actor_id(user)
         
         from documents.models import Document
         uploaded_docs = Document.find_by_customer(app.customer_id)
@@ -753,7 +769,7 @@ class OfficerReviewView(LoanOfficerRequiredMixin, APIView):
             )
         
         data = serializer.validated_data
-        officer_id = user.customer_id
+        officer_id = self._actor_id(user)
         
         # Get customer email for notification
         from accounts.models import Customer
@@ -919,15 +935,15 @@ class DisburseView(LoanOfficerRequiredMixin, APIView):
                 amount=amount,
                 method=method,
                 reference=reference,
-                processed_by=user.customer_id
+                processed_by=self._actor_id(user)
             )
             
-            logger.info(f"Loan disbursed: {app.id} by {user.customer_id}")
+            logger.info(f"Loan disbursed: {app.id} by {self._actor_id(user)}")
             
             # Audit log for disbursement
             AuditLog.log_action(
                 action='loan_disbursed',
-                user_id=user.customer_id,
+                user_id=self._actor_id(user),
                 user_type='loan_officer',
                 description=f'Loan disbursed - ₱{amount:,.2f} via {method}',
                 resource_type='loan',
@@ -1136,7 +1152,7 @@ class RecordPaymentView(LoanOfficerRequiredMixin, APIView):
             payment_method=payment_method,
             reference=reference,
             notes=notes,
-            recorded_by=user.customer_id
+            recorded_by=self._actor_id(user)
         )
         payment.save()
         
@@ -1145,7 +1161,7 @@ class RecordPaymentView(LoanOfficerRequiredMixin, APIView):
         # Audit log for payment
         AuditLog.log_action(
             action='payment_recorded',
-            user_id=user.customer_id,
+            user_id=self._actor_id(user),
             user_type='loan_officer',
             description=f'Payment recorded - ₱{amount:,.2f} for installment #{installment_number}',
             resource_type='payment',
@@ -1215,7 +1231,7 @@ class ActiveLoansView(LoanOfficerRequiredMixin, APIView):
             return result
         user = request.user
         user_role = getattr(user, 'role', '')
-        user_id = str(getattr(user, 'customer_id', '') or '')
+        user_id = self._actor_id(user)
         
         from loans.models import RepaymentSchedule, LoanProduct
         from accounts.models import Customer
@@ -1523,7 +1539,7 @@ class PaymentSearchView(LoanOfficerRequiredMixin, APIView):
             return result
         user = request.user
         user_role = getattr(user, 'role', '')
-        user_id = str(getattr(user, 'customer_id', '') or '')
+        user_id = self._actor_id(user)
         
         # Extract query params
         search_query = sanitize_text(request.query_params.get('search', ''))
