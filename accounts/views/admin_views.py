@@ -34,6 +34,7 @@ import logging
 
 logger = logging.getLogger('admin_auth')
 GENERIC_LOGIN_ERROR_MESSAGE = "Invalid email/username or password."
+DEFAULT_LOAN_OFFICER_DEPARTMENT = "Loans Department"
 
 
 def _get_client_ip(request):
@@ -555,6 +556,11 @@ class LoanOfficerManagementView(AdminRequiredMixin, APIView):
             
             # Generate temporary password
             temp_password = generate_temp_password()
+
+            department = (
+                sanitize_text(request.data.get('department', ''))
+                or DEFAULT_LOAN_OFFICER_DEPARTMENT
+            )
             
             # Create loan officer
             officer = LoanOfficer(
@@ -563,7 +569,7 @@ class LoanOfficerManagementView(AdminRequiredMixin, APIView):
                 last_name=last_name_normalized,
                 email=email,
                 phone=sanitize_text(request.data.get('phone', '')),
-                department=sanitize_text(request.data.get('department', '')),
+                department=department,
                 created_by=ObjectId(admin.id),
                 must_change_password=True
             )
