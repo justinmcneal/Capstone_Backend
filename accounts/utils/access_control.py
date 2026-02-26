@@ -333,6 +333,25 @@ class AccessControlMixin:
 
             customer_ids.update(unassigned_customers - blocked_customers)
 
+        # Include customers who uploaded documents (e.g. during profile
+        # completion) but don't yet have a submitted loan application.
+        # This ensures officers can review pending/needs_review documents
+        # even before the customer submits a formal application.
+        docs_collection = db["documents"]
+        doc_customer_ids = set()
+        for row in docs_collection.find(
+            {"status": {"$in": ["pending", "needs_review"]}},
+            {"customer_id": 1},
+        ):
+            cid = str(row.get("customer_id", "") or "").strip()
+            if cid and cid not in customer_ids:
+                doc_customer_ids.add(cid)
+
+        if doc_customer_ids:
+            # Exclude customers whose documents are already covered
+            # by an application assigned to another officer.
+            customer_ids.update(doc_customer_ids - blocked_customers)
+
         return True, customer_ids
 
     def require_customer_scope_for_officer(
