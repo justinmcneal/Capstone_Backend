@@ -130,10 +130,10 @@ class AIInteraction:
         return False
     
     @classmethod
-    def find(cls, query, sort=None, limit=None):
+    def find(cls, query, sort=None, limit=None, projection=None):
         db = get_db()
         collection = db[cls.collection_name]
-        cursor = collection.find(query)
+        cursor = collection.find(query, projection)
         if sort:
             cursor = cursor.sort(sort)
         if limit:
@@ -157,6 +157,7 @@ class AIInteraction:
         page=1,
         limit=50,
         search_query=None,
+        projection=None,
     ):
         """Get paginated chat history for a customer with optional search."""
         db = get_db()
@@ -177,7 +178,7 @@ class AIInteraction:
         skip = (page - 1) * limit
 
         cursor = (
-            collection.find(query)
+            collection.find(query, projection)
             .sort([('timestamp', -1)])
             .skip(skip)
             .limit(limit)

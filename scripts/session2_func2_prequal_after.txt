@@ -1,0 +1,13 @@
+Session 1: Prototype Monitoring (AI Track)
+
+Function 2: AI Pre-Qualify (POST /api/loans/pre-qualify/)
+------------------------------------------------------------------------------
+Case                                   Avg(ms)    Min(ms)    Max(ms)     Runs
+------------------------------------------------------------------------------
+amount_15000                            881.90     881.90     881.90        1
+amount_20000                            846.10     846.10     846.10        1
+amount_30000                           1181.42    1181.42    1181.42        1
+------------------------------------------------------------------------------
+OVERALL                                 969.81     846.10    1181.42        3
+
+Done. Copy this output into your Session 1 evidence section.

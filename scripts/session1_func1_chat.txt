@@ -1,0 +1,13 @@
+Session 1: Prototype Monitoring (AI Track)
+
+Function 1: AI Chat (POST /api/ai/chat/)
+------------------------------------------------------------------------------
+Case                                   Avg(ms)    Min(ms)    Max(ms)     Runs
+------------------------------------------------------------------------------
+What are the basic requirement         1012.30    1012.30    1012.30        1
+Explain loan interest in simpl          895.43     895.43     895.43        1
+What should I improve if my pr          862.10     862.10     862.10        1
+------------------------------------------------------------------------------
+OVERALL                                 923.28     862.10    1012.30        3
+
+Done. Copy this output into your Session 1 evidence section.

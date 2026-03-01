@@ -4,6 +4,7 @@ AI Qualification Service - Uses Groq LLM to analyze customer eligibility.
 import json
 import logging
 import re
+import os
 from ai_assistant.services import get_llm_service
 from accounts.models import Consent
 from accounts.utils.validation_utils import sanitize_multiline_text, sanitize_text
@@ -11,6 +12,7 @@ from profiles.models import CustomerProfile, BusinessProfile, AlternativeData
 from documents.models import Document, DOCUMENT_TYPES
 
 logger = logging.getLogger('loans')
+QUALIFICATION_MAX_TOKENS = int(os.getenv('AI_QUALIFICATION_MAX_TOKENS', '400'))
 
 BASELINE_REQUIRED_DOCUMENTS = ['valid_id']
 DOCUMENT_TYPE_ALIASES = {
@@ -442,7 +444,7 @@ def qualify_customer(
         language='en',
         system_prompt=QUALIFICATION_SYSTEM_PROMPT,
         temperature=0.1,
-        max_tokens=600,
+        max_tokens=QUALIFICATION_MAX_TOKENS,
         top_p=0.9,
     )
     

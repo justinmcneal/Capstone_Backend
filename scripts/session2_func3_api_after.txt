@@ -1,0 +1,13 @@
+Session 1: Prototype Monitoring (AI Track)
+
+Function 3: AI API Calls (GET /api/ai/*)
+------------------------------------------------------------------------------
+Case                                   Avg(ms)    Min(ms)    Max(ms)     Runs
+------------------------------------------------------------------------------
+status_get                               83.62      83.62      83.62        1
+suggestions_get                          52.25      52.25      52.25        1
+history_get                             195.34     195.34     195.34        1
+------------------------------------------------------------------------------
+OVERALL                                 110.41      52.25     195.34        3
+
+Done. Copy this output into your Session 1 evidence section.

@@ -3,6 +3,7 @@ from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
 import uuid
 import math
+import os
 
 from accounts.authentication import CustomJWTAuthentication
 from accounts.utils.access_control import AccessControlMixin
@@ -16,6 +17,8 @@ import logging
 
 logger = logging.getLogger('ai_assistant')
 ALLOWED_LANGUAGES = {'en', 'tl'}
+AI_CHAT_MAX_TOKENS = int(os.getenv('AI_CHAT_MAX_TOKENS', '400'))
+AI_CHAT_CONTEXT_MESSAGES = int(os.getenv('AI_CHAT_CONTEXT_MESSAGES', '6'))
 
 
 class ConsentRequiredMixin(AccessControlMixin):
@@ -110,7 +113,7 @@ class ChatView(ConsentRequiredMixin, APIView):
             )
             conversation_history = [
                 {'role': h.role, 'content': h.message if h.role == 'user' else h.response}
-                for h in history[-10:]  # Last 10 messages
+                for h in history[-AI_CHAT_CONTEXT_MESSAGES:]
             ]
             
             # Get LLM response
@@ -127,7 +130,8 @@ class ChatView(ConsentRequiredMixin, APIView):
             result = llm.chat(
                 message=message,
                 conversation_history=conversation_history,
-                language=language
+                language=language,
+                max_tokens=AI_CHAT_MAX_TOKENS,
             )
             
             if not result['success']:
@@ -238,6 +242,15 @@ class ChatHistoryView(ConsentRequiredMixin, APIView):
                 page=page,
                 limit=limit,
                 search_query=search_query or None,
+                projection={
+                    '_id': 1,
+                    'role': 1,
+                    'message': 1,
+                    'response': 1,
+                    'conversation_id': 1,
+                    'timestamp': 1,
+                    'language': 1,
+                },
             )
             
             # Group by conversation
