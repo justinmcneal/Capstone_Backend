@@ -156,6 +156,12 @@ def get_customer_data(customer_id):
     # Get documents
     documents = Document.find_by_customer(customer_id)
     
+    # Debug logging
+    if business:
+        logger.info(f"[QUALIFICATION DATA] Customer {customer_id} - business_age_months: {business.business_age_months}, is_registered: {business.is_registered}, income: {business.estimated_monthly_income}")
+    else:
+        logger.warning(f"[QUALIFICATION DATA] Customer {customer_id} - no business profile found")
+    
     return {
         'personal': personal,
         'business': business,
@@ -340,10 +346,13 @@ def format_profile_for_ai(data):
     
     business_str = "None provided"
     if business:
+        months = business.business_age_months or 0
+        years = months / 12 if months else 0
+        logger.info(f"[AI QUALIFICATION] Business Age - months: {months}, years: {years:.1f}, raw value: {business.business_age_months}")
         business_str = f"""
 - Business Name: {business.business_name or 'Not provided'}
 - Business Type: {business.business_type or 'Not provided'}
-- Years in Operation: {business.years_in_operation or 0}
+- Years in Operation: {years:.1f} years ({months} months)
 - Registered: {'Yes' if business.is_registered else 'No'}
 - Monthly Income Range: {business.income_range or 'Not provided'}
 - Estimated Monthly Income: ₱{business.estimated_monthly_income or 0:,.2f}
@@ -513,12 +522,15 @@ def rule_based_qualification(
     
     # Check business profile
     if business:
-        if business.years_in_operation and business.years_in_operation >= product.min_business_months / 12:
+        # business_age_months is stored in months (canonical unit)
+        logger.info(f"[RULE-BASED QUALIFICATION] Checking business age - months: {business.business_age_months}, required: {product.min_business_months}")
+        if business.business_age_months and business.business_age_months >= product.min_business_months:
             score += 15
             strengths.append("Sufficient business experience")
         else:
             score -= 10
             concerns.append("Limited business history")
+            logger.warning(f"[RULE-BASED QUALIFICATION] Insufficient business age: {business.business_age_months} < {product.min_business_months}")
         
         if business.estimated_monthly_income and business.estimated_monthly_income >= product.min_monthly_income:
             score += 15
