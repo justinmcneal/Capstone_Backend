@@ -1,6 +1,7 @@
 from rest_framework.views import APIView
 from rest_framework import status
-from rest_framework.permissions import AllowAny
+from rest_framework.permissions import AllowAny, IsAuthenticated
+from accounts.authentication import CustomJWTAuthentication
 from django.conf import settings
 from django.middleware.csrf import get_token
 from rest_framework_simplejwt.tokens import RefreshToken
@@ -19,7 +20,7 @@ from accounts.utils.auth_cookies import (
     get_refresh_token_from_request,
     set_auth_cookies,
 )
-from accounts.serializers.auth_serializers import LoginSerializer
+from accounts.serializers.auth_serializers import LoginSerializer, UpdateLanguageSerializer
 from accounts.utils.throttles import SignUpRateThrottle, LoginRateThrottle, OTPVerificationRateThrottle, OTPResendRateThrottle
 from analytics.models import AuditLog
 import logging
@@ -132,6 +133,46 @@ class SignUpView(APIView):
         except Exception as e:
             logger.error(f"Signup error from IP {request.META.get('REMOTE_ADDR')}: {str(e)}")
             return APIResponseHelper.server_error_response('An error occurred during registration')
+
+class UpdateLanguageView(APIView):
+    """
+    PATCH /auth/language/
+    Update the authenticated customer's language preference.
+    Request body: {"language": "en" | "tl"}
+    """
+    authentication_classes = [CustomJWTAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def patch(self, request):
+        serializer = UpdateLanguageSerializer(data=request.data)
+        if not serializer.is_valid():
+            return APIResponseHelper.validation_error_response(serializer.errors)
+
+        try:
+            customer = AuthService.get_customer_by_id(request.user.customer_id)
+            if not customer:
+                return APIResponseHelper.error_response(
+                    'Customer not found', status.HTTP_404_NOT_FOUND
+                )
+
+            language_code = serializer.validated_data['language']
+            customer = AuthService.update_language(customer, language_code)
+
+            logger.info(
+                f"Language updated to '{language_code}' for user {customer.email}"
+            )
+            return APIResponseHelper.success_response(
+                data={
+                    'language': customer.language,
+                },
+                message='Language preference updated successfully',
+            )
+        except ValueError as e:
+            return APIResponseHelper.error_response(str(e), status.HTTP_400_BAD_REQUEST)
+        except Exception as e:
+            logger.error(f"Error updating language: {str(e)}")
+            return APIResponseHelper.server_error_response('Failed to update language preference')
+
 
 class LoginView(APIView):
     permission_classes = [AllowAny]

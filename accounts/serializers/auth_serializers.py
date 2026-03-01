@@ -4,6 +4,11 @@ from accounts.utils.validation_utils import validate_person_name
 from .base_serializers import InputSanitizationMixin, PasswordValidationMixin
 
 
+class UpdateLanguageSerializer(serializers.Serializer):
+    """Validates a language preference update payload."""
+    language = serializers.ChoiceField(choices=[('en', 'English'), ('tl', 'Tagalog')])
+
+
 class SignUpSerializer(InputSanitizationMixin, PasswordValidationMixin, serializers.Serializer):
     
     first_name = serializers.CharField(max_length=100)
