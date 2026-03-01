@@ -168,7 +168,7 @@ class BusinessProfileView(CustomerProfileAccessMixin, APIView):
                     'business_barangay': profile.business_barangay,
                     'business_city': profile.business_city,
                     'business_province': profile.business_province,
-                    'years_in_operation': profile.years_in_operation,
+                    'business_age_months': profile.business_age_months,
                     'is_registered': profile.is_registered,
                     'registration_type': profile.registration_type,
                     'registration_number': profile.registration_number,

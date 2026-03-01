@@ -430,7 +430,7 @@ class OfficerApplicationDetailView(LoanOfficerRequiredMixin, APIView):
                 'business_name': business.business_name,
                 'business_type': business.business_type,
                 'business_address': business.business_address,
-                'years_in_operation': business.years_in_operation,
+                'business_age_months': business.business_age_months,
                 'is_registered': business.is_registered,
                 'income_range': business.income_range,
                 'estimated_monthly_income': float(business.estimated_monthly_income) if business.estimated_monthly_income else None,

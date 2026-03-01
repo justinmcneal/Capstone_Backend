@@ -116,8 +116,13 @@ class BusinessProfileSerializer(InputSanitizationMixin, serializers.Serializer):
     def validate_business_province(self, value):
         return _validate_location_name(value, 'Business Province')
     
-    # Operations
-    years_in_operation = serializers.FloatField(required=False, allow_null=True, min_value=0)
+    # Operations - canonical unit: months
+    business_age_months = serializers.IntegerField(
+        required=False,
+        allow_null=True,
+        min_value=1,
+        help_text="Business age in months (canonical unit). Minimum 1 month."
+    )
     is_registered = serializers.BooleanField(required=False)
     registration_type = serializers.ChoiceField(
         choices=['DTI', 'SEC', 'BIR', 'none'],

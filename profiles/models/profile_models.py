@@ -271,7 +271,9 @@ class BusinessProfile:
         self.business_province = kwargs.get('business_province', '')
         
         # Operations
-        self.years_in_operation = kwargs.get('years_in_operation')  # Float/int
+        # Canonical unit: months (not years)
+        # Support both field names for backwards compatibility
+        self.business_age_months = kwargs.get('business_age_months') or kwargs.get('years_in_operation')
         self.is_registered = kwargs.get('is_registered', False)  # DTI/SEC registered
         self.registration_type = kwargs.get('registration_type')  # DTI, SEC, BIR
         self.registration_number = kwargs.get('registration_number', '')
@@ -301,7 +303,7 @@ class BusinessProfile:
             'business_barangay': self.business_barangay,
             'business_city': self.business_city,
             'business_province': self.business_province,
-            'years_in_operation': self.years_in_operation,
+            'business_age_months': self.business_age_months,
             'is_registered': self.is_registered,
             'registration_type': self.registration_type,
             'registration_number': self.registration_number,
