@@ -1,6 +1,30 @@
 from rest_framework import serializers
 from profiles.models import BUSINESS_TYPES, EDUCATION_LEVELS, INCOME_RANGES
 from accounts.serializers.base_serializers import InputSanitizationMixin
+import re
+
+# Regex that matches valid Philippine location names:
+# - Must start with a letter
+# - May contain letters, spaces, hyphens, apostrophes, periods
+# - Examples: "San Juan", "Sta. Rosa", "Sto. Tomas", "O'Donnell", "Baguio City"
+_LOCATION_NAME_RE = re.compile(r"^[a-zA-Z][a-zA-Z\s'\-.]*$")
+
+
+def _validate_location_name(value, field_label):
+    """Shared validator for barangay / city / province fields."""
+    if not value:
+        return value  # allow blank (required check is handled per-field)
+    stripped = value.strip()
+    if not _LOCATION_NAME_RE.match(stripped):
+        raise serializers.ValidationError(
+            f"{field_label} may only contain letters, spaces, hyphens, "
+            "apostrophes and periods."
+        )
+    if re.search(r'\s{2,}', stripped):
+        raise serializers.ValidationError(
+            f"Please enter a valid {field_label} name."
+        )
+    return stripped
 
 
 class CustomerProfileSerializer(InputSanitizationMixin, serializers.Serializer):
@@ -32,6 +56,15 @@ class CustomerProfileSerializer(InputSanitizationMixin, serializers.Serializer):
     emergency_contact_name = serializers.CharField(max_length=100, required=False, allow_blank=True)
     emergency_contact_phone = serializers.CharField(max_length=20, required=False, allow_blank=True)
     emergency_contact_relationship = serializers.CharField(max_length=50, required=False, allow_blank=True)
+
+    def validate_barangay(self, value):
+        return _validate_location_name(value, 'Barangay')
+
+    def validate_city_municipality(self, value):
+        return _validate_location_name(value, 'City / Municipality')
+
+    def validate_province(self, value):
+        return _validate_location_name(value, 'Province')
 
 
 class CustomerProfileResponseSerializer(serializers.Serializer):
@@ -73,6 +106,15 @@ class BusinessProfileSerializer(InputSanitizationMixin, serializers.Serializer):
     business_barangay = serializers.CharField(max_length=100, required=False, allow_blank=True)
     business_city = serializers.CharField(max_length=100, required=False, allow_blank=True)
     business_province = serializers.CharField(max_length=100, required=False, allow_blank=True)
+
+    def validate_business_barangay(self, value):
+        return _validate_location_name(value, 'Business Barangay')
+
+    def validate_business_city(self, value):
+        return _validate_location_name(value, 'Business City')
+
+    def validate_business_province(self, value):
+        return _validate_location_name(value, 'Business Province')
     
     # Operations
     years_in_operation = serializers.FloatField(required=False, allow_null=True, min_value=0)
