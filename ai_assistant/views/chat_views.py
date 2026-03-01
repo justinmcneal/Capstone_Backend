@@ -4,6 +4,8 @@ from rest_framework.permissions import IsAuthenticated
 import uuid
 import math
 import os
+import json
+import re
 
 from accounts.authentication import CustomJWTAuthentication
 from accounts.utils.access_control import AccessControlMixin
@@ -13,12 +15,280 @@ from accounts.utils.validation_utils import sanitize_text, sanitize_multiline_te
 from accounts.models import Consent
 from ai_assistant.models import AIInteraction
 from ai_assistant.services import get_llm_service
+from documents.models import Document
+from loans.models import LoanProduct
+from loans.services import check_basic_eligibility, qualify_customer, resolve_required_document_types
 import logging
 
 logger = logging.getLogger('ai_assistant')
 ALLOWED_LANGUAGES = {'en', 'tl'}
 AI_CHAT_MAX_TOKENS = int(os.getenv('AI_CHAT_MAX_TOKENS', '400'))
 AI_CHAT_CONTEXT_MESSAGES = int(os.getenv('AI_CHAT_CONTEXT_MESSAGES', '6'))
+LOAN_READINESS_MODE = 'loan_readiness'
+LOAN_READINESS_KEYWORDS = {
+    'loan readiness',
+    'readiness',
+    'ready to apply',
+    'eligible',
+    'eligibility',
+    'qualify',
+    'requirements',
+    'approval chance',
+    'handa',
+}
+DOCUMENT_TYPE_ALIASES = {
+    'proof_of_income': 'income_proof',
+    'business_registration': 'business_permit',
+}
+DOCUMENT_TYPE_LABELS = {
+    'valid_id': 'Valid Government ID',
+    'selfie_with_id': 'Selfie with ID',
+    'proof_of_address': 'Proof of Address',
+    'business_permit': 'Business Permit',
+    'business_photo': 'Business Photo',
+    'income_proof': 'Proof of Income',
+    'other': 'Other',
+}
+
+LOAN_READINESS_SYSTEM_PROMPT = """You are Loan Readiness Coach for MSME Pathways.
+
+Use ONLY the provided backend readiness data. Do not invent facts.
+
+Return a concise response with these exact sections in order:
+1) Readiness Summary
+2) Missing Requirements
+3) Risk Flags
+4) Next 3 Actions
+
+Rules:
+- If a section has no items, say "None".
+- Keep actions specific and prioritized.
+- Never guarantee approval.
+- Readiness Summary must match readiness.ready_to_apply.
+  If readiness.ready_to_apply is false, clearly say not ready yet.
+- Use eligibility_check.missing_requirements exactly; do not duplicate items.
+"""
+
+
+def _safe_float(value, default=None):
+    try:
+        parsed = float(value)
+        return parsed if parsed > 0 else default
+    except (TypeError, ValueError):
+        return default
+
+
+def _safe_int(value, default=None):
+    try:
+        parsed = int(value)
+        return parsed if parsed > 0 else default
+    except (TypeError, ValueError):
+        return default
+
+
+def _extract_requested_amount(message):
+    if not message:
+        return None
+
+    pattern = r'(\d{1,3}(?:,\d{3})+|\d+(?:\.\d+)?)\s*([kK])?'
+    for match in re.finditer(pattern, str(message)):
+        raw_value = match.group(1).replace(',', '')
+        amount = _safe_float(raw_value)
+        if amount is None:
+            continue
+        if match.group(2):
+            amount *= 1000
+        if amount >= 1000:
+            return round(amount, 2)
+    return None
+
+
+def _is_loan_readiness_request(message, mode):
+    requested_mode = sanitize_text(mode or '').lower()
+    if requested_mode == LOAN_READINESS_MODE:
+        return True
+
+    lowered = sanitize_text(message or '').lower()
+    return any(keyword in lowered for keyword in LOAN_READINESS_KEYWORDS)
+
+
+def _normalize_requirements_scope(raw_scope):
+    normalized = sanitize_text(raw_scope or '').lower()
+    if normalized not in {'baseline', 'product'}:
+        return 'product'
+    return normalized
+
+
+def _normalize_missing_requirement_item(item):
+    text = sanitize_text(item or '')
+    if not text:
+        return ''
+
+    normalized = re.sub(r'^(document required|missing)\s*:\s*', '', text, flags=re.IGNORECASE).strip()
+    return normalized or text
+
+
+def _canonical_document_type(document_type):
+    normalized = sanitize_text(document_type or '').lower()
+    return DOCUMENT_TYPE_ALIASES.get(normalized, normalized)
+
+
+def _document_type_label(document_type):
+    canonical = _canonical_document_type(document_type)
+    return DOCUMENT_TYPE_LABELS.get(canonical, canonical.replace('_', ' ').title())
+
+
+def _build_loan_readiness_context(customer_id, message, payload):
+    product_id = sanitize_text(payload.get('product_id', ''))
+    if product_id:
+        product = LoanProduct.find_by_id(product_id)
+        if not product or not product.active:
+            return None, "Selected loan product was not found or is inactive."
+    else:
+        products = LoanProduct.find(active_only=True)
+        if len(products) > 1:
+            return None, "Please provide product_id to compute readiness for a specific loan product."
+        product = products[0] if products else None
+        if not product:
+            return None, "No active loan products are available for readiness coaching."
+
+    requested_amount = _safe_float(payload.get('amount'))
+    if requested_amount is None:
+        requested_amount = _safe_float(payload.get('requested_amount'))
+    if requested_amount is None:
+        requested_amount = _extract_requested_amount(message)
+    if requested_amount is None:
+        requested_amount = float(product.min_amount or 1000)
+
+    term_months = _safe_int(payload.get('term_months'), default=12)
+    term_months = max(product.min_term_months, min(term_months, product.max_term_months))
+    purpose = sanitize_text(payload.get('purpose', '')) or 'General business funding'
+    requirements_scope = _normalize_requirements_scope(payload.get('requirements_scope'))
+
+    basic = check_basic_eligibility(
+        customer_id=customer_id,
+        product=product,
+        requirements_scope=requirements_scope,
+        require_approved_documents=False,
+    )
+
+    qualification = qualify_customer(
+        customer_id=customer_id,
+        product=product,
+        requested_amount=requested_amount,
+        term_months=term_months,
+        purpose=purpose,
+        requirements_scope=requirements_scope,
+        require_approved_documents=False,
+    )
+
+    required_doc_types = resolve_required_document_types(product, requirements_scope)
+    uploaded_doc_types = {
+        _canonical_document_type(doc.document_type)
+        for doc in Document.find_by_customer(customer_id)
+        if _canonical_document_type(doc.document_type)
+    }
+    missing_document_uploads = [
+        _document_type_label(doc_type)
+        for doc_type in required_doc_types
+        if doc_type not in uploaded_doc_types
+    ]
+
+    merged_missing = []
+    seen_missing = set()
+    for item in (basic.get('missing_requirements', []) + qualification.get('missing_requirements', [])):
+        normalized_item = _normalize_missing_requirement_item(item)
+        if not normalized_item:
+            continue
+        marker = normalized_item.lower()
+        if marker in seen_missing:
+            continue
+        seen_missing.add(marker)
+        merged_missing.append(normalized_item)
+    for label in missing_document_uploads:
+        marker = f"upload required: {label}".lower()
+        if marker in seen_missing:
+            continue
+        seen_missing.add(marker)
+        merged_missing.append(f"Upload required: {label}")
+
+    amount_in_range = product.min_amount <= requested_amount <= product.max_amount
+    can_apply_profiles = bool(basic.get('can_apply'))
+    can_apply_documents = len(missing_document_uploads) == 0
+    can_apply = can_apply_profiles and can_apply_documents
+    ready_to_apply = bool(
+        amount_in_range
+        and can_apply
+        and qualification.get('can_apply')
+        and qualification.get('eligible')
+    )
+    risk_flags = []
+    if not amount_in_range:
+        risk_flags.append(
+            f"Requested amount is outside product range (₱{product.min_amount:,.0f}-₱{product.max_amount:,.0f})"
+        )
+    if qualification.get('risk_category') == 'high':
+        risk_flags.append("High risk category from qualification result")
+    if not qualification.get('eligible'):
+        risk_flags.append("Current profile is not yet eligible for recommended approval flow")
+    if not can_apply_profiles:
+        risk_flags.append("Basic profile requirements are incomplete")
+    if not can_apply_documents:
+        risk_flags.append("Required documents for selected product are not yet uploaded")
+
+    context = {
+        'readiness': {
+            'ready_to_apply': ready_to_apply,
+            'status': 'ready' if ready_to_apply else 'not_ready',
+        },
+        'product': {
+            'id': product.id,
+            'name': product.name,
+            'code': product.code,
+            'min_amount': product.min_amount,
+            'max_amount': product.max_amount,
+            'min_term_months': product.min_term_months,
+            'max_term_months': product.max_term_months,
+        },
+        'requested': {
+            'amount': requested_amount,
+            'term_months': term_months,
+            'purpose': purpose,
+            'requirements_scope': requirements_scope,
+            'amount_in_range': amount_in_range,
+        },
+        'eligibility_check': {
+            'can_apply': can_apply,
+            'can_apply_profiles': can_apply_profiles,
+            'can_apply_documents': can_apply_documents,
+            'missing_requirements': merged_missing,
+            'required_documents': [_document_type_label(doc_type) for doc_type in required_doc_types],
+            'missing_document_uploads': missing_document_uploads,
+            'uploaded_documents': sorted(_document_type_label(doc_type) for doc_type in uploaded_doc_types),
+        },
+        'qualification': {
+            'eligible': qualification.get('eligible', False),
+            'eligibility_score': qualification.get('eligibility_score'),
+            'risk_category': qualification.get('risk_category'),
+            'recommended_amount': qualification.get('recommended_amount'),
+            'strengths': qualification.get('strengths', []),
+            'concerns': qualification.get('concerns', []),
+        },
+        'risk_flags': risk_flags,
+    }
+    return context, None
+
+
+def _build_loan_readiness_message(message, context):
+    readiness_payload = json.dumps(context, ensure_ascii=False)
+    return (
+        "User question:\n"
+        f"{message}\n\n"
+        "Authoritative rule: readiness.ready_to_apply is the final apply-ready status.\n\n"
+        "Trusted backend readiness data:\n"
+        f"{readiness_payload}\n\n"
+        "Answer using the required 4-section format."
+    )
 
 
 class ConsentRequiredMixin(AccessControlMixin):
@@ -105,6 +375,26 @@ class ChatView(ConsentRequiredMixin, APIView):
                     status_code=status.HTTP_400_BAD_REQUEST
                 )
             language = requested_language
+            requested_mode = sanitize_text(request.data.get('mode', '')).lower()
+            loan_readiness_requested = _is_loan_readiness_request(message, requested_mode)
+            loan_readiness_context = None
+            llm_message = message
+            llm_system_prompt = None
+
+            if loan_readiness_requested:
+                loan_readiness_context, readiness_error = _build_loan_readiness_context(
+                    customer_id=customer_id,
+                    message=message,
+                    payload=request.data,
+                )
+                if readiness_error:
+                    return error_response(
+                        message="Loan readiness coaching is unavailable",
+                        errors={'loan_readiness': readiness_error},
+                        status_code=status.HTTP_400_BAD_REQUEST
+                    )
+                llm_message = _build_loan_readiness_message(message, loan_readiness_context)
+                llm_system_prompt = LOAN_READINESS_SYSTEM_PROMPT
             
             # Get conversation history for context
             history = AIInteraction.find_by_conversation(
@@ -128,9 +418,10 @@ class ChatView(ConsentRequiredMixin, APIView):
                 )
             
             result = llm.chat(
-                message=message,
+                message=llm_message,
                 conversation_history=conversation_history,
                 language=language,
+                system_prompt=llm_system_prompt,
                 max_tokens=AI_CHAT_MAX_TOKENS,
             )
             
@@ -173,14 +464,26 @@ class ChatView(ConsentRequiredMixin, APIView):
             ai_interaction.save()
             
             logger.info(f"AI chat: customer {customer_id}, {result.get('response_time_ms')}ms")
+
+            response_payload = {
+                'response': ai_response,
+                'conversation_id': conversation_id,
+                'model': result.get('model'),
+                'response_time_ms': result.get('response_time_ms'),
+            }
+            if loan_readiness_context:
+                response_payload['loan_readiness'] = {
+                    'enabled': True,
+                    'readiness': loan_readiness_context.get('readiness'),
+                    'product': loan_readiness_context.get('product'),
+                    'requested': loan_readiness_context.get('requested'),
+                    'eligibility_check': loan_readiness_context.get('eligibility_check'),
+                    'qualification': loan_readiness_context.get('qualification'),
+                    'risk_flags': loan_readiness_context.get('risk_flags'),
+                }
             
             return success_response(
-                data={
-                    'response': ai_response,
-                    'conversation_id': conversation_id,
-                    'model': result.get('model'),
-                    'response_time_ms': result.get('response_time_ms')
-                },
+                data=response_payload,
                 message="Response generated successfully"
             )
             
