@@ -31,7 +31,8 @@ class AuthService:
             'email': customer.email,
             'verified': customer.verified,
             'role': customer.role,
-            'two_factor_enabled': customer.two_factor_enabled
+            'two_factor_enabled': customer.two_factor_enabled,
+            'language': getattr(customer, 'language', 'en'),
         }
         if include_last_name:
             data['last_name'] = customer.last_name
@@ -108,6 +109,16 @@ class AuthService:
         refresh.set_exp(lifetime=timedelta(minutes=5))
         return str(refresh)
     
+    @staticmethod
+    def update_language(customer, language_code):
+        """Update a customer's language preference. Accepts 'en' or 'tl'."""
+        allowed = {'en', 'tl'}
+        if language_code not in allowed:
+            raise ValueError(f"language must be one of: {', '.join(sorted(allowed))}")
+        customer.language = language_code
+        customer.save()
+        return customer
+
     @staticmethod
     def authenticate_customer(email, password):
         customer = AuthService.get_customer_by_email(email)

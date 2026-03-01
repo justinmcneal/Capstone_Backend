@@ -1,6 +1,6 @@
 from django.urls import path
 from accounts.views import CSRFTokenView, SignUpView, VerifyOTP, ResendOTP, ForgotPasswordView, VerifyResetOTPView, ResetPasswordView, ChangePasswordView, ConsentView
-from accounts.views.auth_views import LoginView, LogoutView, RefreshTokenView
+from accounts.views.auth_views import LoginView, LogoutView, RefreshTokenView, UpdateLanguageView
 from accounts.views.two_factor_views import (
     Setup2FAView, 
     Confirm2FASetupView, 
@@ -50,6 +50,7 @@ urlpatterns = [
 
     # Consent Management
     path('consent/', ConsentView.as_view(), name='consent'),
+    path('language/', UpdateLanguageView.as_view(), name='update-language'),
 
     # Loan Officer Authentication
     path('loan-officer/login/', LoanOfficerLoginView.as_view(), name='loan-officer-login'),
