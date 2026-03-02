@@ -457,9 +457,16 @@ class RefreshTokenView(APIView):
 
             customer_id = token.get('customer_id')
             role = token.get('role', 'customer')
-            token_type = token.get('token_type')
+            token_type = token.get('session_type')
             if token_type not in {'remember_me', 'no_remember_me', 'signup'}:
-                token_type = 'remember_me' if role == 'loan_officer' else 'no_remember_me'
+                # Backward compatibility: older tokens may have used token_type
+                # for remember-me semantics. Reserved JWT token_type values
+                # ("refresh"/"access") are ignored here.
+                legacy_type = token.get('token_type')
+                if legacy_type in {'remember_me', 'no_remember_me', 'signup'}:
+                    token_type = legacy_type
+                else:
+                    token_type = 'remember_me' if role == 'loan_officer' else 'no_remember_me'
             if not customer_id:
                 logger.warning(
                     f"Token refresh missing customer_id claim from IP {request.META.get('REMOTE_ADDR')}"
