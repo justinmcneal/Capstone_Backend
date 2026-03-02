@@ -92,7 +92,9 @@ class TokenUtils:
         refresh['email'] = customer.email
         refresh['verified'] = customer.verified
         refresh['role'] = customer.role
-        refresh['token_type'] = token_type
+        # Do not override SimpleJWT's reserved "token_type" claim ("refresh"/"access").
+        # Store remember-me/signup semantics in a custom claim instead.
+        refresh['session_type'] = token_type
         
         refresh.set_exp(lifetime=lifetimes['refresh'])
         
@@ -142,7 +144,9 @@ class TokenUtils:
         refresh['email'] = email
         refresh['verified'] = verified
         refresh['role'] = role
-        refresh['token_type'] = token_type
+        # Do not override SimpleJWT's reserved "token_type" claim ("refresh"/"access").
+        # Store remember-me/signup semantics in a custom claim instead.
+        refresh['session_type'] = token_type
         
         # Set expiration from centralized lifetime config
         refresh.set_exp(lifetime=lifetimes['refresh'])
