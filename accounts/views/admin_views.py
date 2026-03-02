@@ -20,6 +20,7 @@ from accounts.utils.auth_cookies import (
 )
 from accounts.utils.validation_utils import (
     validate_employee_id,
+    validate_phone_number,
     validate_person_name,
     normalize_text,
     sanitize_text,
@@ -488,11 +489,18 @@ class LoanOfficerManagementView(AdminRequiredMixin, APIView):
             employee_id_valid, employee_id_error, employee_id = validate_employee_id(
                 request.data.get('employee_id', ''),
                 field_name='Employee ID',
-                max_length=50
+                max_length=20
             )
             first_name = request.data.get('first_name', '')
             last_name = request.data.get('last_name', '')
             email = EmailUtils.normalize_email(str(request.data.get('email') or ''))
+            phone_valid, phone_error, phone_number = validate_phone_number(
+                request.data.get('phone', ''),
+                field_name='Phone',
+                required=False,
+                min_digits=11,
+                max_digits=11,
+            )
 
             # Validate required fields
             missing_errors = {}
@@ -539,6 +547,13 @@ class LoanOfficerManagementView(AdminRequiredMixin, APIView):
                     errors={'last_name': last_name_error},
                     status_code=status.HTTP_400_BAD_REQUEST
                 )
+
+            if not phone_valid:
+                return error_response(
+                    message=phone_error,
+                    errors={'phone': phone_error},
+                    status_code=status.HTTP_400_BAD_REQUEST
+                )
             
             # Check if email already exists
             if LoanOfficer.find_one({'email': email}):
@@ -568,7 +583,7 @@ class LoanOfficerManagementView(AdminRequiredMixin, APIView):
                 first_name=first_name_normalized,
                 last_name=last_name_normalized,
                 email=email,
-                phone=sanitize_text(request.data.get('phone', '')),
+                phone=phone_number,
                 department=department,
                 created_by=ObjectId(admin.id),
                 must_change_password=True
@@ -719,6 +734,27 @@ class LoanOfficerDetailView(AdminRequiredMixin, APIView):
                                 status_code=status.HTTP_400_BAD_REQUEST
                             )
                         new_value = normalized_name
+                    elif field == 'phone':
+                        if new_value is not None and not isinstance(new_value, str):
+                            return error_response(
+                                message="phone must be a string",
+                                errors={'phone': 'phone must be a string'},
+                                status_code=status.HTTP_400_BAD_REQUEST
+                            )
+                        is_valid, phone_error, normalized_phone = validate_phone_number(
+                            new_value,
+                            field_name='Phone',
+                            required=False,
+                            min_digits=11,
+                            max_digits=11,
+                        )
+                        if not is_valid:
+                            return error_response(
+                                message=phone_error,
+                                errors={'phone': phone_error},
+                                status_code=status.HTTP_400_BAD_REQUEST
+                            )
+                        new_value = normalized_phone
                     elif field == 'active':
                         is_valid, parsed_active, parse_error = parse_bool(new_value, 'active')
                         if not is_valid:
@@ -730,7 +766,7 @@ class LoanOfficerDetailView(AdminRequiredMixin, APIView):
                         new_value = parsed_active
                     elif isinstance(new_value, str):
                         new_value = sanitize_text(new_value)
-                    elif field in ['phone', 'department'] and new_value is not None:
+                    elif field == 'department' and new_value is not None and not isinstance(new_value, str):
                         return error_response(
                             message=f"{field} must be a string",
                             errors={field: f"{field} must be a string"},

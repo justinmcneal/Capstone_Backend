@@ -169,3 +169,47 @@ def validate_employee_id(value, field_name="Employee ID", min_length=3, max_leng
         )
 
     return True, None, normalized
+
+
+def validate_phone_number(
+    value,
+    field_name="Phone",
+    required=False,
+    min_digits=11,
+    max_digits=11,
+):
+    """
+    Validate phone number with numeric-only policy.
+    Default enforces exactly 11 digits.
+    """
+    raw = "" if value is None else str(value).strip()
+
+    if not raw:
+        if required:
+            return False, f"{field_name} is required", ""
+        return True, None, ""
+
+    if not re.fullmatch(r"[0-9\s-]+", raw):
+        return (
+            False,
+            f"{field_name} must contain numbers only",
+            raw,
+        )
+
+    digits_only = re.sub(r"\D", "", raw)
+    digit_count = len(digits_only)
+
+    if digit_count < min_digits or digit_count > max_digits:
+        if min_digits == max_digits:
+            return (
+                False,
+                f"{field_name} must be exactly {min_digits} digits",
+                digits_only,
+            )
+        return (
+            False,
+            f"{field_name} must be between {min_digits} and {max_digits} digits",
+            digits_only,
+        )
+
+    return True, None, digits_only
