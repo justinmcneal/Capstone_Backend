@@ -457,6 +457,9 @@ class RefreshTokenView(APIView):
 
             customer_id = token.get('customer_id')
             role = token.get('role', 'customer')
+            token_type = token.get('token_type')
+            if token_type not in {'remember_me', 'no_remember_me', 'signup'}:
+                token_type = 'remember_me' if role == 'loan_officer' else 'no_remember_me'
             if not customer_id:
                 logger.warning(
                     f"Token refresh missing customer_id claim from IP {request.META.get('REMOTE_ADDR')}"
@@ -499,7 +502,7 @@ class RefreshTokenView(APIView):
                         'Account is inactive',
                         status.HTTP_401_UNAUTHORIZED
                     )
-                new_tokens = AuthService.create_customer_tokens(customer, token_type='no_remember_me')
+                new_tokens = AuthService.create_customer_tokens(customer, token_type=token_type)
                 user_email = customer.email
             else:
                 try:
@@ -541,17 +544,12 @@ class RefreshTokenView(APIView):
                         status.HTTP_401_UNAUTHORIZED
                     )
 
-                # Keep role-based session durations for non-customer users.
-                refresh_days = 1
-                if role == 'loan_officer':
-                    refresh_days = 3
-
                 new_tokens = TokenUtils.generate_tokens(
                     user_id=user.id,
                     email=user.email,
                     verified=getattr(user, 'verified', True),
                     role=role,
-                    refresh_token_days=refresh_days
+                    token_type=token_type
                 )
                 user_email = user.email
 

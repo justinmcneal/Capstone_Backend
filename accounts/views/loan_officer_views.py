@@ -191,13 +191,13 @@ class LoanOfficerLoginView(APIView):
                 )
             
             # Generate tokens
-            refresh_days = 3 if remember_me else 1
+            token_type = 'remember_me' if remember_me else 'no_remember_me'
             tokens = TokenUtils.generate_tokens(
                 user_id=officer.id,
                 email=officer.email,
                 verified=officer.verified,
                 role='loan_officer',
-                refresh_token_days=refresh_days
+                token_type=token_type
             )
             
             # Audit log for loan officer login
