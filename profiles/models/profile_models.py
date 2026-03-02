@@ -273,7 +273,10 @@ class BusinessProfile:
         # Operations
         # Canonical unit: months (not years)
         # Support both field names for backwards compatibility
-        self.business_age_months = kwargs.get('business_age_months') or kwargs.get('years_in_operation')
+        # Use explicit None check to handle 0 as valid value
+        _age_months = kwargs.get('business_age_months')
+        _years_op = kwargs.get('years_in_operation')
+        self.business_age_months = _age_months if _age_months is not None else _years_op
         self.is_registered = kwargs.get('is_registered', False)  # DTI/SEC registered
         self.registration_type = kwargs.get('registration_type')  # DTI, SEC, BIR
         self.registration_number = kwargs.get('registration_number', '')
