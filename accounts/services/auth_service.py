@@ -89,6 +89,8 @@ class AuthService:
             
         except DuplicateKeyError:
             raise ValueError('An account with this email already exists')
+        except ValueError:
+            raise  # Propagate ValueError so SignUpView can return a proper 400 response
         except Exception as e:
             raise Exception(f'Registration failed: {str(e)}')
     
