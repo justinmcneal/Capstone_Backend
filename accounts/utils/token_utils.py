@@ -55,6 +55,15 @@ class TokenUtils:
         refresh_entry.save()
 
     @staticmethod
+    def _get_token_lifetimes(token_type='no_remember_me'):
+        lifetimes = getattr(settings, 'TOKEN_LIFETIMES', {})
+        default_lifetimes = lifetimes.get('no_remember_me', {
+            'access': timedelta(minutes=30),
+            'refresh': timedelta(days=7),
+        })
+        return lifetimes.get(token_type, default_lifetimes)
+
+    @staticmethod
     def generate_jwt_tokens(customer, token_type='no_remember_me'):
         """
         Generate JWT access and refresh tokens for a customer with dynamic lifetimes.
@@ -67,7 +76,7 @@ class TokenUtils:
         Returns:
             dict with access and refresh tokens
         """
-        lifetimes = settings.TOKEN_LIFETIMES.get(token_type, settings.TOKEN_LIFETIMES['no_remember_me'])
+        lifetimes = TokenUtils._get_token_lifetimes(token_type)
         
         # Single-device enforcement: Invalidate all existing refresh tokens for this customer.
         customer_query = TokenUtils._token_membership_query(customer.id, role='customer', active_only=True)
@@ -83,6 +92,7 @@ class TokenUtils:
         refresh['email'] = customer.email
         refresh['verified'] = customer.verified
         refresh['role'] = customer.role
+        refresh['token_type'] = token_type
         
         refresh.set_exp(lifetime=lifetimes['refresh'])
         
@@ -103,7 +113,7 @@ class TokenUtils:
         }
     
     @staticmethod
-    def generate_tokens(user_id, email, verified=True, role='customer', refresh_token_days=1):
+    def generate_tokens(user_id, email, verified=True, role='customer', token_type='no_remember_me'):
         """
         Generate JWT tokens for non-customer users (admin, loan officer).
         
@@ -112,11 +122,13 @@ class TokenUtils:
             email: User's email
             verified: Whether user is verified
             role: User role (admin, loan_officer)
-            refresh_token_days: How many days the refresh token should last
+            token_type: 'remember_me', 'no_remember_me', or 'signup'
         
         Returns:
             dict with access and refresh tokens
         """
+        lifetimes = TokenUtils._get_token_lifetimes(token_type)
+
         user_query = TokenUtils._token_membership_query(user_id, role=role, active_only=True)
         existing_tokens = RefreshTokenEntry.find(user_query)
         invalidated_count = len(existing_tokens)
@@ -130,12 +142,13 @@ class TokenUtils:
         refresh['email'] = email
         refresh['verified'] = verified
         refresh['role'] = role
+        refresh['token_type'] = token_type
         
-        # Set expiration
-        refresh.set_exp(lifetime=timedelta(days=refresh_token_days))
+        # Set expiration from centralized lifetime config
+        refresh.set_exp(lifetime=lifetimes['refresh'])
         
         access = refresh.access_token
-        access.set_exp(lifetime=timedelta(minutes=15))  # Shorter access for admins
+        access.set_exp(lifetime=lifetimes['access'])
 
         TokenUtils._store_refresh_token_entry(
             customer_id=user_id,

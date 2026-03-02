@@ -235,7 +235,7 @@ class Verify2FAView(APIView):
                     email=user.email,
                     verified=True,
                     role='admin',
-                    refresh_token_days=1
+                    token_type='no_remember_me'
                 )
                 user_data = {
                     'id': user.id,
@@ -253,7 +253,7 @@ class Verify2FAView(APIView):
                     email=user.email,
                     verified=user.verified,
                     role='loan_officer',
-                    refresh_token_days=1
+                    token_type='no_remember_me'
                 )
                 user_data = {
                     'id': user.id,

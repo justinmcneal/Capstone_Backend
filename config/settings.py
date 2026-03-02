@@ -205,29 +205,29 @@ REST_FRAMEWORK = {
 # JWT Settings
 from datetime import timedelta
 
+# Single source of truth for token lifetimes across all roles.
+TOKEN_LIFETIMES = {
+    'remember_me': {
+        'access': timedelta(minutes=30),
+        'refresh': timedelta(days=30),
+    },
+    'no_remember_me': {
+        'access': timedelta(minutes=30),
+        'refresh': timedelta(days=7),
+    },
+    'signup': {
+        'access': timedelta(minutes=30),
+        'refresh': timedelta(days=7),
+    },
+}
+
 SIMPLE_JWT = {
-    'ACCESS_TOKEN_LIFETIME': timedelta(minutes=10),  # 10 minutes for all logins
-    'REFRESH_TOKEN_LIFETIME': timedelta(hours=24),   # Default 24 hours (will be overridden dynamically)
+    'ACCESS_TOKEN_LIFETIME': TOKEN_LIFETIMES['no_remember_me']['access'],
+    'REFRESH_TOKEN_LIFETIME': TOKEN_LIFETIMES['no_remember_me']['refresh'],
     'ROTATE_REFRESH_TOKENS': False,  # Disabled since we're using MongoDB
     'BLACKLIST_AFTER_ROTATION': False,  # Disabled - using custom MongoDB blacklist
     'AUTH_HEADER_TYPES': ('Bearer',),
     'CHECK_REVOKE_TOKEN': False,  # Disable built-in token revocation check
-}
-
-# Token lifetime configurations for different scenarios
-TOKEN_LIFETIMES = {
-    'remember_me': {
-        'access': timedelta(minutes=10),
-        'refresh': timedelta(days=3)
-    },
-    'no_remember_me': {
-        'access': timedelta(minutes=10),
-        'refresh': timedelta(hours=24)
-    },
-    'signup': {  # After OTP verification
-        'access': timedelta(minutes=10),
-        'refresh': timedelta(hours=24)
-    }
 }
 
 # CORS configuration
