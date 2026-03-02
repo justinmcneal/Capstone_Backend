@@ -6,6 +6,7 @@ from django.utils.html import strip_tags
 # Unicode-aware: allows letters with optional separators between words.
 _PERSON_NAME_PATTERN = re.compile(r"^[^\W\d_]+(?:[ .'-][^\W\d_]+)*$", re.UNICODE)
 _EMPLOYEE_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]*$")
+_EMAIL_PATTERN = re.compile(r"^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$")
 _CONTROL_CHARS_PATTERN = re.compile(r"[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]")
 _MULTI_NEWLINE_PATTERN = re.compile(r"\n{3,}")
 _DANGEROUS_BLOCK_TAG_PATTERN = re.compile(
@@ -213,3 +214,39 @@ def validate_phone_number(
         )
 
     return True, None, digits_only
+
+
+def validate_email(value, field_name="Email", required=True, max_length=254):
+    """
+    Validate email address format.
+    Maximum length of 254 characters per RFC 5321.
+    
+    Returns:
+        tuple[bool, str|None, str]: (is_valid, error_message, normalized_email)
+    """
+    normalized = normalize_text(value)
+
+    if not normalized:
+        if required:
+            return False, f"{field_name} is required", ""
+        return True, None, ""
+
+    if len(normalized) > max_length:
+        return (
+            False,
+            f"{field_name} must be at most {max_length} characters",
+            normalized,
+        )
+
+    # Convert to lowercase for validation
+    email_lower = normalized.lower()
+
+    if not _EMAIL_PATTERN.match(email_lower):
+        return (
+            False,
+            f"{field_name} must be a valid email address",
+            normalized,
+        )
+
+    return True, None, email_lower
+

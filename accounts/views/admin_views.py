@@ -19,6 +19,7 @@ from accounts.utils.auth_cookies import (
     get_refresh_token_from_request,
 )
 from accounts.utils.validation_utils import (
+    validate_email,
     validate_employee_id,
     validate_phone_number,
     validate_person_name,
@@ -554,9 +555,21 @@ class LoanOfficerManagementView(AdminRequiredMixin, APIView):
                     errors={'phone': phone_error},
                     status_code=status.HTTP_400_BAD_REQUEST
                 )
+
+            email_valid, email_error, email_normalized = validate_email(
+                email,
+                field_name='Email',
+                required=True
+            )
+            if not email_valid:
+                return error_response(
+                    message=email_error,
+                    errors={'email': email_error},
+                    status_code=status.HTTP_400_BAD_REQUEST
+                )
             
             # Check if email already exists
-            if LoanOfficer.find_one({'email': email}):
+            if LoanOfficer.find_one({'email': email_normalized}):
                 return error_response(
                     message="A loan officer with this email already exists",
                     status_code=status.HTTP_400_BAD_REQUEST
@@ -582,7 +595,7 @@ class LoanOfficerManagementView(AdminRequiredMixin, APIView):
                 employee_id=employee_id,
                 first_name=first_name_normalized,
                 last_name=last_name_normalized,
-                email=email,
+                email=email_normalized,
                 phone=phone_number,
                 department=department,
                 created_by=ObjectId(admin.id),
@@ -591,7 +604,7 @@ class LoanOfficerManagementView(AdminRequiredMixin, APIView):
             officer.set_password(temp_password)
             officer.save()
             
-            logger.info(f"Loan officer created: {email} by admin {admin.username}")
+            logger.info(f"Loan officer created: {email_normalized} by admin {admin.username}")
             
             # Audit log
             AuditLog.log_action(
@@ -599,10 +612,10 @@ class LoanOfficerManagementView(AdminRequiredMixin, APIView):
                 user_id=admin.id,
                 user_type='admin' if not admin.super_admin else 'super_admin',
                 user_email=admin.email,
-                description=f'Created loan officer: {email}',
+                description=f'Created loan officer: {email_normalized}',
                 resource_type='loan_officer',
                 resource_id=officer.id,
-                details={'officer_email': email, 'employee_id': employee_id},
+                details={'officer_email': email_normalized, 'employee_id': employee_id},
                 ip_address=request.META.get('REMOTE_ADDR', '')
             )
             
@@ -1026,6 +1039,19 @@ class AdminManagementView(SuperAdminRequiredMixin, APIView):
             username = data['username'].strip()
             email = data['email'].lower().strip()
             
+            # Validate email format
+            email_valid, email_error, email_normalized = validate_email(
+                email,
+                field_name='Email',
+                required=True
+            )
+            if not email_valid:
+                return error_response(
+                    message=email_error,
+                    errors={'email': email_error},
+                    status_code=status.HTTP_400_BAD_REQUEST
+                )
+            
             # Check if username already exists
             if Admin.find_one({'username': username}):
                 return error_response(
@@ -1034,7 +1060,7 @@ class AdminManagementView(SuperAdminRequiredMixin, APIView):
                 )
             
             # Check if email already exists
-            if Admin.find_one({'email': email}):
+            if Admin.find_one({'email': email_normalized}):
                 return error_response(
                     message="An admin with this email already exists",
                     status_code=status.HTTP_400_BAD_REQUEST
@@ -1046,7 +1072,7 @@ class AdminManagementView(SuperAdminRequiredMixin, APIView):
             # Create admin
             new_admin = Admin(
                 username=username,
-                email=email,
+                email=email_normalized,
                 first_name=data.get('first_name', ''),
                 last_name=data.get('last_name', ''),
                 super_admin=data.get('super_admin', False),
