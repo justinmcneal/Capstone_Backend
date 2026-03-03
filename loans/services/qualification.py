@@ -131,6 +131,16 @@ PRODUCT REQUIREMENTS:
 - Minimum monthly income: ₱{min_income:,.2f}
 - Minimum business operation: {min_months} months
 - Required documents: {required_docs}
+
+REQUIREMENT STATUS (pre-computed, authoritative — do NOT override):
+{requirement_status}
+
+IMPORTANT RULES:
+- Use the REQUIREMENT STATUS above as the ground truth for whether each requirement is met.
+- If a requirement is marked as MEETS, do NOT list it as a concern or missing requirement.
+- Only list a requirement as missing/concern if the status says DOES NOT MEET.
+- The "missing_requirements" array must ONLY contain items the customer genuinely fails.
+- Always quote the exact product threshold (e.g. "{min_months} months") — never invent different numbers.
 """
 
 QUALIFICATION_REQUIRED_FIELDS = {
@@ -352,7 +362,7 @@ def format_profile_for_ai(data):
         business_str = f"""
 - Business Name: {business.business_name or 'Not provided'}
 - Business Type: {business.business_type or 'Not provided'}
-- Years in Operation: {years:.1f} years ({months} months)
+- Business Age: {months} months ({years:.1f} years)
 - Registered: {'Yes' if business.is_registered else 'No'}
 - Monthly Income Range: {business.income_range or 'Not provided'}
 - Estimated Monthly Income: ₱{business.estimated_monthly_income or 0:,.2f}
@@ -376,6 +386,95 @@ def format_profile_for_ai(data):
         docs_str = "\n".join(doc_list)
     
     return profile_str, business_str, alt_str, docs_str
+
+
+def _build_requirement_status(data, product, required_doc_types, require_approved_documents):
+    """
+    Pre-compute authoritative requirement status lines for the AI prompt.
+    These act as ground truth so the AI cannot hallucinate different thresholds.
+    """
+    lines = []
+    business = data.get('business')
+    docs = data.get('documents', [])
+
+    # Business age check
+    biz_months = (business.business_age_months or 0) if business else 0
+    min_months = product.min_business_months
+    if biz_months >= min_months:
+        lines.append(f"- Business operation: MEETS requirement ({biz_months} months >= {min_months} months minimum)")
+    else:
+        lines.append(f"- Business operation: DOES NOT MEET requirement ({biz_months} months < {min_months} months minimum)")
+
+    # Income check
+    income = (business.estimated_monthly_income or 0) if business else 0
+    min_income = product.min_monthly_income
+    if income >= min_income:
+        lines.append(f"- Monthly income: MEETS requirement (₱{income:,.2f} >= ₱{min_income:,.2f} minimum)")
+    else:
+        lines.append(f"- Monthly income: DOES NOT MEET requirement (₱{income:,.2f} < ₱{min_income:,.2f} minimum)")
+
+    # Document check
+    if require_approved_documents and required_doc_types:
+        doc_types_uploaded = set()
+        for doc in docs:
+            canonical = canonicalize_document_type(doc.document_type)
+            if canonical:
+                doc_types_uploaded.add(canonical)
+        for req_doc in required_doc_types:
+            label = document_type_label(req_doc)
+            if req_doc in doc_types_uploaded:
+                lines.append(f"- Document '{label}': UPLOADED")
+            else:
+                lines.append(f"- Document '{label}': MISSING")
+
+    return "\n".join(lines) if lines else "No pre-computed status available."
+
+
+_BUSINESS_AGE_PATTERNS = re.compile(
+    r'business\s+(age|operation|history|experience|months)'
+    r'|insufficient.*business'
+    r'|limited.*business.*histor'
+    r'|minimum.*\d+\s*months?\s*(of\s+)?business'
+    r'|business.*less\s+than',
+    re.IGNORECASE,
+)
+
+
+def _strip_false_business_age_failures(result, business, product):
+    """
+    Post-AI guard: if the customer actually meets the business-age threshold
+    but the AI wrongly flagged it, remove those entries from concerns and
+    missing_requirements so the user isn't shown incorrect reasons.
+    """
+    if not business:
+        return result
+
+    biz_months = business.business_age_months or 0
+    if biz_months < product.min_business_months:
+        # Customer genuinely does not meet the requirement — keep AI output.
+        return result
+
+    # Customer meets the requirement — strip any erroneous AI flags.
+    changed = False
+    for key in ('concerns', 'missing_requirements'):
+        original = result.get(key, [])
+        filtered = [item for item in original if not _BUSINESS_AGE_PATTERNS.search(item)]
+        if len(filtered) != len(original):
+            result[key] = filtered
+            changed = True
+            logger.info(
+                f"[AI VALIDATION] Stripped false business-age failure from {key}: "
+                f"customer has {biz_months} months >= {product.min_business_months} required"
+            )
+
+    # If we removed all missing_requirements but AI said not eligible,
+    # re-evaluate eligibility based on remaining missing_requirements.
+    if changed and not result.get('eligible') and len(result.get('missing_requirements', [])) == 0:
+        result['eligible'] = True
+        result['can_apply'] = True
+        logger.info("[AI VALIDATION] Overriding eligibility to True after stripping false failures")
+
+    return result
 
 
 def qualify_customer(
@@ -413,6 +512,11 @@ def qualify_customer(
             reason='Rule-based assessment (AI consent not granted)',
         )
     
+    # Build pre-computed requirement status so the AI has authoritative ground truth
+    requirement_status = _build_requirement_status(
+        data, product, required_doc_types, require_approved_documents,
+    )
+
     # Build prompt
     prompt = QUALIFICATION_USER_PROMPT.format(
         profile_data=profile_str,
@@ -429,7 +533,8 @@ def qualify_customer(
             ', '.join(document_type_label(doc) for doc in required_doc_types)
             if require_approved_documents
             else 'Not required at pre-qualification stage (enforced during loan application)'
-        )
+        ),
+        requirement_status=requirement_status,
     )
     
     # Get AI response
@@ -479,13 +584,17 @@ def qualify_customer(
         )
 
     try:
-        return _validate_and_normalize_ai_qualification(
+        ai_result = _validate_and_normalize_ai_qualification(
             payload=payload,
             product=product,
             requested_amount=requested_amount,
             required_doc_types=required_doc_types,
             scope=scope,
         )
+        # Post-AI guard: strip false business-age failures the AI may hallucinate
+        business = data.get('business')
+        ai_result = _strip_false_business_age_failures(ai_result, business, product)
+        return ai_result
     except ValueError as e:
         logger.error(f"AI qualification schema validation failed: {e}")
 
