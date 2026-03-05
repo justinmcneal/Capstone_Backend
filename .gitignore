@@ -207,10 +207,10 @@ marimo/_lsp/
 __marimo__/
 
 # ML Training Data (contains personal documents - do not commit)
-documents/ml/training_data/**
-documents/ml/test_data/**
-documents/ml/reports/**
-!documents/ml/training_data/README.md
+# documents/ml/training_data/**
+# documents/ml/test_data/**
+# documents/ml/reports/**
+# !documents/ml/training_data/README.md
 
 # Trained ML Models (large files)
 documents/ml/models/*.pth
