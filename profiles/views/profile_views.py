@@ -56,6 +56,7 @@ class CustomerProfileView(CustomerProfileAccessMixin, APIView):
                     'gender': profile.gender,
                     'civil_status': profile.civil_status,
                     'nationality': profile.nationality,
+                    'mobile_number': profile.mobile_number,
                     'address_line1': profile.address_line1,
                     'address_line2': profile.address_line2,
                     'barangay': profile.barangay,

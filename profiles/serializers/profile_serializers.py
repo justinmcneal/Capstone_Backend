@@ -43,6 +43,7 @@ class CustomerProfileSerializer(InputSanitizationMixin, serializers.Serializer):
         allow_null=True
     )
     nationality = serializers.CharField(max_length=50, required=False)
+    mobile_number = serializers.CharField(max_length=20, required=False, allow_blank=True)
     
     # Address
     address_line1 = serializers.CharField(max_length=200, required=False, allow_blank=True)
@@ -56,6 +57,21 @@ class CustomerProfileSerializer(InputSanitizationMixin, serializers.Serializer):
     emergency_contact_name = serializers.CharField(max_length=100, required=False, allow_blank=True)
     emergency_contact_phone = serializers.CharField(max_length=20, required=False, allow_blank=True)
     emergency_contact_relationship = serializers.CharField(max_length=50, required=False, allow_blank=True)
+
+    def validate_mobile_number(self, value):
+        if not value:
+            return value  # optional field
+        cleaned = re.sub(r'[\s\-().]', '', value)
+        # Accept 09XXXXXXXXX (11 digits) or +639XXXXXXXXX (13 chars)
+        if not re.fullmatch(r'(09\d{9}|\+639\d{9})', cleaned):
+            raise serializers.ValidationError(
+                'Enter a valid Philippine mobile number '
+                '(e.g. 09171234567 or +639171234567).'
+            )
+        # Normalize to +639XXXXXXXXX
+        if cleaned.startswith('09'):
+            cleaned = '+63' + cleaned[1:]
+        return cleaned
 
     def validate_barangay(self, value):
         return _validate_location_name(value, 'Barangay')
@@ -75,6 +91,7 @@ class CustomerProfileResponseSerializer(serializers.Serializer):
     gender = serializers.CharField(allow_null=True)
     civil_status = serializers.CharField(allow_null=True)
     nationality = serializers.CharField()
+    mobile_number = serializers.CharField(allow_blank=True)
     address_line1 = serializers.CharField()
     address_line2 = serializers.CharField()
     barangay = serializers.CharField()
