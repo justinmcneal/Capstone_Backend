@@ -108,6 +108,7 @@ class CustomerProfile:
     """
     collection_name = 'customer_profiles'
     encrypted_fields = (
+        'mobile_number',
         'address_line1',
         'address_line2',
         'barangay',
@@ -127,6 +128,7 @@ class CustomerProfile:
         self.gender = kwargs.get('gender')  # male, female, other, prefer_not_to_say
         self.civil_status = kwargs.get('civil_status')  # single, married, widowed, separated
         self.nationality = kwargs.get('nationality', 'Filipino')
+        self.mobile_number = kwargs.get('mobile_number', '')  # Philippine mobile e.g. +639XXXXXXXXX
         
         # Address Information
         self.address_line1 = kwargs.get('address_line1', '')
@@ -165,6 +167,7 @@ class CustomerProfile:
             'gender': self.gender,
             'civil_status': self.civil_status,
             'nationality': self.nationality,
+            'mobile_number': self.mobile_number,
             'address_line1': self.address_line1,
             'address_line2': self.address_line2,
             'barangay': self.barangay,
