@@ -71,6 +71,7 @@ class LoanApplication:
         self.document_request_history = kwargs.get('document_request_history', [])
         
         # Disbursement tracking
+        self.preferred_disbursement_method = kwargs.get('preferred_disbursement_method')  # Borrower-selected: gcash, bank_transfer
         self.disbursed_amount = kwargs.get('disbursed_amount')
         self.disbursed_at = kwargs.get('disbursed_at')
         self.disbursement_method = kwargs.get('disbursement_method')  # bank_transfer, cash, etc.
@@ -109,6 +110,7 @@ class LoanApplication:
             'missing_documents_requested_by': self.missing_documents_requested_by,
             'missing_documents_requested_at': self.missing_documents_requested_at,
             'document_request_history': self.document_request_history,
+            'preferred_disbursement_method': self.preferred_disbursement_method,
             'disbursed_amount': self.disbursed_amount,
             'disbursed_at': self.disbursed_at,
             'disbursement_method': self.disbursement_method,
@@ -245,6 +247,17 @@ class LoanApplication:
         self.disbursement_method = method
         self.disbursement_reference = reference
         self.disbursed_by = processed_by
+        return self.save()
+    
+    def set_preferred_disbursement_method(self, method):
+        """Set the borrower's preferred disbursement method (before actual disbursement)."""
+        allowed = {'bank_transfer', 'gcash'}
+        if method not in allowed:
+            raise ValueError(f"Disbursement method must be one of: {', '.join(sorted(allowed))}")
+        if self.status != 'approved':
+            raise ValueError("Can only set disbursement method for approved applications")
+        self.preferred_disbursement_method = method
+        self.updated_at = datetime.utcnow()
         return self.save()
     
     def can_resubmit(self):

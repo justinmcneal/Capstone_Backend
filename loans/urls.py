@@ -11,6 +11,7 @@ from loans.views import (
     PaymentHistoryView,
     ResubmitApplicationView,
     RejectionFeedbackView,
+    SetDisbursementMethodView,
     # Admin
     AdminProductListView,
     AdminProductDetailView,
@@ -46,6 +47,7 @@ urlpatterns = [
     path('applications/<str:application_id>/payments/', PaymentHistoryView.as_view(), name='application-payments'),
     path('applications/<str:application_id>/resubmit/', ResubmitApplicationView.as_view(), name='application-resubmit'),
     path('applications/<str:application_id>/feedback/', RejectionFeedbackView.as_view(), name='application-feedback'),
+    path('applications/<str:application_id>/set-disbursement-method/', SetDisbursementMethodView.as_view(), name='set-disbursement-method'),
     
     # Admin endpoints (product management)
     path('admin/products/', AdminProductListView.as_view(), name='admin-products'),

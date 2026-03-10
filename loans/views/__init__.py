@@ -8,7 +8,8 @@ from .customer_views import (
     RepaymentScheduleView,
     PaymentHistoryView,
     ResubmitApplicationView,
-    RejectionFeedbackView
+    RejectionFeedbackView,
+    SetDisbursementMethodView,
 )
 from .admin_views import (
     AdminProductListView,
