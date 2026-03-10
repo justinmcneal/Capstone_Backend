@@ -58,6 +58,7 @@ def _serialize_customer_application_detail(app, product):
         'rejection_reason': app.rejection_reason,
         'submitted_at': app.submitted_at.isoformat() if app.submitted_at else None,
         'decision_date': app.decision_date.isoformat() if app.decision_date else None,
+        'preferred_disbursement_method': app.preferred_disbursement_method,
         'disbursed_at': app.disbursed_at.isoformat() if app.disbursed_at else None,
         'created_at': app.created_at.isoformat()
     }
@@ -1202,3 +1203,78 @@ Don't give up! Many successful borrowers were approved on their second try."""
             },
             message="Feedback retrieved"
         )
+
+
+class SetDisbursementMethodView(CustomerRoleRequiredMixin, APIView):
+    """
+    Customer: Set preferred disbursement method after loan approval.
+    
+    POST /api/loans/applications/<id>/set-disbursement-method/
+    Body: { "disbursement_method": "gcash" | "bank_transfer" }
+    """
+    authentication_classes = [CustomJWTAuthentication]
+    permission_classes = [IsAuthenticated]
+    
+    def post(self, request, application_id):
+        has_permission, result = self.check_customer_permission(request)
+        if not has_permission:
+            return result
+
+        user = request.user
+        customer_id = user.customer_id
+        
+        app = LoanApplication.find_by_id(application_id)
+        
+        if not app or app.customer_id != customer_id:
+            return error_response(
+                message="Application not found",
+                status_code=status.HTTP_404_NOT_FOUND
+            )
+        
+        disbursement_method = sanitize_text(
+            request.data.get('disbursement_method', '')
+        ).lower().strip()
+        
+        if not disbursement_method:
+            return error_response(
+                message="disbursement_method is required",
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+        
+        try:
+            app.set_preferred_disbursement_method(disbursement_method)
+        except ValueError as e:
+            return error_response(
+                message=str(e),
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Audit log
+        AuditLog.log_action(
+            action='disbursement_method_set',
+            user_id=customer_id,
+            user_type='customer',
+            user_email=user.email if hasattr(user, 'email') else '',
+            description=f'Borrower set preferred disbursement method to {disbursement_method}',
+            resource_type='loan',
+            resource_id=app.id,
+            details={
+                'disbursement_method': disbursement_method,
+            },
+            ip_address=request.META.get('REMOTE_ADDR', '')
+        )
+        
+        logger.info(
+            f"Disbursement method set: {disbursement_method} "
+            f"for application {app.id} by customer {customer_id}"
+        )
+        
+        return success_response(
+            data={
+                'id': app.id,
+                'status': app.status,
+                'preferred_disbursement_method': app.preferred_disbursement_method,
+            },
+            message="Disbursement method saved successfully"
+        )
+

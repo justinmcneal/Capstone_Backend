@@ -496,6 +496,7 @@ class OfficerApplicationDetailView(LoanOfficerRequiredMixin, APIView):
                 'submitted_at': app.submitted_at.isoformat() if app.submitted_at else None,
                 'decision_date': app.decision_date.isoformat() if app.decision_date else None,
                 'disbursed_amount': app.disbursed_amount,
+                'preferred_disbursement_method': app.preferred_disbursement_method,
                 'disbursement_method': app.disbursement_method,
                 'disbursement_reference': app.disbursement_reference,
                 'disbursed_at': app.disbursed_at.isoformat() if app.disbursed_at else None,
@@ -900,7 +901,13 @@ class DisburseView(LoanOfficerRequiredMixin, APIView):
         
         # Get disbursement data
         amount_raw = request.data.get('amount', app.approved_amount)
-        method = sanitize_text(request.data.get('method', 'bank_transfer')).lower() or 'bank_transfer'
+        # Prefer the borrower's pre-set method; officer cannot override
+        stored_method = getattr(app, 'preferred_disbursement_method', None)
+        if stored_method:
+            method = stored_method
+        else:
+            # Fallback for legacy apps where borrower didn't set a preference
+            method = sanitize_text(request.data.get('method', 'bank_transfer')).lower() or 'bank_transfer'
         reference = sanitize_text(request.data.get('reference', ''))
         external_reference = sanitize_text(request.data.get('external_reference', ''))  # Bank/check number
         try:
