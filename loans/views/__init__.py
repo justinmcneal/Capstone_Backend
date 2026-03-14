@@ -30,4 +30,5 @@ from .officer_views import (
     OfficerScheduleView,
     OfficerPaymentHistoryView,
     PaymentSearchView,
+    BlockchainStatusView,
 )

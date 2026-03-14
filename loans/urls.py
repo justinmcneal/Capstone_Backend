@@ -30,6 +30,7 @@ from loans.views import (
     OfficerScheduleView,
     OfficerPaymentHistoryView,
     PaymentSearchView,
+    BlockchainStatusView,
 )
 
 
@@ -70,4 +71,7 @@ urlpatterns = [
     path('officer/active-loans/', ActiveLoansView.as_view(), name='officer-active-loans'),
     path('officer/applications/<str:application_id>/schedule/', OfficerScheduleView.as_view(), name='officer-schedule'),
     path('officer/applications/<str:application_id>/payments/', OfficerPaymentHistoryView.as_view(), name='officer-payment-history'),
+    
+    # Blockchain
+    path('applications/<str:application_id>/blockchain/', BlockchainStatusView.as_view(), name='application-blockchain'),
 ]

@@ -2,6 +2,7 @@ from rest_framework.views import APIView
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
 from bson import ObjectId
+from django.conf import settings
 
 from accounts.authentication import CustomJWTAuthentication
 from accounts.utils.access_control import AccessControlMixin
@@ -473,6 +474,14 @@ class LoanApplyView(CustomerRoleRequiredMixin, APIView):
                 details={'product': product.name, 'amount': data['requested_amount'], 'term': data['term_months']},
                 ip_address=request.META.get('REMOTE_ADDR', '')
             )
+            
+            # Blockchain sync
+            if getattr(settings, 'BLOCKCHAIN_ENABLED', False):
+                try:
+                    from loans.blockchain.tasks import sync_application_to_chain
+                    sync_application_to_chain.delay(application.id)
+                except Exception as e:
+                    logger.warning(f"Failed to queue blockchain sync for application {application.id}: {e}")
             
             return success_response(
                 data={
