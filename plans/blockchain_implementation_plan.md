@@ -833,48 +833,54 @@ loans/blockchain/
 
 #### Sub-task 5.1.2 — ABI Management
 
-**Status:** Pending
+**Status:** ✅ Completed
 
-- [ ] Create `loans/blockchain/abis/` directory
-- [ ] Create `scripts/copy_abis.py` — extracts ABI arrays from Hardhat artifacts into clean JSON files
-- [ ] Copy ABIs for all 10 V2 contracts
+- [x] Create `loans/blockchain/abis/` directory
+- [x] Create `scripts/copy_abis.py` — extracts ABI arrays from Hardhat artifacts into clean JSON files
+- [x] Copy ABIs for all 10 V2 contracts (56–79 ABI entries each)
 
 #### Sub-task 5.1.3 — Web3 Client (`client.py`)
 
-**Status:** Pending
+**Status:** ✅ Completed
 
-- [ ] `get_web3()` — cached Web3 provider connection
-- [ ] `get_contract(name)` — load ABI + address from settings, return Contract instance
-- [ ] `get_account()` — load backend wallet from private key
-- [ ] `send_transaction(contract, method, *args)` — build tx, sign, send, wait for receipt, return tx_hash + gas_used
-- [ ] `call_view(contract, method, *args)` — read-only contract call (no gas)
-- [ ] Custom exception classes in `exceptions.py`:
-  - `BlockchainConnectionError`
-  - `BlockchainTransactionFailed`
-  - `ContractNotFoundError`
+- [x] `get_web3()` — cached Web3 provider connection (with PoA middleware for Ganache)
+- [x] `get_contract(name)` — load ABI + address from settings, return Contract instance (cached)
+- [x] `get_account()` — load backend wallet from private key
+- [x] `send_transaction(contract, method, *args)` — build tx, sign, send, wait for receipt, return tx_hash + gas_used
+- [x] `call_view(contract, method, *args)` — read-only contract call (no gas)
+- [x] `clear_cache()` — reset all cached connections (for testing)
+- [x] Custom exception classes in `exceptions.py`:
+  - `BlockchainConnectionError`, `BlockchainTransactionFailed`, `ContractNotFoundError`, `BlockchainDisabledError`
+- [x] Verified: All 10 contracts load, view calls work, send_transaction works on Ganache
 
 #### Sub-task 5.1.4 — Contract Service Modules
 
-**Status:** Pending
+**Status:** ✅ Completed
 
 Each service wraps specific contract calls with Django-friendly interfaces:
 
-- [ ] `application_service.py`
+- [x] `application_service.py`
   - `create_application_onchain(loan_id, borrower_addr, product_id, amount, term, rate)`
   - `submit_application_onchain(loan_id, score, risk_category, ai_hash)`
-- [ ] `review_service.py`
+  - `get_application_onchain(loan_id)`
+- [x] `review_service.py`
   - `assign_officer_onchain(loan_id, officer_addr)`
-- [ ] `approval_service.py`
+  - `get_assigned_officer_onchain(loan_id)`
+- [x] `approval_service.py`
   - `approve_loan_onchain(loan_id, amount, notes_hash)`
-- [ ] `disbursement_service.py`
+- [x] `disbursement_service.py`
   - `set_method_onchain(loan_id, method, details_hash)`
   - `initiate_disbursement_onchain(loan_id, amount)`
-  - `complete_disbursement_onchain(loan_id, amount, ref_hash)`
-- [ ] `repayment_service.py`
+  - `complete_disbursement_onchain(loan_id, amount, ref_hash)` — 2-step: initiate + complete
+  - `get_disbursement_onchain(disbursement_id)`
+- [x] `repayment_service.py`
   - `create_schedule_onchain(loan_id, borrower, principal, rate, term, start_date)`
   - `record_payment_onchain(loan_id, installment_num, amount, method, ref_hash)`
-- [ ] `audit_service.py`
-  - `get_audit_trail(resource_id)` — read-only, fetch from AuditRegistry
+  - `mark_overdue_onchain(loan_id, installment_num)`
+  - `get_schedule_onchain(loan_id)`, `get_installment_onchain()`, `get_all_installments_onchain()`, `get_remaining_balance_onchain()`
+- [x] `audit_service.py`
+  - `get_audit_trail(resource_id)` — read-only, returns parsed dicts with action labels
+  - `get_audit_entry(entry_id)` — single entry lookup
 
 **Key integration points:**
 - After `LoanApplication.submit()` in backend → call `submit_application_onchain()` on-chain
