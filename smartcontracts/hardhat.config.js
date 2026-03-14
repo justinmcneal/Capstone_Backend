@@ -37,7 +37,9 @@ module.exports = {
     ganache: {
       url: "http://127.0.0.1:7545",
       chainId: 1337,
-      accounts: [PRIVATE_KEY, PRIVATE_KEY_2]
+      accounts: [PRIVATE_KEY, PRIVATE_KEY_2],
+      gas: 6721975,
+      gasPrice: 20000000000
     },
     // Ganache CLI (default port 8545)
     ganache_cli: {
