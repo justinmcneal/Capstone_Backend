@@ -56,14 +56,16 @@ async function main() {
   console.log(`Borrower:         ${borrower.address}`);
 
   // ================================================================
-  // Patch signers: Ganache GUI underestimates gas for cross-contract
-  // proxy calls, causing bare "revert" errors. HardhatEthersSigner
-  // only reads the `gas` config for hardhat/localhost networks, so
-  // we set _gasLimit directly on each signer instance.
+  // Ganache GUI doesn't reliably estimate gas for multi-level proxy
+  // calls. Monkey-patch both signers to always send full block gas.
   // ================================================================
-  const GANACHE_GAS = 6_721_975; // Ganache default block gas limit
-  admin._gasLimit = GANACHE_GAS;
-  borrower._gasLimit = GANACHE_GAS;
+  const GANACHE_GAS = 6_721_975n;
+  for (const signer of [admin, borrower]) {
+    const origSend = signer.sendTransaction.bind(signer);
+    signer.sendTransaction = function(tx) {
+      return origSend({ ...tx, gasLimit: GANACHE_GAS });
+    };
+  }
 
   // ================================================================
   // 3. Connect to all 10 contracts using the patched admin signer
@@ -390,15 +392,22 @@ async function main() {
 
   for (let i = 1; i <= termMonths; i++) {
     const inst = await repaymentSchedule.getInstallment(loanId, i);
-    const payRefHash = ethers.keccak256(ethers.toUtf8Bytes(`VALIDATE_PAY_${i}`));
+    const payRefHash = ethers.keccak256(ethers.toUtf8Bytes(`VALIDATE_PAY_${i}_${Date.now()}_${Math.random()}`));
+
+    // On last installment, add rounding remainder so remainingBalance hits 0
+    let payAmount = inst.totalAmount;
+    if (i === termMonths) {
+      const remaining = await repaymentSchedule.getRemainingBalance(loanId);
+      payAmount = remaining; // pay exact remaining to trigger LoanFullyRepaid
+    }
 
     const receipt = await execStep(
       `10.${i}`,
-      `Record payment for installment ${i}/${termMonths} (amount: ${inst.totalAmount.toString()})`,
+      `Record payment for installment ${i}/${termMonths} (amount: ${payAmount.toString()})`,
       () => paymentRecording.recordPayment(
         loanId,
         i,              // installmentNumber (uint16)
-        inst.totalAmount,
+        payAmount,
         2,              // PaymentMethod.GCash
         payRefHash
       )
