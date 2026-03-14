@@ -35,27 +35,27 @@ contract RepaymentSchedule is
     struct Schedule {
         bytes32 scheduleId;
         bytes32 loanId;
-        address borrower;
         uint256 principal;
-        uint16 interestRateBps;
-        uint16 termMonths;
         uint256 monthlyPayment;
         uint256 totalAmount;
         uint256 totalInterest;
         uint256 totalPaid;
         uint256 startDate;
         uint256 createdAt;
+        address borrower;           // 20 bytes — packed with interestRateBps + termMonths
+        uint16 interestRateBps;     // 2 bytes
+        uint16 termMonths;          // 2 bytes
     }
 
     struct Installment {
-        uint16 number;
-        uint256 dueDate;
         uint256 principalAmount;
         uint256 interestAmount;
         uint256 totalAmount;
         uint256 paidAmount;
-        InstallmentStatus status;
-        uint256 paidAt;
+        uint48 dueDate;             // sufficient until year 8M
+        uint48 paidAt;              // packed with dueDate + number + status
+        uint16 number;
+        InstallmentStatus status;   // 1 byte
     }
 
     // ============ Constants ============
@@ -230,7 +230,7 @@ contract RepaymentSchedule is
 
             Installment storage inst = installments[scheduleId][i];
             inst.number          = i;
-            inst.dueDate         = dueDate;
+            inst.dueDate         = uint48(dueDate);
             inst.principalAmount = monthlyPrincipal;
             inst.interestAmount  = monthlyInterest;
             inst.totalAmount     = monthlyPayment;
@@ -363,7 +363,7 @@ contract RepaymentSchedule is
         external
         onlyRole(SYSTEM_ROLE)
         scheduleExists(loanId)
-        returns (InstallmentStatus oldStatus, InstallmentStatus newStatus)
+        returns (InstallmentStatus oldStatus, InstallmentStatus newStatus, uint256 remainingBalance)
     {
         bytes32 scheduleId = loanToSchedule[loanId];
         Installment storage inst = installments[scheduleId][installmentNumber];
@@ -376,15 +376,16 @@ contract RepaymentSchedule is
 
         if (inst.paidAmount >= inst.totalAmount) {
             inst.status = InstallmentStatus.Paid;
-            inst.paidAt = block.timestamp;
+            inst.paidAt = uint48(block.timestamp);
         } else if (inst.paidAmount > 0) {
             inst.status = InstallmentStatus.Partial;
         }
         newStatus = inst.status;
 
-        // Update schedule totals
+        // Update schedule totals and compute remaining balance
         Schedule storage sched = schedules[scheduleId];
         sched.totalPaid += amount;
+        remainingBalance = sched.totalPaid >= sched.totalAmount ? 0 : sched.totalAmount - sched.totalPaid;
     }
 
     /**
@@ -410,7 +411,7 @@ contract RepaymentSchedule is
         }
 
         oldStatus = inst.status;
-        daysOverdue = (block.timestamp - inst.dueDate) / SECONDS_PER_DAY;
+        daysOverdue = (block.timestamp - uint256(inst.dueDate)) / SECONDS_PER_DAY;
 
         inst.status = InstallmentStatus.Overdue;
     }

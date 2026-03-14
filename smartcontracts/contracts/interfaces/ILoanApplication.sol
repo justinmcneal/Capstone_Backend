@@ -176,6 +176,17 @@ interface ILoanApplication {
         LoanStatus newStatus
     ) external returns (bool success);
 
+    /**
+     * @notice Update application status without audit logging (caller handles audit)
+     * @param loanId The loan application identifier
+     * @param newStatus The new status to set
+     * @return success True if status updated successfully
+     */
+    function updateStatusSilent(
+        bytes32 loanId,
+        LoanStatus newStatus
+    ) external returns (bool success);
+
     // ============ View Functions ============
     
     /**

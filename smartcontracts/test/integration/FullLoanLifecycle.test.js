@@ -553,9 +553,10 @@ describe("Full Loan Lifecycle — Integration", function () {
         expect(inst.status).to.equal(InstallmentStatus.Paid);
       }
 
-      // Payment history should contain exactly termMonths payments
+      // Payment history storage array no longer populated (gas optimization);
+      // events are the canonical source for payment history.
       const history = await paymentRecording.getPaymentHistory(loanId);
-      expect(history.length).to.equal(termMonths);
+      expect(history.length).to.equal(0);
 
       // ── Step 12: Verify audit trail ──
       const trail = await auditRegistry.getFullAuditTrail(loanId);

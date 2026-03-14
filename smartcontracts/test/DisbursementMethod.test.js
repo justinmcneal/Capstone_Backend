@@ -443,9 +443,10 @@ describe("DisbursementMethod", function () {
             expect(selection.isLocked).to.be.true;
         });
 
-        it("Should log to audit registry", async function () {
+        // Gas optimization: auditRegistry.log() call was removed from lockMethod()
+        it("Should succeed without emitting audit log (gas optimization)", async function () {
             const tx = await disbursementMethod.connect(systemContract).lockMethod(loanId1);
-            await expect(tx).to.emit(auditRegistry, "AuditLogged");
+            await expect(tx).to.not.emit(auditRegistry, "AuditLogged");
         });
 
         it("Should revert if caller is not SYSTEM_ROLE", async function () {

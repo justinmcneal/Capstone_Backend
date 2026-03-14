@@ -167,8 +167,8 @@ contract LoanApproval is
         decisionTimestamps[loanId] = block.timestamp;
         totalApproved++;
 
-        // Update application status to Approved
-        loanApplication.updateStatus(loanId, ILoanApplication.LoanStatus.Approved);
+        // Update application status to Approved (silent — we log below)
+        loanApplication.updateStatusSilent(loanId, ILoanApplication.LoanStatus.Approved);
 
         emit LoanApproved(loanId, msg.sender, approvedAmount, notesHash, block.timestamp);
 
@@ -223,8 +223,8 @@ contract LoanApproval is
         decisionTimestamps[loanId] = block.timestamp;
         totalRejected++;
 
-        // Update application status to Rejected
-        loanApplication.updateStatus(loanId, ILoanApplication.LoanStatus.Rejected);
+        // Update application status to Rejected (silent — we log below)
+        loanApplication.updateStatusSilent(loanId, ILoanApplication.LoanStatus.Rejected);
 
         emit LoanRejected(loanId, msg.sender, rejectionReasonHash, block.timestamp);
 

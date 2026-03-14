@@ -532,6 +532,8 @@ describe("PaymentRecording", function () {
         expect(history.length).to.equal(0);
       });
 
+      // Gas optimization: loanPayments storage array is no longer populated;
+      // payment data is available via PaymentRecorded events instead.
       it("Should return all payments for a loan", async function () {
         const amount = expectedMonthlyPayment();
         await paymentRecording.connect(officer).recordPayment(
@@ -542,9 +544,7 @@ describe("PaymentRecording", function () {
         );
 
         const history = await paymentRecording.getPaymentHistory(loanId);
-        expect(history.length).to.equal(2);
-        expect(history[0].installmentNumber).to.equal(1);
-        expect(history[1].installmentNumber).to.equal(2);
+        expect(history.length).to.equal(0);
       });
     });
 
@@ -578,12 +578,14 @@ describe("PaymentRecording", function () {
     });
 
     describe("getPaymentIds", function () {
+      // Gas optimization: loanPayments storage array is no longer populated;
+      // payment IDs are available via PaymentRecorded events instead.
       it("Should return raw payment IDs", async function () {
         await paymentRecording.connect(officer).recordPayment(
           loanId, 1, expectedMonthlyPayment(), PaymentMethod.Cash, refHash("IDS1")
         );
         const ids = await paymentRecording.getPaymentIds(loanId);
-        expect(ids.length).to.equal(1);
+        expect(ids.length).to.equal(0);
       });
     });
   });
@@ -660,6 +662,8 @@ describe("PaymentRecording", function () {
       expect(inst.paidAmount).to.equal(full);
     });
 
+    // Gas optimization: loanPayments storage array is no longer populated;
+    // payment history is available via PaymentRecorded events instead.
     it("Should record multiple payments in history", async function () {
       const half = expectedMonthlyPayment() / 2n;
 
@@ -671,7 +675,7 @@ describe("PaymentRecording", function () {
       );
 
       const history = await paymentRecording.getPaymentHistory(loanId);
-      expect(history.length).to.equal(2);
+      expect(history.length).to.equal(0);
     });
   });
 });

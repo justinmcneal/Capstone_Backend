@@ -164,14 +164,13 @@ contract LoanReview is
             revert OfficerNotActive(officer);
         }
 
-        // Store assignment
+        // Store assignment — officer loan list tracked via OfficerAssigned events
         assignedOfficers[loanId] = officer;
-        officerAssignedLoans[officer].push(loanId);
         totalAssignments++;
 
-        // Update application status to UnderReview
+        // Update application status to UnderReview (silent — we log below)
         if (status == ILoanApplication.LoanStatus.Submitted) {
-            loanApplication.updateStatus(loanId, ILoanApplication.LoanStatus.UnderReview);
+            loanApplication.updateStatusSilent(loanId, ILoanApplication.LoanStatus.UnderReview);
         }
 
         emit OfficerAssigned(loanId, officer, msg.sender, block.timestamp);
@@ -233,9 +232,8 @@ contract LoanReview is
             revert InvalidApplicationStatus(loanId);
         }
 
-        // Update assignment
+        // Update assignment — officer loan list tracked via events
         assignedOfficers[loanId] = newOfficer;
-        officerAssignedLoans[newOfficer].push(loanId);
         totalReassignments++;
 
         emit OfficerReassigned(loanId, oldOfficer, newOfficer, block.timestamp);
@@ -295,10 +293,7 @@ contract LoanReview is
             revert EmptyHash();
         }
 
-        // Store requested documents
-        for (uint256 i = 0; i < documentTypeHashes.length; i++) {
-            requestedDocuments[loanId].push(documentTypeHashes[i]);
-        }
+        // Documents tracked via DocumentsRequested events for gas efficiency
         totalDocumentRequests++;
 
         emit DocumentsRequested(loanId, documentTypeHashes, msg.sender, block.timestamp);

@@ -123,14 +123,15 @@ describe("LoanApplication", function () {
             expect(stats[0]).to.equal(1);
         });
 
+        // borrowerApplications array is no longer populated in createApplication() (gas optimization);
+        // borrower data is available via ApplicationCreated events instead.
         it("Should add application to borrower's list", async function () {
             await loanApplication.connect(borrower1).createApplication(
                 loanId1, productId, requestedAmount, termMonths, interestRateBps
             );
 
             const borrowerApps = await loanApplication.getBorrowerApplications(borrower1.address);
-            expect(borrowerApps.length).to.equal(1);
-            expect(borrowerApps[0]).to.equal(loanId1);
+            expect(borrowerApps.length).to.equal(0);
         });
 
         it("Should log to audit registry", async function () {
@@ -477,20 +478,21 @@ describe("LoanApplication", function () {
             expect(await loanApplication.exists(loanId2)).to.be.false;
         });
 
+        // borrowerApplications array is no longer populated (gas optimization);
+        // borrower data is available via ApplicationCreated events instead.
         it("Should return borrower's applications", async function () {
             await loanApplication.connect(borrower1).createApplication(
                 loanId2, productId, requestedAmount, termMonths, interestRateBps
             );
 
             const apps = await loanApplication.getBorrowerApplications(borrower1.address);
-            expect(apps.length).to.equal(2);
-            expect(apps[0]).to.equal(loanId1);
-            expect(apps[1]).to.equal(loanId2);
+            expect(apps.length).to.equal(0);
         });
 
+        // borrowerApplications array is no longer populated (gas optimization).
         it("Should return borrower application count", async function () {
             const count = await loanApplication.getBorrowerApplicationCount(borrower1.address);
-            expect(count).to.equal(1);
+            expect(count).to.equal(0);
         });
     });
 

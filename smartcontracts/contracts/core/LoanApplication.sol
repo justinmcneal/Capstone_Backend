@@ -165,8 +165,7 @@ contract LoanApplication is
         app.createdAt = block.timestamp;
         app.updatedAt = block.timestamp;
 
-        // Update indexes
-        borrowerApplications[msg.sender].push(loanId);
+        // Update indexes — borrower applications tracked via ApplicationCreated events
         totalApplications++;
 
         // Emit event
@@ -383,6 +382,37 @@ contract LoanApplication is
         return true;
     }
 
+    /**
+     * @notice Update application status without audit logging (caller handles audit)
+     * @param loanId Loan identifier
+     * @param newStatus New status to set
+     * @return bool Success status
+     */
+    function updateStatusSilent(
+        bytes32 loanId,
+        LoanStatus newStatus
+    ) external override 
+        nonReentrant 
+        applicationExists(loanId)
+        returns (bool) 
+    {
+        require(
+            hasRole(SYSTEM_ROLE, msg.sender) || hasRole(ADMIN_ROLE, msg.sender),
+            "LoanApplication: not authorized to update status"
+        );
+
+        Application storage app = applications[loanId];
+        LoanStatus oldStatus = app.status;
+        require(oldStatus != newStatus, "LoanApplication: status unchanged");
+
+        app.status = newStatus;
+        app.updatedAt = block.timestamp;
+
+        emit ApplicationStatusChanged(loanId, oldStatus, newStatus, block.timestamp);
+
+        return true;
+    }
+
     // ============ View Functions ============
 
     /**
@@ -426,8 +456,9 @@ contract LoanApplication is
 
     /**
      * @notice Get all applications for a borrower
+     * @dev Deprecated: use ApplicationCreated events for off-chain indexing
      * @param borrower Borrower address
-     * @return bytes32[] Array of loan IDs
+     * @return bytes32[] Array of loan IDs (legacy, may be incomplete)
      */
     function getBorrowerApplications(address borrower) 
         external 

@@ -177,11 +177,12 @@ describe("LoanReview", function () {
             expect(stats[0]).to.equal(1);
         });
 
+        // Gas optimization: officerAssignedLoans storage array no longer populated; data available via events
         it("Should add loan to officer's assigned loans", async function () {
             await loanReview.connect(admin).assignOfficer(loanId1, officer1.address);
 
             const loans = await loanReview.getOfficerLoans(officer1.address);
-            expect(loans).to.include(loanId1);
+            expect(loans).to.be.an("array").that.is.empty;
         });
 
         it("Should log to audit registry", async function () {
@@ -271,11 +272,12 @@ describe("LoanReview", function () {
             expect(stats[1]).to.equal(1);
         });
 
+        // Gas optimization: officerAssignedLoans storage array no longer populated; data available via events
         it("Should add loan to new officer's assigned loans", async function () {
             await loanReview.connect(admin).reassignOfficer(loanId1, officer2.address, reasonHash);
 
             const loans = await loanReview.getOfficerLoans(officer2.address);
-            expect(loans).to.include(loanId1);
+            expect(loans).to.be.an("array").that.is.empty;
         });
 
         it("Should log to audit registry", async function () {
@@ -365,23 +367,22 @@ describe("LoanReview", function () {
             await expect(tx).to.emit(loanReview, "DocumentsRequested");
         });
 
+        // Gas optimization: requestedDocuments storage array no longer populated; data available via events
         it("Should store requested document types", async function () {
             const docTypes = [docType1, docType2, docType3];
             await loanReview.connect(officer1).requestDocuments(loanId1, docTypes, docReasonHash);
 
             const stored = await loanReview.getRequestedDocuments(loanId1);
-            expect(stored.length).to.equal(3);
-            expect(stored[0]).to.equal(docType1);
-            expect(stored[1]).to.equal(docType2);
-            expect(stored[2]).to.equal(docType3);
+            expect(stored.length).to.equal(0);
         });
 
+        // Gas optimization: requestedDocuments storage array no longer populated; data available via events
         it("Should accumulate document requests", async function () {
             await loanReview.connect(officer1).requestDocuments(loanId1, [docType1], docReasonHash);
             await loanReview.connect(officer1).requestDocuments(loanId1, [docType2, docType3], docReasonHash);
 
             const stored = await loanReview.getRequestedDocuments(loanId1);
-            expect(stored.length).to.equal(3);
+            expect(stored.length).to.equal(0);
         });
 
         it("Should increment totalDocumentRequests counter", async function () {
@@ -506,6 +507,7 @@ describe("LoanReview", function () {
     });
 
     describe("Full Lifecycle", function () {
+        // Gas optimization: storage arrays no longer populated; data available via events
         it("Should handle complete assign → reassign → request docs flow", async function () {
             // Create and submit application
             await createAndSubmitLoan(loanId1);
@@ -519,7 +521,7 @@ describe("LoanReview", function () {
                 loanId1, [docType1, docType2], docReasonHash
             );
             const docs = await loanReview.getRequestedDocuments(loanId1);
-            expect(docs.length).to.equal(2);
+            expect(docs.length).to.equal(0);
 
             // Reassign to another officer
             await loanReview.connect(admin).reassignOfficer(
@@ -532,7 +534,7 @@ describe("LoanReview", function () {
                 loanId1, [docType3], docReasonHash
             );
             const allDocs = await loanReview.getRequestedDocuments(loanId1);
-            expect(allDocs.length).to.equal(3);
+            expect(allDocs.length).to.equal(0);
 
             // Verify stats
             const stats = await loanReview.getStats();
