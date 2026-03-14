@@ -693,20 +693,32 @@ Test the complete loan lifecycle across all contracts:
 
 ### Task 4.4 — Update Deployment Scripts
 
+**Status:** ✅ Completed — `scripts/deploy-v2.js` created and verified on local Hardhat network. All 10 contracts deploy, wire, and verify successfully.
+
 **File:** `smartcontracts/scripts/deploy-v2.js`
 
-Deployment order (dependency-aware):
-1. `AuditRegistry`
-2. `LoanAccessControl`
-3. `LoanApplication` (depends on AccessControl + AuditRegistry)
-4. `LoanReview` (depends on LoanApplication)
-5. `LoanApproval` (depends on LoanApplication)
-6. `DisbursementMethod` (depends on LoanApplication)
-7. `DisbursementExecution` (depends on LoanApproval + DisbursementMethod)
-8. `RepaymentSchedule` (depends on LoanApplication)
-9. `PaymentRecording` (depends on RepaymentSchedule)
-10. Grant LOGGER_ROLE to all contracts on AuditRegistry
-11. Grant SYSTEM_ROLE to backend service wallet
+**Deployment order (dependency-aware):**
+1. `AuditRegistry` → `initialize(admin)`
+2. `LoanAccessControl` → `initialize(admin)`
+3. `LoanCore` (bridge for RepaymentSchedule.getLoanStatus) → `initialize(accessControl, auditRegistry, admin)`
+4. `LoanApplication` → `initialize(accessControl, auditRegistry, admin)`
+5. `LoanReview` → `initialize(accessControl, auditRegistry, loanApplication, admin)`
+6. `LoanApproval` → `initialize(accessControl, auditRegistry, loanApplication, loanReview, admin)`
+7. `DisbursementMethod` → `initialize(accessControl, auditRegistry, loanApplication, admin)`
+8. `DisbursementExecution` → `initialize(accessControl, auditRegistry, loanApplication, disbursementMethod, admin)`
+9. `RepaymentSchedule` → `initialize(loanCore, admin)`
+10. `PaymentRecording` → `initialize(repaymentSchedule, auditRegistry, admin)`
+
+**Post-deployment wiring:**
+- LOGGER_ROLE → 7 contracts on AuditRegistry
+- SYSTEM_ROLE → LoanReview, LoanApproval, DisbursementExecution on LoanApplication
+- SYSTEM_ROLE → DisbursementExecution on DisbursementMethod
+- SYSTEM_ROLE → PaymentRecording on RepaymentSchedule
+- SYSTEM_ROLE → DisbursementExecution on LoanCore
+- LoanCore.setContracts(disbursementExecution, repaymentSchedule, deployer)
+- Optional: BACKEND_WALLET env var for backend service SYSTEM_ROLE grants
+
+**Output:** Saves deployment data to `./deployments/v2-{network}-{timestamp}.json`
 
 ---
 
