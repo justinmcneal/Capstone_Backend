@@ -771,7 +771,13 @@ Test the complete loan lifecycle across all contracts:
 
 ## Sprint 5 — Phase 2 Integration (Weeks 9–10)
 
-> **Gate:** All Phase 1 contracts must be deployed and validated on testnet before Sprint 5 begins.
+> **Gate:** All Phase 1 contracts must be deployed and validated before Sprint 5 begins. ✅ PASSED
+
+**Architecture decisions:**
+- **Async-first:** All blockchain calls go through Celery tasks (non-blocking API responses)
+- **Dual-write:** Django MongoDB is source of truth; blockchain is immutable audit layer
+- **Fail-safe:** If blockchain call fails, Django operation still succeeds; Celery retries (max 3, exponential backoff)
+- **ABI management:** Compiled ABIs copied from `smartcontracts/artifacts/` into `loans/blockchain/abis/`
 
 ---
 
@@ -781,28 +787,156 @@ Test the complete loan lifecycle across all contracts:
 ```
 loans/blockchain/
 ├── __init__.py
-├── client.py              # Web3 connection and contract loading
+├── client.py              # Web3 connection, ABI loading, contract instances
+├── tasks.py               # Celery tasks for async blockchain calls
+├── exceptions.py          # Custom blockchain exceptions
+├── models.py              # BlockchainTransaction MongoDB collection
+├── abis/                  # Compiled contract ABIs (copied from artifacts)
+│   ├── LoanApplication.json
+│   ├── LoanReview.json
+│   ├── LoanApproval.json
+│   ├── DisbursementMethod.json
+│   ├── DisbursementExecution.json
+│   ├── RepaymentSchedule.json
+│   ├── PaymentRecording.json
+│   ├── LoanAccessControl.json
+│   ├── AuditRegistry.json
+│   └── LoanCore.json
 ├── services/
+│   ├── __init__.py
 │   ├── application_service.py   # Calls LoanApplication contract
 │   ├── review_service.py        # Calls LoanReview contract
 │   ├── approval_service.py      # Calls LoanApproval contract
 │   ├── disbursement_service.py  # Calls DisbursementMethod + DisbursementExecution
-│   └── repayment_service.py     # Calls RepaymentSchedule + PaymentRecording
-├── event_listener.py            # Listens for contract events
-└── models/
-    └── blockchain_tx.py         # Stores tx hashes linked to DB records
+│   ├── repayment_service.py     # Calls RepaymentSchedule + PaymentRecording
+│   └── audit_service.py         # Read-only: fetch audit trail from AuditRegistry
+└── event_listener.py            # Listens for contract events (optional)
 ```
 
+#### Sub-task 5.1.1 — Dependencies & Configuration
+
+**Status:** ✅ Completed
+
+- [x] Add `web3>=6.0.0` to `requirements.txt`
+- [x] Add blockchain settings to `config/settings.py`:
+  - `BLOCKCHAIN_ENABLED` — kill switch (default: False)
+  - `BLOCKCHAIN_RPC_URL` — RPC endpoint (default: Ganache `http://127.0.0.1:7545`)
+  - `BLOCKCHAIN_CHAIN_ID` — chain ID (default: 1337)
+  - `BLOCKCHAIN_WALLET_KEY` — backend service wallet private key
+  - `BLOCKCHAIN_CONTRACT_ADDRESSES` — JSON dict of deployed addresses
+  - `BLOCKCHAIN_GAS_LIMIT` / `BLOCKCHAIN_GAS_PRICE_GWEI` — gas settings
+  - `BLOCKCHAIN_ABI_DIR` — path to ABI files
+- [x] Add blockchain env vars to `.env.example` (documented with comments)
+- [x] Configure `.env` with Ganache deployment values (10 contract addresses)
+- [x] Verified: Django loads all settings correctly
+- [x] Verified: web3.py connects to Ganache, wallet has ~100K ETH balance
+
+#### Sub-task 5.1.2 — ABI Management
+
+**Status:** Pending
+
+- [ ] Create `loans/blockchain/abis/` directory
+- [ ] Create `scripts/copy_abis.py` — extracts ABI arrays from Hardhat artifacts into clean JSON files
+- [ ] Copy ABIs for all 10 V2 contracts
+
+#### Sub-task 5.1.3 — Web3 Client (`client.py`)
+
+**Status:** Pending
+
+- [ ] `get_web3()` — cached Web3 provider connection
+- [ ] `get_contract(name)` — load ABI + address from settings, return Contract instance
+- [ ] `get_account()` — load backend wallet from private key
+- [ ] `send_transaction(contract, method, *args)` — build tx, sign, send, wait for receipt, return tx_hash + gas_used
+- [ ] `call_view(contract, method, *args)` — read-only contract call (no gas)
+- [ ] Custom exception classes in `exceptions.py`:
+  - `BlockchainConnectionError`
+  - `BlockchainTransactionFailed`
+  - `ContractNotFoundError`
+
+#### Sub-task 5.1.4 — Contract Service Modules
+
+**Status:** Pending
+
+Each service wraps specific contract calls with Django-friendly interfaces:
+
+- [ ] `application_service.py`
+  - `create_application_onchain(loan_id, borrower_addr, product_id, amount, term, rate)`
+  - `submit_application_onchain(loan_id, score, risk_category, ai_hash)`
+- [ ] `review_service.py`
+  - `assign_officer_onchain(loan_id, officer_addr)`
+- [ ] `approval_service.py`
+  - `approve_loan_onchain(loan_id, amount, notes_hash)`
+- [ ] `disbursement_service.py`
+  - `set_method_onchain(loan_id, method, details_hash)`
+  - `initiate_disbursement_onchain(loan_id, amount)`
+  - `complete_disbursement_onchain(loan_id, amount, ref_hash)`
+- [ ] `repayment_service.py`
+  - `create_schedule_onchain(loan_id, borrower, principal, rate, term, start_date)`
+  - `record_payment_onchain(loan_id, installment_num, amount, method, ref_hash)`
+- [ ] `audit_service.py`
+  - `get_audit_trail(resource_id)` — read-only, fetch from AuditRegistry
+
 **Key integration points:**
-- After `LoanApplication.submit()` in backend → call `LoanApplication.submitApplication()` on-chain
-- After `LoanApplication.approve()` in backend → call `LoanApproval.approveLoan()` on-chain
-- After `LoanApplication.disburse()` in backend → call `DisbursementExecution.completeDisbursement()` on-chain
-- After `RepaymentSchedule.generate_for_loan()` → call `RepaymentSchedule.createSchedule()` on-chain
-- After `RepaymentSchedule.record_payment()` → call `PaymentRecording.recordPayment()` on-chain
+- After `LoanApplication.submit()` in backend → call `submit_application_onchain()` on-chain
+- After `LoanApplication.approve()` in backend → call `approve_loan_onchain()` on-chain
+- After `LoanApplication.disburse()` in backend → call `complete_disbursement_onchain()` on-chain
+- After `RepaymentSchedule.generate_for_loan()` → call `create_schedule_onchain()` on-chain
+- After `RepaymentSchedule.record_payment()` → call `record_payment_onchain()` on-chain
+
+#### Sub-task 5.1.5 — Celery Tasks (`tasks.py`)
+
+**Status:** Pending
+
+- [ ] `@shared_task sync_application_to_chain(loan_id)` — called after submit
+- [ ] `@shared_task sync_approval_to_chain(loan_id)` — called after approve
+- [ ] `@shared_task sync_disbursement_to_chain(loan_id)` — called after disburse
+- [ ] `@shared_task sync_schedule_to_chain(loan_id)` — called after schedule generation
+- [ ] `@shared_task sync_payment_to_chain(loan_id, payment_id)` — called after record_payment
+- [ ] Retry config: `max_retries=3, default_retry_delay=10, retry_backoff=True`
+- [ ] On success: store `tx_hash` in MongoDB via `BlockchainTransaction` model
+- [ ] On final failure: log error, mark transaction as `failed`
+
+#### Sub-task 5.1.6 — MongoDB Model Updates
+
+**Status:** Pending
+
+- [ ] Add `blockchain_tx_hashes` dict to `LoanApplication` model:
+  ```python
+  # Keyed by action: {"submit": "0x...", "approve": "0x...", "disburse": "0x..."}
+  blockchain_tx_hashes: dict = {}
+  ```
+- [ ] Add `blockchain_schedule_tx` field to `RepaymentSchedule` model
+- [ ] Add `blockchain_tx_hash` field to `LoanPayment` model
+- [ ] Create `loans/blockchain/models.py` — `BlockchainTransaction` collection:
+  - Fields: `tx_hash, contract_name, method, loan_id, status (pending|confirmed|failed), gas_used, block_number, error, created_at, completed_at`
+
+#### Sub-task 5.1.7 — View Integration (Wire into Existing Endpoints)
+
+**Status:** Pending
+
+- [ ] `LoanApplicationView.submit()` → add `sync_application_to_chain.delay(loan_id)` after successful submit
+- [ ] `LoanOfficerView.review()` (approve path) → add `sync_approval_to_chain.delay(loan_id)`
+- [ ] `LoanOfficerView.disburse()` → add `sync_disbursement_to_chain.delay(loan_id)`
+- [ ] `RepaymentSchedule.generate_for_loan()` → add `sync_schedule_to_chain.delay(loan_id)`
+- [ ] `LoanOfficerView.record_payment()` → add `sync_payment_to_chain.delay(loan_id, payment_id)`
+- [ ] Add new endpoint: `GET /api/loans/applications/<id>/blockchain/` — returns tx hashes + on-chain audit trail
+- [ ] All hooks gated by `settings.BLOCKCHAIN_ENABLED` flag
+
+#### Sub-task 5.1.8 — Testing
+
+**Status:** Pending
+
+- [ ] Unit tests for `client.py` (mock Web3 provider)
+- [ ] Unit tests for each service module (mock contract calls)
+- [ ] Unit tests for Celery tasks (mock services, verify retry logic)
+- [ ] Integration test: full loan lifecycle with Ganache running
+- [ ] Verify existing API tests still pass (no regressions)
 
 ---
 
 ### Task 5.2 — Web Application Integration
+
+**Priority:** MEDIUM (optional — backend handles all on-chain calls)
 
 **Files to create in `Capstone-Web/src/blockchain/`:**
 ```
@@ -821,9 +955,19 @@ components/
 └── AuditTrail.tsx         # Display full audit trail for a loan
 ```
 
+#### Sub-tasks:
+- [ ] 5.2.1 — Add ethers.js + wallet connection library (wagmi or web3modal)
+- [ ] 5.2.2 — Create blockchain hooks (`useWallet`, `useContract`, `useTransaction`)
+- [ ] 5.2.3 — Create `contractService.ts` for ABI loading
+- [ ] 5.2.4 — Create `BlockchainBadge.tsx` — "Verified on blockchain" indicator on loan cards
+- [ ] 5.2.5 — Create `TransactionStatus.tsx` — pending/confirmed/failed status component
+- [ ] 5.2.6 — Create `AuditTrail.tsx` — full audit trail display for a loan
+
 ---
 
 ### Task 5.3 — Mobile Application Integration
+
+**Priority:** MEDIUM (optional — backend handles all on-chain calls)
 
 **Files to create in `MSME-Pathways-Mobile/src/blockchain/`:**
 ```
@@ -836,7 +980,23 @@ components/
 └── AuditTrail.tsx         # Audit trail display
 ```
 
+#### Sub-tasks:
+- [ ] 5.3.1 — Add WalletConnect v2 + ethers.js packages
+- [ ] 5.3.2 — Create `walletService.ts` + `contractService.ts`
+- [ ] 5.3.3 — Create `TransactionModal.tsx` + `AuditTrail.tsx`
+
 ---
+
+### Sprint 5 Implementation Order
+
+```
+5.1.1 (deps & config) → 5.1.2 (ABIs) → 5.1.3 (Web3 client)
+    → 5.1.4 (service modules) → 5.1.5 (Celery tasks)
+    → 5.1.6 (model updates) → 5.1.7 (wire into views)
+    → 5.1.8 (testing)
+    → 5.2 (web — optional)
+    → 5.3 (mobile — optional)
+```
 
 ## Contract Dependency Map
 
