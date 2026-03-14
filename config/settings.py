@@ -333,6 +333,11 @@ LOGGING = {
             'level': 'INFO',
             'propagate': False,
         },
+        'blockchain': {
+            'handlers': ['console'],
+            'level': 'INFO',
+            'propagate': False,
+        },
     },
 }
 

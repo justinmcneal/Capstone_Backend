@@ -56,7 +56,13 @@ def get_audit_trail(resource_id):
 
     entries = []
     for entry in raw_entries:
-        action_int = entry[3] if isinstance(entry[3], int) else int(entry[3])
+        raw_action = entry[3]
+        if isinstance(raw_action, int):
+            action_int = raw_action
+        elif isinstance(raw_action, bytes):
+            action_int = int.from_bytes(raw_action, byteorder='big')
+        else:
+            action_int = int(raw_action)
         entries.append({
             "resource_id": entry[0].hex() if isinstance(entry[0], bytes) else entry[0],
             "resource_type": entry[1].hex() if isinstance(entry[1], bytes) else entry[1],
@@ -93,7 +99,13 @@ def get_audit_entry(entry_id):
 
     entry = call_view(contract, "getEntry", entry_id_bytes)
 
-    action_int = entry[3] if isinstance(entry[3], int) else int(entry[3])
+    raw_action = entry[3]
+    if isinstance(raw_action, int):
+        action_int = raw_action
+    elif isinstance(raw_action, bytes):
+        action_int = int.from_bytes(raw_action, byteorder='big')
+    else:
+        action_int = int(raw_action)
     return {
         "resource_id": entry[0].hex() if isinstance(entry[0], bytes) else entry[0],
         "resource_type": entry[1].hex() if isinstance(entry[1], bytes) else entry[1],

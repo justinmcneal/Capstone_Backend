@@ -475,13 +475,12 @@ class LoanApplyView(CustomerRoleRequiredMixin, APIView):
                 ip_address=request.META.get('REMOTE_ADDR', '')
             )
             
-            # Blockchain sync
-            if getattr(settings, 'BLOCKCHAIN_ENABLED', False):
-                try:
-                    from loans.blockchain.tasks import sync_application_to_chain
-                    sync_application_to_chain.delay(application.id)
-                except Exception as e:
-                    logger.warning(f"Failed to queue blockchain sync for application {application.id}: {e}")
+            # Blockchain sync (background thread, no Celery needed)
+            try:
+                from loans.blockchain.sync import sync_application
+                sync_application(application.id)
+            except Exception as e:
+                logger.warning(f"Blockchain sync skipped for application {application.id}: {e}")
             
             return success_response(
                 data={
@@ -1081,6 +1080,13 @@ class PaymentHistoryView(CustomerRoleRequiredMixin, APIView):
             customer_id,
         )
 
+        # Blockchain sync — payment
+        try:
+            from loans.blockchain.sync import sync_payment
+            sync_payment(application_id, payment.id)
+        except Exception as e:
+            logger.warning(f"Blockchain sync skipped for payment {payment.id}: {e}")
+
         return success_response(
             data={
                 'payment_id': payment.id,
@@ -1285,5 +1291,63 @@ class SetDisbursementMethodView(CustomerRoleRequiredMixin, APIView):
                 'preferred_disbursement_method': app.preferred_disbursement_method,
             },
             message="Disbursement method saved successfully"
+        )
+
+
+class CustomerBlockchainView(CustomerRoleRequiredMixin, APIView):
+    """
+    Customer: Get blockchain transaction status for own loan application.
+
+    GET /api/loans/applications/<id>/blockchain/
+    """
+    authentication_classes = [CustomJWTAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, application_id):
+        has_permission, result = self.check_customer_permission(request)
+        if not has_permission:
+            return result
+
+        user = request.user
+        customer_id = user.customer_id
+
+        if not ObjectId.is_valid(application_id):
+            return error_response(
+                message="Invalid application ID",
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+
+        app = LoanApplication.find_by_id(application_id)
+        if not app or app.customer_id != customer_id:
+            return error_response(
+                message="Application not found",
+                status_code=status.HTTP_404_NOT_FOUND
+            )
+
+        data = {
+            'application_id': app.id,
+            'blockchain_enabled': getattr(settings, 'BLOCKCHAIN_ENABLED', False),
+            'tx_hashes': getattr(app, 'blockchain_tx_hashes', {}),
+            'transactions': [],
+        }
+
+        if getattr(settings, 'BLOCKCHAIN_ENABLED', False):
+            try:
+                from loans.blockchain.models import BlockchainTransaction
+                txs = BlockchainTransaction.find_by_loan(application_id)
+                data['transactions'] = [tx.to_dict() for tx in txs]
+            except Exception as e:
+                logger.warning(f"Failed to fetch blockchain transactions: {e}")
+
+            try:
+                from loans.blockchain.services.audit_service import get_audit_trail
+                trail = get_audit_trail(application_id)
+                data['audit_trail'] = trail
+            except Exception as e:
+                logger.warning(f"Failed to fetch on-chain audit trail: {e}")
+
+        return success_response(
+            data=data,
+            message="Blockchain status retrieved"
         )
 
