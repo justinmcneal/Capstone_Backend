@@ -4,6 +4,7 @@ require("@nomicfoundation/hardhat-verify");
 require("dotenv").config();
 
 const PRIVATE_KEY = process.env.PRIVATE_KEY || "0x0000000000000000000000000000000000000000000000000000000000000001";
+const PRIVATE_KEY_2 = process.env.PRIVATE_KEY_2 || "0x0000000000000000000000000000000000000000000000000000000000000002";
 const SEPOLIA_RPC_URL = process.env.SEPOLIA_RPC_URL || "https://eth-sepolia.g.alchemy.com/v2/your-api-key";
 const MAINNET_RPC_URL = process.env.MAINNET_RPC_URL || "https://eth-mainnet.g.alchemy.com/v2/your-api-key";
 const POLYGON_RPC_URL = process.env.POLYGON_RPC_URL || "https://polygon-mainnet.g.alchemy.com/v2/your-api-key";
@@ -36,9 +37,7 @@ module.exports = {
     ganache: {
       url: "http://127.0.0.1:7545",
       chainId: 1337,
-      accounts: {
-        mnemonic: process.env.GANACHE_MNEMONIC || "test test test test test test test test test test test junk"
-      }
+      accounts: [PRIVATE_KEY, PRIVATE_KEY_2]
     },
     // Ganache CLI (default port 8545)
     ganache_cli: {
