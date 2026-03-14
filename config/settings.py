@@ -12,6 +12,7 @@ https://docs.djangoproject.com/en/4.2/ref/settings/
 
 from pathlib import Path
 import os
+import json
 from dotenv import load_dotenv
 from pymongo import MongoClient
 from cryptography.fernet import Fernet
@@ -369,3 +370,33 @@ GROQ_API_KEY = os.getenv('GROQ_API_KEY', '')
 GROQ_MODEL = os.getenv('GROQ_MODEL', 'llama-3.1-8b-instant')
 GROQ_CHAT_MODEL = os.getenv('GROQ_CHAT_MODEL', GROQ_MODEL)
 GROQ_QUALIFICATION_MODEL = os.getenv('GROQ_QUALIFICATION_MODEL', GROQ_MODEL)
+
+# =============================================================================
+# BLOCKCHAIN INTEGRATION (Smart Contracts via web3.py)
+# =============================================================================
+
+# Kill switch — set to True to enable blockchain sync
+BLOCKCHAIN_ENABLED = env_bool('BLOCKCHAIN_ENABLED', False)
+
+# RPC endpoint (Ganache local, or testnet/mainnet URL)
+BLOCKCHAIN_RPC_URL = os.getenv('BLOCKCHAIN_RPC_URL', 'http://127.0.0.1:7545')
+
+# Chain ID (1337=Ganache, 31337=Hardhat, 11155111=Sepolia, 137=Polygon)
+BLOCKCHAIN_CHAIN_ID = int(os.getenv('BLOCKCHAIN_CHAIN_ID', '1337'))
+
+# Backend service wallet private key (signs all on-chain transactions)
+BLOCKCHAIN_WALLET_KEY = os.getenv('BLOCKCHAIN_WALLET_KEY', '')
+
+# Deployed contract addresses (JSON string from env, or loaded from deployment file)
+_contract_addresses_raw = os.getenv('BLOCKCHAIN_CONTRACT_ADDRESSES', '')
+if _contract_addresses_raw:
+    BLOCKCHAIN_CONTRACT_ADDRESSES = json.loads(_contract_addresses_raw)
+else:
+    BLOCKCHAIN_CONTRACT_ADDRESSES = {}
+
+# Gas settings
+BLOCKCHAIN_GAS_LIMIT = int(os.getenv('BLOCKCHAIN_GAS_LIMIT', '6721975'))
+BLOCKCHAIN_GAS_PRICE_GWEI = int(os.getenv('BLOCKCHAIN_GAS_PRICE_GWEI', '20'))
+
+# Path to ABI files (relative to BASE_DIR)
+BLOCKCHAIN_ABI_DIR = BASE_DIR / 'loans' / 'blockchain' / 'abis'
