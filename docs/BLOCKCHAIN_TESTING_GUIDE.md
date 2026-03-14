@@ -15,6 +15,44 @@ A step-by-step guide to test the blockchain audit trail feature using Ganache.
 
 ---
 
+## Step 0 — Install/Update Backend Dependencies
+
+Before running blockchain tests, make sure backend dependencies are installed (including `web3` from `requirements.txt`).
+
+```bash
+cd /path/to/Capstone_Backend
+source .venv/bin/activate
+pip install -r requirements.txt
+```
+
+---
+
+## Step 0.5 — Configure Blockchain Env + ABIs (Essential)
+
+Before starting Django, make sure blockchain settings are complete:
+
+1. In `.env`, set these values:
+   - `BLOCKCHAIN_ENABLED=True`
+   - `BLOCKCHAIN_RPC_URL=http://127.0.0.1:7545`
+   - `BLOCKCHAIN_CHAIN_ID=1337`
+   - `BLOCKCHAIN_WALLET_KEY=<ganache_private_key>`
+   - `BLOCKCHAIN_CONTRACT_ADDRESSES=<json_from_deployment_file>`
+2. Copy ABIs into `loans/blockchain/abis`:
+
+```bash
+cd /path/to/Capstone_Backend
+source .venv/bin/activate
+python scripts/copy_abis.py
+```
+
+3. Quick sanity check (must print `connected: True`):
+
+```bash
+python manage.py shell -c "from loans.blockchain.client import get_web3; print('connected:', get_web3().is_connected())"
+```
+
+---
+
 ## Step 1 — Start Ganache
 
 1. Open **Ganache** desktop app
@@ -34,21 +72,25 @@ If contracts are not yet deployed:
 ```bash
 cd smartcontracts
 npm install
-npx hardhat run scripts/deploy_local.js --network ganache
+BACKEND_WALLET=<backend_wallet_address> npx hardhat run scripts/deploy-v2.js --network ganache
 ```
 
-This deploys 10 contracts and outputs their addresses. Copy the addresses into the `.env` file under `BLOCKCHAIN_CONTRACT_ADDRESSES`.
+This deploys 10 contracts, wires cross-contract roles, and (if `BACKEND_WALLET` is set) grants backend wallet roles.
+
+Then copy contract addresses from the generated `smartcontracts/deployments/v2-ganache-*.json` file into `.env` under `BLOCKCHAIN_CONTRACT_ADDRESSES`.
 
 ---
 
-## Step 3 — Grant Roles (first time only)
+## Step 3 — Validate Deployment + Roles (recommended)
 
-Run the role-granting script so the backend wallet can call all contracts:
+Run validation to catch missing roles/wiring before app testing:
 
 ```bash
 cd smartcontracts
-npx hardhat run scripts/grant_roles.js --network ganache
+npx hardhat run scripts/validate-deployment.js --network ganache
 ```
+
+If this script fails on role/access checks, fix deployment first before continuing.
 
 ---
 
@@ -217,17 +259,24 @@ INFO sync_payment OK: loan=<LOAN_ID> payment=... tx=...
 | Issue | Solution |
 |-------|---------|
 | No blockchain logs in console | Check `BLOCKCHAIN_ENABLED=True` in `.env` |
+| `BLOCKCHAIN_WALLET_KEY is not configured` | Set backend wallet key in `.env` (Ganache private key) |
+| `ContractNotFoundError` or ABI load failure | Run `python scripts/copy_abis.py` and verify `loans/blockchain/abis/*.json` exist |
+| `Cannot connect to blockchain node at http://127.0.0.1:7545` | Ensure Ganache is running on port 7545 and RPC URL matches `.env` |
+| Role/access `revert` from contracts | Redeploy with `BACKEND_WALLET=<address> npx hardhat run scripts/deploy-v2.js --network ganache` |
 | `VM Exception: revert` on approve | Ensure `assignOfficer` is called before `approveLoan` (automatic) |
 | `VM Exception: revert` on schedule | Loan must be in `Disbursed` status in LoanCore |
 | `NOTHING FOUND` in Ganache search | Add `0x` prefix to the transaction hash |
 | Mobile shows "Not yet verified" | Restart the Flutter app (hot restart) after backend changes |
-| `web3` module not found | Run `pip install web3` in the backend venv |
+| `web3` module not found | Activate backend venv and run `pip install -r requirements.txt` |
 
 ---
 
 ## Quick Smoke Test Checklist
 
 - [ ] Ganache is running on port 7545
+- [ ] `.env` has `BLOCKCHAIN_ENABLED=True`, wallet key, and contract addresses
+- [ ] ABI files exist in `loans/blockchain/abis/` (after `python scripts/copy_abis.py`)
+- [ ] `validate-deployment.js` passes on Ganache
 - [ ] Django server starts with `BLOCKCHAIN_ENABLED = True`
 - [ ] Submit loan → see 4 blockchain INFO logs
 - [ ] Approve loan → see 4 blockchain INFO logs
