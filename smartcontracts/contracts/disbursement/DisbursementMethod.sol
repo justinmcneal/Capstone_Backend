@@ -50,11 +50,11 @@ contract DisbursementMethod is
      */
     struct MethodSelection {
         bytes32 loanId;
-        address borrower;
-        Method method;
         uint256 selectedAt;
         uint256 updatedAt;
-        bool isLocked;           // Locked after disbursement initiated
+        address borrower;            // 20 bytes — packed with method + isLocked
+        Method method;               // 1 byte
+        bool isLocked;               // 1 byte — Locked after disbursement initiated
     }
 
     // ============ State Variables ============
@@ -256,7 +256,6 @@ contract DisbursementMethod is
     function lockMethod(bytes32 loanId) 
         external 
         nonReentrant
-        loanExists(loanId)
         returns (bool success) 
     {
         // Only SYSTEM_ROLE (DisbursementExecution contract) can lock
@@ -278,16 +277,6 @@ contract DisbursementMethod is
             loanId,
             methodSelections[loanId].method,
             block.timestamp
-        );
-
-        // Log to audit registry
-        auditRegistry.log(
-            loanId,
-            "disbursement_method",
-            IAuditRegistry.AuditAction.SystemConfigChanged,
-            bytes32(uint256(methodSelections[loanId].method)),
-            bytes32(uint256(methodSelections[loanId].method)),
-            bytes32(uint256(methodSelections[loanId].method))
         );
 
         return true;

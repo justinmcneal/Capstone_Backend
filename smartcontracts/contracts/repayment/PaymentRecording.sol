@@ -38,12 +38,12 @@ contract PaymentRecording is
         bytes32 paymentId;
         bytes32 loanId;
         bytes32 scheduleId;
-        uint16 installmentNumber;
-        uint256 amount;
-        PaymentMethod method;
         bytes32 referenceHash;
-        address recordedBy;
+        uint256 amount;
         uint256 recordedAt;
+        address recordedBy;         // 20 bytes — packed with installmentNumber + method
+        uint16 installmentNumber;   // 2 bytes
+        PaymentMethod method;       // 1 byte
     }
 
     // ============ Constants ============
@@ -220,21 +220,22 @@ contract PaymentRecording is
         // ── Apply payment to schedule (mutates RepaymentSchedule state) ──
         (
             RepaymentSchedule.InstallmentStatus oldStatus,
-            RepaymentSchedule.InstallmentStatus newStatus
+            RepaymentSchedule.InstallmentStatus newStatus,
+            uint256 remainingBalance
         ) = repaymentSchedule.applyPayment(loanId, installmentNumber, amount);
 
         // ── Generate payment ID ─────────────────────────────────
         _paymentNonce++;
         paymentId = keccak256(abi.encodePacked(loanId, installmentNumber, _paymentNonce));
 
-        // ── Get schedule details for the payment record ─────────
-        RepaymentSchedule.Schedule memory sched = repaymentSchedule.getSchedule(loanId);
+        // ── Get scheduleId without loading full struct ──────────
+        bytes32 scheduleId = repaymentSchedule.loanToSchedule(loanId);
 
         // ── Persist payment ─────────────────────────────────────
         Payment storage payment = payments[paymentId];
         payment.paymentId         = paymentId;
         payment.loanId            = loanId;
-        payment.scheduleId        = sched.scheduleId;
+        payment.scheduleId        = scheduleId;
         payment.installmentNumber = installmentNumber;
         payment.amount            = amount;
         payment.method            = method;
@@ -242,13 +243,10 @@ contract PaymentRecording is
         payment.recordedBy        = msg.sender;
         payment.recordedAt        = block.timestamp;
 
-        loanPayments[loanId].push(paymentId);
+        // Track via events, not storage arrays for gas efficiency
         usedPaymentReferences[referenceHash] = true;
         totalPaymentsRecorded++;
         totalAmountCollected += amount;
-
-        // ── Remaining balance ───────────────────────────────────
-        uint256 remainingBalance = repaymentSchedule.getRemainingBalance(loanId);
 
         emit PaymentRecorded(
             paymentId,
@@ -282,7 +280,7 @@ contract PaymentRecording is
 
         // ── Fully repaid? ──────────────────────────────────────
         if (remainingBalance == 0) {
-            emit LoanFullyRepaid(loanId, sched.totalPaid + amount, block.timestamp);
+            emit LoanFullyRepaid(loanId, totalAmountCollected, block.timestamp);
         }
 
         return paymentId;

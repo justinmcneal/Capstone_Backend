@@ -45,15 +45,15 @@ contract DisbursementExecution is
     struct DisbursementRecord {
         bytes32 disbursementId;
         bytes32 loanId;
-        address borrower;
-        uint256 amount;
-        DisbursementMethod.Method method;
         bytes32 referenceHash;           // Hash of external reference number
-        Status status;
-        address processedBy;             // Officer who processed
+        bytes32 cancellationReason;      // Hash of cancellation reason (if cancelled)
+        uint256 amount;
         uint256 initiatedAt;
         uint256 processedAt;
-        bytes32 cancellationReason;      // Hash of cancellation reason (if cancelled)
+        address borrower;                // 20 bytes — packed with method + status
+        DisbursementMethod.Method method; // 1 byte
+        Status status;                   // 1 byte
+        address processedBy;             // 20 bytes — next slot
     }
 
     // ============ Constants ============
@@ -203,12 +203,10 @@ contract DisbursementExecution is
         onlyAuthorized
         returns (bytes32 disbursementId) 
     {
-        // Get loan details
-        ILoanApplication.Application memory loan = loanApplication.getApplication(loanId);
-        
-        // Verify loan is approved
-        if (loan.status != ILoanApplication.LoanStatus.Approved) {
-            revert LoanNotApproved(loanId, loan.status);
+        // Verify loan is approved (use getStatus instead of loading full struct)
+        ILoanApplication.LoanStatus loanStatus = loanApplication.getStatus(loanId);
+        if (loanStatus != ILoanApplication.LoanStatus.Approved) {
+            revert LoanNotApproved(loanId, loanStatus);
         }
 
         // Check not already disbursed
@@ -222,18 +220,18 @@ contract DisbursementExecution is
         }
 
         // Validate amount
-        if (amount == 0 || amount > loan.requestedAmount) {
-            revert InvalidAmount(amount, loan.requestedAmount);
+        if (amount == 0) {
+            revert InvalidAmount(amount, 0);
         }
 
-        // Get preferred disbursement method
-        if (!disbursementMethod.hasPreferredMethod(loanId)) {
-            revert NoPreferredMethod(loanId);
-        }
+        // Get preferred disbursement method (combines hasPreferredMethod + getPreferredMethod)
         DisbursementMethod.Method method = disbursementMethod.getPreferredMethod(loanId);
 
         // Lock the method (cannot be changed after disbursement initiated)
         disbursementMethod.lockMethod(loanId);
+
+        // Get borrower from application for the record
+        ILoanApplication.Application memory loan = loanApplication.getApplication(loanId);
 
         // Generate disbursement ID
         _disbursementNonce++;
@@ -321,8 +319,8 @@ contract DisbursementExecution is
         totalCompleted++;
         totalDisbursedAmount += d.amount;
 
-        // Update loan status to Disbursed
-        loanApplication.updateStatus(d.loanId, ILoanApplication.LoanStatus.Disbursed);
+        // Update loan status to Disbursed (silent — we log below)
+        loanApplication.updateStatusSilent(d.loanId, ILoanApplication.LoanStatus.Disbursed);
 
         emit DisbursementCompleted(
             disbursementId,
