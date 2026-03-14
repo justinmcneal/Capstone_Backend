@@ -403,5 +403,9 @@ else:
 BLOCKCHAIN_GAS_LIMIT = int(os.getenv('BLOCKCHAIN_GAS_LIMIT', '6721975'))
 BLOCKCHAIN_GAS_PRICE_GWEI = int(os.getenv('BLOCKCHAIN_GAS_PRICE_GWEI', '20'))
 
+# Block explorer URL (e.g. https://etherscan.io, https://sepolia.etherscan.io)
+# Leave empty for local Ganache (no explorer available)
+BLOCKCHAIN_EXPLORER_URL = os.getenv('BLOCKCHAIN_EXPLORER_URL', '')
+
 # Path to ABI files (relative to BASE_DIR)
 BLOCKCHAIN_ABI_DIR = BASE_DIR / 'loans' / 'blockchain' / 'abis'

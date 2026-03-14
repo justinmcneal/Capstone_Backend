@@ -1942,9 +1942,11 @@ class BlockchainStatusView(LoanOfficerRequiredMixin, APIView):
                 status_code=status.HTTP_404_NOT_FOUND
             )
         
+        explorer_url = getattr(settings, 'BLOCKCHAIN_EXPLORER_URL', '')
         data = {
             'application_id': app.id,
             'blockchain_enabled': getattr(settings, 'BLOCKCHAIN_ENABLED', False),
+            'explorer_url': f"{explorer_url}/tx" if explorer_url else '',
             'tx_hashes': getattr(app, 'blockchain_tx_hashes', {}),
             'transactions': [],
         }
