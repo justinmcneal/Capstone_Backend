@@ -59,11 +59,11 @@ class BlockchainTransaction:
             'block_number': self.block_number,
             'error': self.error,
             'details': self.details,
-            'created_at': self.created_at,
-            'completed_at': self.completed_at,
+            'created_at': self.created_at.isoformat() if hasattr(self.created_at, 'isoformat') else self.created_at,
+            'completed_at': self.completed_at.isoformat() if hasattr(self.completed_at, 'isoformat') else self.completed_at,
         }
         if self._id:
-            data['_id'] = self._id
+            data['_id'] = str(self._id)
         return data
 
     def save(self):
@@ -71,6 +71,7 @@ class BlockchainTransaction:
         if collection is None:
             return self
         data = self.to_dict()
+        data.pop('_id', None)
         if self._id:
             collection.update_one({'_id': self._id}, {'$set': data})
         else:

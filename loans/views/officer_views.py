@@ -819,13 +819,12 @@ class OfficerReviewView(LoanOfficerRequiredMixin, APIView):
                 except Exception as e:
                     logger.warning(f"Failed to send approval email: {e}")
             
-            # Blockchain sync — approval
-            if getattr(settings, 'BLOCKCHAIN_ENABLED', False):
-                try:
-                    from loans.blockchain.tasks import sync_approval_to_chain
-                    sync_approval_to_chain.delay(app.id)
-                except Exception as e:
-                    logger.warning(f"Failed to queue blockchain sync for approval {app.id}: {e}")
+            # Blockchain sync — approval (background thread, no Celery needed)
+            try:
+                from loans.blockchain.sync import sync_approval
+                sync_approval(app.id)
+            except Exception as e:
+                logger.warning(f"Blockchain sync skipped for approval {app.id}: {e}")
             
         else:
             app.reject(
@@ -979,15 +978,12 @@ class DisburseView(LoanOfficerRequiredMixin, APIView):
             except Exception as e:
                 logger.warning(f"Failed to generate repayment schedule: {e}")
             
-            # Blockchain sync — disbursement + schedule
-            if getattr(settings, 'BLOCKCHAIN_ENABLED', False):
-                try:
-                    from loans.blockchain.tasks import sync_disbursement_to_chain, sync_schedule_to_chain
-                    sync_disbursement_to_chain.delay(app.id)
-                    if schedule:
-                        sync_schedule_to_chain.delay(app.id)
-                except Exception as e:
-                    logger.warning(f"Failed to queue blockchain sync for disbursement {app.id}: {e}")
+            # Blockchain sync — disbursement + schedule (background thread, no Celery needed)
+            try:
+                from loans.blockchain.sync import sync_disbursement
+                sync_disbursement(app.id, include_schedule=bool(schedule))
+            except Exception as e:
+                logger.warning(f"Blockchain sync skipped for disbursement {app.id}: {e}")
             
             # Send disbursement email
             from accounts.models import Customer
@@ -1221,13 +1217,12 @@ class RecordPaymentView(LoanOfficerRequiredMixin, APIView):
         except Exception as e:
             logger.warning(f"Failed to send payment email: {e}")
         
-        # Blockchain sync — payment
-        if getattr(settings, 'BLOCKCHAIN_ENABLED', False):
-            try:
-                from loans.blockchain.tasks import sync_payment_to_chain
-                sync_payment_to_chain.delay(loan_id, payment.id)
-            except Exception as e:
-                logger.warning(f"Failed to queue blockchain sync for payment {payment.id}: {e}")
+        # Blockchain sync — payment (background thread, no Celery needed)
+        try:
+            from loans.blockchain.sync import sync_payment
+            sync_payment(loan_id, payment.id)
+        except Exception as e:
+            logger.warning(f"Blockchain sync skipped for payment {payment.id}: {e}")
         
         return success_response(
             data={
@@ -1958,7 +1953,7 @@ class BlockchainStatusView(LoanOfficerRequiredMixin, APIView):
             try:
                 from loans.blockchain.models import BlockchainTransaction
                 txs = BlockchainTransaction.find_by_loan(application_id)
-                data['transactions'] = txs
+                data['transactions'] = [tx.to_dict() for tx in txs]
             except Exception as e:
                 logger.warning(f"Failed to fetch blockchain transactions: {e}")
             

@@ -169,7 +169,7 @@ def send_transaction(contract, method_name, *args):
     tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
     receipt = w3.eth.wait_for_transaction_receipt(tx_hash, timeout=120)
 
-    tx_hash_hex = receipt["transactionHash"].hex()
+    tx_hash_hex = "0x" + receipt["transactionHash"].hex()
 
     if receipt["status"] != 1:
         logger.error(
