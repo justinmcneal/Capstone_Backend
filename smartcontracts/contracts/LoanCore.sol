@@ -226,6 +226,10 @@ contract LoanCore is
         address _repayment,
         address _oracle
     ) external onlyRole(ADMIN_ROLE) {
+        if (_disbursement == address(0)) revert ZeroAddress();
+        if (_repayment == address(0)) revert ZeroAddress();
+        if (_oracle == address(0)) revert ZeroAddress();
+
         disbursementContract = _disbursement;
         repaymentContract = _repayment;
         oracleContract = _oracle;
@@ -250,6 +254,7 @@ contract LoanCore is
     ) external nonReentrant whenNotPaused returns (bool) {
         if (loans[loanId].createdAt != 0) revert LoanAlreadyExists(loanId);
         if (requestedAmount == 0) revert InvalidAmount(requestedAmount);
+        require(productId != bytes32(0), "LoanCore: invalid productId");
         
         // Verify borrower is registered
         require(
@@ -502,6 +507,8 @@ contract LoanCore is
         bytes32 loanId,
         uint256 amount
     ) external 
+        nonReentrant
+        whenNotPaused
         loanExists(loanId) 
         inStatus(loanId, LoanStatus.Approved)
         returns (bool) 
@@ -535,6 +542,7 @@ contract LoanCore is
         bytes32 reasonHash
     ) external 
         nonReentrant 
+        whenNotPaused
         loanExists(loanId) 
         returns (bool) 
     {

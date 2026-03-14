@@ -344,6 +344,7 @@ contract LoanApplication is
         LoanStatus newStatus
     ) external override 
         nonReentrant 
+        whenNotPaused
         applicationExists(loanId)
         returns (bool) 
     {
@@ -393,6 +394,7 @@ contract LoanApplication is
         LoanStatus newStatus
     ) external override 
         nonReentrant 
+        whenNotPaused
         applicationExists(loanId)
         returns (bool) 
     {

@@ -256,6 +256,7 @@ contract DisbursementMethod is
     function lockMethod(bytes32 loanId) 
         external 
         nonReentrant
+        whenNotPaused
         returns (bool success) 
     {
         // Only SYSTEM_ROLE (DisbursementExecution contract) can lock

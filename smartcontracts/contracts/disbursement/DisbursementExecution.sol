@@ -230,8 +230,11 @@ contract DisbursementExecution is
         // Lock the method (cannot be changed after disbursement initiated)
         disbursementMethod.lockMethod(loanId);
 
-        // Get borrower from application for the record
+        // Get loan application and validate amount does not exceed requested
         ILoanApplication.Application memory loan = loanApplication.getApplication(loanId);
+        if (amount > loan.requestedAmount) {
+            revert InvalidAmount(amount, loan.requestedAmount);
+        }
 
         // Generate disbursement ID
         _disbursementNonce++;

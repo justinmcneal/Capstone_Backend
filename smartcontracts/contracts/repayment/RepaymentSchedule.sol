@@ -191,6 +191,9 @@ contract RepaymentSchedule is
             revert LoanNotDisbursed(loanId);
         }
 
+        if (borrower == address(0)) {
+            revert ZeroAddress();
+        }
         if (principal == 0) {
             revert InvalidPrincipal();
         }
@@ -361,6 +364,8 @@ contract RepaymentSchedule is
         uint256 amount
     )
         external
+        nonReentrant
+        whenNotPaused
         onlyRole(SYSTEM_ROLE)
         scheduleExists(loanId)
         returns (InstallmentStatus oldStatus, InstallmentStatus newStatus, uint256 remainingBalance)
@@ -400,6 +405,8 @@ contract RepaymentSchedule is
         uint16 installmentNumber
     )
         external
+        nonReentrant
+        whenNotPaused
         onlyRole(SYSTEM_ROLE)
         scheduleExists(loanId)
         returns (InstallmentStatus oldStatus, uint256 daysOverdue)
