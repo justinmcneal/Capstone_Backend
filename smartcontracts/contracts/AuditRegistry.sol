@@ -4,6 +4,8 @@ pragma solidity ^0.8.20;
 import "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
 
 import "./interfaces/IAuditRegistry.sol";
 
@@ -16,6 +18,8 @@ contract AuditRegistry is
     Initializable,
     AccessControlUpgradeable,
     UUPSUpgradeable,
+    ReentrancyGuardUpgradeable,
+    PausableUpgradeable,
     IAuditRegistry 
 {
     // ============ Constants ============
@@ -52,6 +56,8 @@ contract AuditRegistry is
 
         __AccessControl_init();
         __UUPSUpgradeable_init();
+        __ReentrancyGuard_init();
+        __Pausable_init();
 
         _grantRole(DEFAULT_ADMIN_ROLE, admin);
         _grantRole(ADMIN_ROLE, admin);
@@ -84,7 +90,7 @@ contract AuditRegistry is
         bytes32 detailsHash,
         bytes32 previousStateHash,
         bytes32 newStateHash
-    ) external override onlyRole(LOGGER_ROLE) returns (bytes32 entryId) {
+    ) external override onlyRole(LOGGER_ROLE) nonReentrant whenNotPaused returns (bytes32 entryId) {
         require(resourceId != bytes32(0), "AuditRegistry: empty resource ID");
         require(resourceType != bytes32(0), "AuditRegistry: empty resource type");
 
@@ -130,7 +136,7 @@ contract AuditRegistry is
         bytes32[] calldata detailsHashes,
         bytes32[] calldata previousStateHashes,
         bytes32[] calldata newStateHashes
-    ) external onlyRole(LOGGER_ROLE) returns (bytes32[] memory entryIds) {
+    ) external onlyRole(LOGGER_ROLE) nonReentrant whenNotPaused returns (bytes32[] memory entryIds) {
         require(
             resourceIds.length == resourceTypes.length &&
             resourceIds.length == actions.length &&
@@ -271,6 +277,16 @@ contract AuditRegistry is
         }
 
         return (true, 0);
+    }
+
+    // ============ Pausable Functions ============
+
+    function pause() external onlyRole(ADMIN_ROLE) {
+        _pause();
+    }
+
+    function unpause() external onlyRole(ADMIN_ROLE) {
+        _unpause();
     }
 
     // ============ Upgrade Functions ============

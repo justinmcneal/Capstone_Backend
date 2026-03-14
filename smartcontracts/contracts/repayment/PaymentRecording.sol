@@ -299,6 +299,7 @@ contract PaymentRecording is
         uint16 installmentNumber
     )
         external
+        nonReentrant
         whenNotPaused
         onlyOverdueAuthorized
         returns (bool)

@@ -197,10 +197,10 @@ describe("DisbursementExecution", function () {
                 .to.be.revertedWithCustomError(disbursementExecution, "InvalidAmount");
         });
 
-        it("Should not revert if amount exceeds requested (no cap check)", async function () {
+        it("Should revert if amount exceeds requested", async function () {
             const tooMuch = ethers.parseEther("20000");
             await expect(disbursementExecution.connect(officer).initiateDisbursement(loanId, tooMuch))
-                .to.not.be.reverted;
+                .to.be.revertedWithCustomError(disbursementExecution, "InvalidAmount");
         });
 
         it("Should revert if already disbursed", async function () {
