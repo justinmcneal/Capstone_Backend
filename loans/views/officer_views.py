@@ -338,11 +338,27 @@ class OfficerApplicationListView(LoanOfficerRequiredMixin, APIView):
                 'eligibility_score': app.eligibility_score,
                 'risk_category': app.risk_category,
                 'assigned_officer': app.assigned_officer,
+                'assigned_officer_name': None,
                 'submitted_at': app.submitted_at.isoformat() if app.submitted_at else None,
                 'decision_date': app.decision_date.isoformat() if app.decision_date else None,
                 **internal_note_summary(app),
             })
         
+        # Resolve assigned officer names
+        from accounts.models.loan_officer import LoanOfficer as LO
+        officer_ids = {a['assigned_officer'] for a in apps_data if a.get('assigned_officer')}
+        officer_name_map = {}
+        for oid in officer_ids:
+            try:
+                o = LO.find_one({'_id': ObjectId(oid)})
+                if o:
+                    officer_name_map[oid] = f"{o.first_name} {o.last_name}".strip() or 'Unknown'
+            except Exception:
+                pass
+        for a in apps_data:
+            if a.get('assigned_officer'):
+                a['assigned_officer_name'] = officer_name_map.get(a['assigned_officer'])
+
         return success_response(
             data={
                 'applications': apps_data,
