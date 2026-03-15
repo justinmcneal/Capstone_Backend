@@ -253,6 +253,19 @@ class LoanOfficerLogoutView(APIView):
             refresh_token = get_refresh_token_from_request(request)
             access_token = get_access_token_from_request(request)
             
+            # Extract user info from token before blacklisting
+            user_id = None
+            user_email = ''
+            try:
+                import jwt as pyjwt
+                token_to_decode = access_token or refresh_token
+                if token_to_decode:
+                    payload = pyjwt.decode(token_to_decode, options={"verify_signature": False, "verify_exp": False})
+                    user_id = payload.get('customer_id')
+                    user_email = payload.get('email', '')
+            except Exception:
+                logger.warning("Could not decode token for audit log user info during logout")
+            
             if refresh_token:
                 TokenUtils.blacklist_token(refresh_token, token_type='refresh')
             
@@ -262,7 +275,9 @@ class LoanOfficerLogoutView(APIView):
             # Audit log for loan officer logout
             AuditLog.log_action(
                 action='user_logout',
+                user_id=user_id,
                 user_type='loan_officer',
+                user_email=user_email,
                 description='Loan officer logged out',
                 ip_address=request.META.get('REMOTE_ADDR', '')
             )

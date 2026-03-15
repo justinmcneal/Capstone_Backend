@@ -4,7 +4,7 @@ from rest_framework.permissions import AllowAny, IsAuthenticated
 from accounts.authentication import CustomJWTAuthentication
 from django.conf import settings
 from django.middleware.csrf import get_token
-from rest_framework_simplejwt.tokens import RefreshToken
+from rest_framework_simplejwt.tokens import AccessToken, RefreshToken
 from rest_framework_simplejwt.exceptions import TokenError
 from bson import ObjectId
 from accounts.models import Admin, Customer, LoanOfficer
@@ -599,6 +599,19 @@ class LogoutView(APIView):
             return APIResponseHelper.error_response('Refresh token is required')
         
         try:
+            # Extract user info from token before blacklisting
+            user_id = None
+            user_email = ''
+            try:
+                import jwt as pyjwt
+                token_to_decode = access_token or refresh_token
+                if token_to_decode:
+                    payload = pyjwt.decode(token_to_decode, options={"verify_signature": False, "verify_exp": False})
+                    user_id = payload.get('customer_id')
+                    user_email = payload.get('email', '')
+            except Exception:
+                logger.warning("Could not decode token for audit log user info during logout")
+            
             # Blacklist both tokens
             if TokenUtils.blacklist_tokens_on_logout(access_token, refresh_token):
                 logger.info(f"User logged out from IP {request.META.get('REMOTE_ADDR')}")
@@ -606,7 +619,9 @@ class LogoutView(APIView):
                 # Log audit event
                 AuditLog.log_action(
                     action='user_logout',
+                    user_id=user_id,
                     user_type='customer',
+                    user_email=user_email,
                     description='User logged out',
                     ip_address=request.META.get('REMOTE_ADDR', '')
                 )
