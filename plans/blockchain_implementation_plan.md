@@ -774,9 +774,9 @@ Test the complete loan lifecycle across all contracts:
 > **Gate:** All Phase 1 contracts must be deployed and validated before Sprint 5 begins. ✅ PASSED
 
 **Architecture decisions:**
-- **Async-first:** All blockchain calls go through Celery tasks (non-blocking API responses)
+- **Threaded sync-first:** All blockchain calls go through `loans.blockchain.sync` using background threads (non-blocking API responses)
 - **Dual-write:** Django MongoDB is source of truth; blockchain is immutable audit layer
-- **Fail-safe:** If blockchain call fails, Django operation still succeeds; Celery retries (max 3, exponential backoff)
+- **Fail-safe:** If blockchain call fails, Django operation still succeeds; sync errors are logged and do not break API responses
 - **ABI management:** Compiled ABIs copied from `smartcontracts/artifacts/` into `loans/blockchain/abis/`
 
 ---
@@ -788,7 +788,8 @@ Test the complete loan lifecycle across all contracts:
 loans/blockchain/
 ├── __init__.py
 ├── client.py              # Web3 connection, ABI loading, contract instances
-├── tasks.py               # Celery tasks for async blockchain calls
+├── sync.py                # Threaded blockchain sync functions used by views
+├── tasks.py               # Celery task module (available, not used by current view flow)
 ├── exceptions.py          # Custom blockchain exceptions
 ├── models.py              # BlockchainTransaction MongoDB collection
 ├── abis/                  # Compiled contract ABIs (copied from artifacts)
@@ -889,18 +890,18 @@ Each service wraps specific contract calls with Django-friendly interfaces:
 - After `RepaymentSchedule.generate_for_loan()` → call `create_schedule_onchain()` on-chain
 - After `RepaymentSchedule.record_payment()` → call `record_payment_onchain()` on-chain
 
-#### Sub-task 5.1.5 — Celery Tasks (`tasks.py`)
+#### Sub-task 5.1.5 — Synchronous Threaded Sync (`sync.py`)
 
 **Status:** ✅ Complete
 
-- [x] `@shared_task sync_application_to_chain(loan_id)` — called after submit
-- [x] `@shared_task sync_approval_to_chain(loan_id)` — called after approve
-- [x] `@shared_task sync_disbursement_to_chain(loan_id)` — called after disburse
-- [x] `@shared_task sync_schedule_to_chain(loan_id)` — called after schedule generation
-- [x] `@shared_task sync_payment_to_chain(loan_id, payment_id)` — called after record_payment
-- [x] Retry config: `max_retries=3, default_retry_delay=10, retry_backoff=True`
+- [x] `sync_application(loan_id)` — called after submit
+- [x] `sync_approval(loan_id)` — called after approve
+- [x] `sync_disbursement(loan_id, include_schedule=True)` — called after disburse
+- [x] `sync_schedule(loan_id)` — called after schedule generation (or chained from disbursement)
+- [x] `sync_payment(loan_id, payment_id)` — called after record_payment
+- [x] Execution model: `threading.Thread(..., daemon=True)` so API responses are not blocked
 - [x] On success: store `tx_hash` in MongoDB via `BlockchainTransaction` model
-- [x] On final failure: log error, mark transaction as `failed`
+- [x] On failure: log error, mark transaction as `failed` (no Celery retry queue in active flow)
 
 #### Sub-task 5.1.6 — MongoDB Model Updates
 
@@ -920,10 +921,10 @@ Each service wraps specific contract calls with Django-friendly interfaces:
 
 **Status:** ✅ Complete
 
-- [x] `LoanApplyView.post()` → add `sync_application_to_chain.delay(loan_id)` after successful submit
-- [x] `OfficerReviewView.put()` (approve path) → add `sync_approval_to_chain.delay(loan_id)`
-- [x] `DisburseView.post()` → add `sync_disbursement_to_chain.delay(loan_id)` + `sync_schedule_to_chain.delay(loan_id)`
-- [x] `RecordPaymentView.post()` → add `sync_payment_to_chain.delay(loan_id, payment_id)`
+- [x] `LoanApplyView.post()` → call `sync_application(loan_id)` after successful submit
+- [x] `OfficerReviewView.put()` (approve path) → call `sync_approval(loan_id)`
+- [x] `DisburseView.post()` → call `sync_disbursement(loan_id, include_schedule=...)`
+- [x] `RecordPaymentView.post()` → call `sync_payment(loan_id, payment_id)`
 - [x] Add new endpoint: `GET /api/loans/applications/<id>/blockchain/` — returns tx hashes + on-chain audit trail (`BlockchainStatusView`)
 - [x] All hooks gated by `settings.BLOCKCHAIN_ENABLED` flag
 
@@ -933,7 +934,8 @@ Each service wraps specific contract calls with Django-friendly interfaces:
 
 - [x] Unit tests for `client.py` (mock Web3 provider) — 23 tests
 - [x] Unit tests for each service module (mock contract calls) — 33 tests
-- [x] Unit tests for Celery tasks (mock services, verify retry logic) — 27 tests
+- [x] Unit tests for synchronous sync module (threaded blockchain flow) — `tests/blockchain/test_sync.py`
+- [x] Unit tests for Celery task module (legacy/optional path) — 27 tests
 - [x] Unit tests for models and exceptions — 22 tests
 - [x] Integration test: full loan lifecycle with Ganache running — 9 tests (3 skipped due to contract access control)
 - [x] All **107 tests passing**, 3 skipped, 0 failures
@@ -942,7 +944,8 @@ Each service wraps specific contract calls with Django-friendly interfaces:
 - `tests/blockchain/test_client.py` — Web3 client functions
 - `tests/blockchain/test_services.py` — All 6 service modules
 - `tests/blockchain/test_models.py` — BlockchainTransaction CRUD
-- `tests/blockchain/test_tasks.py` — Celery tasks with retry logic
+- `tests/blockchain/test_sync.py` — Synchronous threaded sync functions used by views
+- `tests/blockchain/test_tasks.py` — Celery task module tests (available but not active in views)
 - `tests/blockchain/test_exceptions.py` — Exception hierarchy
 - `tests/blockchain/test_integration.py` — End-to-end with Ganache
 
@@ -1010,7 +1013,7 @@ components/
 
 ```
 5.1.1 (deps & config) → 5.1.2 (ABIs) → 5.1.3 (Web3 client)
-    → 5.1.4 (service modules) → 5.1.5 (Celery tasks)
+  → 5.1.4 (service modules) → 5.1.5 (threaded sync module)
     → 5.1.6 (model updates) → 5.1.7 (wire into views)
     → 5.1.8 (testing)
     → 5.2 (web — optional)

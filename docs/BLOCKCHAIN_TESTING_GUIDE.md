@@ -4,6 +4,15 @@ Test the blockchain audit trail using Ganache (local Ethereum).
 
 **Prerequisites:** Ganache 2.7+, Python 3.9+, Node.js 18+, MongoDB (running)
 
+## Implementation Notes
+
+This guide reflects the current backend implementation in this repository.
+
+- Blockchain sync is triggered from Django views in background threads via `loans.blockchain.sync`.
+- The backend signs on-chain transactions with the configured service wallet (`BLOCKCHAIN_WALLET_KEY`).
+- Because transactions are backend-signed, on-chain actor fields that depend on `msg.sender` reflect the backend wallet, not the authenticated mobile/web user.
+- Backend verification endpoints are implemented in this repo. Web/mobile audit UI cards described in the Phase 2 plan are not part of this backend repository and should not be treated as required for backend verification.
+
 ---
 
 ## Understanding the Two `.env` Files
