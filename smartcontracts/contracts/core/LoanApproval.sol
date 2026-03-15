@@ -136,17 +136,14 @@ contract LoanApproval is
         uint256 approvedAmount,
         bytes32 notesHash
     ) external nonReentrant whenNotPaused returns (bool) {
-        // Validate application exists
-        if (!loanApplication.exists(loanId)) {
-            revert ApplicationNotFound(loanId);
-        }
-
         // Validate caller is assigned officer or admin
         _validateCallerIsOfficerOrAdmin(loanId);
 
+        // Single cross-contract call (getApplication reverts if not found)
+        ILoanApplication.Application memory app = loanApplication.getApplication(loanId);
+
         // Validate application is in UnderReview status
-        ILoanApplication.LoanStatus status = loanApplication.getStatus(loanId);
-        if (status != ILoanApplication.LoanStatus.UnderReview) {
+        if (app.status != ILoanApplication.LoanStatus.UnderReview) {
             revert InvalidApplicationStatus(loanId);
         }
 
@@ -155,7 +152,6 @@ contract LoanApproval is
             revert InvalidAmount(approvedAmount);
         }
 
-        ILoanApplication.Application memory app = loanApplication.getApplication(loanId);
         if (approvedAmount > app.requestedAmount) {
             revert AmountExceedsRequested(approvedAmount, app.requestedAmount);
         }
@@ -178,7 +174,7 @@ contract LoanApproval is
             "approval",
             IAuditRegistry.AuditAction.LoanApproved,
             keccak256(abi.encodePacked(msg.sender, approvedAmount, notesHash)),
-            bytes32(uint256(status)),
+            bytes32(uint256(app.status)),
             bytes32(uint256(ILoanApplication.LoanStatus.Approved))
         );
 
@@ -197,16 +193,13 @@ contract LoanApproval is
         bytes32 rejectionReasonHash,
         bytes32 notesHash
     ) external nonReentrant whenNotPaused returns (bool) {
-        // Validate application exists
-        if (!loanApplication.exists(loanId)) {
-            revert ApplicationNotFound(loanId);
-        }
-
         // Validate caller is assigned officer or admin
         _validateCallerIsOfficerOrAdmin(loanId);
 
-        // Validate application is in UnderReview status
+        // Single cross-contract call (getStatus reverts if not found)
         ILoanApplication.LoanStatus status = loanApplication.getStatus(loanId);
+
+        // Validate application is in UnderReview status
         if (status != ILoanApplication.LoanStatus.UnderReview) {
             revert InvalidApplicationStatus(loanId);
         }

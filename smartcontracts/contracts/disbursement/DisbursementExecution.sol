@@ -203,10 +203,10 @@ contract DisbursementExecution is
         onlyAuthorized
         returns (bytes32 disbursementId) 
     {
-        // Verify loan is approved (use getStatus instead of loading full struct)
-        ILoanApplication.LoanStatus loanStatus = loanApplication.getStatus(loanId);
-        if (loanStatus != ILoanApplication.LoanStatus.Approved) {
-            revert LoanNotApproved(loanId, loanStatus);
+        // Single cross-contract call (getApplication reverts if not found)
+        ILoanApplication.Application memory loan = loanApplication.getApplication(loanId);
+        if (loan.status != ILoanApplication.LoanStatus.Approved) {
+            revert LoanNotApproved(loanId, loan.status);
         }
 
         // Check not already disbursed
@@ -230,8 +230,7 @@ contract DisbursementExecution is
         // Lock the method (cannot be changed after disbursement initiated)
         disbursementMethod.lockMethod(loanId);
 
-        // Get loan application and validate amount does not exceed requested
-        ILoanApplication.Application memory loan = loanApplication.getApplication(loanId);
+        // Validate amount against already-loaded application data
         if (amount > loan.requestedAmount) {
             revert InvalidAmount(amount, loan.requestedAmount);
         }
