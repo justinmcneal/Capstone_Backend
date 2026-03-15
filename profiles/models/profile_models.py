@@ -400,7 +400,7 @@ class AlternativeData:
         # Digital Footprint (optional)
         self.has_bank_account = kwargs.get('has_bank_account', False)
         self.bank_account_duration = kwargs.get('bank_account_duration')  # Years
-        self.has_ewallet = kwargs.get('has_ewallet', False)  # GCash, Maya, etc.
+        self.has_ewallet = kwargs.get('has_ewallet', False)  # GCash, Wallet (ETH), etc.
         self.ewallet_usage = kwargs.get('ewallet_usage')  # daily, weekly, monthly, rarely
         
         # Utility Payments
