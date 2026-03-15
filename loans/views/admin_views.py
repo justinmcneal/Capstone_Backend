@@ -526,16 +526,44 @@ class OfficerWorkloadView(AdminRequiredMixin, APIView):
             officer_id=None  # Get all assigned apps, not filtered by officer
         )
         
+        # Resolve customer names and officer names in bulk
+        from accounts.models import Customer
+        from accounts.models.loan_officer import LoanOfficer
+
+        all_apps = list(pending_data['applications']) + list(assigned_data['applications'])
+        customer_ids = {app.customer_id for app in all_apps if app.customer_id}
+        officer_ids = {app.assigned_officer for app in all_apps if app.assigned_officer}
+
+        customer_names = {}
+        for cid in customer_ids:
+            try:
+                c = Customer.find_one({'_id': ObjectId(cid)})
+                if c:
+                    customer_names[cid] = f"{c.first_name} {c.last_name}".strip() or 'Unknown'
+            except Exception:
+                pass
+
+        officer_names = {}
+        for oid in officer_ids:
+            try:
+                o = LoanOfficer.find_one({'_id': ObjectId(oid)})
+                if o:
+                    officer_names[oid] = f"{o.first_name} {o.last_name}".strip() or 'Unknown'
+            except Exception:
+                pass
+
         # Format pending applications for response
         pending_apps = [{
             'id': app.id,
             'customer_id': app.customer_id,
+            'customer_name': customer_names.get(app.customer_id, 'Unknown'),
             'requested_amount': app.requested_amount,
             'term_months': app.term_months,
             'status': app.status,
             'eligibility_score': app.eligibility_score,
             'risk_category': app.risk_category,
             'assigned_officer': app.assigned_officer,
+            'assigned_officer_name': officer_names.get(app.assigned_officer, None) if app.assigned_officer else None,
             'submitted_at': app.submitted_at.isoformat() if app.submitted_at else None,
             'internal_notes_count': len(app.internal_notes or []),
             'latest_internal_note': serialize_internal_note(
@@ -547,12 +575,14 @@ class OfficerWorkloadView(AdminRequiredMixin, APIView):
         assigned_apps = [{
             'id': app.id,
             'customer_id': app.customer_id,
+            'customer_name': customer_names.get(app.customer_id, 'Unknown'),
             'requested_amount': app.requested_amount,
             'term_months': app.term_months,
             'status': app.status,
             'eligibility_score': app.eligibility_score,
             'risk_category': app.risk_category,
             'assigned_officer': app.assigned_officer,
+            'assigned_officer_name': officer_names.get(app.assigned_officer, None) if app.assigned_officer else None,
             'submitted_at': app.submitted_at.isoformat() if app.submitted_at else None,
             'internal_notes_count': len(app.internal_notes or []),
             'latest_internal_note': serialize_internal_note(
