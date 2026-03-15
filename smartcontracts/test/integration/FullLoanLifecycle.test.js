@@ -40,9 +40,9 @@ describe("Full Loan Lifecycle — Integration", function () {
     Rejected: 4, Disbursed: 5, Cancelled: 6,
   };
   const RiskCategory = { Low: 0, Medium: 1, High: 2 };
-  const DisbursementMethodEnum = { BankTransfer: 0, GCash: 1, Cash: 2, Maya: 3, Other: 4 };
+  const DisbursementMethodEnum = { BankTransfer: 0, GCash: 1, Cash: 2, Check: 3, Wallet: 4 };
   const DisbursementStatus = { Pending: 0, Processing: 1, Completed: 2, Cancelled: 3 };
-  const PaymentMethod = { Cash: 0, BankTransfer: 1, GCash: 2, Maya: 3, Other: 4 };
+  const PaymentMethod = { Cash: 0, BankTransfer: 1, GCash: 2, Check: 3, Wallet: 4 };
   const InstallmentStatus = { Pending: 0, Paid: 1, Partial: 2, Overdue: 3 };
 
   // ================================================================

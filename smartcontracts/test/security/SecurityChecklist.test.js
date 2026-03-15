@@ -28,8 +28,8 @@ describe("Security Checklist", function () {
     const eligibilityScore = 85;
     const aiRecHash = ethers.keccak256(ethers.toUtf8Bytes("AI_REC_SEC"));
     const approvalNotesHash = ethers.keccak256(ethers.toUtf8Bytes("APPROVAL_SEC"));
-    const Method = { BankTransfer: 0, GCash: 1, Cash: 2, Maya: 3, Other: 4 };
-    const PaymentMethod = { Cash: 0, BankTransfer: 1, GCash: 2, Maya: 3, Other: 4 };
+    const Method = { BankTransfer: 0, GCash: 1, Cash: 2, Check: 3, Wallet: 4 };
+    const PaymentMethod = { Cash: 0, BankTransfer: 1, GCash: 2, Check: 3, Wallet: 4 };
 
     const refHash = (tag) => ethers.keccak256(ethers.toUtf8Bytes(tag));
 

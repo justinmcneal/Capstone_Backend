@@ -25,7 +25,7 @@ describe("PaymentRecording", function () {
   const DAYS_PER_MONTH = 30n;
 
   // PaymentMethod enum
-  const PaymentMethod = { Cash: 0, BankTransfer: 1, GCash: 2, Maya: 3, Other: 4 };
+  const PaymentMethod = { Cash: 0, BankTransfer: 1, GCash: 2, Check: 3, Wallet: 4 };
 
   // InstallmentStatus enum (mirrors RepaymentSchedule)
   const InstallmentStatus = { Pending: 0, Paid: 1, Partial: 2, Overdue: 3 };
@@ -324,7 +324,7 @@ describe("PaymentRecording", function () {
       const ref = refHash("PAY015");
 
       const tx = await paymentRecording.connect(officer).recordPayment(
-        loanId, 1, amount, PaymentMethod.Maya, ref
+        loanId, 1, amount, PaymentMethod.Check, ref
       );
       const receipt = await tx.wait();
 
@@ -343,7 +343,7 @@ describe("PaymentRecording", function () {
       expect(payment.loanId).to.equal(loanId);
       expect(payment.installmentNumber).to.equal(1);
       expect(payment.amount).to.equal(amount);
-      expect(payment.method).to.equal(PaymentMethod.Maya);
+      expect(payment.method).to.equal(PaymentMethod.Check);
       expect(payment.referenceHash).to.equal(ref);
       expect(payment.recordedBy).to.equal(officer.address);
     });
