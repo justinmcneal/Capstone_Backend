@@ -15,10 +15,10 @@ logger = logging.getLogger("blockchain")
 # DisbursementMethod.Method enum mapping (Django string → Solidity uint)
 DISBURSEMENT_METHOD_MAP = {
     "bank_transfer": 0,
-    "gcash": 1,
-    "cash": 2,
-    "maya": 3,
-    "other": 4,
+    "cash": 1,
+    "gcash": 2,
+    "check": 3,
+    "wallet": 4,
 }
 
 
@@ -35,7 +35,7 @@ def set_method_onchain(loan_id, method, details_hash=""):
 
     Args:
         loan_id: Loan identifier (string, hashed to bytes32)
-        method: Disbursement method string ('bank_transfer', 'gcash', 'cash', 'maya', 'other')
+        method: Disbursement method string ('cash', 'gcash', 'bank_transfer', 'check', 'wallet')
         details_hash: Hash of account details (string, hashed to bytes32)
 
     Returns:

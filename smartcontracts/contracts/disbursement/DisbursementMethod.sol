@@ -39,8 +39,8 @@ contract DisbursementMethod is
         BankTransfer,    // 0 - Direct bank transfer
         GCash,           // 1 - GCash mobile wallet
         Cash,            // 2 - Cash pickup
-        Maya,            // 3 - Maya (formerly PayMaya)
-        Other            // 4 - Other methods
+        Check,           // 3 - Check payment
+        Wallet           // 4 - Crypto wallet (ETH)
     }
 
     // ============ Structs ============

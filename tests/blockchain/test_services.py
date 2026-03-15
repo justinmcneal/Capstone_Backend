@@ -242,7 +242,7 @@ class TestDisbursementService:
     def test_disbursement_method_map_completeness(self):
         from loans.blockchain.services.disbursement_service import DISBURSEMENT_METHOD_MAP
 
-        expected = {"bank_transfer", "gcash", "cash", "maya", "other"}
+        expected = {"cash", "gcash", "bank_transfer", "check", "wallet"}
         assert set(DISBURSEMENT_METHOD_MAP.keys()) == expected
         # Values should be 0-4
         assert set(DISBURSEMENT_METHOD_MAP.values()) == {0, 1, 2, 3, 4}
@@ -369,7 +369,7 @@ class TestRepaymentService:
     def test_payment_method_map_completeness(self):
         from loans.blockchain.services.repayment_service import PAYMENT_METHOD_MAP
 
-        expected = {"cash", "bank_transfer", "gcash", "maya", "other"}
+        expected = {"cash", "gcash", "bank_transfer", "check", "wallet"}
         assert set(PAYMENT_METHOD_MAP.keys()) == expected
         assert set(PAYMENT_METHOD_MAP.values()) == {0, 1, 2, 3, 4}
 

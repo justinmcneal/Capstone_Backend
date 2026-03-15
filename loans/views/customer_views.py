@@ -441,7 +441,8 @@ class LoanApplyView(CustomerRoleRequiredMixin, APIView):
                 purpose=data.get('purpose', ''),
                 eligibility_score=qualification.get('eligibility_score'),
                 ai_recommendation=qualification,
-                risk_category=qualification.get('risk_category')
+                risk_category=qualification.get('risk_category'),
+                preferred_disbursement_method=data.get('preferred_disbursement_method') or None,
             )
             application.submit()
             
@@ -994,7 +995,7 @@ class PaymentHistoryView(CustomerRoleRequiredMixin, APIView):
                 status_code=status.HTTP_400_BAD_REQUEST
             )
 
-        valid_methods = {'cash', 'bank_transfer', 'gcash', 'maya', 'check', 'other'}
+        valid_methods = {'cash', 'gcash', 'bank_transfer', 'check', 'wallet'}
         if payment_method not in valid_methods:
             return error_response(
                 message="Invalid payment_method",

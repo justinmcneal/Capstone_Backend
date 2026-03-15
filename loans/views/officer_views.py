@@ -957,7 +957,7 @@ class DisburseView(LoanOfficerRequiredMixin, APIView):
                 message="amount must be greater than 0",
                 status_code=status.HTTP_400_BAD_REQUEST
             )
-        allowed_methods = {'bank_transfer', 'cash', 'gcash', 'maya', 'check', 'other'}
+        allowed_methods = {'cash', 'gcash', 'bank_transfer', 'check', 'wallet'}
         if method not in allowed_methods:
             return error_response(
                 message="Invalid disbursement method",
@@ -1123,7 +1123,7 @@ class RecordPaymentView(LoanOfficerRequiredMixin, APIView):
                 message="amount must be greater than 0",
                 status_code=status.HTTP_400_BAD_REQUEST
             )
-        valid_methods = {'cash', 'bank_transfer', 'gcash', 'maya', 'check', 'other'}
+        valid_methods = {'cash', 'gcash', 'bank_transfer', 'check', 'wallet'}
         if payment_method not in valid_methods:
             return error_response(
                 message="Invalid payment_method",
@@ -1572,7 +1572,7 @@ class PaymentSearchView(LoanOfficerRequiredMixin, APIView):
         - customer_id: Filter by customer ID
         - disbursed_only: If true (default), only include payments from disbursed loans
         - payment_status: Filter by payment timing status ('on_time', 'late')
-        - payment_method: Filter by payment method ('cash', 'bank_transfer', 'gcash', 'maya', 'check')
+        - payment_method: Filter by payment method ('cash', 'gcash', 'bank_transfer', 'check', 'wallet')
         - min_amount: Minimum payment amount
         - max_amount: Maximum payment amount
         - start_date: Filter payments recorded on or after this date (YYYY-MM-DD)
@@ -1712,7 +1712,7 @@ class PaymentSearchView(LoanOfficerRequiredMixin, APIView):
             query['customer_id'] = customer_id
         
         # Payment method filter
-        valid_methods = ['cash', 'bank_transfer', 'gcash', 'maya', 'check', 'other']
+        valid_methods = ['cash', 'gcash', 'bank_transfer', 'check', 'wallet']
         if payment_method:
             if payment_method not in valid_methods:
                 return error_response(
