@@ -426,7 +426,7 @@ class OfficerApplicationDetailView(LoanOfficerRequiredMixin, APIView):
             'personal_profile': {
                 'first_name': customer.first_name if customer else None,
                 'last_name': customer.last_name if customer else None,
-                'phone_number': customer.phone if customer else None,
+                'phone_number': personal.mobile_number or (customer.phone if customer else None),
                 'civil_status': personal.civil_status,
                 'city_municipality': personal.city_municipality,
                 'province': personal.province,
