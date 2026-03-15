@@ -498,7 +498,7 @@ class FAQsView(AccessControlMixin, APIView):
             },
             {
                 'question': 'How do I make payments?',
-                'answer': 'Payments can be made via bank transfer, GCash, Maya, or cash at partner locations.'
+                'answer': 'Payments can be made via bank transfer, GCash, Wallet (ETH), check or cash at partner locations.'
             },
             {
                 'question': 'What happens if I miss a payment?',
