@@ -338,11 +338,27 @@ class OfficerApplicationListView(LoanOfficerRequiredMixin, APIView):
                 'eligibility_score': app.eligibility_score,
                 'risk_category': app.risk_category,
                 'assigned_officer': app.assigned_officer,
+                'assigned_officer_name': None,
                 'submitted_at': app.submitted_at.isoformat() if app.submitted_at else None,
                 'decision_date': app.decision_date.isoformat() if app.decision_date else None,
                 **internal_note_summary(app),
             })
         
+        # Resolve assigned officer names
+        from accounts.models.loan_officer import LoanOfficer as LO
+        officer_ids = {a['assigned_officer'] for a in apps_data if a.get('assigned_officer')}
+        officer_name_map = {}
+        for oid in officer_ids:
+            try:
+                o = LO.find_one({'_id': ObjectId(oid)})
+                if o:
+                    officer_name_map[oid] = f"{o.first_name} {o.last_name}".strip() or 'Unknown'
+            except Exception:
+                pass
+        for a in apps_data:
+            if a.get('assigned_officer'):
+                a['assigned_officer_name'] = officer_name_map.get(a['assigned_officer'])
+
         return success_response(
             data={
                 'applications': apps_data,
@@ -813,6 +829,14 @@ class OfficerReviewView(LoanOfficerRequiredMixin, APIView):
                     )
                 except Exception as e:
                     logger.warning(f"Failed to send approval email: {e}")
+            
+            # Blockchain sync — approval (background thread, no Celery needed)
+            try:
+                from loans.blockchain.sync import sync_approval
+                sync_approval(app.id)
+            except Exception as e:
+                logger.warning(f"Blockchain sync skipped for approval {app.id}: {e}")
+            
         else:
             app.reject(
                 officer_id=officer_id,
@@ -964,6 +988,13 @@ class DisburseView(LoanOfficerRequiredMixin, APIView):
                     logger.info(f"Repayment schedule generated for loan {app.id}")
             except Exception as e:
                 logger.warning(f"Failed to generate repayment schedule: {e}")
+            
+            # Blockchain sync — disbursement + schedule (background thread, no Celery needed)
+            try:
+                from loans.blockchain.sync import sync_disbursement
+                sync_disbursement(app.id, include_schedule=bool(schedule))
+            except Exception as e:
+                logger.warning(f"Blockchain sync skipped for disbursement {app.id}: {e}")
             
             # Send disbursement email
             from accounts.models import Customer
@@ -1196,6 +1227,13 @@ class RecordPaymentView(LoanOfficerRequiredMixin, APIView):
                 )
         except Exception as e:
             logger.warning(f"Failed to send payment email: {e}")
+        
+        # Blockchain sync — payment (background thread, no Celery needed)
+        try:
+            from loans.blockchain.sync import sync_payment
+            sync_payment(loan_id, payment.id)
+        except Exception as e:
+            logger.warning(f"Blockchain sync skipped for payment {payment.id}: {e}")
         
         return success_response(
             data={
@@ -1885,4 +1923,61 @@ class PaymentSearchView(LoanOfficerRequiredMixin, APIView):
                 }
             },
             message="Payments retrieved"
+        )
+
+
+class BlockchainStatusView(LoanOfficerRequiredMixin, APIView):
+    """
+    Get blockchain transaction status for a loan application.
+    
+    GET /api/loans/applications/<id>/blockchain/
+    """
+    authentication_classes = [CustomJWTAuthentication]
+    permission_classes = [IsAuthenticated]
+    
+    def get(self, request, application_id):
+        has_permission, result = self.check_officer_permission(request)
+        if not has_permission:
+            return result
+        
+        if not ObjectId.is_valid(application_id):
+            return error_response(
+                message="Invalid application ID",
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+        
+        app = LoanApplication.find_by_id(application_id)
+        if not app:
+            return error_response(
+                message="Application not found",
+                status_code=status.HTTP_404_NOT_FOUND
+            )
+        
+        explorer_url = getattr(settings, 'BLOCKCHAIN_EXPLORER_URL', '')
+        data = {
+            'application_id': app.id,
+            'blockchain_enabled': getattr(settings, 'BLOCKCHAIN_ENABLED', False),
+            'explorer_url': f"{explorer_url}/tx" if explorer_url else '',
+            'tx_hashes': getattr(app, 'blockchain_tx_hashes', {}),
+            'transactions': [],
+        }
+        
+        if getattr(settings, 'BLOCKCHAIN_ENABLED', False):
+            try:
+                from loans.blockchain.models import BlockchainTransaction
+                txs = BlockchainTransaction.find_by_loan(application_id)
+                data['transactions'] = [tx.to_dict() for tx in txs]
+            except Exception as e:
+                logger.warning(f"Failed to fetch blockchain transactions: {e}")
+            
+            try:
+                from loans.blockchain.services.audit_service import get_audit_trail
+                trail = get_audit_trail(application_id)
+                data['audit_trail'] = trail
+            except Exception as e:
+                logger.warning(f"Failed to fetch on-chain audit trail: {e}")
+        
+        return success_response(
+            data=data,
+            message="Blockchain status retrieved"
         )

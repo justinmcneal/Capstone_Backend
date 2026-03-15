@@ -48,4 +48,10 @@ python-dateutil>=2.8.2
 gunicorn>=21.0.0
 whitenoise>=6.6.0
 
-pip-audit
+# Blockchain Integration (web3.py)
+web3>=6.0.0
+
+# Testing
+pytest>=7.0.0
+pytest-django>=4.5.0
+mongomock>=4.1.0

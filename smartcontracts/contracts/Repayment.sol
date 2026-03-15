@@ -238,6 +238,7 @@ contract Repayment is
             revert LoanNotDisbursed(loanId);
         }
 
+        require(borrower != address(0), "Repayment: zero borrower address");
         require(principal > 0, "Repayment: invalid principal");
         require(termMonths > 0 && termMonths <= 360, "Repayment: invalid term");
 
@@ -427,6 +428,8 @@ contract Repayment is
         bytes32 loanId,
         uint16 installmentNumber
     ) external 
+        nonReentrant
+        whenNotPaused
         scheduleExists(loanId) 
         returns (bool) 
     {

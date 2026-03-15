@@ -4,6 +4,8 @@ pragma solidity ^0.8.20;
 import "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
 
 import "./interfaces/IAuditRegistry.sol";
 
@@ -16,6 +18,8 @@ contract AuditRegistry is
     Initializable,
     AccessControlUpgradeable,
     UUPSUpgradeable,
+    ReentrancyGuardUpgradeable,
+    PausableUpgradeable,
     IAuditRegistry 
 {
     // ============ Constants ============
@@ -52,6 +56,8 @@ contract AuditRegistry is
 
         __AccessControl_init();
         __UUPSUpgradeable_init();
+        __ReentrancyGuard_init();
+        __Pausable_init();
 
         _grantRole(DEFAULT_ADMIN_ROLE, admin);
         _grantRole(ADMIN_ROLE, admin);
@@ -79,14 +85,14 @@ contract AuditRegistry is
      */
     function log(
         bytes32 resourceId,
-        string calldata resourceType,
+        bytes32 resourceType,
         AuditAction action,
         bytes32 detailsHash,
         bytes32 previousStateHash,
         bytes32 newStateHash
-    ) external override onlyRole(LOGGER_ROLE) returns (bytes32 entryId) {
+    ) external override onlyRole(LOGGER_ROLE) nonReentrant whenNotPaused returns (bytes32 entryId) {
         require(resourceId != bytes32(0), "AuditRegistry: empty resource ID");
-        require(bytes(resourceType).length > 0, "AuditRegistry: empty resource type");
+        require(resourceType != bytes32(0), "AuditRegistry: empty resource type");
 
         // Generate entry ID
         _entryNonce++;
@@ -97,9 +103,8 @@ contract AuditRegistry is
             _entryNonce
         ));
 
-        // Create entry
+        // Create entry — packed struct saves ~3 slots vs original
         AuditEntry storage entry = entries[entryId];
-        entry.entryId = entryId;
         entry.resourceId = resourceId;
         entry.resourceType = resourceType;
         entry.action = action;
@@ -107,12 +112,11 @@ contract AuditRegistry is
         entry.detailsHash = detailsHash;
         entry.previousStateHash = previousStateHash;
         entry.newStateHash = newStateHash;
-        entry.timestamp = block.timestamp;
-        entry.blockNumber = block.number;
+        entry.timestamp = uint48(block.timestamp);
+        entry.blockNumber = uint48(block.number);
 
-        // Update indexes
+        // Update indexes — removed actorEntries push for gas savings
         resourceEntries[resourceId].push(entryId);
-        actorEntries[msg.sender].push(entryId);
         latestResourceState[resourceId] = newStateHash;
 
         totalEntries++;
@@ -127,12 +131,12 @@ contract AuditRegistry is
      */
     function logBatch(
         bytes32[] calldata resourceIds,
-        string[] calldata resourceTypes,
+        bytes32[] calldata resourceTypes,
         AuditAction[] calldata actions,
         bytes32[] calldata detailsHashes,
         bytes32[] calldata previousStateHashes,
         bytes32[] calldata newStateHashes
-    ) external onlyRole(LOGGER_ROLE) returns (bytes32[] memory entryIds) {
+    ) external onlyRole(LOGGER_ROLE) nonReentrant whenNotPaused returns (bytes32[] memory entryIds) {
         require(
             resourceIds.length == resourceTypes.length &&
             resourceIds.length == actions.length &&
@@ -155,7 +159,6 @@ contract AuditRegistry is
             ));
 
             AuditEntry storage entry = entries[entryId];
-            entry.entryId = entryId;
             entry.resourceId = resourceIds[i];
             entry.resourceType = resourceTypes[i];
             entry.action = actions[i];
@@ -163,11 +166,10 @@ contract AuditRegistry is
             entry.detailsHash = detailsHashes[i];
             entry.previousStateHash = previousStateHashes[i];
             entry.newStateHash = newStateHashes[i];
-            entry.timestamp = block.timestamp;
-            entry.blockNumber = block.number;
+            entry.timestamp = uint48(block.timestamp);
+            entry.blockNumber = uint48(block.number);
 
             resourceEntries[resourceIds[i]].push(entryId);
-            actorEntries[msg.sender].push(entryId);
             latestResourceState[resourceIds[i]] = newStateHashes[i];
 
             entryIds[i] = entryId;
@@ -275,6 +277,16 @@ contract AuditRegistry is
         }
 
         return (true, 0);
+    }
+
+    // ============ Pausable Functions ============
+
+    function pause() external onlyRole(ADMIN_ROLE) {
+        _pause();
+    }
+
+    function unpause() external onlyRole(ADMIN_ROLE) {
+        _unpause();
     }
 
     // ============ Upgrade Functions ============

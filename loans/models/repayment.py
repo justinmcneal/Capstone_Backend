@@ -39,6 +39,9 @@ class RepaymentSchedule:
         # Timestamps
         self.start_date = kwargs.get('start_date', datetime.utcnow())
         self.created_at = kwargs.get('created_at', datetime.utcnow())
+
+        # Blockchain sync tracking
+        self.blockchain_schedule_tx = kwargs.get('blockchain_schedule_tx', '')
     
     @property
     def id(self):
@@ -57,6 +60,7 @@ class RepaymentSchedule:
             'installments': self.installments,
             'start_date': self.start_date,
             'created_at': self.created_at,
+            'blockchain_schedule_tx': self.blockchain_schedule_tx,
         }
         if self._id:
             data['_id'] = self._id
