@@ -189,14 +189,9 @@ class OfficerApplicationListView(LoanOfficerRequiredMixin, APIView):
         elif status_filter != 'all':
             query['status'] = status_filter
 
-        # ABAC scope: loan officers can only access their own assigned apps
-        # plus unassigned apps available for pickup.
+        # ABAC scope: loan officers can only access their own assigned apps.
         if user_role == 'loan_officer':
-            query['$or'] = [
-                {'assigned_officer': user_id},
-                {'assigned_officer': {'$in': [None, '']}},
-                {'assigned_officer': {'$exists': False}},
-            ]
+            query['assigned_officer'] = user_id
         
         # Amount range filter
         parsed_min_amount = None
@@ -389,7 +384,7 @@ class OfficerApplicationDetailView(LoanOfficerRequiredMixin, APIView):
         has_scope, scope_result = self.check_application_scope(
             request,
             app,
-            allow_unassigned=True,
+            allow_unassigned=False,
         )
         if not has_scope:
             return scope_result
@@ -542,7 +537,7 @@ class OfficerApplicationNotesView(LoanOfficerRequiredMixin, APIView):
         has_scope, scope_result = self.check_application_scope(
             request,
             app,
-            allow_unassigned=True,
+            allow_unassigned=False,
         )
         if not has_scope:
             return scope_result
@@ -622,7 +617,7 @@ class OfficerRequestMissingDocumentsView(LoanOfficerRequiredMixin, APIView):
         has_scope, scope_result = self.check_application_scope(
             request,
             app,
-            allow_unassigned=True,
+            allow_unassigned=False,
         )
         if not has_scope:
             return scope_result
@@ -749,7 +744,7 @@ class OfficerReviewView(LoanOfficerRequiredMixin, APIView):
         has_scope, scope_result = self.check_application_scope(
             request,
             app,
-            allow_unassigned=True,
+            allow_unassigned=False,
         )
         if not has_scope:
             return scope_result
