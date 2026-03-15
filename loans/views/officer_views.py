@@ -482,10 +482,25 @@ class OfficerApplicationDetailView(LoanOfficerRequiredMixin, APIView):
             'uploaded_at': doc.uploaded_at.isoformat() if doc.uploaded_at else None
         } for doc in documents]
         
+        # Resolve assigned officer name
+        assigned_officer_name = None
+        if app.assigned_officer:
+            try:
+                from accounts.models.loan_officer import LoanOfficer
+                officer = LoanOfficer.find_one({'_id': ObjectId(app.assigned_officer)})
+                if officer:
+                    assigned_officer_name = f"{officer.first_name} {officer.last_name}".strip() or None
+            except Exception:
+                pass
+
+        # Build customer name
+        customer_name = f"{customer.first_name} {customer.last_name}".strip() if customer else "Unknown"
+
         return success_response(
             data={
                 'id': app.id,
                 'customer_id': app.customer_id,
+                'customer_name': customer_name,
                 'product': {
                     'id': product.id if product else None,
                     'name': product.name if product else 'Unknown',
@@ -502,6 +517,7 @@ class OfficerApplicationDetailView(LoanOfficerRequiredMixin, APIView):
                 'risk_category': app.risk_category,
                 'ai_recommendation': app.ai_recommendation,
                 'assigned_officer': app.assigned_officer,
+                'assigned_officer_name': assigned_officer_name,
                 'officer_notes': app.officer_notes,
                 'rejection_reason': app.rejection_reason,
                 'submitted_at': app.submitted_at.isoformat() if app.submitted_at else None,
