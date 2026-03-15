@@ -2,6 +2,15 @@
 
 A step-by-step guide to test the blockchain audit trail feature using Ganache.
 
+## Implementation Notes
+
+This guide reflects the current backend implementation in this repository.
+
+- Blockchain sync is triggered from Django views in background threads via `loans.blockchain.sync`.
+- The backend signs on-chain transactions with the configured service wallet (`BLOCKCHAIN_WALLET_KEY`).
+- Because transactions are backend-signed, on-chain actor fields that depend on `msg.sender` reflect the backend wallet, not the authenticated mobile/web user.
+- Backend verification endpoints are implemented in this repo. Web/mobile audit UI cards described in the Phase 2 plan are not part of this backend repository and should not be treated as required for backend verification.
+
 ---
 
 ## Prerequisites
@@ -102,9 +111,15 @@ source .venv/bin/activate
 python manage.py runserver
 ```
 
-Verify these lines appear (no errors):
+Recommended sanity check after startup:
+
+```bash
+python manage.py shell -c "from django.conf import settings; print('BLOCKCHAIN_ENABLED:', settings.BLOCKCHAIN_ENABLED)"
 ```
-BLOCKCHAIN_ENABLED = True
+
+Expected output:
+```
+BLOCKCHAIN_ENABLED: True
 ```
 
 ---
@@ -146,6 +161,8 @@ INFO sync_approval OK: loan=<LOAN_ID> tx=...
 ```
 
 **Verify in Ganache:** TX COUNT increased by 4
+
+Note: the approval sync performs both `LoanReview.assignOfficer()` and `LoanApproval.approveLoan()` before mirroring the state in `LoanCore`.
 
 ---
 
@@ -195,33 +212,59 @@ INFO sync_payment OK: loan=<LOAN_ID> payment=... tx=...
 
 ---
 
-## Step 6 — Verify Blockchain Audit Trail (UI)
+## Step 6 — Verify Blockchain Audit Trail
 
-### Web App (Loan Officer View)
+The backend repository implements API endpoints for blockchain verification. Use those as the source of truth for testing this repo.
 
-1. Open any **non-pending** application on the web app
-2. Scroll down to see the **"Blockchain Audit Trail"** card
-3. Verify it shows:
-   - ✅ **Application Submitted** — with tx hash, block number, gas, timestamp
-   - ✅ **Loan Approved** — with tx hash, block number, gas, timestamp
-   - ✅ **Disbursement Completed** — with tx hash, block number, gas, timestamp
-   - ✅ **schedule** — with tx hash, block number, gas, timestamp
-   - ✅ **payment** (one per payment made) — with tx hash, block number, gas, timestamp
-4. All entries should show **"Confirmed"** badge in green
+### Officer API
 
-### Mobile App (Customer View)
+Call:
 
-1. Open the loan detail on the mobile app
-2. Look for the **"Blockchain Verification"** card
-3. Verify it shows:
-   - 🛡️ **Verified** badge (green)
-   - List of all transactions with status icons, tx hashes, block numbers, and dates
+```text
+GET /api/loans/officer/applications/<LOAN_ID>/blockchain/
+```
+
+Expected response fields:
+- `application_id`
+- `blockchain_enabled`
+- `tx_hashes`
+- `transactions`
+- `audit_trail`
+
+Verify that `transactions` contains confirmed entries for the actions that have already been synced:
+- `submit`
+- `approve`
+- `disburse`
+- `schedule`
+- `payment` (one per payment made)
+
+Each confirmed transaction should include:
+- `tx_hash`
+- `contract_name`
+- `method`
+- `status`
+- `gas_used`
+- `block_number`
+
+### Customer API
+
+Call:
+
+```text
+GET /api/loans/applications/<LOAN_ID>/blockchain/
+```
+
+Expected response fields are the same as the officer endpoint for the authenticated customer who owns the application.
+
+### Optional UI Verification
+
+If your separate web/mobile frontends already implemented the planned audit components, you may also verify those screens. Those UI components are not required to validate the backend in this repository.
 
 ---
 
 ## Step 7 — Verify Transaction Hashes in Ganache
 
-1. Copy a transaction hash from the web/mobile UI (click the hash to copy)
+1. Copy a transaction hash from the blockchain status API response or from any implemented web/mobile UI
 2. In Ganache, paste it in the **search bar** (top right)
    - ⚠️ **Add `0x` prefix** if the hash doesn't start with it
 3. Ganache will show the full transaction details: sender, contract, gas used, block number
@@ -233,12 +276,14 @@ INFO sync_payment OK: loan=<LOAN_ID> payment=... tx=...
 | Action | Contracts Called | What's Immutable |
 |--------|----------------|-----------------|
 | Submit Application | LoanApplication + LoanCore | Loan amount, term, interest rate, borrower |
-| Approve Loan | LoanApproval + LoanCore | Approved amount, officer identity |
-| Disburse | DisbursementExecution + LoanCore | Disbursement amount, method, timestamp |
+| Approve Loan | LoanReview + LoanApproval + LoanCore | Officer assignment, approved amount, approval decision |
+| Disburse | DisbursementMethod + DisbursementExecution + LoanCore | Preferred method, disbursement amount, completion reference, timestamp |
 | Create Schedule | RepaymentSchedule | Monthly payment, term, due dates |
 | Record Payment | PaymentRecording | Payment amount, installment number, timestamp |
 
 **Key point:** Once recorded on the blockchain, these records **cannot be altered or deleted** — this provides an immutable audit trail for loan transparency.
+
+**Important implementation detail:** in the current backend architecture, transactions are submitted by the backend service wallet. That means on-chain actor identity is the backend signer unless you introduce direct user-wallet signing in a frontend/mobile client.
 
 ---
 
@@ -265,8 +310,8 @@ INFO sync_payment OK: loan=<LOAN_ID> payment=... tx=...
 | Role/access `revert` from contracts | Redeploy with `BACKEND_WALLET=<address> npx hardhat run scripts/deploy-v2.js --network ganache` |
 | `VM Exception: revert` on approve | Ensure `assignOfficer` is called before `approveLoan` (automatic) |
 | `VM Exception: revert` on schedule | Loan must be in `Disbursed` status in LoanCore |
+| Audit UI cards are missing | Use the blockchain status API endpoints; frontend/mobile audit components are planned separately |
 | `NOTHING FOUND` in Ganache search | Add `0x` prefix to the transaction hash |
-| Mobile shows "Not yet verified" | Restart the Flutter app (hot restart) after backend changes |
 | `web3` module not found | Activate backend venv and run `pip install -r requirements.txt` |
 
 ---
@@ -277,12 +322,12 @@ INFO sync_payment OK: loan=<LOAN_ID> payment=... tx=...
 - [ ] `.env` has `BLOCKCHAIN_ENABLED=True`, wallet key, and contract addresses
 - [ ] ABI files exist in `loans/blockchain/abis/` (after `python scripts/copy_abis.py`)
 - [ ] `validate-deployment.js` passes on Ganache
-- [ ] Django server starts with `BLOCKCHAIN_ENABLED = True`
+- [ ] Django sanity check confirms `BLOCKCHAIN_ENABLED: True`
 - [ ] Submit loan → see 4 blockchain INFO logs
 - [ ] Approve loan → see 4 blockchain INFO logs
 - [ ] Disburse loan → see 5 blockchain INFO logs
 - [ ] Make payment → see 1 blockchain INFO log
-- [ ] Web app shows "Blockchain Audit Trail" card with all transactions
-- [ ] Mobile app shows "Blockchain Verification" card with ✅ Verified
-- [ ] TX hash from UI matches in Ganache search (with `0x` prefix)
+- [ ] Officer blockchain endpoint returns confirmed transactions and audit trail
+- [ ] Customer blockchain endpoint returns confirmed transactions and audit trail
+- [ ] TX hash from API response or UI matches in Ganache search (with `0x` prefix)
 - [ ] Ganache TX COUNT matches expected total
