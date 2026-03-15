@@ -1,288 +1,206 @@
-# Blockchain Integration Testing Guide
+# Blockchain Testing Guide
 
-A step-by-step guide to test the blockchain audit trail feature using Ganache.
+Test the blockchain audit trail using Ganache (local Ethereum).
 
----
-
-## Prerequisites
-
-| Tool | Version | Purpose |
-|------|---------|---------|
-| **Ganache** (GUI) | 2.7+ | Local Ethereum blockchain |
-| **Python** | 3.9+ | Django backend |
-| **Node.js** | 18+ | Smart contract deployment |
-| **MongoDB** | Running | Application database |
+**Prerequisites:** Ganache 2.7+, Python 3.9+, Node.js 18+, MongoDB (running)
 
 ---
 
-## Step 0 — Install/Update Backend Dependencies
+## Understanding the Two `.env` Files
 
-Before running blockchain tests, make sure backend dependencies are installed (including `web3` from `requirements.txt`).
+There are **two separate `.env` files** — each used by a different tool:
 
-```bash
-cd /path/to/Capstone_Backend
-source .venv/bin/activate
-pip install -r requirements.txt
-```
+| File | Used by | Fill it when |
+|------|---------|--------------|
+| `smartcontracts/.env` | **Hardhat** (Node.js) | Deploying contracts to Ganache |
+| `.env` (project root) | **Django** (Python) | Running the backend server |
 
----
-
-## Step 0.5 — Configure Blockchain Env + ABIs (Essential)
-
-Before starting Django, make sure blockchain settings are complete:
-
-1. In `.env`, set these values:
-   - `BLOCKCHAIN_ENABLED=True`
-   - `BLOCKCHAIN_RPC_URL=http://127.0.0.1:7545`
-   - `BLOCKCHAIN_CHAIN_ID=1337`
-   - `BLOCKCHAIN_WALLET_KEY=<ganache_private_key>`
-   - `BLOCKCHAIN_CONTRACT_ADDRESSES=<json_from_deployment_file>`
-2. Copy ABIs into `loans/blockchain/abis`:
-
-```bash
-cd /path/to/Capstone_Backend
-source .venv/bin/activate
-python scripts/copy_abis.py
-```
-
-3. Quick sanity check (must print `connected: True`):
-
-```bash
-python manage.py shell -c "from loans.blockchain.client import get_web3; print('connected:', get_web3().is_connected())"
-```
+Fill `smartcontracts/.env` first → deploy → then fill root `.env` with the resulting contract addresses.
 
 ---
 
 ## Step 1 — Start Ganache
 
-1. Open **Ganache** desktop app
-2. Select workspace **MSME-PATHWAYS** (or create new)
-3. Verify settings:
-   - **RPC Server:** `http://127.0.0.1:7545`
-   - **Network ID:** `1337`
-   - **Gas Limit:** `6721975`
-4. Note the **current block number** and **TX COUNT** — you'll compare these later
+1. Open **Ganache** desktop app → select or create a workspace
+2. Confirm: **RPC** `http://127.0.0.1:7545` · **Network ID** `1337` · **Gas Limit** `6721975`
+3. You will need **two pieces of info** from the Accounts tab:
+
+| What | Where in Ganache | Used for |
+|------|-----------------|----------|
+| **Account address** (`0x...`) | Listed directly on the Accounts tab | `BACKEND_WALLET` in the deploy command |
+| **Private key** (64 hex chars) | Click the **🔑 key icon** next to an account | `PRIVATE_KEY` in `smartcontracts/.env` and `BLOCKCHAIN_WALLET_KEY` in root `.env` |
+
+> Use the same Ganache account for both the deployer and backend wallet during local testing, or use two separate accounts.
 
 ---
 
 ## Step 2 — Deploy Smart Contracts (first time only)
 
-If contracts are not yet deployed:
+### 2a. Fill `smartcontracts/.env`
+
+Create `smartcontracts/.env` (copy from `smartcontracts/.env.example`) and set the minimum required value:
+
+```env
+# smartcontracts/.env  — used by Hardhat for deployment
+PRIVATE_KEY=your_ganache_private_key_here
+```
+
+> **Where:** Ganache → Accounts tab → **🔑 key icon** on the account you want to deploy from → copy the private key.
+
+### 2b. Run Deployment
 
 ```bash
 cd smartcontracts
 npm install
-BACKEND_WALLET=<backend_wallet_address> npx hardhat run scripts/deploy-v2.js --network ganache
+BACKEND_WALLET=0xYourGanacheAccountAddress npx hardhat run scripts/deploy-v2.js --network ganache
 ```
 
-This deploys 10 contracts, wires cross-contract roles, and (if `BACKEND_WALLET` is set) grants backend wallet roles.
+- `BACKEND_WALLET` = the **address** (not private key) of the Ganache account Django will use to sign transactions.
+- Deploys 10 contracts, wires cross-contract roles, and grants `BACKEND_WALLET` SYSTEM_ROLE.
+- Saves results to `smartcontracts/deployments/v2-ganache-<timestamp>.json`.
 
-Then copy contract addresses from the generated `smartcontracts/deployments/v2-ganache-*.json` file into `.env` under `BLOCKCHAIN_CONTRACT_ADDRESSES`.
-
----
-
-## Step 3 — Validate Deployment + Roles (recommended)
-
-Run validation to catch missing roles/wiring before app testing:
+### 2c. Validate (recommended)
 
 ```bash
-cd smartcontracts
 npx hardhat run scripts/validate-deployment.js --network ganache
 ```
 
-If this script fails on role/access checks, fix deployment first before continuing.
+---
+
+## Step 3 — Fill Root `.env`
+
+Open `.env` in the **project root** (used by Django). Set the blockchain fields:
+
+```env
+# .env (project root) — used by Django
+BLOCKCHAIN_ENABLED=True
+BLOCKCHAIN_RPC_URL=http://127.0.0.1:7545
+BLOCKCHAIN_CHAIN_ID=1337
+BLOCKCHAIN_WALLET_KEY=<private_key_of_BACKEND_WALLET_account>
+BLOCKCHAIN_CONTRACT_ADDRESSES={"auditRegistry":"0x...","accessControl":"0x...","loanCore":"0x...","loanApplication":"0x...","loanReview":"0x...","loanApproval":"0x...","disbursementMethod":"0x...","disbursementExecution":"0x...","repaymentSchedule":"0x...","paymentRecording":"0x..."}
+BLOCKCHAIN_GAS_LIMIT=6721975
+BLOCKCHAIN_GAS_PRICE_GWEI=20
+```
+
+### Where to get each value
+
+#### `BLOCKCHAIN_WALLET_KEY`
+
+> ⚠️ This is the **private key**, NOT the address. The address (e.g. `0x79Af1cD4...`) shown in the deploy output as "Backend service wallet" is just for reference — Django needs the **private key** of that same account.
+
+1. Open Ganache → **Accounts tab**
+2. Find the account whose address matches what you used as `BACKEND_WALLET` in Step 2
+3. Click the **🔑 key icon** on that row
+4. Copy the **Private Key** (64 hex characters) — this goes into `BLOCKCHAIN_WALLET_KEY`
+
+#### `BLOCKCHAIN_CONTRACT_ADDRESSES`
+
+After deployment succeeds, a JSON file is saved at:
+```
+smartcontracts/deployments/v2-ganache-<timestamp>.json
+```
+
+Open it — it looks like this:
+```json
+{
+  "contracts": {
+    "auditRegistry": "0xABC...",
+    "accessControl": "0xDEF...",
+    "loanCore": "0x123...",
+    ...
+  }
+}
+```
+
+Copy the entire `contracts` object and paste it as a **single-line JSON string** into `BLOCKCHAIN_CONTRACT_ADDRESSES`. Example:
+```
+BLOCKCHAIN_CONTRACT_ADDRESSES={"auditRegistry":"0xABC...","accessControl":"0xDEF...","loanCore":"0x123...","loanApplication":"0x...","loanReview":"0x...","loanApproval":"0x...","disbursementMethod":"0x...","disbursementExecution":"0x...","repaymentSchedule":"0x...","paymentRecording":"0x..."}
+```
+
+### Copy ABIs (required once, or after recompiling contracts)
+
+```bash
+# From project root
+pip install -r requirements.txt
+python scripts/copy_abis.py
+```
+
+This copies ABI files from `smartcontracts/artifacts/` into `loans/blockchain/abis/` (10 files). Django loads these to interact with deployed contracts.
+
+### Verify connection
+
+```bash
+python manage.py shell -c "from loans.blockchain.client import get_web3; print('connected:', get_web3().is_connected())"
+```
+
+Must print `connected: True`.
 
 ---
 
-## Step 4 — Start the Django Backend
+## Step 4 — Start Django & Test
 
 ```bash
-cd /path/to/Capstone_Backend
-source .venv/bin/activate
 python manage.py runserver
 ```
 
-Verify these lines appear (no errors):
+Normal startup output looks like:
 ```
-BLOCKCHAIN_ENABLED = True
+System check identified no issues (0 silenced).
+Starting development server at http://0.0.0.0:8000/
 ```
+
+To confirm blockchain is enabled, run this quick check:
+```bash
+python manage.py shell -c "from django.conf import settings; print('BLOCKCHAIN_ENABLED:', settings.BLOCKCHAIN_ENABLED)"
+```
+
+Should print `BLOCKCHAIN_ENABLED: True`.
+
+### Full Loan Lifecycle Test
+
+Each action in the app triggers background blockchain transactions written to Ganache. The **TX Count** is how many on-chain contract calls are made per step.
+
+| Step | Action | Where | TX Count | What's written on-chain |
+|------|--------|-------|----------|------------------------|
+| **Submit** | Customer applies for a loan | Mobile app | +4 | `createApplication()` + `submitApplication()` on LoanApplication and LoanCore |
+| **Approve** | Officer approves the application | Web app | +4 | `assignOfficer()` on LoanReview + `approveLoan()` on LoanApproval and LoanCore |
+| **Disburse** | Officer disburses the loan | Web app | +5 | `setPreferredMethod()` + `initiateDisbursement()` + `completeDisbursement()` + `markDisbursed()` + `createSchedule()` |
+| **Pay** | Customer makes a payment | Mobile app | +1 per payment | `recordPayment()` on PaymentRecording |
+
+**Total for a 3-month loan with 3 payments: 16 transactions**
+
+**How to confirm each step worked:**
+
+1. **Django console** — after each action you should see:
+   ```
+   INFO Transaction OK: 0xABC123.createApplication() tx=... gas=...
+   INFO sync_application OK: loan=... tx=...
+   ```
+   `Transaction OK` = the contract call succeeded on-chain. `sync_* OK` = Django finished syncing that step.
+
+2. **Ganache → Transactions tab** — TX count increases by the expected number after each action.
+
+> If you see no logs, blockchain sync runs in a background thread — wait 1–2 seconds after the action before checking the console.
 
 ---
 
-## Step 5 — Test the Full Loan Lifecycle
+## Step 5 — Verify Audit Trail
 
-### 5a. Submit a Loan Application (Mobile App — Customer)
-
-1. Log in as a **customer** on the mobile app
-2. Go to **Apply for Loan**
-3. Select a loan product and submit
-
-**Expected in Django console:**
-```
-INFO Transaction OK: 0x8944fCF9.createApplication() tx=... gas=...
-INFO createApplication on-chain: loan=<LOAN_ID> tx=...
-INFO Transaction OK: 0x8944fCF9.submitApplication() tx=... gas=...
-INFO submitApplication on-chain: loan=<LOAN_ID> tx=...
-INFO LoanCore createLoan+submitLoan OK: loan=<LOAN_ID>
-INFO sync_application OK: loan=<LOAN_ID> tx=...
-```
-
-**Verify in Ganache:** TX COUNT increased by 4
-
----
-
-### 5b. Approve the Loan (Web App — Loan Officer)
-
-1. Log in as a **loan officer** on the web app
-2. Go to **Pending Applications**
-3. Open the application and click **Approve**
-
-**Expected in Django console:**
-```
-INFO Transaction OK: 0xc7db39D5.assignOfficer() tx=... gas=...
-INFO Transaction OK: 0x1343045a.approveLoan() tx=... gas=...
-INFO LoanCore assignOfficer+approveLoan OK: loan=<LOAN_ID>
-INFO sync_approval OK: loan=<LOAN_ID> tx=...
-```
-
-**Verify in Ganache:** TX COUNT increased by 4
-
----
-
-### 5c. Set Disbursement Method (Mobile App — Customer)
-
-1. On the mobile app, the approved loan will prompt to **select disbursement method**
-2. Choose **GCash** or **Bank Transfer**
-
-*(No blockchain transaction for this step — it's stored in MongoDB only)*
-
----
-
-### 5d. Disburse the Loan (Web App — Loan Officer)
-
-1. On the web app, open the approved application
-2. Click **Disburse**
-
-**Expected in Django console:**
-```
-INFO Transaction OK: 0x9394e573.setPreferredMethod() tx=... gas=...
-INFO Transaction OK: 0xe02c566C.initiateDisbursement() tx=... gas=...
-INFO Transaction OK: 0xe02c566C.completeDisbursement() tx=... gas=...
-INFO LoanCore markDisbursed OK: loan=<LOAN_ID>
-INFO sync_disbursement OK: loan=<LOAN_ID> tx=...
-INFO Transaction OK: 0x11766655.createSchedule() tx=... gas=...
-INFO sync_schedule OK: loan=<LOAN_ID> tx=...
-```
-
-**Verify in Ganache:** TX COUNT increased by 5
-
----
-
-### 5e. Make a Payment (Mobile App — Customer)
-
-1. On the mobile app, go to **My Loans** → open the disbursed loan
-2. Go to **Repayment** tab and click **Pay**
-3. Submit the payment
-
-**Expected in Django console:**
-```
-INFO Transaction OK: 0x5368131a.recordPayment() tx=... gas=...
-INFO recordPayment on-chain: loan=<LOAN_ID> installment=1 amount=... tx=...
-INFO sync_payment OK: loan=<LOAN_ID> payment=... tx=...
-```
-
-**Verify in Ganache:** TX COUNT increased by 1
-
----
-
-## Step 6 — Verify Blockchain Audit Trail (UI)
-
-### Web App (Loan Officer View)
-
-1. Open any **non-pending** application on the web app
-2. Scroll down to see the **"Blockchain Audit Trail"** card
-3. Verify it shows:
-   - ✅ **Application Submitted** — with tx hash, block number, gas, timestamp
-   - ✅ **Loan Approved** — with tx hash, block number, gas, timestamp
-   - ✅ **Disbursement Completed** — with tx hash, block number, gas, timestamp
-   - ✅ **schedule** — with tx hash, block number, gas, timestamp
-   - ✅ **payment** (one per payment made) — with tx hash, block number, gas, timestamp
-4. All entries should show **"Confirmed"** badge in green
-
-### Mobile App (Customer View)
-
-1. Open the loan detail on the mobile app
-2. Look for the **"Blockchain Verification"** card
-3. Verify it shows:
-   - 🛡️ **Verified** badge (green)
-   - List of all transactions with status icons, tx hashes, block numbers, and dates
-
----
-
-## Step 7 — Verify Transaction Hashes in Ganache
-
-1. Copy a transaction hash from the web/mobile UI (click the hash to copy)
-2. In Ganache, paste it in the **search bar** (top right)
-   - ⚠️ **Add `0x` prefix** if the hash doesn't start with it
-3. Ganache will show the full transaction details: sender, contract, gas used, block number
-
----
-
-## What Each Transaction Proves
-
-| Action | Contracts Called | What's Immutable |
-|--------|----------------|-----------------|
-| Submit Application | LoanApplication + LoanCore | Loan amount, term, interest rate, borrower |
-| Approve Loan | LoanApproval + LoanCore | Approved amount, officer identity |
-| Disburse | DisbursementExecution + LoanCore | Disbursement amount, method, timestamp |
-| Create Schedule | RepaymentSchedule | Monthly payment, term, due dates |
-| Record Payment | PaymentRecording | Payment amount, installment number, timestamp |
-
-**Key point:** Once recorded on the blockchain, these records **cannot be altered or deleted** — this provides an immutable audit trail for loan transparency.
-
----
-
-## Expected Transaction Count per Loan
-
-| Lifecycle Step | # of Transactions |
-|---------------|-------------------|
-| Submit application | 4 |
-| Approve loan | 4 |
-| Disburse + schedule | 5 |
-| Each payment | 1 |
-| **Total (3-month loan, 3 payments)** | **16** |
+- **Web app (officer):** Open a non-pending application → scroll to **"Blockchain Audit Trail"** card. Each entry shows tx hash, block number, gas, timestamp, and a green **"Confirmed"** badge.
+- **Mobile app (customer):** Open loan detail → **"Blockchain Verification"** card shows a green **Verified** badge with all transactions listed.
+- **Ganache:** Copy a tx hash from the UI → paste in Ganache search bar (add `0x` prefix if missing) to verify on-chain.
 
 ---
 
 ## Troubleshooting
 
-| Issue | Solution |
-|-------|---------|
-| No blockchain logs in console | Check `BLOCKCHAIN_ENABLED=True` in `.env` |
-| `BLOCKCHAIN_WALLET_KEY is not configured` | Set backend wallet key in `.env` (Ganache private key) |
-| `ContractNotFoundError` or ABI load failure | Run `python scripts/copy_abis.py` and verify `loans/blockchain/abis/*.json` exist |
-| `Cannot connect to blockchain node at http://127.0.0.1:7545` | Ensure Ganache is running on port 7545 and RPC URL matches `.env` |
-| Role/access `revert` from contracts | Redeploy with `BACKEND_WALLET=<address> npx hardhat run scripts/deploy-v2.js --network ganache` |
-| `VM Exception: revert` on approve | Ensure `assignOfficer` is called before `approveLoan` (automatic) |
-| `VM Exception: revert` on schedule | Loan must be in `Disbursed` status in LoanCore |
-| `NOTHING FOUND` in Ganache search | Add `0x` prefix to the transaction hash |
-| Mobile shows "Not yet verified" | Restart the Flutter app (hot restart) after backend changes |
-| `web3` module not found | Activate backend venv and run `pip install -r requirements.txt` |
-
----
-
-## Quick Smoke Test Checklist
-
-- [ ] Ganache is running on port 7545
-- [ ] `.env` has `BLOCKCHAIN_ENABLED=True`, wallet key, and contract addresses
-- [ ] ABI files exist in `loans/blockchain/abis/` (after `python scripts/copy_abis.py`)
-- [ ] `validate-deployment.js` passes on Ganache
-- [ ] Django server starts with `BLOCKCHAIN_ENABLED = True`
-- [ ] Submit loan → see 4 blockchain INFO logs
-- [ ] Approve loan → see 4 blockchain INFO logs
-- [ ] Disburse loan → see 5 blockchain INFO logs
-- [ ] Make payment → see 1 blockchain INFO log
-- [ ] Web app shows "Blockchain Audit Trail" card with all transactions
-- [ ] Mobile app shows "Blockchain Verification" card with ✅ Verified
-- [ ] TX hash from UI matches in Ganache search (with `0x` prefix)
-- [ ] Ganache TX COUNT matches expected total
+| Issue | Fix |
+|-------|-----|
+| No blockchain logs | Check `BLOCKCHAIN_ENABLED=True` in root `.env` |
+| `insufficient funds for gas` | `PRIVATE_KEY` missing in `smartcontracts/.env` — set it to a Ganache account's private key (🔑 icon) |
+| Wallet key not configured | Set `BLOCKCHAIN_WALLET_KEY` in root `.env` — copy from Ganache (🔑 icon on the `BACKEND_WALLET` account) |
+| `ContractNotFoundError` / ABI error | Run `python scripts/copy_abis.py` from project root |
+| Cannot connect to node | Ensure Ganache is running on port 7545 |
+| Role/access `revert` | Redeploy with `BACKEND_WALLET=0xAddress` set in the deploy command |
+| `NOTHING FOUND` in Ganache | Add `0x` prefix to the tx hash |
+| `web3` module not found | Run `pip install -r requirements.txt` |

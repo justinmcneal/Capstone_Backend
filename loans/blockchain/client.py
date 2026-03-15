@@ -157,11 +157,24 @@ def send_transaction(contract, method_name, *args):
 
     fn = contract.functions[method_name](*args)
 
+    # Auto-estimate gas; fall back to configured limit if estimation fails
+    try:
+        estimated_gas = fn.estimate_gas({"from": account.address})
+        gas = min(int(estimated_gas * 1.2), settings.BLOCKCHAIN_GAS_LIMIT)  # 20% buffer, capped
+    except Exception:
+        gas = settings.BLOCKCHAIN_GAS_LIMIT
+
+    # Use network gas price if available (EIP-1559 or legacy), else fall back to configured value
+    try:
+        gas_price = w3.eth.gas_price
+    except Exception:
+        gas_price = Web3.to_wei(settings.BLOCKCHAIN_GAS_PRICE_GWEI, "gwei")
+
     tx = fn.build_transaction({
         "from": account.address,
         "nonce": w3.eth.get_transaction_count(account.address),
-        "gas": settings.BLOCKCHAIN_GAS_LIMIT,
-        "gasPrice": Web3.to_wei(settings.BLOCKCHAIN_GAS_PRICE_GWEI, "gwei"),
+        "gas": gas,
+        "gasPrice": gas_price,
         "chainId": settings.BLOCKCHAIN_CHAIN_ID,
     })
 
