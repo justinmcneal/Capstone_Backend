@@ -37,7 +37,7 @@ Complete documentation of how smart contracts integrate with the backend, web ap
 | **useBlockchainStatus hook** | ✅ Already built | Calls `GET /api/loans/officer/applications/{id}/blockchain/` |
 | **BlockchainTransaction types** | ✅ Already defined | TypeScript interfaces match backend response |
 | **Conditional rendering** | ✅ Working | Card only shown when application status ≠ "draft" |
-| **Admin blockchain view** | ❌ Not built | Admin section has no blockchain pages or components |
+| **Admin blockchain view** | ✅ Built | Admin can view application details + blockchain audit trail at `/admin/applications/:id` |
 
 **Verdict: No changes needed for the officer view.** The `BlockchainAuditCard` is already integrated into `OfficerApplicationDetailPage` and calls the correct backend endpoint.
 
