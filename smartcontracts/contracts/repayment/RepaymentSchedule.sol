@@ -227,18 +227,8 @@ contract RepaymentSchedule is
 
         loanToSchedule[loanId] = scheduleId;
 
-        // ── Generate installments (30-day months) ───────────────
-        for (uint16 i = 1; i <= termMonths; i++) {
-            uint256 dueDate = startDate + (uint256(i) * DAYS_PER_MONTH * SECONDS_PER_DAY);
-
-            Installment storage inst = installments[scheduleId][i];
-            inst.number          = i;
-            inst.dueDate         = uint48(dueDate);
-            inst.principalAmount = monthlyPrincipal;
-            inst.interestAmount  = monthlyInterest;
-            inst.totalAmount     = monthlyPayment;
-            inst.status          = InstallmentStatus.Pending;
-        }
+        // Installments are computed lazily from schedule params on first access
+        // (removes ~800K gas from loop of N×6 SSTOREs)
 
         emit ScheduleCreated(
             scheduleId,
@@ -251,6 +241,48 @@ contract RepaymentSchedule is
         );
 
         return scheduleId;
+    }
+
+    // ============ Internal Helpers ============
+
+    /**
+     * @notice Compute installment values from schedule params (used for lazy init)
+     */
+    function _computeInstallment(Schedule storage sched, uint16 number)
+        internal
+        view
+        returns (Installment memory)
+    {
+        uint256 monthlyPrincipal = sched.principal / sched.termMonths;
+        uint256 monthlyInterest  = (sched.principal * sched.interestRateBps) / 10_000;
+
+        return Installment({
+            number:          number,
+            dueDate:         uint48(sched.startDate + (uint256(number) * DAYS_PER_MONTH * SECONDS_PER_DAY)),
+            principalAmount: monthlyPrincipal,
+            interestAmount:  monthlyInterest,
+            totalAmount:     monthlyPrincipal + monthlyInterest,
+            paidAmount:      0,
+            paidAt:          0,
+            status:          InstallmentStatus.Pending
+        });
+    }
+
+    /**
+     * @notice Lazy-initialize an installment in storage on first interaction
+     */
+    function _initInstallment(Installment storage inst, Schedule storage sched, uint16 number)
+        internal
+    {
+        uint256 monthlyPrincipal = sched.principal / sched.termMonths;
+        uint256 monthlyInterest  = (sched.principal * sched.interestRateBps) / 10_000;
+
+        inst.number          = number;
+        inst.dueDate         = uint48(sched.startDate + (uint256(number) * DAYS_PER_MONTH * SECONDS_PER_DAY));
+        inst.principalAmount = monthlyPrincipal;
+        inst.interestAmount  = monthlyInterest;
+        inst.totalAmount     = monthlyPrincipal + monthlyInterest;
+        inst.status          = InstallmentStatus.Pending;
     }
 
     // ============ View Functions ============
@@ -271,7 +303,7 @@ contract RepaymentSchedule is
     }
 
     /**
-     * @notice Get a single installment
+     * @notice Get a single installment (computed on-the-fly if not yet stored)
      * @param loanId Loan identifier
      * @param number Installment number (1-based)
      * @return The Installment struct
@@ -283,15 +315,22 @@ contract RepaymentSchedule is
         returns (Installment memory)
     {
         bytes32 scheduleId = loanToSchedule[loanId];
-        Installment storage inst = installments[scheduleId][number];
-        if (inst.number == 0) {
+        Schedule storage sched = schedules[scheduleId];
+
+        if (number == 0 || number > sched.termMonths) {
             revert InstallmentNotFound(loanId, number);
         }
-        return inst;
+
+        Installment storage inst = installments[scheduleId][number];
+        if (inst.number != 0) {
+            return inst;
+        }
+
+        return _computeInstallment(sched, number);
     }
 
     /**
-     * @notice Get all installments for a loan
+     * @notice Get all installments for a loan (computed on-the-fly where needed)
      * @param loanId Loan identifier
      * @return result Array of Installment structs
      */
@@ -306,7 +345,12 @@ contract RepaymentSchedule is
 
         result = new Installment[](sched.termMonths);
         for (uint16 i = 1; i <= sched.termMonths; i++) {
-            result[i - 1] = installments[scheduleId][i];
+            Installment storage inst = installments[scheduleId][i];
+            if (inst.number != 0) {
+                result[i - 1] = inst;
+            } else {
+                result[i - 1] = _computeInstallment(sched, i);
+            }
         }
         return result;
     }
@@ -371,9 +415,17 @@ contract RepaymentSchedule is
         returns (InstallmentStatus oldStatus, InstallmentStatus newStatus, uint256 remainingBalance)
     {
         bytes32 scheduleId = loanToSchedule[loanId];
-        Installment storage inst = installments[scheduleId][installmentNumber];
-        if (inst.number == 0) {
+        Schedule storage sched = schedules[scheduleId];
+
+        if (installmentNumber == 0 || installmentNumber > sched.termMonths) {
             revert InstallmentNotFound(loanId, installmentNumber);
+        }
+
+        Installment storage inst = installments[scheduleId][installmentNumber];
+
+        // Lazy-initialize if this installment hasn't been stored yet
+        if (inst.number == 0) {
+            _initInstallment(inst, sched, installmentNumber);
         }
 
         oldStatus = inst.status;
@@ -388,7 +440,6 @@ contract RepaymentSchedule is
         newStatus = inst.status;
 
         // Update schedule totals and compute remaining balance
-        Schedule storage sched = schedules[scheduleId];
         sched.totalPaid += amount;
         remainingBalance = sched.totalPaid >= sched.totalAmount ? 0 : sched.totalAmount - sched.totalPaid;
     }
@@ -412,9 +463,17 @@ contract RepaymentSchedule is
         returns (InstallmentStatus oldStatus, uint256 daysOverdue)
     {
         bytes32 scheduleId = loanToSchedule[loanId];
-        Installment storage inst = installments[scheduleId][installmentNumber];
-        if (inst.number == 0) {
+        Schedule storage sched = schedules[scheduleId];
+
+        if (installmentNumber == 0 || installmentNumber > sched.termMonths) {
             revert InstallmentNotFound(loanId, installmentNumber);
+        }
+
+        Installment storage inst = installments[scheduleId][installmentNumber];
+
+        // Lazy-initialize if this installment hasn't been stored yet
+        if (inst.number == 0) {
+            _initInstallment(inst, sched, installmentNumber);
         }
 
         oldStatus = inst.status;
