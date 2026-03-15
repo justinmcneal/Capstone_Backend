@@ -30,8 +30,8 @@ contract PaymentRecording is
         Cash,           // 0
         BankTransfer,   // 1
         GCash,          // 2
-        Maya,           // 3
-        Other           // 4
+        Check,          // 3
+        Wallet          // 4
     }
 
     struct Payment {

@@ -18,8 +18,8 @@ PAYMENT_METHOD_MAP = {
     "cash": 0,
     "bank_transfer": 1,
     "gcash": 2,
-    "maya": 3,
-    "other": 4,
+    "check": 3,
+    "wallet": 4,
 }
 
 
@@ -76,7 +76,7 @@ def record_payment_onchain(loan_id, installment_number, amount, payment_method, 
         loan_id: Loan identifier (string, hashed to bytes32)
         installment_number: 1-based installment number (int)
         amount: Payment amount in smallest unit (int)
-        payment_method: Payment method string ('cash', 'bank_transfer', 'gcash', 'maya', 'other')
+        payment_method: Payment method string ('cash', 'gcash', 'bank_transfer', 'check', 'wallet')
         reference_hash: Unique payment reference (string, hashed to bytes32)
 
     Returns:

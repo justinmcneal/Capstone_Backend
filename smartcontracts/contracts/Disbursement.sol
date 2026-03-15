@@ -33,8 +33,8 @@ contract Disbursement is
         BankTransfer,    // 0
         Cash,            // 1
         GCash,           // 2
-        Maya,            // 3
-        Other            // 4
+        Check,           // 3
+        Wallet           // 4
     }
 
     struct DisbursementRecord {

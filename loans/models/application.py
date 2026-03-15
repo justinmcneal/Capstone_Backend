@@ -254,12 +254,13 @@ class LoanApplication:
         return self.save()
     
     def set_preferred_disbursement_method(self, method):
-        """Set the borrower's preferred disbursement method (before actual disbursement)."""
-        allowed = {'bank_transfer', 'gcash'}
+        """Set the borrower's preferred disbursement method."""
+        allowed = {'cash', 'gcash', 'bank_transfer', 'check', 'wallet'}
         if method not in allowed:
             raise ValueError(f"Disbursement method must be one of: {', '.join(sorted(allowed))}")
-        if self.status != 'approved':
-            raise ValueError("Can only set disbursement method for approved applications")
+        allowed_statuses = {'pending', 'submitted', 'under_review', 'approved'}
+        if self.status not in allowed_statuses:
+            raise ValueError("Cannot change disbursement method for this application status")
         self.preferred_disbursement_method = method
         self.updated_at = datetime.utcnow()
         return self.save()

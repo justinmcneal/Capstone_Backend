@@ -10,7 +10,7 @@ def get_db():
     return settings.MONGODB
 
 
-PAYMENT_METHODS = ['cash', 'bank_transfer', 'gcash', 'maya', 'other']
+PAYMENT_METHODS = ['cash', 'gcash', 'bank_transfer', 'check', 'wallet']
 
 
 class LoanPayment:
