@@ -31,15 +31,12 @@ class CustomerRoleRequiredMixin(AccessControlMixin):
 
 
 def _serialize_customer_application_detail(app, product):
-    # interest_rate from product (monthly decimal, e.g. 0.02 = 2% monthly).
-    # We convert to annual percentage for consistent display:
-    #   0.02 monthly * 12 months * 100 = 24% p.a.
-    interest_rate_annual = None
+    interest_rate_monthly_pct = None
     if product and product.interest_rate is not None:
         try:
-            interest_rate_annual = round(float(product.interest_rate) * 12 * 100, 2)
+            interest_rate_monthly_pct = round(float(product.interest_rate) * 100, 2)
         except (TypeError, ValueError):
-            interest_rate_annual = None
+            interest_rate_monthly_pct = None
 
     return {
         'id': app.id,
@@ -51,7 +48,7 @@ def _serialize_customer_application_detail(app, product):
         'recommended_amount': app.recommended_amount,
         'approved_amount': app.approved_amount,
         'term_months': app.term_months,
-        'interest_rate': interest_rate_annual,
+        'interest_rate': interest_rate_monthly_pct,
         'purpose': app.purpose,
         'status': app.status,
         'eligibility_score': app.eligibility_score,
