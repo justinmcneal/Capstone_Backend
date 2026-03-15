@@ -32,8 +32,8 @@ describe("DisbursementMethod", function () {
         BankTransfer: 0,
         GCash: 1,
         Cash: 2,
-        Maya: 3,
-        Other: 4
+        Check: 3,
+        Wallet: 4
     };
 
     beforeEach(async function () {
@@ -219,22 +219,22 @@ describe("DisbursementMethod", function () {
             expect(method).to.equal(Method.Cash);
         });
 
-        it("Should set preferred method successfully (Maya)", async function () {
+        it("Should set preferred method successfully (Check)", async function () {
             await disbursementMethod.connect(borrower1).setPreferredMethod(
-                loanId1, Method.Maya
+                loanId1, Method.Check
             );
 
             const method = await disbursementMethod.getPreferredMethod(loanId1);
-            expect(method).to.equal(Method.Maya);
+            expect(method).to.equal(Method.Check);
         });
 
-        it("Should set preferred method successfully (Other)", async function () {
+        it("Should set preferred method successfully (Wallet)", async function () {
             await disbursementMethod.connect(borrower1).setPreferredMethod(
-                loanId1, Method.Other
+                loanId1, Method.Wallet
             );
 
             const method = await disbursementMethod.getPreferredMethod(loanId1);
-            expect(method).to.equal(Method.Other);
+            expect(method).to.equal(Method.Wallet);
         });
 
         it("Should increment totalMethodsSet counter", async function () {
@@ -256,13 +256,13 @@ describe("DisbursementMethod", function () {
 
         it("Should store complete method selection details", async function () {
             await disbursementMethod.connect(borrower1).setPreferredMethod(
-                loanId1, Method.Maya
+                loanId1, Method.Check
             );
 
             const selection = await disbursementMethod.getMethodSelection(loanId1);
             expect(selection.loanId).to.equal(loanId1);
             expect(selection.borrower).to.equal(borrower1.address);
-            expect(selection.method).to.equal(Method.Maya);
+            expect(selection.method).to.equal(Method.Check);
             expect(selection.isLocked).to.be.false;
             expect(selection.selectedAt).to.be.gt(0);
             expect(selection.updatedAt).to.equal(selection.selectedAt);
@@ -360,11 +360,11 @@ describe("DisbursementMethod", function () {
 
         it("Should update method value correctly", async function () {
             await disbursementMethod.connect(borrower1).setPreferredMethod(
-                loanId1, Method.Maya
+                loanId1, Method.Check
             );
 
             const method = await disbursementMethod.getPreferredMethod(loanId1);
-            expect(method).to.equal(Method.Maya);
+            expect(method).to.equal(Method.Check);
         });
 
         it("Should increment totalMethodsUpdated counter", async function () {
@@ -383,7 +383,7 @@ describe("DisbursementMethod", function () {
             await ethers.provider.send("evm_mine");
 
             await disbursementMethod.connect(borrower1).setPreferredMethod(
-                loanId1, Method.Other
+                loanId1, Method.Wallet
             );
 
             const selectionAfter = await disbursementMethod.getMethodSelection(loanId1);
@@ -404,10 +404,10 @@ describe("DisbursementMethod", function () {
         it("Should allow multiple updates", async function () {
             await disbursementMethod.connect(borrower1).setPreferredMethod(loanId1, Method.GCash);
             await disbursementMethod.connect(borrower1).setPreferredMethod(loanId1, Method.Cash);
-            await disbursementMethod.connect(borrower1).setPreferredMethod(loanId1, Method.Maya);
+            await disbursementMethod.connect(borrower1).setPreferredMethod(loanId1, Method.Check);
 
             const method = await disbursementMethod.getPreferredMethod(loanId1);
-            expect(method).to.equal(Method.Maya);
+            expect(method).to.equal(Method.Check);
 
             const stats = await disbursementMethod.getStats();
             expect(stats[1]).to.equal(3); // 3 updates
@@ -586,8 +586,8 @@ describe("DisbursementMethod", function () {
             expect(await disbursementMethod.isMethodLocked(loanId2)).to.be.false;
 
             // Can still update unlocked loan
-            await disbursementMethod.connect(borrower1).setPreferredMethod(loanId2, Method.Maya);
-            expect(await disbursementMethod.getPreferredMethod(loanId2)).to.equal(Method.Maya);
+            await disbursementMethod.connect(borrower1).setPreferredMethod(loanId2, Method.Check);
+            expect(await disbursementMethod.getPreferredMethod(loanId2)).to.equal(Method.Check);
         });
     });
 

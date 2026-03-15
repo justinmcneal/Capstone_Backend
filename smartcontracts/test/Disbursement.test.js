@@ -22,8 +22,8 @@ describe("Disbursement", function () {
     BankTransfer: 0,
     Cash: 1,
     GCash: 2,
-    Maya: 3,
-    Other: 4
+    Check: 3,
+    Wallet: 4
   };
 
   // DisbursementStatus enum - matches backend (no Failed/Reversed)
@@ -307,7 +307,7 @@ describe("Disbursement", function () {
       await disbursement.connect(officer).initiateDisbursement(
         loanId,
         approvedAmount,
-        DisbursementMethod.Maya
+        DisbursementMethod.Check
       );
       
       disbursementId = await disbursement.loanToDisbursement(loanId);
@@ -317,7 +317,7 @@ describe("Disbursement", function () {
       const record = await disbursement.disbursements(disbursementId);
       expect(record.amount).to.equal(approvedAmount);
       expect(record.loanId).to.equal(loanId);
-      expect(record.method).to.equal(DisbursementMethod.Maya);
+      expect(record.method).to.equal(DisbursementMethod.Check);
     });
 
     it("Should get disbursement ID by loan ID", async function () {

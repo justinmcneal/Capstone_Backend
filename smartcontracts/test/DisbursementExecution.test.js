@@ -31,7 +31,7 @@ describe("DisbursementExecution", function () {
     const reasonHash = ethers.keccak256(ethers.toUtf8Bytes("REASON001"));
 
     // Enums
-    const Method = { BankTransfer: 0, GCash: 1, Cash: 2, Maya: 3, Other: 4 };
+    const Method = { BankTransfer: 0, GCash: 1, Cash: 2, Check: 3, Wallet: 4 };
     const Status = { Pending: 0, Processing: 1, Completed: 2, Cancelled: 3 };
     const LoanStatus = { Draft: 0, Submitted: 1, UnderReview: 2, Approved: 3, Rejected: 4, Disbursed: 5, Cancelled: 6 };
     const RiskCategory = { Low: 0, Medium: 1, High: 2 };
@@ -305,7 +305,7 @@ describe("DisbursementExecution", function () {
 
         beforeEach(async function () {
             await createAndApproveLoan(loanId, borrower);
-            await disbursementMethod.connect(borrower).setPreferredMethod(loanId, Method.Maya);
+            await disbursementMethod.connect(borrower).setPreferredMethod(loanId, Method.Check);
             const tx = await disbursementExecution.connect(officer).initiateDisbursement(loanId, disbursementAmount);
             await tx.wait();
             // Get disbursement ID from mapping
