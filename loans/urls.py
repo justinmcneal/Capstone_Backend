@@ -30,6 +30,8 @@ from loans.views import (
     OfficerScheduleView,
     OfficerPaymentHistoryView,
     PaymentSearchView,
+    BlockchainStatusView,
+    CustomerBlockchainView,
 )
 
 
@@ -48,6 +50,7 @@ urlpatterns = [
     path('applications/<str:application_id>/resubmit/', ResubmitApplicationView.as_view(), name='application-resubmit'),
     path('applications/<str:application_id>/feedback/', RejectionFeedbackView.as_view(), name='application-feedback'),
     path('applications/<str:application_id>/set-disbursement-method/', SetDisbursementMethodView.as_view(), name='set-disbursement-method'),
+    path('applications/<str:application_id>/blockchain/', CustomerBlockchainView.as_view(), name='application-blockchain'),
     
     # Admin endpoints (product management)
     path('admin/products/', AdminProductListView.as_view(), name='admin-products'),
@@ -70,4 +73,5 @@ urlpatterns = [
     path('officer/active-loans/', ActiveLoansView.as_view(), name='officer-active-loans'),
     path('officer/applications/<str:application_id>/schedule/', OfficerScheduleView.as_view(), name='officer-schedule'),
     path('officer/applications/<str:application_id>/payments/', OfficerPaymentHistoryView.as_view(), name='officer-payment-history'),
+    path('officer/applications/<str:application_id>/blockchain/', BlockchainStatusView.as_view(), name='officer-blockchain'),
 ]

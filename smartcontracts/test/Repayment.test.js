@@ -88,9 +88,9 @@ describe("Repayment", function () {
     
     // Register Repayment contract with LoanCore
     await loanCore.setContracts(
-      ethers.ZeroAddress,  // disbursement not needed for this test
+      other.address,       // placeholder non-zero address
       await repayment.getAddress(),
-      ethers.ZeroAddress   // oracle not needed for this test
+      other.address        // placeholder non-zero address
     );
     
     // Grant roles

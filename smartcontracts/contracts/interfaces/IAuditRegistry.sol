@@ -22,16 +22,15 @@ interface IAuditRegistry {
     }
 
     struct AuditEntry {
-        bytes32 entryId;
         bytes32 resourceId;
-        string resourceType;
-        AuditAction action;
-        address actor;
+        bytes32 resourceType;       // was string — bytes32 saves ~20K gas
         bytes32 detailsHash;
         bytes32 previousStateHash;
         bytes32 newStateHash;
-        uint256 timestamp;
-        uint256 blockNumber;
+        AuditAction action;         // uint8, packed with actor
+        address actor;              // 20 bytes — shares slot with action
+        uint48 timestamp;           // sufficient until year 8M
+        uint48 blockNumber;         // shares slot with timestamp
     }
 
     event AuditLogged(
@@ -44,7 +43,7 @@ interface IAuditRegistry {
 
     function log(
         bytes32 resourceId,
-        string calldata resourceType,
+        bytes32 resourceType,
         AuditAction action,
         bytes32 detailsHash,
         bytes32 previousStateHash,

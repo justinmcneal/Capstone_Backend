@@ -3,6 +3,7 @@ pragma solidity ^0.8.20;
 
 import "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 
@@ -15,6 +16,7 @@ contract LoanAccessControl is
     Initializable, 
     AccessControlUpgradeable, 
     PausableUpgradeable,
+    ReentrancyGuardUpgradeable,
     UUPSUpgradeable 
 {
     // ============ Role Definitions ============
@@ -110,6 +112,7 @@ contract LoanAccessControl is
     function initialize(address admin) public initializer {
         __AccessControl_init();
         __Pausable_init();
+        __ReentrancyGuard_init();
         __UUPSUpgradeable_init();
 
         // Set up role hierarchy
@@ -135,7 +138,7 @@ contract LoanAccessControl is
     function registerOfficer(
         address officer, 
         bytes32 employeeIdHash
-    ) external onlyRole(ADMIN_ROLE) whenNotPaused returns (bool) {
+    ) external onlyRole(ADMIN_ROLE) whenNotPaused nonReentrant returns (bool) {
         require(officer != address(0), "LoanAccessControl: zero address");
         require(employeeIdHash != bytes32(0), "LoanAccessControl: empty employee ID");
         require(!hasRole(LOAN_OFFICER_ROLE, officer), "LoanAccessControl: already registered");
@@ -153,7 +156,7 @@ contract LoanAccessControl is
      * @notice Deactivate a loan officer (soft delete)
      * @param officer Address of the officer to deactivate
      */
-    function deactivateOfficer(address officer) external onlyRole(ADMIN_ROLE) returns (bool) {
+    function deactivateOfficer(address officer) external onlyRole(ADMIN_ROLE) nonReentrant returns (bool) {
         require(hasRole(LOAN_OFFICER_ROLE, officer), "LoanAccessControl: not an officer");
         require(activeOfficers[officer], "LoanAccessControl: already inactive");
 
@@ -167,7 +170,7 @@ contract LoanAccessControl is
      * @notice Reactivate a loan officer
      * @param officer Address of the officer to reactivate
      */
-    function reactivateOfficer(address officer) external onlyRole(ADMIN_ROLE) returns (bool) {
+    function reactivateOfficer(address officer) external onlyRole(ADMIN_ROLE) nonReentrant returns (bool) {
         require(hasRole(LOAN_OFFICER_ROLE, officer), "LoanAccessControl: not an officer");
         require(!activeOfficers[officer], "LoanAccessControl: already active");
 
@@ -187,7 +190,7 @@ contract LoanAccessControl is
     function registerBorrower(
         address borrower, 
         bytes32 customerIdHash
-    ) external onlyRole(SYSTEM_ROLE) whenNotPaused returns (bool) {
+    ) external onlyRole(SYSTEM_ROLE) whenNotPaused nonReentrant returns (bool) {
         require(borrower != address(0), "LoanAccessControl: zero address");
         require(customerIdHash != bytes32(0), "LoanAccessControl: empty customer ID");
         require(!hasRole(BORROWER_ROLE, borrower), "LoanAccessControl: already registered");

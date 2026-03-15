@@ -10,6 +10,8 @@ describe("AuditRegistry", function () {
   const LOGGER_ROLE = ethers.keccak256(ethers.toUtf8Bytes("LOGGER_ROLE"));
   const UPGRADER_ROLE = ethers.keccak256(ethers.toUtf8Bytes("UPGRADER_ROLE"));
 
+  const LOAN_TYPE = ethers.encodeBytes32String("loan");
+
   // AuditAction enum values (from interface)
   const AuditAction = {
     LoanCreated: 0,
@@ -81,7 +83,7 @@ describe("AuditRegistry", function () {
       await expect(
         auditRegistry.connect(logger1).log(
           resourceId,
-          "loan",
+          LOAN_TYPE,
           AuditAction.LoanCreated,
           detailsHash,
           previousState,
@@ -101,7 +103,7 @@ describe("AuditRegistry", function () {
       await expect(
         auditRegistry.connect(logger1).log(
           resourceId,
-          "loan",
+          LOAN_TYPE,
           AuditAction.LoanCreated,
           detailsHash,
           previousStateHash,
@@ -115,7 +117,7 @@ describe("AuditRegistry", function () {
       
       await auditRegistry.connect(logger1).log(
         resourceId,
-        "loan",
+        LOAN_TYPE,
         AuditAction.LoanCreated,
         detailsHash,
         previousStateHash,
@@ -129,7 +131,7 @@ describe("AuditRegistry", function () {
     it("Should store entry and retrieve by resource", async function () {
       await auditRegistry.connect(logger1).log(
         resourceId,
-        "loan",
+        LOAN_TYPE,
         AuditAction.LoanCreated,
         detailsHash,
         previousStateHash,
@@ -141,7 +143,7 @@ describe("AuditRegistry", function () {
 
       const entry = await auditRegistry.getEntry(entryIds[0]);
       expect(entry.resourceId).to.equal(resourceId);
-      expect(entry.resourceType).to.equal("loan");
+      expect(entry.resourceType).to.equal(LOAN_TYPE);
       expect(entry.action).to.equal(AuditAction.LoanCreated);
       expect(entry.actor).to.equal(logger1.address);
     });
@@ -150,7 +152,7 @@ describe("AuditRegistry", function () {
       await expect(
         auditRegistry.connect(other).log(
           resourceId,
-          "loan",
+          LOAN_TYPE,
           AuditAction.LoanCreated,
           detailsHash,
           previousStateHash,
@@ -163,7 +165,7 @@ describe("AuditRegistry", function () {
       await expect(
         auditRegistry.connect(logger1).log(
           ethers.ZeroHash,
-          "loan",
+          LOAN_TYPE,
           AuditAction.LoanCreated,
           detailsHash,
           previousStateHash,
@@ -176,7 +178,7 @@ describe("AuditRegistry", function () {
       await expect(
         auditRegistry.connect(logger1).log(
           resourceId,
-          "",
+          ethers.ZeroHash,
           AuditAction.LoanCreated,
           detailsHash,
           previousStateHash,
@@ -195,7 +197,7 @@ describe("AuditRegistry", function () {
     beforeEach(async function () {
       await auditRegistry.connect(logger1).log(
         resourceId,
-        "loan",
+        LOAN_TYPE,
         AuditAction.LoanCreated,
         detailsHash,
         previousStateHash,
@@ -231,7 +233,7 @@ describe("AuditRegistry", function () {
         ethers.keccak256(ethers.toUtf8Bytes("LOAN001")),
         ethers.keccak256(ethers.toUtf8Bytes("LOAN002"))
       ];
-      const resourceTypes = ["loan", "loan"];
+      const resourceTypes = [LOAN_TYPE, LOAN_TYPE];
       const actions = [AuditAction.LoanCreated, AuditAction.LoanCreated];
       const detailsHashes = [
         ethers.keccak256(ethers.toUtf8Bytes("DETAILS1")),
@@ -258,7 +260,7 @@ describe("AuditRegistry", function () {
 
     it("Should reject mismatched array lengths", async function () {
       const resourceIds = [ethers.keccak256(ethers.toUtf8Bytes("LOAN001"))];
-      const resourceTypes = ["loan", "loan"]; // Wrong length
+      const resourceTypes = [LOAN_TYPE, LOAN_TYPE]; // Wrong length
 
       await expect(
         auditRegistry.connect(logger1).logBatch(
@@ -281,7 +283,7 @@ describe("AuditRegistry", function () {
       for (let i = 0; i < 5; i++) {
         await auditRegistry.connect(logger1).log(
           resourceId,
-          "loan",
+          LOAN_TYPE,
           i, // Different actions
           ethers.keccak256(ethers.toUtf8Bytes(`DETAILS${i}`)),
           ethers.ZeroHash,
@@ -300,9 +302,9 @@ describe("AuditRegistry", function () {
       expect(trail.length).to.equal(5);
     });
 
-    it("Should get entries by actor with limit", async function () {
+    it("Should get entries by actor (returns empty - actorEntries no longer populated)", async function () {
       const entries = await auditRegistry.getEntriesByActor(logger1.address, 3);
-      expect(entries.length).to.equal(3);
+      expect(entries.length).to.equal(0);
     });
 
     it("Should return empty for non-existent resource", async function () {
@@ -321,17 +323,17 @@ describe("AuditRegistry", function () {
       const state3 = ethers.keccak256(ethers.toUtf8Bytes("STATE3"));
 
       await auditRegistry.connect(logger1).log(
-        resourceId, "loan", AuditAction.LoanCreated,
+        resourceId, LOAN_TYPE, AuditAction.LoanCreated,
         ethers.ZeroHash, ethers.ZeroHash, state1
       );
 
       await auditRegistry.connect(logger1).log(
-        resourceId, "loan", AuditAction.LoanSubmitted,
+        resourceId, LOAN_TYPE, AuditAction.LoanSubmitted,
         ethers.ZeroHash, state1, state2
       );
 
       await auditRegistry.connect(logger1).log(
-        resourceId, "loan", AuditAction.LoanApproved,
+        resourceId, LOAN_TYPE, AuditAction.LoanApproved,
         ethers.ZeroHash, state2, state3
       );
 
@@ -352,12 +354,12 @@ describe("AuditRegistry", function () {
       const resourceId2 = ethers.keccak256(ethers.toUtf8Bytes("LOAN002"));
 
       await auditRegistry.connect(logger1).log(
-        resourceId1, "loan", AuditAction.LoanCreated,
+        resourceId1, LOAN_TYPE, AuditAction.LoanCreated,
         ethers.ZeroHash, ethers.ZeroHash, ethers.keccak256(ethers.toUtf8Bytes("STATE1"))
       );
 
       await auditRegistry.connect(logger1).log(
-        resourceId2, "loan", AuditAction.LoanCreated,
+        resourceId2, LOAN_TYPE, AuditAction.LoanCreated,
         ethers.ZeroHash, ethers.ZeroHash, ethers.keccak256(ethers.toUtf8Bytes("STATE2"))
       );
 

@@ -35,6 +35,9 @@ class LoanPayment:
         # Recording info
         self.recorded_by = kwargs.get('recorded_by')  # Officer ID
         self.recorded_at = kwargs.get('recorded_at', datetime.utcnow())
+
+        # Blockchain sync tracking
+        self.blockchain_tx_hash = kwargs.get('blockchain_tx_hash', '')
     
     @property
     def id(self):
@@ -52,6 +55,7 @@ class LoanPayment:
             'notes': self.notes,
             'recorded_by': self.recorded_by,
             'recorded_at': self.recorded_at,
+            'blockchain_tx_hash': self.blockchain_tx_hash,
         }
         if self._id:
             data['_id'] = self._id

@@ -82,6 +82,9 @@ class LoanApplication:
         self.submitted_at = kwargs.get('submitted_at')
         self.created_at = kwargs.get('created_at', datetime.utcnow())
         self.updated_at = kwargs.get('updated_at', datetime.utcnow())
+
+        # Blockchain sync tracking
+        self.blockchain_tx_hashes = kwargs.get('blockchain_tx_hashes', {})
     
     @property
     def id(self):
@@ -119,6 +122,7 @@ class LoanApplication:
             'submitted_at': self.submitted_at,
             'created_at': self.created_at,
             'updated_at': self.updated_at,
+            'blockchain_tx_hashes': self.blockchain_tx_hashes,
         }
         if self._id:
             data['_id'] = self._id

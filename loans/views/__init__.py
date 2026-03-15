@@ -10,6 +10,7 @@ from .customer_views import (
     ResubmitApplicationView,
     RejectionFeedbackView,
     SetDisbursementMethodView,
+    CustomerBlockchainView,
 )
 from .admin_views import (
     AdminProductListView,
@@ -30,4 +31,5 @@ from .officer_views import (
     OfficerScheduleView,
     OfficerPaymentHistoryView,
     PaymentSearchView,
+    BlockchainStatusView,
 )
