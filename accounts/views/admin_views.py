@@ -302,11 +302,34 @@ class AdminLogoutView(APIView):
             refresh_token = get_refresh_token_from_request(request)
             access_token = get_access_token_from_request(request)
             
+            # Extract user info from token before blacklisting
+            user_id = None
+            user_email = ''
+            try:
+                import jwt as pyjwt
+                token_to_decode = access_token or refresh_token
+                if token_to_decode:
+                    payload = pyjwt.decode(token_to_decode, options={"verify_signature": False, "verify_exp": False})
+                    user_id = payload.get('customer_id')
+                    user_email = payload.get('email', '')
+            except Exception:
+                logger.warning("Could not decode token for audit log user info during admin logout")
+            
             if refresh_token:
                 TokenUtils.blacklist_token(refresh_token, token_type='refresh')
             
             if access_token:
                 TokenUtils.blacklist_token(access_token, token_type='access')
+            
+            # Audit log for admin logout
+            AuditLog.log_action(
+                action='user_logout',
+                user_id=user_id,
+                user_type='admin',
+                user_email=user_email,
+                description='Admin logged out',
+                ip_address=request.META.get('REMOTE_ADDR', '')
+            )
             
             response = success_response(message="Logged out successfully")
             clear_auth_cookies(response)
