@@ -29,7 +29,7 @@ class SecurityHeadersMiddleware:
         
         # Strict API-first CSP.
         # This backend serves JSON APIs; it does not require inline/eval script execution.
-        is_local = request.get_host().startswith('localhost') or request.get_host().startswith('127.0.0.1')
+        is_local = request.get_host().startswith('localhost') or request.get_host().startswith('127.0.0.1') or request.get_host().startswith('192.168.')
 
         if is_local:
             # Keep localhost connect targets for local tooling, while still blocking script execution.
@@ -43,7 +43,7 @@ class SecurityHeadersMiddleware:
                 "style-src 'none'; "
                 "img-src 'self' data: http://localhost:*; "
                 "font-src 'none'; "
-                "connect-src 'self' http://localhost:* ws://localhost:*; "
+                "connect-src 'self' http://localhost:* ws://localhost:* http://192.168.*:*; "
                 "frame-src 'none'; "
                 "manifest-src 'none'; "
                 "worker-src 'none'"
@@ -73,7 +73,7 @@ class SecurityHeadersMiddleware:
 
         # Cross-origin isolation / Spectre hardening
         response['Cross-Origin-Opener-Policy'] = 'same-origin'
-        response['Cross-Origin-Resource-Policy'] = 'same-site'
+        response['Cross-Origin-Resource-Policy'] = 'same-site' if not is_local else 'cross-origin'
         response['Cross-Origin-Embedder-Policy'] = 'require-corp'
         response['Origin-Agent-Cluster'] = '?1'
         
