@@ -1357,3 +1357,302 @@ class CustomerBlockchainView(CustomerRoleRequiredMixin, APIView):
             message="Blockchain status retrieved"
         )
 
+
+class WalletPaymentView(CustomerRoleRequiredMixin, APIView):
+    """
+    Customer: Verify and record an ETH wallet payment for a loan installment.
+
+    The customer pays via MetaMask (WalletConnect), then submits the tx_hash here.
+    Backend verifies the transaction on-chain before recording the payment.
+
+    POST /api/loans/applications/<id>/wallet-payment/
+    """
+    authentication_classes = [CustomJWTAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, application_id):
+        has_permission, result = self.check_customer_permission(request)
+        if not has_permission:
+            return result
+
+        user = request.user
+        customer_id = user.customer_id
+
+        tx_hash = request.data.get('tx_hash', '').strip()
+        installment_number_raw = request.data.get('installment_number')
+
+        if not tx_hash:
+            return error_response(
+                message="tx_hash is required",
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+        if not tx_hash.startswith('0x') or len(tx_hash) != 66:
+            return error_response(
+                message="Invalid transaction hash format",
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+        if installment_number_raw in (None, ''):
+            return error_response(
+                message="installment_number is required",
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+        try:
+            installment_number = int(installment_number_raw)
+        except (TypeError, ValueError):
+            return error_response(
+                message="installment_number must be an integer",
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+        if installment_number < 1:
+            return error_response(
+                message="installment_number must be at least 1",
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+
+        app = LoanApplication.find_by_id(application_id)
+        if not app or app.customer_id != customer_id:
+            return error_response(
+                message="Application not found",
+                status_code=status.HTTP_404_NOT_FOUND
+            )
+        if app.status != 'disbursed':
+            return error_response(
+                message="Loan is not in disbursed status",
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Find schedule and validate installment
+        from loans.models import RepaymentSchedule, LoanPayment
+        schedule = RepaymentSchedule.find_by_loan(application_id)
+        if not schedule:
+            return error_response(
+                message="Repayment schedule not found",
+                status_code=status.HTTP_404_NOT_FOUND
+            )
+
+        installment = schedule.get_installment(installment_number)
+        if not installment:
+            return error_response(
+                message=f"Installment #{installment_number} not found",
+                status_code=status.HTTP_404_NOT_FOUND
+            )
+        if installment.get('status') == 'paid':
+            return error_response(
+                message=f"Installment #{installment_number} is already fully paid",
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Verify the transaction on-chain
+        try:
+            from loans.blockchain.client import get_web3, get_account
+            from loans.blockchain.services.eth_price_service import get_eth_php_rate
+
+            w3 = get_web3()
+            tx = w3.eth.get_transaction(tx_hash)
+            receipt = w3.eth.get_transaction_receipt(tx_hash)
+
+            if receipt['status'] != 1:
+                return error_response(
+                    message="Transaction failed on-chain",
+                    status_code=status.HTTP_400_BAD_REQUEST
+                )
+
+            # Verify recipient is the system wallet
+            system_address = get_account().address.lower()
+            if tx['to'].lower() != system_address:
+                return error_response(
+                    message="Transaction recipient does not match system wallet",
+                    status_code=status.HTTP_400_BAD_REQUEST
+                )
+
+            # Verify sender is the customer's wallet
+            from profiles.models.profile_models import CustomerProfile
+            profile = CustomerProfile.find_by_customer(customer_id)
+            if not profile or not profile.wallet_address:
+                return error_response(
+                    message="Customer wallet address not configured",
+                    status_code=status.HTTP_400_BAD_REQUEST
+                )
+            if tx['from'].lower() != profile.wallet_address.lower():
+                return error_response(
+                    message="Transaction sender does not match your wallet address",
+                    status_code=status.HTTP_400_BAD_REQUEST
+                )
+
+            # Verify amount (convert ETH received to PHP and compare)
+            eth_received = float(w3.from_wei(tx['value'], 'ether'))
+            rate_info = get_eth_php_rate()
+            php_received = eth_received * rate_info['rate']
+            expected_php = installment['total_amount'] - installment.get('paid_amount', 0)
+
+            # Allow ±2% tolerance for exchange rate fluctuations
+            tolerance = expected_php * 0.02
+            if php_received < (expected_php - tolerance):
+                return error_response(
+                    message=f"Insufficient payment amount. Expected ~₱{expected_php:.2f} "
+                            f"(received {eth_received:.6f} ETH ≈ ₱{php_received:.2f})",
+                    status_code=status.HTTP_400_BAD_REQUEST
+                )
+
+            # Check for duplicate tx_hash
+            existing = settings.MONGODB['loan_payments'].find_one(
+                {'eth_tx_hash': tx_hash}
+            )
+            if existing:
+                return error_response(
+                    message="This transaction has already been recorded",
+                    status_code=status.HTTP_400_BAD_REQUEST
+                )
+
+        except error_response.__class__:
+            raise
+        except Exception as exc:
+            logger.error("Wallet payment verification failed: %s", exc)
+            return error_response(
+                message=f"Failed to verify transaction on-chain: {str(exc)}",
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Record the payment (use the expected PHP amount for consistency)
+        payment_amount = min(php_received, expected_php)
+        unpaid_before = schedule.count_unpaid_before(installment_number)
+        updated_installment = schedule.record_payment(installment_number, payment_amount)
+
+        payment = LoanPayment(
+            loan_id=application_id,
+            schedule_id=schedule.id,
+            customer_id=customer_id,
+            installment_number=installment_number,
+            amount=payment_amount,
+            payment_method='wallet',
+            reference=tx_hash[:18],
+            notes=f"ETH wallet payment: {eth_received:.6f} ETH @ {rate_info['rate']:.2f} PHP/ETH",
+            recorded_by=customer_id,
+        )
+        payment.save()
+
+        # Store ETH-specific details on the payment record
+        settings.MONGODB['loan_payments'].update_one(
+            {'_id': ObjectId(payment.id)},
+            {'$set': {
+                'eth_tx_hash': tx_hash,
+                'eth_amount': str(eth_received),
+                'eth_rate': rate_info['rate'],
+                'eth_rate_source': rate_info['source'],
+                'eth_sender': profile.wallet_address,
+                'eth_block_number': receipt['blockNumber'],
+            }}
+        )
+
+        logger.info(
+            "Wallet payment verified: loan=%s installment=%d amount=%.6f ETH tx=%s",
+            application_id, installment_number, eth_received, tx_hash[:18]
+        )
+
+        # Audit log
+        from analytics.models import AuditLog
+        AuditLog.log_action(
+            action='wallet_payment_verified',
+            user_id=customer_id,
+            user_type='customer',
+            description=f'Wallet payment verified - {eth_received:.6f} ETH for installment #{installment_number}',
+            resource_type='payment',
+            resource_id=payment.id,
+            details={
+                'loan_id': application_id,
+                'installment_number': installment_number,
+                'eth_amount': str(eth_received),
+                'php_amount': payment_amount,
+                'eth_rate': rate_info['rate'],
+                'tx_hash': tx_hash,
+            },
+            ip_address=request.META.get('REMOTE_ADDR', '')
+        )
+
+        # Blockchain audit trail sync
+        try:
+            from loans.blockchain.sync import sync_payment
+            sync_payment(application_id, payment.id)
+        except Exception as e:
+            logger.warning(f"Blockchain sync skipped for wallet payment {payment.id}: {e}")
+
+        return success_response(
+            data={
+                'status': 'verified',
+                'payment_id': payment.id,
+                'installment_number': installment_number,
+                'installment_status': updated_installment['status'],
+                'amount_php': payment_amount,
+                'amount_eth': str(eth_received),
+                'eth_rate': rate_info['rate'],
+                'tx_hash': tx_hash,
+                'block_number': receipt['blockNumber'],
+                'remaining_balance': schedule.get_remaining_balance(),
+            },
+            message="Wallet payment verified and recorded",
+            status_code=status.HTTP_201_CREATED
+        )
+
+
+class SystemWalletInfoView(CustomerRoleRequiredMixin, APIView):
+    """
+    Customer: Get system wallet address and current ETH/PHP rate.
+
+    Mobile app uses this to construct the WalletConnect ETH transfer request.
+
+    GET /api/loans/system-wallet/
+    """
+    authentication_classes = [CustomJWTAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        has_permission, result = self.check_customer_permission(request)
+        if not has_permission:
+            return result
+
+        from loans.blockchain.client import get_account, get_web3
+
+        if not getattr(settings, 'BLOCKCHAIN_ENABLED', False):
+            return error_response(
+                message="Blockchain is not enabled",
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE
+            )
+
+        try:
+            account = get_account()
+            w3 = get_web3()
+        except Exception as exc:
+            return error_response(
+                message=f"Blockchain connection unavailable: {str(exc)}",
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE
+            )
+
+        # Fetch live exchange rate
+        from loans.blockchain.services.eth_price_service import (
+            get_eth_php_rate,
+            ExchangeRateUnavailableError,
+        )
+        try:
+            rate_info = get_eth_php_rate()
+        except ExchangeRateUnavailableError:
+            return error_response(
+                message="ETH/PHP exchange rate is currently unavailable. "
+                        "Wallet payments are temporarily disabled.",
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE
+            )
+
+        from datetime import datetime, timezone
+        return success_response(
+            data={
+                'wallet_address': account.address,
+                'chain_id': settings.BLOCKCHAIN_CHAIN_ID,
+                'rpc_url': settings.BLOCKCHAIN_RPC_URL,
+                'eth_php_rate': rate_info['rate'],
+                'rate_source': rate_info['source'],
+                'rate_cached_at': datetime.fromtimestamp(
+                    rate_info['fetched_at'], tz=timezone.utc
+                ).isoformat() if rate_info['fetched_at'] else None,
+            },
+            message="System wallet info retrieved"
+        )
+
