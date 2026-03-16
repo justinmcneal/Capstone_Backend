@@ -13,6 +13,7 @@ from accounts.models import Consent
 from ai_assistant.models import AIInteraction
 from ai_assistant.services import get_llm_service
 from ai_assistant.services.llm_service import SYSTEM_PROMPT
+from ai_assistant.services.tools import TOOL_SCHEMAS
 import logging
 
 logger = logging.getLogger('ai_assistant')
@@ -33,9 +34,11 @@ def build_user_context(customer_id):
         from loans.models.payment import LoanPayment
 
         lines = ["\n\n=== CURRENT USER CONTEXT ==="]
+        logger.info(f"Building user context for customer_id: {customer_id}")
 
         # --- Profile ---
         profile = CustomerProfile.find_by_customer(customer_id)
+        logger.info(f"Profile lookup result: {profile is not None}")
         if profile:
             pct = getattr(profile, 'completion_percentage', None)
             if pct is not None:
@@ -52,9 +55,14 @@ def build_user_context(customer_id):
                         missing.append('emergency contact')
                     if missing:
                         lines.append(f"  Missing: {', '.join(missing)}")
+            else:
+                lines.append("Profile: Created but completion not calculated")
+        else:
+            lines.append("Profile: Not created yet")
 
         # --- Business ---
         business = BusinessProfile.find_by_customer(customer_id)
+        logger.info(f"Business lookup result: {business is not None}")
         if business and getattr(business, 'business_name', None):
             btype = getattr(business, 'business_type', 'unknown')
             age = getattr(business, 'business_age_months', None)
@@ -65,9 +73,12 @@ def build_user_context(customer_id):
             if income is not None:
                 parts.append(f"monthly income ₱{income:,.0f}")
             lines.append(', '.join(parts))
+        else:
+            lines.append("Business Profile: Not set up yet")
 
         # --- Documents ---
         docs = Document.find_by_customer(customer_id)
+        logger.info(f"Documents found: {len(docs) if docs else 0}")
         if docs:
             doc_summary = []
             for doc in docs:
@@ -81,6 +92,7 @@ def build_user_context(customer_id):
 
         # --- Loan Applications ---
         apps = LoanApplication.find_by_customer(customer_id)
+        logger.info(f"Loan applications found: {len(apps) if apps else 0}")
         if apps:
             for app in apps[:3]:
                 app_status = getattr(app, 'status', 'unknown')
@@ -126,12 +138,14 @@ def build_user_context(customer_id):
         else:
             lines.append("Loan Applications: None yet")
 
-        lines.append("Note: You may reference this context when answering the user's questions. Present the data helpfully but do not dump it all at once — only mention what is relevant to their question.")
+        lines.append("Note: You have access to this user's real data above. When answering their questions, ALWAYS use this data directly. Do NOT tell them to check the app — instead, tell them the actual values from the context above.")
 
-        return '\n'.join(lines)
+        context = '\n'.join(lines)
+        logger.info(f"Built user context ({len(context)} chars): {context[:200]}...")
+        return context
 
     except Exception as e:
-        logger.warning(f"Failed to build user context for {customer_id}: {e}")
+        logger.error(f"Failed to build user context for {customer_id}: {e}", exc_info=True)
         return ""
 
 
@@ -245,11 +259,13 @@ class ChatView(ConsentRequiredMixin, APIView):
             user_context = build_user_context(customer_id)
             contextualized_prompt = SYSTEM_PROMPT + user_context
 
-            result = llm.chat(
+            result = llm.chat_with_tools(
                 message=message,
+                customer_id=customer_id,
                 conversation_history=conversation_history,
                 language=language,
-                system_prompt=contextualized_prompt
+                system_prompt=contextualized_prompt,
+                tools=TOOL_SCHEMAS,
             )
             
             if not result['success']:
