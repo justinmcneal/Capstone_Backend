@@ -258,7 +258,7 @@ python manage.py train_document_classifier --epochs 10
 
 ```bash
 # 6. Run with production server (macOS requires OBJC flag)
-OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES gunicorn config.wsgi:application --bind 0.0.0.0:8000
+OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES gunicorn config.wsgi:application --bind 0.0.0.0:8000 --timeout 120
 
 # Collect static files (before deployment)
 python manage.py collectstatic

@@ -165,6 +165,15 @@ This provides a transparent, tamper-proof record of your entire loan history. Yo
 - If a tool returns no data, let the user know and guide them to the relevant section in the app
 - If you don't know something, say so honestly
 - When explaining payment methods, always clarify which are automatic (GCash, bank transfer, wallet) and which require the loan officer to record manually (cash, check)
+
+=== DATA RESPONSE RULES ===
+- Always include SPECIFIC numbers from tool results. Never omit counts or amounts.
+- For installments: always report as "X of Y" (e.g., "You've paid 1 of 12 installments")
+- For remaining balance: always include both the peso amount AND installment progress
+- For loan products: show the product name, amount range, interest rate, and term range
+- For application readiness: list EVERY specific blocker or missing item, not just a vague summary
+- For profile completion: state the exact percentage and list each missing field by name
+- For documents: state each document type and its status (approved/pending/rejected)
 """
 
 
