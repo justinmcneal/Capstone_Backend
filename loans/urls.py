@@ -12,6 +12,8 @@ from loans.views import (
     ResubmitApplicationView,
     RejectionFeedbackView,
     SetDisbursementMethodView,
+    WalletPaymentView,
+    SystemWalletInfoView,
     # Admin
     AdminProductListView,
     AdminProductDetailView,
@@ -51,6 +53,8 @@ urlpatterns = [
     path('applications/<str:application_id>/feedback/', RejectionFeedbackView.as_view(), name='application-feedback'),
     path('applications/<str:application_id>/set-disbursement-method/', SetDisbursementMethodView.as_view(), name='set-disbursement-method'),
     path('applications/<str:application_id>/blockchain/', CustomerBlockchainView.as_view(), name='application-blockchain'),
+    path('applications/<str:application_id>/wallet-payment/', WalletPaymentView.as_view(), name='wallet-payment'),
+    path('system-wallet/', SystemWalletInfoView.as_view(), name='system-wallet'),
     
     # Admin endpoints (product management)
     path('admin/products/', AdminProductListView.as_view(), name='admin-products'),

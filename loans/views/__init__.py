@@ -11,6 +11,8 @@ from .customer_views import (
     RejectionFeedbackView,
     SetDisbursementMethodView,
     CustomerBlockchainView,
+    WalletPaymentView,
+    SystemWalletInfoView,
 )
 from .admin_views import (
     AdminProductListView,
