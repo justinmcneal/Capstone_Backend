@@ -43,7 +43,7 @@ class SecurityHeadersMiddleware:
                 "style-src 'none'; "
                 "img-src 'self' data: http://localhost:*; "
                 "font-src 'none'; "
-                "connect-src 'self' http://localhost:* ws://localhost:* http://192.168.*:*; "
+                "connect-src 'self' http://localhost:* ws://localhost:* *; "
                 "frame-src 'none'; "
                 "manifest-src 'none'; "
                 "worker-src 'none'"
