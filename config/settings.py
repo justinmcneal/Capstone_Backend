@@ -379,6 +379,12 @@ GROQ_MODEL = os.getenv('GROQ_MODEL', 'llama-3.1-8b-instant')
 GROQ_CHAT_MODEL = os.getenv('GROQ_CHAT_MODEL', GROQ_MODEL)
 GROQ_QUALIFICATION_MODEL = os.getenv('GROQ_QUALIFICATION_MODEL', GROQ_MODEL)
 
+# LLM Provider Configuration
+# Set LLM_PROVIDER to 'groq' or 'ollama' to switch AI backends
+LLM_PROVIDER = os.getenv('LLM_PROVIDER', 'groq')
+OLLAMA_BASE_URL = os.getenv('OLLAMA_BASE_URL', 'http://localhost:11434')
+OLLAMA_MODEL = os.getenv('OLLAMA_MODEL', 'llama3.1')
+
 # =============================================================================
 # BLOCKCHAIN INTEGRATION (Smart Contracts via web3.py)
 # =============================================================================
