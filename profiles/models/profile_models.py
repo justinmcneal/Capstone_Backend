@@ -143,6 +143,9 @@ class CustomerProfile:
         self.emergency_contact_phone = kwargs.get('emergency_contact_phone', '')
         self.emergency_contact_relationship = kwargs.get('emergency_contact_relationship', '')
         
+        # Wallet
+        self.wallet_address = kwargs.get('wallet_address')  # Ethereum address (0x + 40 hex)
+        
         # Profile Completion
         self.profile_completed = kwargs.get('profile_completed', False)
         self.completion_percentage = kwargs.get('completion_percentage', 0)
@@ -177,6 +180,7 @@ class CustomerProfile:
             'emergency_contact_name': self.emergency_contact_name,
             'emergency_contact_phone': self.emergency_contact_phone,
             'emergency_contact_relationship': self.emergency_contact_relationship,
+            'wallet_address': self.wallet_address,
             'profile_completed': self.profile_completed,
             'completion_percentage': self.completion_percentage,
             'created_at': self.created_at,
