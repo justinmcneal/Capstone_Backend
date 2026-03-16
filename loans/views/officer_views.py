@@ -1123,10 +1123,9 @@ class RecordPaymentView(LoanOfficerRequiredMixin, APIView):
                 message="amount must be greater than 0",
                 status_code=status.HTTP_400_BAD_REQUEST
             )
-        valid_methods = {'cash', 'gcash', 'bank_transfer', 'check', 'wallet'}
-        if payment_method not in valid_methods:
+        if payment_method != 'cash':
             return error_response(
-                message="Invalid payment_method",
+                message="Manual payment recording only accepts cash",
                 status_code=status.HTTP_400_BAD_REQUEST
             )
         if not reference and external_reference:
