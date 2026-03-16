@@ -22,6 +22,7 @@ HOW IT WORKS:
 =============================================================================
 """
 import os
+import json
 import requests
 import logging
 from django.conf import settings
@@ -157,7 +158,8 @@ This provides a transparent, tamper-proof record of your entire loan history. Yo
 - If asked in Tagalog, respond in Tagalog
 - If asked in English, respond in English
 - Keep responses concise but helpful (2-4 short paragraphs maximum)
-- If asked about real-time data (loan status, payment history, balance), direct the user to check the relevant section in the app — you do not have access to their personal account data
+- If asked about real-time data (loan status, payment history, balance, profile completeness), use the available tools to look up the information — do not guess or make up data
+- If a tool returns no data, let the user know and guide them to the relevant section in the app
 - If you don't know something, say so honestly
 - When explaining payment methods, always clarify which are automatic (GCash, bank transfer, wallet) and which require the loan officer to record manually (cash, check)
 """
@@ -330,6 +332,153 @@ class GroqService:
         """
         result = self.chat(prompt)
         return result.get('response', '') if result.get('success') else ''
+
+    def chat_with_tools(
+        self,
+        message,
+        customer_id,
+        conversation_history=None,
+        language='en',
+        system_prompt=None,
+        tools=None,
+        temperature=0.7,
+        max_tokens=1024,
+        top_p=0.9,
+        max_tool_rounds=3,
+    ):
+        """
+        Send a message with function calling support.
+        The LLM can request tool calls; we execute them and feed results back.
+
+        Args:
+            message: The user's message
+            customer_id: Authenticated customer ID (for scoping tool queries)
+            conversation_history: Previous messages for context
+            language: 'en' or 'tl'
+            system_prompt: Optional system prompt override
+            tools: List of tool schemas (OpenAI format)
+            temperature: Sampling temperature
+            max_tokens: Max output tokens
+            top_p: Nucleus sampling
+            max_tool_rounds: Max tool call iterations to prevent infinite loops
+
+        Returns:
+            dict with success, response, model, response_time_ms, tokens_used, tools_called
+        """
+        from ai_assistant.services.tools import execute_tool
+
+        if not self.api_key:
+            return {
+                'success': False,
+                'error': "Groq API key not configured. Add GROQ_API_KEY to .env file."
+            }
+
+        start_time = time.time()
+        total_tokens = 0
+        tools_called = []
+
+        active_system_prompt = system_prompt or SYSTEM_PROMPT
+        messages = [{"role": "system", "content": active_system_prompt}]
+
+        if conversation_history:
+            for hist in conversation_history[-10:]:
+                messages.append({
+                    "role": hist.get('role', 'user'),
+                    "content": hist.get('content', '')
+                })
+
+        if language == 'tl':
+            message = f"[Please respond in Tagalog/Filipino] {message}"
+
+        messages.append({"role": "user", "content": message})
+
+        for round_num in range(max_tool_rounds + 1):
+            try:
+                request_body = {
+                    "model": self.model,
+                    "messages": messages,
+                    "temperature": temperature,
+                    "max_tokens": max_tokens,
+                    "top_p": top_p,
+                }
+
+                if tools and round_num < max_tool_rounds:
+                    request_body["tools"] = tools
+                    request_body["tool_choice"] = "auto"
+
+                response = requests.post(
+                    self.api_url,
+                    headers={
+                        "Authorization": f"Bearer {self.api_key}",
+                        "Content-Type": "application/json"
+                    },
+                    json=request_body,
+                    timeout=30
+                )
+
+                if response.status_code != 200:
+                    error_msg = response.json().get('error', {}).get('message', response.text)
+                    logger.error(f"Groq error: {response.status_code} - {error_msg}")
+                    return {'success': False, 'error': f"Groq error: {error_msg}"}
+
+                result = response.json()
+                usage = result.get('usage', {})
+                total_tokens += usage.get('total_tokens', 0)
+
+                choice = result.get('choices', [{}])[0]
+                assistant_message = choice.get('message', {})
+                finish_reason = choice.get('finish_reason', '')
+
+                tool_calls = assistant_message.get('tool_calls')
+                if tool_calls and finish_reason == 'tool_calls':
+                    messages.append(assistant_message)
+
+                    for tool_call in tool_calls:
+                        func = tool_call.get('function', {})
+                        tool_name = func.get('name', '')
+                        try:
+                            tool_args = json.loads(func.get('arguments', '{}'))
+                        except json.JSONDecodeError:
+                            tool_args = {}
+
+                        logger.info(f"Tool call: {tool_name}({tool_args}) for customer {customer_id}")
+                        tool_result = execute_tool(tool_name, tool_args, customer_id)
+                        tools_called.append(tool_name)
+
+                        messages.append({
+                            "role": "tool",
+                            "tool_call_id": tool_call.get('id', ''),
+                            "content": tool_result,
+                        })
+
+                    continue
+                else:
+                    elapsed_ms = int((time.time() - start_time) * 1000)
+                    return {
+                        'success': True,
+                        'response': assistant_message.get('content', ''),
+                        'model': self.model,
+                        'provider': 'groq',
+                        'response_time_ms': elapsed_ms,
+                        'tokens_used': total_tokens,
+                        'tools_called': tools_called,
+                    }
+
+            except requests.Timeout:
+                return {'success': False, 'error': "Request timed out. Please try again."}
+            except requests.RequestException as e:
+                logger.error(f"Groq error: {str(e)}")
+                return {'success': False, 'error': "Could not connect to Groq API."}
+            except json.JSONDecodeError:
+                return {'success': False, 'error': "Invalid response from AI service."}
+
+        elapsed_ms = int((time.time() - start_time) * 1000)
+        return {
+            'success': False,
+            'error': "Too many tool call rounds. Please try a simpler question.",
+            'response_time_ms': elapsed_ms,
+            'tools_called': tools_called,
+        }
 
 
 # =============================================================================
