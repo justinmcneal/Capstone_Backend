@@ -225,6 +225,62 @@ def call_view(contract, method_name, *args):
     return fn.call()
 
 
+def send_eth_transfer(to_address, amount_wei):
+    """
+    Send ETH from the system wallet to a target address.
+
+    This is a direct value transfer (not a contract call).
+    Used for wallet-based loan disbursements.
+
+    Args:
+        to_address: Recipient Ethereum address
+        amount_wei: Amount in Wei (int)
+
+    Returns:
+        dict with keys: tx_hash, gas_used, block_number, status, amount_wei
+    """
+    _check_enabled()
+    w3 = get_web3()
+    account = get_account()
+
+    tx = {
+        "from": account.address,
+        "to": Web3.to_checksum_address(to_address),
+        "value": int(amount_wei),
+        "nonce": w3.eth.get_transaction_count(account.address),
+        "gas": 21000,  # Standard ETH transfer gas
+        "gasPrice": w3.eth.gas_price,
+        "chainId": settings.BLOCKCHAIN_CHAIN_ID,
+    }
+
+    signed = account.sign_transaction(tx)
+    tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
+    receipt = w3.eth.wait_for_transaction_receipt(tx_hash, timeout=120)
+
+    tx_hash_hex = "0x" + receipt["transactionHash"].hex()
+
+    if receipt["status"] != 1:
+        logger.error("ETH transfer FAILED: to=%s amount=%s tx=%s", to_address, amount_wei, tx_hash_hex)
+        raise BlockchainTransactionFailed(
+            f"ETH transfer to {to_address} failed",
+            tx_hash=tx_hash_hex,
+            receipt=receipt,
+        )
+
+    logger.info(
+        "ETH transfer OK: tx=%s amount=%s wei to=%s",
+        tx_hash_hex[:18], amount_wei, to_address[:10],
+    )
+
+    return {
+        "tx_hash": tx_hash_hex,
+        "gas_used": receipt["gasUsed"],
+        "block_number": receipt["blockNumber"],
+        "status": receipt["status"],
+        "amount_wei": int(amount_wei),
+    }
+
+
 def clear_cache():
     """Clear all cached Web3 instances and contracts. Useful for testing."""
     get_web3.cache_clear()

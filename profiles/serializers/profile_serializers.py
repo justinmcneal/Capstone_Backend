@@ -58,6 +58,19 @@ class CustomerProfileSerializer(InputSanitizationMixin, serializers.Serializer):
     emergency_contact_phone = serializers.CharField(max_length=20, required=False, allow_blank=True)
     emergency_contact_relationship = serializers.CharField(max_length=50, required=False, allow_blank=True)
 
+    # Wallet
+    wallet_address = serializers.CharField(max_length=42, required=False, allow_blank=True, allow_null=True)
+
+    def validate_wallet_address(self, value):
+        if not value:
+            return value
+        value = value.strip()
+        if not re.fullmatch(r'0x[0-9a-fA-F]{40}', value):
+            raise serializers.ValidationError(
+                'Enter a valid Ethereum address (0x followed by 40 hex characters).'
+            )
+        return value
+
     def validate_mobile_number(self, value):
         if not value:
             return value  # optional field
@@ -101,6 +114,7 @@ class CustomerProfileResponseSerializer(serializers.Serializer):
     emergency_contact_name = serializers.CharField()
     emergency_contact_phone = serializers.CharField()
     emergency_contact_relationship = serializers.CharField()
+    wallet_address = serializers.CharField(allow_null=True, allow_blank=True, required=False)
     profile_completed = serializers.BooleanField()
     completion_percentage = serializers.IntegerField()
 
