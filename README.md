@@ -230,7 +230,7 @@ python manage.py train_document_classifier --epochs 10
 python manage.py runserver
 
 # Test with production server locally
-gunicorn config.wsgi:application --bind 127.0.0.1:8000
+gunicorn config.wsgi:application --bind 0.0.0.0:8000
 
 # Collect static files (before deployment)
 python manage.py collectstatic
