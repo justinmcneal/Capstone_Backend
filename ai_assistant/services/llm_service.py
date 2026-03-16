@@ -32,26 +32,29 @@ logger = logging.getLogger('ai_assistant')
 
 
 # =============================================================================
-# CONFIGURATION - Loaded from .env file or Django settings
+# CONFIGURATION - Read lazily from Django settings at call time
 # =============================================================================
 
-# Your Groq API key (get free at https://console.groq.com)
-GROQ_API_KEY = getattr(settings, 'GROQ_API_KEY', os.environ.get('GROQ_API_KEY', ''))
-
-# The default AI model to use (llama-3.1-8b-instant is fast and supports Tagalog)
-GROQ_MODEL = getattr(settings, 'GROQ_MODEL', os.environ.get('GROQ_MODEL', 'llama-3.1-8b-instant'))
-GROQ_CHAT_MODEL = getattr(settings, 'GROQ_CHAT_MODEL', os.environ.get('GROQ_CHAT_MODEL', GROQ_MODEL))
-GROQ_QUALIFICATION_MODEL = getattr(
-    settings, 'GROQ_QUALIFICATION_MODEL', os.environ.get('GROQ_QUALIFICATION_MODEL', GROQ_MODEL)
-)
-
-# Groq API endpoint (don't change this)
 GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
 
-MODEL_BY_USE_CASE = {
-    'default': GROQ_MODEL,
-    'chat': GROQ_CHAT_MODEL,
-    'qualification': GROQ_QUALIFICATION_MODEL,
+
+def _get_config():
+    """Read LLM config from Django settings (which reads .env via load_dotenv)."""
+    return {
+        'provider': getattr(settings, 'LLM_PROVIDER', 'groq'),
+        'groq_api_key': getattr(settings, 'GROQ_API_KEY', ''),
+        'groq_model': getattr(settings, 'GROQ_MODEL', 'llama-3.1-8b-instant'),
+        'groq_chat_model': getattr(settings, 'GROQ_CHAT_MODEL', getattr(settings, 'GROQ_MODEL', 'llama-3.1-8b-instant')),
+        'groq_qualification_model': getattr(settings, 'GROQ_QUALIFICATION_MODEL', getattr(settings, 'GROQ_MODEL', 'llama-3.1-8b-instant')),
+        'ollama_base_url': getattr(settings, 'OLLAMA_BASE_URL', 'http://localhost:11434'),
+        'ollama_model': getattr(settings, 'OLLAMA_MODEL', 'llama3.1'),
+    }
+
+
+MODEL_USE_CASE_KEYS = {
+    'default': 'groq_model',
+    'chat': 'groq_chat_model',
+    'qualification': 'groq_qualification_model',
 }
 
 
@@ -166,39 +169,45 @@ This provides a transparent, tamper-proof record of your entire loan history. Yo
 
 
 # =============================================================================
-# GROQ SERVICE CLASS - Main service that talks to Groq API
+# LLM SERVICE CLASS - Supports Groq (cloud) and Ollama (local)
 # =============================================================================
 
 class GroqService:
     """
-    Service for Groq Cloud LLM.
-    
-    This is the main class that handles all AI chat functionality.
-    It sends messages to Groq and returns AI responses.
-    
-    FREE TIER: 14,400 requests per day (enough for demo/capstone)
+    LLM Service supporting multiple providers.
+
+    Providers:
+    - 'groq': Groq Cloud API (free tier, 14,400 req/day)
+    - 'ollama': Local Ollama instance (no limits, requires local setup)
+
+    Switch via .env: LLM_PROVIDER=groq or LLM_PROVIDER=ollama
     """
     
-    def __init__(self, api_key=None, model=None):
-        """
-        Initialize the Groq service.
-        
-        Args:
-            api_key: Your Groq API key (optional, uses .env if not provided)
-            model: The AI model to use (optional, defaults to llama-3.1-8b-instant)
-        """
-        self.api_key = api_key or GROQ_API_KEY
-        self.model = model or GROQ_MODEL
-        self.api_url = GROQ_API_URL
-        self.provider = 'groq'
+    def __init__(self, api_key=None, model=None, provider=None):
+        config = _get_config()
+        self.provider = provider or config['provider']
+        logger.info(f"LLM init: provider={self.provider}")
+
+        if self.provider == 'ollama':
+            self.model = model or config['ollama_model']
+            self.api_url = f"{config['ollama_base_url']}/v1/chat/completions"
+            self.api_key = 'ollama'
+            self._ollama_base_url = config['ollama_base_url']
+        else:
+            self.api_key = api_key or config['groq_api_key']
+            self.model = model or config['groq_model']
+            self.api_url = GROQ_API_URL
+            self.provider = 'groq'
+            self._ollama_base_url = None
     
     def is_available(self):
-        """
-        Check if the Groq service is ready to use.
-        
-        Returns True if API key is configured, False otherwise.
-        Used by health check endpoint: GET /api/health/
-        """
+        """Check if the LLM service is ready to use."""
+        if self.provider == 'ollama':
+            try:
+                resp = requests.get(f"{self._ollama_base_url}/api/tags", timeout=3)
+                return resp.status_code == 200
+            except Exception:
+                return False
         return bool(self.api_key)
     
     def chat(
@@ -269,22 +278,23 @@ class GroqService:
         # Add the current user message
         messages.append({"role": "user", "content": message})
         
-        # Send request to Groq API
+        # Send request to LLM API
+        timeout = 120 if self.provider == 'ollama' else 30
         try:
             response = requests.post(
                 self.api_url,
                 headers={
-                    "Authorization": f"Bearer {self.api_key}",  # API authentication
+                    "Authorization": f"Bearer {self.api_key}",
                     "Content-Type": "application/json"
                 },
                 json={
-                    "model": self.model,           # llama-3.1-8b-instant
-                    "messages": messages,          # The conversation
-                    "temperature": temperature,    # Creativity (0=strict, 1=creative)
-                    "max_tokens": max_tokens,      # Max response length
-                    "top_p": top_p                 # Response diversity
+                    "model": self.model,
+                    "messages": messages,
+                    "temperature": temperature,
+                    "max_tokens": max_tokens,
+                    "top_p": top_p
                 },
-                timeout=30  # Wait max 30 seconds for response
+                timeout=timeout
             )
             
             # Check if request was successful
@@ -300,7 +310,7 @@ class GroqService:
                     'success': True,
                     'response': choice.get('message', {}).get('content', ''),
                     'model': self.model,
-                    'provider': 'groq',
+                    'provider': self.provider,
                     'response_time_ms': elapsed_ms,
                     'tokens_used': usage.get('total_tokens', 0)
                 }
@@ -406,6 +416,7 @@ class GroqService:
                     request_body["tools"] = tools
                     request_body["tool_choice"] = "auto"
 
+                timeout = 120 if self.provider == 'ollama' else 30
                 response = requests.post(
                     self.api_url,
                     headers={
@@ -413,13 +424,13 @@ class GroqService:
                         "Content-Type": "application/json"
                     },
                     json=request_body,
-                    timeout=30
+                    timeout=timeout
                 )
 
                 if response.status_code != 200:
                     error_msg = response.json().get('error', {}).get('message', response.text)
-                    logger.error(f"Groq error: {response.status_code} - {error_msg}")
-                    return {'success': False, 'error': f"Groq error: {error_msg}"}
+                    logger.error(f"LLM error ({self.provider}): {response.status_code} - {error_msg}")
+                    return {'success': False, 'error': f"LLM error: {error_msg}"}
 
                 result = response.json()
                 usage = result.get('usage', {})
@@ -489,23 +500,18 @@ def get_llm_service(use_case='default', model=None):
     """
     Factory function to get the LLM service.
     
-    Usage in views:
-        from ai_assistant.services import get_llm_service
-        
-        llm = get_llm_service()
-        result = llm.chat("Hello!")
-    
-    Args:
-        use_case: Routing key ('default', 'chat', 'qualification')
-        model: Optional explicit model override
-
-    Returns:
-        GroqService instance
+    Reads LLM_PROVIDER from Django settings at call time.
     """
-    if model:
+    config = _get_config()
+    provider = config['provider']
+
+    if provider == 'ollama':
+        selected_model = model or config['ollama_model']
+    elif model:
         selected_model = model
     else:
         normalized_use_case = str(use_case or 'default').strip().lower()
-        selected_model = MODEL_BY_USE_CASE.get(normalized_use_case, GROQ_MODEL)
+        use_case_key = MODEL_USE_CASE_KEYS.get(normalized_use_case, 'groq_model')
+        selected_model = config[use_case_key]
 
-    return GroqService(model=selected_model)
+    return GroqService(model=selected_model, provider=provider)

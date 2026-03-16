@@ -32,6 +32,37 @@ python manage.py runserver 0.0.0.0:8000
 
 API available at: `http://localhost:8000/`
 
+### AI Chatbot — LLM Provider Setup
+
+The AI assistant supports two LLM providers. Switch between them via a single `.env` variable:
+
+**Option A: Groq (Cloud — default)**
+```bash
+# In .env
+LLM_PROVIDER=groq
+# Free tier: 14,400 requests/day
+# Get API key at: https://console.groq.com
+```
+
+**Option B: Ollama (Local — no rate limits)**
+```bash
+# 1. Install Ollama
+brew install ollama  # macOS
+
+# 2. Start Ollama server
+ollama serve
+
+# 3. Pull a model
+ollama pull llama3.1
+
+# 4. Switch provider in .env
+LLM_PROVIDER=ollama
+OLLAMA_BASE_URL=http://localhost:11434
+OLLAMA_MODEL=llama3.1
+```
+
+Restart the backend after switching providers.
+
 ---
 
 ## Configuration
@@ -223,13 +254,10 @@ python manage.py train_document_classifier --epochs 10
 
 ---
 
-## Useful Commands
+## Useful Commands (Production)
 
 ```bash
-# Run development server
-python manage.py runserver
-
-# Test with production server locally
+# 6. Run with production server (macOS requires OBJC flag)
 OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES gunicorn config.wsgi:application --bind 0.0.0.0:8000
 
 # Collect static files (before deployment)
@@ -237,6 +265,17 @@ python manage.py collectstatic
 
 # Check health
 curl http://localhost:8000/api/health/
+```
+
+### Switch AI Provider
+
+```bash
+# Use Groq (cloud, free tier)
+# In .env: LLM_PROVIDER=groq
+
+# Use Ollama (local, no limits)
+# In .env: LLM_PROVIDER=ollama
+# Make sure Ollama is running: ollama serve
 ```
 
 ### Encrypted Backup and Restore
