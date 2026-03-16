@@ -434,6 +434,7 @@ class OfficerApplicationDetailView(LoanOfficerRequiredMixin, APIView):
                 'street_address': personal.address_line1,
                 'emergency_contact_name': personal.emergency_contact_name,
                 'emergency_contact_phone': personal.emergency_contact_phone,
+                'wallet_address': personal.wallet_address,
                 'profile_completed': personal.profile_completed,
                 'completion_percentage': personal.completion_percentage
             },
@@ -527,6 +528,11 @@ class OfficerApplicationDetailView(LoanOfficerRequiredMixin, APIView):
                 'disbursement_method': app.disbursement_method,
                 'disbursement_reference': app.disbursement_reference,
                 'disbursed_at': app.disbursed_at.isoformat() if app.disbursed_at else None,
+                # ETH disbursement details (populated after wallet disbursement)
+                'eth_disbursement_tx_hash': getattr(app, 'eth_disbursement_tx_hash', None),
+                'eth_disbursement_amount': getattr(app, 'eth_disbursement_amount', None),
+                'eth_disbursement_rate': getattr(app, 'eth_disbursement_rate', None),
+                'eth_disbursement_recipient': getattr(app, 'eth_disbursement_recipient', None),
                 'internal_notes': [
                     serialize_internal_note(note)
                     for note in (app.internal_notes or [])
