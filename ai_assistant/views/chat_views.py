@@ -332,7 +332,10 @@ class SuggestionsView(ConsentRequiredMixin, APIView):
                 "Paano mag-apply ng loan para sa maliit na negosyo?",
                 "Ano-ano ang mga requirements para sa loan?",
                 "Magkano ang pwede kong i-loan?",
-                "Paano malalaman kung approved ang loan ko?"
+                "Paano malalaman kung approved ang loan ko?",
+                "Paano magbayad ng loan?",
+                "Ano-ano ang mga paraan ng pagbabayad?",
+                "Paano gumagana ang blockchain verification?",
             ]
         else:
             suggestions = [
@@ -340,7 +343,10 @@ class SuggestionsView(ConsentRequiredMixin, APIView):
                 "How do I apply for a small business loan?",
                 "What documents do I need for a loan?",
                 "How much can I borrow?",
-                "How will I know if my loan is approved?"
+                "How will I know if my loan is approved?",
+                "How do I make a payment?",
+                "What payment methods are available?",
+                "How does blockchain verification work?",
             ]
         
         return success_response(
@@ -407,32 +413,37 @@ class EducationView(AccessControlMixin, APIView):
             },
             'interest_rates': {
                 'title': 'Understanding Interest Rates',
-                'content': 'Interest is what you pay for borrowing money. Lower rates mean lower total cost.',
+                'content': 'Interest is what you pay for borrowing money. MSME Pathways uses a flat interest rate, meaning you pay the same interest amount each month. Lower rates mean lower total cost.',
                 'key_points': [
-                    'Monthly rate: Applied each month',
-                    'Annual rate: Total yearly percentage',
-                    'Compare rates before choosing a loan'
+                    'Flat rate: Same interest amount every month (not compounding)',
+                    'Default rate: 1.5% per month (18% per year), varies by product',
+                    'Compare rates before choosing a loan product'
                 ]
             },
             'loan_process': {
                 'title': 'The Loan Process',
-                'content': 'Applying for a loan is simple with our AI-assisted process.',
+                'content': 'Applying for a loan is simple with our AI-assisted process. Every step is tracked and recorded on the blockchain for transparency.',
                 'key_points': [
-                    'Step 1: Complete your profile',
-                    'Step 2: Upload required documents',
-                    'Step 3: Get AI pre-qualification',
-                    'Step 4: Submit application',
-                    'Step 5: Wait for approval'
+                    'Step 1: Complete your profile (personal, business, and alternative credit data)',
+                    'Step 2: Upload required documents (valid ID is always required)',
+                    'Step 3: Browse loan products and get AI pre-qualification',
+                    'Step 4: Submit your application with your preferred amount and term',
+                    'Step 5: A loan officer reviews your application',
+                    'Step 6: Get approved or receive feedback on what to improve',
+                    'Step 7: Loan is disbursed via your preferred method',
+                    'Step 8: Repay in monthly installments'
                 ]
             },
             'documents_needed': {
                 'title': 'Documents You Need',
-                'content': 'We keep requirements simple for MSMEs.',
+                'content': 'We keep requirements simple for MSMEs. Many small businesses operate informally, so we don\'t always require a business permit.',
                 'key_points': [
-                    'Valid government ID (required)',
-                    'Proof of address',
-                    'Business permit (if available)',
-                    'Photo of your business'
+                    'Valid government ID (required for all loans)',
+                    'Selfie with your ID',
+                    'Proof of address (utility bill, barangay certificate)',
+                    'Business permit (DTI/SEC/Mayor\'s permit — if available)',
+                    'Business photo (photo of your business or workplace)',
+                    'Income proof (bank statements, sales records — optional)'
                 ]
             },
             'improving_chances': {
@@ -443,6 +454,63 @@ class EducationView(AccessControlMixin, APIView):
                     'Upload clear, valid documents',
                     'Start with a smaller loan amount',
                     'Show consistent business activity'
+                ]
+            },
+            'payment_methods': {
+                'title': 'Payment Methods',
+                'content': 'MSME Pathways supports 5 payment methods in two categories: automatic and manual.',
+                'key_points': [
+                    'AUTOMATIC — recorded instantly when you pay:',
+                    '  • GCash — pay using your GCash mobile wallet',
+                    '  • Bank Transfer — pay via electronic bank transfer',
+                    '  • Wallet (ETH) — pay using your Ethereum cryptocurrency wallet',
+                    'MANUAL — your loan officer records the payment for you:',
+                    '  • Cash — pay at a partner location',
+                    '  • Check — pay by check; recorded after clearance',
+                    'For cash and check, visit a partner location and your loan officer will record it in the system'
+                ]
+            },
+            'repayment_schedule': {
+                'title': 'Understanding Your Repayment Schedule',
+                'content': 'After your loan is disbursed, a repayment schedule is automatically created with equal monthly installments.',
+                'key_points': [
+                    'Each installment has a due date, principal portion, and interest portion',
+                    'Installment statuses: Pending, Paid, Partial, or Overdue',
+                    'Partial payments are supported — pay what you can',
+                    'View your schedule in the app: Track → select your loan → Schedule tab',
+                    'View payment history: Track → select your loan → Payments tab'
+                ]
+            },
+            'blockchain_basics': {
+                'title': 'Blockchain Verification',
+                'content': 'MSME Pathways records all major loan events on the Ethereum blockchain, providing a transparent and tamper-proof record of your loan history.',
+                'key_points': [
+                    'Every loan application, approval, disbursement, and payment is recorded on-chain',
+                    'Blockchain records cannot be altered or deleted — ensuring transparency',
+                    'You can view blockchain verification details in the app',
+                    'This protects both borrowers and lenders with an immutable audit trail'
+                ]
+            },
+            'after_approval': {
+                'title': 'After Your Loan is Approved',
+                'content': 'Once approved, here\'s what happens next and what you need to know about managing your loan.',
+                'key_points': [
+                    'You\'ll receive a notification with your approved loan amount',
+                    'Set your preferred disbursement method (GCash, bank transfer, cash, check, or wallet)',
+                    'The loan officer processes the disbursement',
+                    'A repayment schedule is automatically created after disbursement',
+                    'Make monthly payments on time to maintain good standing',
+                    'Track everything in the app under the "Track" section'
+                ]
+            },
+            'wallet_setup': {
+                'title': 'Using the ETH Wallet',
+                'content': 'MSME Pathways supports Ethereum (ETH) wallet payments for both disbursement and repayment. This is a cryptocurrency-based payment option.',
+                'key_points': [
+                    'Wallet (ETH) is one of the 5 accepted payment methods',
+                    'Payments via ETH wallet are automatically recorded in the system',
+                    'You can also choose to receive your loan disbursement via ETH wallet',
+                    'All wallet transactions are verified on the Ethereum blockchain'
                 ]
             }
         }
@@ -482,7 +550,7 @@ class FAQsView(AccessControlMixin, APIView):
         faqs = [
             {
                 'question': 'How much can I borrow?',
-                'answer': 'Loan amounts range from ₱5,000 to ₱500,000 depending on your profile and business needs.'
+                'answer': 'Loan amounts range from ₱5,000 to ₱500,000 depending on the loan product, your profile, and business needs.'
             },
             {
                 'question': 'How long does approval take?',
@@ -494,15 +562,35 @@ class FAQsView(AccessControlMixin, APIView):
             },
             {
                 'question': 'Do I need a business permit?',
-                'answer': 'Not necessarily! We understand many MSMEs operate informally. A valid ID is the main requirement.'
+                'answer': 'Not necessarily! We understand many MSMEs operate informally. A valid government ID is the main requirement.'
             },
             {
                 'question': 'How do I make payments?',
-                'answer': 'Payments can be made via bank transfer, GCash, Wallet (ETH), check or cash at partner locations.'
+                'answer': 'There are 5 payment methods in two categories. Automatic (recorded instantly): GCash, Bank Transfer, and Wallet (ETH) — you pay directly and it\'s automatically recorded. Manual (recorded by your loan officer): Cash and Check — you pay at a partner location and the loan officer records it for you.'
             },
             {
                 'question': 'What happens if I miss a payment?',
-                'answer': 'Contact us immediately. We offer flexible arrangements for genuine difficulties.'
+                'answer': 'Your installment will be marked as overdue. Contact us immediately — we offer flexible arrangements for genuine difficulties.'
+            },
+            {
+                'question': 'How do I check my loan status?',
+                'answer': 'Open the app and go to Track → Applications. You\'ll see the current status of all your loan applications (draft, submitted, under review, approved, rejected, or disbursed).'
+            },
+            {
+                'question': 'What is blockchain verification?',
+                'answer': 'Every major event in your loan — application, approval, disbursement, and each payment — is permanently recorded on the Ethereum blockchain. This creates a transparent, tamper-proof audit trail that protects both you and the lender.'
+            },
+            {
+                'question': 'How does the repayment schedule work?',
+                'answer': 'After your loan is disbursed, a repayment schedule is automatically created with equal monthly installments. Each installment includes a principal and interest portion. You can view it in the app under Track → select your loan → Schedule tab.'
+            },
+            {
+                'question': 'What happens after my loan is disbursed?',
+                'answer': 'Once disbursed, your repayment schedule is automatically created. You\'ll need to make monthly payments according to the schedule. You can track your payments and remaining balance in the app under the Track section.'
+            },
+            {
+                'question': 'What is the ETH Wallet payment method?',
+                'answer': 'Wallet (ETH) lets you make payments using an Ethereum cryptocurrency wallet. Payments via ETH wallet are automatically recorded in the system and verified on the blockchain. You can also receive your loan disbursement via ETH wallet.'
             }
         ]
         
