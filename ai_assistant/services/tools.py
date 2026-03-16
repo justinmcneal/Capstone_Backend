@@ -51,7 +51,7 @@ TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "get_loan_status",
-            "description": "Get the status of all the user's loan applications. Call this when the user asks about their loan status, applications, or whether they have any active loans.",
+            "description": "Get the status of the user's OWN loan applications (submitted, approved, disbursed, etc). Call this ONLY when the user asks about THEIR loan status, THEIR applications, or whether THEY have active loans. Do NOT call this for available loan products.",
             "parameters": {
                 "type": "object",
                 "properties": {},
@@ -63,7 +63,7 @@ TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "get_repayment_schedule",
-            "description": "Get the user's repayment schedule including all installments, paid/pending status, and remaining balance. Call this when the user asks about their repayment schedule, installments, or remaining balance.",
+            "description": "Get the user's full repayment schedule with installment progress (paid/total), remaining balance, and each installment's status. Call this when the user asks how much they owe, how many installments they have paid, their repayment progress, or remaining balance.",
             "parameters": {
                 "type": "object",
                 "properties": {},
@@ -105,7 +105,19 @@ TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "get_loan_products",
-            "description": "Get all available loan products with their interest rates, amount ranges, and requirements. Call this when the user asks about available loans, loan options, interest rates, or loan products.",
+            "description": "Get all available loan PRODUCTS offered by the microfinance institution (names, interest rates, amount ranges, requirements). Call this when the user asks what loan products/options are available, what they can borrow, or about interest rates. This is NOT about the user's own applications.",
+            "parameters": {
+                "type": "object",
+                "properties": {},
+                "required": []
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_application_readiness",
+            "description": "Check if the user is ready to apply for a loan by checking profile, business, and document status. Call this when the user asks what they still need to do before applying, if they are eligible, or what requirements are missing.",
             "parameters": {
                 "type": "object",
                 "properties": {},
@@ -133,6 +145,7 @@ def execute_tool(tool_name, tool_args, customer_id):
         'get_next_payment_due': _get_next_payment_due,
         'get_payment_history': _get_payment_history,
         'get_loan_products': _get_loan_products,
+        'get_application_readiness': _get_application_readiness,
     }
 
     executor = executors.get(tool_name)
@@ -373,4 +386,75 @@ def _get_loan_products(customer_id, **kwargs):
         "products": product_list,
         "total": len(product_list),
         "summary": f"{len(product_list)} loan product(s) available."
+    }
+
+
+def _get_application_readiness(customer_id, **kwargs):
+    """Check profile, business, and document completeness for loan application readiness."""
+    from profiles.models.profile_models import CustomerProfile, BusinessProfile
+    from documents.models.document import Document
+
+    blockers = []
+    completed = []
+
+    # Profile check
+    profile = CustomerProfile.find_by_customer(customer_id)
+    if profile:
+        pct = getattr(profile, 'completion_percentage', 0)
+        if pct >= 100:
+            completed.append("Personal profile is complete")
+        else:
+            missing = []
+            if not getattr(profile, 'date_of_birth', None):
+                missing.append('date of birth')
+            if not getattr(profile, 'gender', None):
+                missing.append('gender')
+            if not getattr(profile, 'civil_status', None):
+                missing.append('civil status')
+            if not getattr(profile, 'mobile_number', None):
+                missing.append('mobile number')
+            if not getattr(profile, 'address_line1', None):
+                missing.append('address')
+            if not getattr(profile, 'emergency_contact_name', None):
+                missing.append('emergency contact name')
+            if not getattr(profile, 'emergency_contact_phone', None):
+                missing.append('emergency contact phone')
+            blockers.append(f"Profile is {pct}% complete — missing: {', '.join(missing)}")
+    else:
+        blockers.append("Personal profile has not been created yet")
+
+    # Business check
+    business = BusinessProfile.find_by_customer(customer_id)
+    if business and getattr(business, 'business_name', None):
+        completed.append(f"Business profile set up ({business.business_name})")
+    else:
+        blockers.append("Business profile has not been set up yet")
+
+    # Document check
+    docs = Document.find_by_customer(customer_id)
+    required_types = ['government_id', 'proof_of_income', 'business_permit']
+    if docs:
+        uploaded_types = [getattr(d, 'document_type', '') for d in docs]
+        approved_types = [getattr(d, 'document_type', '') for d in docs if getattr(d, 'status', '') == 'approved']
+        pending_types = [getattr(d, 'document_type', '') for d in docs if getattr(d, 'status', '') == 'pending']
+        rejected_types = [getattr(d, 'document_type', '') for d in docs if getattr(d, 'status', '') == 'rejected']
+
+        missing_docs = [t.replace('_', ' ').title() for t in required_types if t not in uploaded_types]
+        if missing_docs:
+            blockers.append(f"Missing documents: {', '.join(missing_docs)}")
+        if rejected_types:
+            blockers.append(f"Rejected documents need re-upload: {', '.join(t.replace('_', ' ').title() for t in rejected_types)}")
+        if pending_types:
+            completed.append(f"{len(pending_types)} document(s) pending verification")
+        if approved_types:
+            completed.append(f"{len(approved_types)} document(s) approved")
+    else:
+        blockers.append(f"No documents uploaded — required: {', '.join(t.replace('_', ' ').title() for t in required_types)}")
+
+    ready = len(blockers) == 0
+    return {
+        "ready_to_apply": ready,
+        "blockers": blockers,
+        "completed": completed,
+        "summary": "Ready to apply!" if ready else f"{len(blockers)} thing(s) to complete before applying"
     }
