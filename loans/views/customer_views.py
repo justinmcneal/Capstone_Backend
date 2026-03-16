@@ -992,7 +992,13 @@ class PaymentHistoryView(CustomerRoleRequiredMixin, APIView):
                 status_code=status.HTTP_400_BAD_REQUEST
             )
 
-        valid_methods = {'cash', 'gcash', 'bank_transfer', 'check', 'wallet'}
+        if payment_method in {'cash', 'check'}:
+            return error_response(
+                message="Cash and check payments must be paid at the office and recorded by a loan officer",
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+
+        valid_methods = {'gcash', 'bank_transfer', 'wallet'}
         if payment_method not in valid_methods:
             return error_response(
                 message="Invalid payment_method",

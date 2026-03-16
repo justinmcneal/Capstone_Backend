@@ -1084,7 +1084,7 @@ class RecordPaymentView(LoanOfficerRequiredMixin, APIView):
         amount_raw = request.data.get('amount', 0)
         payment_method = sanitize_text(request.data.get('payment_method', 'cash')).lower() or 'cash'
         reference = sanitize_text(request.data.get('reference', ''))
-        external_reference = sanitize_text(request.data.get('external_reference', ''))  # GCash/Bank ref
+        external_reference = sanitize_text(request.data.get('external_reference', ''))  # Cash/check reference
         notes = sanitize_text(request.data.get('notes', ''))
         
         # Validation
@@ -1123,10 +1123,9 @@ class RecordPaymentView(LoanOfficerRequiredMixin, APIView):
                 message="amount must be greater than 0",
                 status_code=status.HTTP_400_BAD_REQUEST
             )
-        valid_methods = {'cash', 'gcash', 'bank_transfer', 'check', 'wallet'}
-        if payment_method not in valid_methods:
+        if payment_method not in {'cash', 'check'}:
             return error_response(
-                message="Invalid payment_method",
+                message="Manual payment recording only accepts cash or check",
                 status_code=status.HTTP_400_BAD_REQUEST
             )
         if not reference and external_reference:
