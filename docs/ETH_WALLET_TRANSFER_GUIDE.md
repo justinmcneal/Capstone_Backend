@@ -191,10 +191,12 @@ print('wallet_address:', p.wallet_address)
 
 # 2. Verify ETH price service
 python manage.py shell -c "
-from loans.blockchain.services.eth_price_service import get_eth_php_rate
-rate = get_eth_php_rate()
-print(f'ETH/PHP rate: {rate}')
-print(f'50,000 PHP = {50000/rate:.6f} ETH')
+from loans.blockchain.services.eth_price_service import get_eth_php_rate, php_to_eth
+rate_info = get_eth_php_rate()
+print(f'ETH/PHP rate: {rate_info[\"rate\"]}')
+print(f'Source: {rate_info[\"source\"]}')
+conversion = php_to_eth(50000)
+print(f'50,000 PHP = {conversion[\"eth_amount\"]:.6f} ETH')
 "
 
 # 3. Verify ETH transfer (Ganache must be running)
@@ -216,9 +218,12 @@ print(f'Balance change: {w3.from_wei(balance_after - balance_before, \"ether\")}
 
 **Expected results:**
 - ✅ Profile saves and returns `wallet_address`
-- ✅ Price service returns a numeric rate (e.g., `180000.0`)
+- ✅ Price service returns a dict with numeric `rate` (e.g., `129824.26`), `source` (`"cryptocompare"`), and `fetched_at`
+- ✅ `php_to_eth()` converts PHP to ETH correctly
 - ✅ ETH transfer succeeds, balance changes in Ganache
 - ✅ Transaction visible in Ganache Transactions tab
+- ✅ Serializer validates ETH addresses (rejects missing `0x` prefix, wrong length)
+- ✅ Price cache prevents redundant API calls within 5-minute window
 
 ---
 
@@ -521,15 +526,84 @@ Include `wallet_address` in the `PUT /api/profile/` request body when updating p
 
 ### Testing Phase 4
 
-1. Open mobile app → **Profile** → **Personal Information**
-2. Scroll to the wallet address field
-3. Enter a valid Ganache account address: `0x...` (42 chars)
-4. Save profile
+**Prerequisites:**
+- Mobile app running on emulator or device (connected to the backend)
+- Backend server running (`python manage.py runserver`)
+- A registered customer account (logged in on mobile)
+- A Ganache account address to use as the wallet (e.g., Account #2: copy from Ganache → Accounts tab)
+
+#### Test 1 — Valid Wallet Address
+
+1. Open mobile app → navigate to **Apply** or **Profile** → **Personal Information** (Step 1 of loan application)
+2. Scroll down to the **"Digital Wallet"** section (below Emergency Contact)
+3. You should see a field labeled **"ETH Wallet Address"** with a wallet icon and hint `0x...`
+4. Enter a valid Ganache Account #2 address (42 characters, e.g., `0x5F034623bFD198980e8Af188702b871458E5d854`)
+5. Tap **Save** / **Next**
+6. Verify:
+   - ✅ No validation error shown
+   - ✅ Profile saves successfully
+
+#### Test 2 — Invalid Wallet Address (Validation)
+
+1. In the same wallet address field, try each of these invalid inputs:
+
+   | Input | Expected Result |
+   |-------|-----------------|
+   | `hello` | ❌ Error: "Must be a valid ETH address (0x + 40 hex characters)" |
+   | `0x1234` | ❌ Error: too short (only 6 chars instead of 42) |
+   | `742d35Cc6634C0532925a3b844Bc9e7595f2bD28` | ❌ Error: missing `0x` prefix |
+   | `0xZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZ` | ❌ Blocked by input filter (only hex chars allowed) |
+   | _(empty)_ | ✅ OK — field is optional |
+
+2. Verify that the input filter only allows hex characters (`0-9`, `a-f`, `A-F`, `x`) and limits to 42 characters
+
+#### Test 3 — Persistence
+
+1. Save a valid wallet address
+2. Navigate away from the screen (go to Home or another tab)
+3. Navigate back to **Personal Information**
+4. Verify:
+   - ✅ The wallet address field still shows the saved address
+   - ✅ The address was not lost or cleared
+
+#### Test 4 — Backend Verification
+
+After saving a wallet address from the mobile app, verify it reached the backend:
+
+```bash
+# Check MongoDB directly
+python manage.py shell -c "
+from django.conf import settings
+db = settings.MONGODB
+# Replace CUSTOMER_ID with the logged-in customer's ID
+profile = db['customer_profiles'].find_one({'customer_id': 'CUSTOMER_ID'})
+print('wallet_address:', profile.get('wallet_address'))
+"
+
+# Or via the API (using the customer's auth token)
+curl http://localhost:8000/api/profile/ \
+  -H "Authorization: Bearer CUSTOMER_TOKEN" | python -m json.tool | grep wallet
+```
+
+#### Test 5 — Wallet Address in Loan Application Flow
+
+1. Set a valid wallet address in the profile
+2. Start a new loan application
+3. In the disbursement method selection, choose **"Wallet (ETH)"**
+4. Submit the application
 5. Verify:
-   - ✅ Field validates format (rejects invalid addresses)
-   - ✅ Address saves successfully
-   - ✅ Address persists after reopening the screen
-   - ✅ Backend MongoDB has `wallet_address` in `customer_profiles` collection
+   - ✅ Application is created with `preferred_disbursement_method: "wallet"`
+   - ✅ The customer's `wallet_address` is accessible to the officer when viewing the application
+
+**Expected results:**
+- ✅ "Digital Wallet" section visible in personal info form
+- ✅ ETH Wallet Address field uses wallet icon (`Icons.account_balance_wallet_outlined`)
+- ✅ Input filter restricts to hex characters, max 42 chars
+- ✅ Regex validation: `^0x[0-9a-fA-F]{40}$`
+- ✅ Optional field — blank is allowed
+- ✅ Saved address persists across screen navigations
+- ✅ Address stored in MongoDB `customer_profiles.wallet_address`
+- ✅ Address sent to backend via `PUT /api/profile/` with key `wallet_address`
 
 ---
 
