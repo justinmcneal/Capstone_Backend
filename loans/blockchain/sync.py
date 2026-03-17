@@ -308,7 +308,7 @@ def _execute_eth_disbursement(loan_id, app):
 
     # Store ETH transfer details in the loan document
     db = getattr(settings, "MONGODB", None)
-    if db:
+    if db is not None:
         from bson import ObjectId as BsonObjectId
         db["loan_applications"].update_one(
             {"_id": BsonObjectId(loan_id)},
@@ -393,6 +393,7 @@ def _sync_schedule_impl(loan_id):
 
 def _sync_payment_impl(loan_id, payment_id):
     from bson import ObjectId
+    from datetime import datetime
 
     from loans.blockchain.models import BlockchainTransaction
     from loans.blockchain.services.repayment_service import record_payment_onchain
@@ -430,12 +431,23 @@ def _sync_payment_impl(loan_id, payment_id):
 
         settings.MONGODB["loan_payments"].update_one(
             {"_id": ObjectId(payment_id)},
-            {"$set": {"blockchain_tx_hash": result["tx_hash"]}},
+            {"$set": {
+                "blockchain_tx_hash": result["tx_hash"],
+                "blockchain_sync_status": "synced",
+                "blockchain_synced_at": datetime.utcnow(),
+            }},
         )
         logger.info("sync_payment OK: loan=%s payment=%s tx=%s",
                      loan_id, payment_id, result["tx_hash"][:18])
 
     except Exception as exc:
+        settings.MONGODB["loan_payments"].update_one(
+            {"_id": ObjectId(payment_id)},
+            {"$set": {
+                "blockchain_sync_status": "failed",
+                "blockchain_sync_error": str(exc)[:500],
+            }},
+        )
         logger.error("sync_payment FAILED: loan=%s payment=%s error=%s",
                      loan_id, payment_id, exc)
         tx_record.mark_failed(str(exc))
