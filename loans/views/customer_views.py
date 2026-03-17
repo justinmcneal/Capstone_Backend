@@ -1485,11 +1485,12 @@ class WalletPaymentView(CustomerRoleRequiredMixin, APIView):
             php_received = eth_received * rate_info['rate']
             expected_php = installment['total_amount'] - installment.get('paid_amount', 0)
 
-            # Allow ±2% tolerance for exchange rate fluctuations
-            tolerance = expected_php * 0.02
-            if php_received < (expected_php - tolerance):
+            # Minimum payment threshold to prevent dust payments
+            MIN_PAYMENT_PHP = 100.0
+            
+            if php_received < MIN_PAYMENT_PHP:
                 return error_response(
-                    message=f"Insufficient payment amount. Expected ~₱{expected_php:.2f} "
+                    message=f"Payment too small. Minimum: ₱{MIN_PAYMENT_PHP:.2f} "
                             f"(received {eth_received:.6f} ETH ≈ ₱{php_received:.2f})",
                     status_code=status.HTTP_400_BAD_REQUEST
                 )
@@ -1513,8 +1514,8 @@ class WalletPaymentView(CustomerRoleRequiredMixin, APIView):
                 status_code=status.HTTP_400_BAD_REQUEST
             )
 
-        # Record the payment (use the expected PHP amount for consistency)
-        payment_amount = min(php_received, expected_php)
+        # Record the payment (accept full amount received, including overpayments)
+        payment_amount = php_received
         unpaid_before = schedule.count_unpaid_before(installment_number)
         updated_installment = schedule.record_payment(installment_number, payment_amount)
 
@@ -1528,10 +1529,11 @@ class WalletPaymentView(CustomerRoleRequiredMixin, APIView):
             reference=tx_hash[:18],
             notes=f"ETH wallet payment: {eth_received:.6f} ETH @ {rate_info['rate']:.2f} PHP/ETH",
             recorded_by=customer_id,
+            blockchain_sync_status='pending',
         )
         payment.save()
 
-        # Store ETH-specific details on the payment record
+        # Store ETH-specific details IMMEDIATELY (before blockchain sync starts)
         settings.MONGODB['loan_payments'].update_one(
             {'_id': ObjectId(payment.id)},
             {'$set': {
@@ -1588,6 +1590,8 @@ class WalletPaymentView(CustomerRoleRequiredMixin, APIView):
                 'tx_hash': tx_hash,
                 'block_number': receipt['blockNumber'],
                 'remaining_balance': schedule.get_remaining_balance(),
+                'blockchain_sync_status': 'pending',
+                'blockchain_sync_message': 'Payment recorded. Blockchain audit trail sync in progress...',
             },
             message="Wallet payment verified and recorded",
             status_code=status.HTTP_201_CREATED
