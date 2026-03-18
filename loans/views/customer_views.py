@@ -1656,6 +1656,10 @@ class SystemWalletInfoView(CustomerRoleRequiredMixin, APIView):
                 'rate_cached_at': datetime.fromtimestamp(
                     rate_info['fetched_at'], tz=timezone.utc
                 ).isoformat() if rate_info['fetched_at'] else None,
+                # Also include rate_updated_at for backwards compatibility
+                'rate_updated_at': datetime.fromtimestamp(
+                    rate_info['fetched_at'], tz=timezone.utc
+                ).isoformat() if rate_info['fetched_at'] else None,
             },
             message="System wallet info retrieved"
         )
