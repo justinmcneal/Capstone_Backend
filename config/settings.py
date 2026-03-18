@@ -186,6 +186,43 @@ DOCUMENT_UPLOAD_AI_ANALYSIS = os.getenv('DOCUMENT_UPLOAD_AI_ANALYSIS', 'True') =
 DOCUMENT_UPLOAD_NOTIFY_REVIEWERS = os.getenv('DOCUMENT_UPLOAD_NOTIFY_REVIEWERS', 'True') == 'True'
 DOCUMENT_UPLOAD_NOTIFY_ASYNC = os.getenv('DOCUMENT_UPLOAD_NOTIFY_ASYNC', 'True') == 'True'
 
+# Cache Configuration
+# Uses Redis if available, falls back to local memory cache
+REDIS_URL = os.getenv('REDIS_URL', os.getenv('CELERY_BROKER_URL', 'redis://localhost:6379/0'))
+USE_REDIS_CACHE = env_bool('USE_REDIS_CACHE', False)
+
+if USE_REDIS_CACHE and REDIS_URL:
+    CACHES = {
+        'default': {
+            'BACKEND': 'django.core.cache.backends.redis.RedisCache',
+            'LOCATION': REDIS_URL,
+            'KEY_PREFIX': 'msme_ai',
+            'OPTIONS': {
+                'CLIENT_CLASS': 'django_redis.client.DefaultClient',
+            }
+        }
+    }
+else:
+    # Local memory cache (good for single-server deployments)
+    CACHES = {
+        'default': {
+            'BACKEND': 'django.core.cache.backends.locmem.LocMemCache',
+            'LOCATION': 'msme-ai-cache',
+            'OPTIONS': {
+                'MAX_ENTRIES': 1000,
+            }
+        }
+    }
+
+# Cache TTL settings (in seconds)
+CACHE_TTL = {
+    'faqs': 60 * 60 * 24,       # 24 hours - FAQs rarely change
+    'education': 60 * 60 * 24,   # 24 hours - education content rarely changes
+    'suggestions': 60 * 60 * 12, # 12 hours - suggestions are static
+    'loan_products': 60 * 30,    # 30 minutes - products may be updated by admin
+    'ai_status': 60,             # 1 minute - status should be fresh
+}
+
 # Default primary key field type
 # https://docs.djangoproject.com/en/4.2/ref/settings/#default-auto-field
 

@@ -46,11 +46,23 @@ This document outlines a phased plan to improve the AI assistant experience, acc
 - [x] Only build user context when question requires it (intent detection)
 
 ### 1.4 Response Caching
-- [ ] Add Redis/in-memory cache for frequent queries
-- [ ] Cache FAQ responses (high TTL, invalidate on content change)
-- [ ] Cache loan products list (medium TTL)
-- [ ] Cache education content (high TTL)
-- [ ] Add cache headers to static AI endpoints (suggestions, faqs, education)
+- [x] Add Redis/in-memory cache for frequent queries
+- [x] Cache FAQ responses (high TTL, 24 hours)
+- [x] Cache loan products list (medium TTL, 30 minutes + invalidation on admin update)
+- [x] Cache education content (high TTL, 24 hours)
+- [x] Cache suggestions (12 hours, per language)
+- [x] Add `cached` flag in API responses for debugging
+
+**Cache TTL Configuration (in `config/settings.py`):**
+```python
+CACHE_TTL = {
+    'faqs': 86400,        # 24 hours
+    'education': 86400,   # 24 hours  
+    'suggestions': 43200, # 12 hours
+    'loan_products': 1800,# 30 minutes
+    'ai_status': 60,      # 1 minute
+}
+```
 
 ### 1.5 Parallel Tool Execution
 - [ ] Detect when multiple independent tools are requested

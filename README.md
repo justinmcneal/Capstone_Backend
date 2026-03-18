@@ -117,6 +117,38 @@ For full variable reference (dev + production), see `.env.example` and `docs/DEP
 
 ---
 
+### Response Caching (Optional)
+
+The API caches static content (FAQs, education, suggestions, loan products) to improve performance.
+
+**Default: In-memory cache** — works out of the box, no setup required.
+
+**Optional: Redis cache** — for multi-server deployments:
+```bash
+# In .env
+USE_REDIS_CACHE=true
+REDIS_URL=redis://localhost:6379/0
+```
+
+**Verify caching is working:**
+```bash
+# Call an endpoint twice - second call should have "cached": true
+curl -H "Authorization: Bearer <token>" http://localhost:8000/api/ai/faqs/
+
+# Response will include:
+# { "data": { "faqs": [...], "cached": true }, ... }
+```
+
+**Cache TTLs:**
+| Content | TTL | Invalidation |
+|---------|-----|--------------|
+| FAQs | 24 hours | Restart server |
+| Education | 24 hours | Restart server |
+| Suggestions | 12 hours | Restart server |
+| Loan Products | 30 mins | Auto (on admin CRUD) |
+
+---
+
 ## Development vs Production
 
 | Setting | Development | Production |

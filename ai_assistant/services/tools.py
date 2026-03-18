@@ -14,8 +14,13 @@ All tools are READ-ONLY — no mutations via chatbot.
 import json
 import logging
 from datetime import datetime
+from django.core.cache import cache
+from django.conf import settings
 
 logger = logging.getLogger('ai_assistant')
+
+# Cache TTL for tool results (loan products change infrequently)
+TOOL_CACHE_TTL = getattr(settings, 'CACHE_TTL', {}).get('loan_products', 1800)  # 30 min default
 
 
 # =============================================================================
@@ -360,11 +365,20 @@ def _get_payment_history(customer_id, limit=5, **kwargs):
 
 
 def _get_loan_products(customer_id, **kwargs):
+    """Get available loan products. Results are cached for performance."""
+    # Check cache first (loan products don't change frequently)
+    cache_key = 'ai_tool_loan_products'
+    cached_result = cache.get(cache_key)
+    if cached_result:
+        return cached_result
+    
     from loans.models.product import LoanProduct
 
     products = LoanProduct.find(active_only=True)
     if not products:
-        return {"products": [], "summary": "No loan products available at this time."}
+        result = {"products": [], "summary": "No loan products available at this time."}
+        cache.set(cache_key, result, TOOL_CACHE_TTL)
+        return result
 
     product_list = []
     for p in products:
@@ -382,11 +396,15 @@ def _get_loan_products(customer_id, **kwargs):
             "required_documents": getattr(p, 'required_documents', []),
         })
 
-    return {
+    result = {
         "products": product_list,
         "total": len(product_list),
         "summary": f"{len(product_list)} loan product(s) available."
     }
+    
+    # Cache for future requests
+    cache.set(cache_key, result, TOOL_CACHE_TTL)
+    return result
 
 
 def _get_application_readiness(customer_id, **kwargs):
