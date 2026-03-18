@@ -30,7 +30,7 @@ matplotlib>=3.7.0
 # Background Tasks (optional)
 celery>=5.3.0
 django-celery-beat>=2.5.0
-redis>=5.0.0
+redis>=4.0.0,<5.0.0
 
 # Environment
 python-dotenv>=1.0.0

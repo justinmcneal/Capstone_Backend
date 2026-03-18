@@ -3,6 +3,7 @@ from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
 from bson import ObjectId
 from datetime import datetime
+from django.core.cache import cache
 
 from accounts.authentication import CustomJWTAuthentication
 from accounts.utils.response_helpers import success_response, error_response
@@ -13,6 +14,12 @@ from loans.serializers import LoanProductSerializer
 import logging
 
 logger = logging.getLogger('loans')
+
+
+def invalidate_loan_products_cache():
+    """Invalidate all loan products related caches when products are modified."""
+    cache.delete('ai_tool_loan_products')
+    logger.debug("Loan products cache invalidated")
 
 
 def serialize_internal_note(note):
@@ -136,6 +143,9 @@ class AdminProductListView(AdminRequiredMixin, APIView):
         )
         product.save()
         
+        # Invalidate cache since products changed
+        invalidate_loan_products_cache()
+        
         logger.info(f"Loan product created: {product.code} by {request.user.customer_id}")
         
         return success_response(
@@ -258,6 +268,9 @@ class AdminProductDetailView(AdminRequiredMixin, APIView):
         saved_product = LoanProduct.find_by_id(product_id)
         logger.info(f"[PUT Product {product_id}] AFTER save (from DB) - min_business_months: {saved_product.min_business_months}, business_types: {saved_product.business_types}")
         
+        # Invalidate cache since products changed
+        invalidate_loan_products_cache()
+        
         logger.info(f"Product updated: {product.code}")
         
         return success_response(data={'id': product.id}, message="Product updated")
@@ -285,6 +298,9 @@ class AdminProductDetailView(AdminRequiredMixin, APIView):
         try:
             product.delete()  # Soft delete
             logger.info(f"Product deactivated: {product.code}")
+            
+            # Invalidate cache since products changed
+            invalidate_loan_products_cache()
             
             # Return updated product info for confirmation
             return success_response(

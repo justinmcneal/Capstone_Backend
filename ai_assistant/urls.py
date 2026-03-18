@@ -1,6 +1,7 @@
 from django.urls import path
 from ai_assistant.views import (
     ChatView,
+    StreamingChatView,
     ChatHistoryView,
     SuggestionsView,
     AIStatusView,
@@ -13,6 +14,9 @@ app_name = 'ai_assistant'
 urlpatterns = [
     # Main chat endpoint
     path('chat/', ChatView.as_view(), name='chat'),
+    
+    # Streaming chat endpoint (SSE)
+    path('chat/stream/', StreamingChatView.as_view(), name='chat-stream'),
     
     # Chat history
     path('history/', ChatHistoryView.as_view(), name='history'),

@@ -1,8 +1,13 @@
 from rest_framework.views import APIView
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
+from rest_framework.renderers import BaseRenderer
+from django.http import StreamingHttpResponse
+from django.core.cache import cache
+from django.conf import settings
 import uuid
 import math
+import time
 
 from accounts.authentication import CustomJWTAuthentication
 from accounts.utils.access_control import AccessControlMixin
@@ -12,7 +17,13 @@ from accounts.utils.validation_utils import sanitize_text, sanitize_multiline_te
 from accounts.models import Consent
 from ai_assistant.models import AIInteraction
 from ai_assistant.services import get_llm_service
-from ai_assistant.services.llm_service import SYSTEM_PROMPT
+from ai_assistant.services.llm_service import SYSTEM_PROMPT, needs_user_context
+from ai_assistant.services.knowledge_base import check_prohibited_content
+from ai_assistant.services.context_builder import (
+    build_user_context,
+    get_context_for_intent,
+    build_minimal_context,
+)
 from ai_assistant.services.tools import TOOL_SCHEMAS
 import logging
 
@@ -20,133 +31,25 @@ logger = logging.getLogger('ai_assistant')
 ALLOWED_LANGUAGES = {'en', 'tl'}
 
 
-def build_user_context(customer_id):
-    """
-    Build a dynamic context block with the user's current data
-    to append to the system prompt. Returns empty string on any failure
-    so the chatbot still works without context.
-    """
-    try:
-        from profiles.models.profile_models import CustomerProfile, BusinessProfile
-        from documents.models.document import Document
-        from loans.models.application import LoanApplication
-        from loans.models.repayment import RepaymentSchedule
-        from loans.models.payment import LoanPayment
+class EventStreamRenderer(BaseRenderer):
+    """Custom renderer for Server-Sent Events"""
+    media_type = 'text/event-stream'
+    format = 'txt'
 
-        lines = ["\n\n=== CURRENT USER CONTEXT ==="]
-        logger.info(f"Building user context for customer_id: {customer_id}")
+    def render(self, data, accepted_media_type=None, renderer_context=None):
+        return data
 
-        # --- Profile ---
-        profile = CustomerProfile.find_by_customer(customer_id)
-        logger.info(f"Profile lookup result: {profile is not None}")
-        if profile:
-            pct = getattr(profile, 'completion_percentage', None)
-            if pct is not None:
-                lines.append(f"Profile: {pct}% complete")
-                if pct < 100:
-                    missing = []
-                    if not getattr(profile, 'date_of_birth', None):
-                        missing.append('date of birth')
-                    if not getattr(profile, 'mobile_number', None):
-                        missing.append('mobile number')
-                    if not getattr(profile, 'address_line1', None):
-                        missing.append('address')
-                    if not getattr(profile, 'emergency_contact_name', None):
-                        missing.append('emergency contact')
-                    if missing:
-                        lines.append(f"  Missing: {', '.join(missing)}")
-            else:
-                lines.append("Profile: Created but completion not calculated")
-        else:
-            lines.append("Profile: Not created yet")
 
-        # --- Business ---
-        business = BusinessProfile.find_by_customer(customer_id)
-        logger.info(f"Business lookup result: {business is not None}")
-        if business and getattr(business, 'business_name', None):
-            btype = getattr(business, 'business_type', 'unknown')
-            age = getattr(business, 'business_age_months', None)
-            income = getattr(business, 'estimated_monthly_income', None)
-            parts = [f"Business: {business.business_name} ({btype})"]
-            if age is not None:
-                parts.append(f"operating for {age} months")
-            if income is not None:
-                parts.append(f"monthly income ₱{income:,.0f}")
-            lines.append(', '.join(parts))
-        else:
-            lines.append("Business Profile: Not set up yet")
+# Cache TTL defaults (fallback if not in settings)
+CACHE_TTL = getattr(settings, 'CACHE_TTL', {
+    'faqs': 86400,
+    'education': 86400,
+    'suggestions': 43200,
+    'loan_products': 1800,
+    'ai_status': 60,
+})
 
-        # --- Documents ---
-        docs = Document.find_by_customer(customer_id)
-        logger.info(f"Documents found: {len(docs) if docs else 0}")
-        if docs:
-            doc_summary = []
-            for doc in docs:
-                dtype = getattr(doc, 'document_type', 'unknown')
-                dstatus = getattr(doc, 'status', 'unknown')
-                label = dtype.replace('_', ' ').title()
-                doc_summary.append(f"{label} ({dstatus})")
-            lines.append(f"Documents: {', '.join(doc_summary)}")
-        else:
-            lines.append("Documents: None uploaded yet")
-
-        # --- Loan Applications ---
-        apps = LoanApplication.find_by_customer(customer_id)
-        logger.info(f"Loan applications found: {len(apps) if apps else 0}")
-        if apps:
-            for app in apps[:3]:
-                app_status = getattr(app, 'status', 'unknown')
-                amount = getattr(app, 'approved_amount', None) or getattr(app, 'requested_amount', None)
-                term = getattr(app, 'term_months', None)
-                app_line = f"Loan Application: {app_status}"
-                if amount:
-                    app_line += f", ₱{amount:,.0f}"
-                if term:
-                    app_line += f", {term} months"
-                lines.append(app_line)
-
-                # --- Repayment Schedule (for disbursed loans) ---
-                if app_status == 'disbursed' and hasattr(app, 'id'):
-                    schedule = RepaymentSchedule.find_by_loan(str(app.id))
-                    if schedule:
-                        installments = getattr(schedule, 'installments', [])
-                        total = len(installments)
-                        paid = sum(1 for i in installments if i.get('status') == 'paid')
-                        overdue = sum(1 for i in installments if i.get('status') == 'overdue')
-                        remaining = schedule.get_remaining_balance()
-                        lines.append(f"  Repayment: {paid} of {total} installments paid, remaining balance ₱{remaining:,.0f}")
-                        if overdue > 0:
-                            lines.append(f"  ⚠ {overdue} overdue installment(s)")
-
-                        next_payment = schedule.get_next_payment()
-                        if next_payment:
-                            due = next_payment.get('due_date')
-                            amt = next_payment.get('total_amount', 0)
-                            due_str = due.strftime('%B %d, %Y') if due else 'unknown'
-                            lines.append(f"  Next payment: ₱{amt:,.0f} due {due_str}")
-
-                    # --- Recent Payments ---
-                    payments = LoanPayment.find_by_loan(str(app.id))
-                    if payments:
-                        recent = payments[:3]
-                        for p in recent:
-                            p_amt = getattr(p, 'amount', 0)
-                            p_method = getattr(p, 'payment_method', 'unknown')
-                            p_date = getattr(p, 'recorded_at', None)
-                            p_date_str = p_date.strftime('%B %d, %Y') if p_date else 'unknown'
-                            lines.append(f"  Payment: ₱{p_amt:,.0f} via {p_method} on {p_date_str}")
-        else:
-            lines.append("Loan Applications: None yet")
-
-        lines.append("Note: You have access to this user's real data above. When answering their questions, ALWAYS use this data directly. Do NOT tell them to check the app — instead, tell them the actual values from the context above.")
-
-        context = '\n'.join(lines)
-        logger.info(f"Built user context ({len(context)} chars): {context[:200]}...")
-        return context
-
-    except Exception as e:
-        logger.error(f"Failed to build user context for {customer_id}: {e}", exc_info=True)
-        return ""
+# Note: build_user_context and related functions are now in context_builder.py
 
 
 class ConsentRequiredMixin(AccessControlMixin):
@@ -244,6 +147,39 @@ class ChatView(ConsentRequiredMixin, APIView):
                 for h in history[-10:]  # Last 10 messages
             ]
             
+            # Check for prohibited content (credentials, guarantees, etc.)
+            is_prohibited, redirect_response = check_prohibited_content(message)
+            if is_prohibited:
+                # Save the interaction but return the redirect response
+                user_interaction = AIInteraction(
+                    customer_id=customer_id,
+                    message=message,
+                    response='',
+                    conversation_id=conversation_id,
+                    role='user'
+                )
+                user_interaction.save()
+                
+                ai_interaction = AIInteraction(
+                    customer_id=customer_id,
+                    message=message,
+                    response=redirect_response,
+                    conversation_id=conversation_id,
+                    role='assistant',
+                    model='content_filter',
+                    response_time_ms=0,
+                )
+                ai_interaction.save()
+                
+                return success_response(
+                    data={
+                        'message': redirect_response,
+                        'conversation_id': conversation_id,
+                        'filtered': True,
+                    },
+                    message="Response generated"
+                )
+            
             # Get LLM response
             llm = get_llm_service(use_case='chat')
             
@@ -255,9 +191,13 @@ class ChatView(ConsentRequiredMixin, APIView):
                     status_code=status.HTTP_503_SERVICE_UNAVAILABLE
                 )
             
-            # Build context-aware system prompt
-            user_context = build_user_context(customer_id)
-            contextualized_prompt = SYSTEM_PROMPT + user_context
+            # Build context-aware system prompt based on intent
+            if needs_user_context(message):
+                # Use intent-based context selection for optimized token usage
+                user_context = get_context_for_intent(message, customer_id)
+                contextualized_prompt = SYSTEM_PROMPT + user_context
+            else:
+                contextualized_prompt = SYSTEM_PROMPT
 
             result = llm.chat_with_tools(
                 message=message,
@@ -324,6 +264,194 @@ class ChatView(ConsentRequiredMixin, APIView):
                 message="Failed to process chat message",
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+
+
+class StreamingChatView(ConsentRequiredMixin, APIView):
+    """
+    Streaming chat endpoint using Server-Sent Events (SSE).
+    
+    POST /api/ai/chat/stream/
+    
+    Returns a stream of events:
+    - event: tool_call, data: {"name": "get_profile_status"}
+    - event: tool_result, data: {"name": "get_profile_status", "success": true}
+    - event: token, data: {"content": "Hello"}
+    - event: done, data: {"model": "llama3.1", "tokens_used": 150}
+    - event: error, data: {"content": "Error message"}
+    """
+    authentication_classes = [CustomJWTAuthentication]
+    permission_classes = [IsAuthenticated]
+    throttle_classes = [ChatRateThrottle]
+    renderer_classes = [EventStreamRenderer]
+
+    def post(self, request):
+        """Stream AI response as Server-Sent Events"""
+        import json
+        
+        # Check AI consent
+        has_consent, result = self.check_ai_consent(request)
+        if not has_consent:
+            return result
+        
+        user = request.user
+        customer_id = user.customer_id
+        
+        # Get message from request
+        message = sanitize_text(request.data.get('message', ''))
+        if not message:
+            return error_response(
+                message="Message is required",
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Get optional parameters
+        raw_conversation_id = request.data.get('conversation_id')
+        if raw_conversation_id:
+            try:
+                conversation_id = str(uuid.UUID(str(raw_conversation_id)))
+            except (ValueError, TypeError):
+                return error_response(
+                    message="conversation_id must be a valid UUID",
+                    errors={'conversation_id': 'Invalid format'},
+                    status_code=status.HTTP_400_BAD_REQUEST
+                )
+        else:
+            conversation_id = str(uuid.uuid4())
+        
+        requested_language = sanitize_text(
+            request.data.get('language', user.language if hasattr(user, 'language') else 'en')
+        ).lower()
+        if requested_language not in ALLOWED_LANGUAGES:
+            return error_response(
+                message="Invalid language value",
+                errors={'language': f"language must be one of: {', '.join(sorted(ALLOWED_LANGUAGES))}"},
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+        language = requested_language
+        
+        # Check for prohibited content before processing
+        is_prohibited, redirect_response = check_prohibited_content(message)
+        if is_prohibited:
+            # Return redirect response as a simple SSE stream
+            def filtered_stream():
+                yield f"event: token\ndata: {json.dumps({'content': redirect_response})}\n\n"
+                yield f"event: done\ndata: {json.dumps({'filtered': True})}\n\n"
+            
+            response = StreamingHttpResponse(
+                filtered_stream(),
+                content_type='text/event-stream'
+            )
+            response['Cache-Control'] = 'no-cache'
+            response['X-Accel-Buffering'] = 'no'
+            return response
+        
+        # Get conversation history
+        history = AIInteraction.find_by_conversation(
+            conversation_id=conversation_id,
+            customer_id=customer_id,
+        )
+        conversation_history = [
+            {'role': h.role, 'content': h.message if h.role == 'user' else h.response}
+            for h in history[-10:]
+        ]
+        
+        # Get LLM service
+        llm = get_llm_service(use_case='chat')
+        
+        if not llm.is_available():
+            return error_response(
+                message="AI service is currently unavailable",
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE
+            )
+        
+        # Build context-aware system prompt based on intent
+        if needs_user_context(message):
+            user_context = get_context_for_intent(message, customer_id)
+            contextualized_prompt = SYSTEM_PROMPT + user_context
+        else:
+            contextualized_prompt = SYSTEM_PROMPT
+
+        def event_stream():
+            """Generator that yields SSE formatted events"""
+            start_time = time.time()
+            full_response = []
+            model_used = ''
+            tokens_used = 0
+            tools_called = []
+            
+            try:
+                for chunk in llm.chat_with_tools_stream(
+                    message=message,
+                    customer_id=customer_id,
+                    conversation_history=conversation_history,
+                    language=language,
+                    system_prompt=contextualized_prompt,
+                    tools=TOOL_SCHEMAS,
+                ):
+                    chunk_type = chunk.get('type')
+                    
+                    if chunk_type == 'tool_call':
+                        yield f"event: tool_call\ndata: {json.dumps({'name': chunk.get('name')})}\n\n"
+                    
+                    elif chunk_type == 'tool_result':
+                        tools_called.append(chunk.get('name'))
+                        yield f"event: tool_result\ndata: {json.dumps({'name': chunk.get('name'), 'success': chunk.get('success', True)})}\n\n"
+                    
+                    elif chunk_type == 'token':
+                        content = chunk.get('content', '')
+                        full_response.append(content)
+                        yield f"event: token\ndata: {json.dumps({'content': content})}\n\n"
+                    
+                    elif chunk_type == 'done':
+                        model_used = chunk.get('model', '')
+                        tokens_used = chunk.get('tokens_used', 0)
+                        elapsed_ms = int((time.time() - start_time) * 1000)
+                        
+                        # Save interactions to database
+                        ai_response = sanitize_multiline_text(''.join(full_response))
+                        if ai_response:
+                            # Save user message
+                            user_interaction = AIInteraction(
+                                customer_id=customer_id,
+                                message=message,
+                                response='',
+                                language=language,
+                                conversation_id=conversation_id,
+                                role='user'
+                            )
+                            user_interaction.save()
+                            
+                            # Save AI response
+                            ai_interaction = AIInteraction(
+                                customer_id=customer_id,
+                                message='',
+                                response=ai_response,
+                                language=language,
+                                conversation_id=conversation_id,
+                                role='assistant',
+                                model_used=model_used,
+                                response_time_ms=elapsed_ms,
+                                tokens_used=tokens_used
+                            )
+                            ai_interaction.save()
+                        
+                        yield f"event: done\ndata: {json.dumps({'model': model_used, 'tokens_used': tokens_used, 'response_time_ms': elapsed_ms, 'conversation_id': conversation_id, 'tools_called': tools_called})}\n\n"
+                    
+                    elif chunk_type == 'error':
+                        yield f"event: error\ndata: {json.dumps({'content': chunk.get('content', 'Unknown error')})}\n\n"
+                        break
+                        
+            except Exception as e:
+                logger.error(f"Stream error: {str(e)}")
+                yield f"event: error\ndata: {json.dumps({'content': 'Stream error occurred'})}\n\n"
+        
+        response = StreamingHttpResponse(
+            event_stream(),
+            content_type='text/event-stream'
+        )
+        response['Cache-Control'] = 'no-cache'
+        response['X-Accel-Buffering'] = 'no'
+        return response
 
 
 class ChatHistoryView(ConsentRequiredMixin, APIView):
@@ -442,6 +570,8 @@ class SuggestionsView(ConsentRequiredMixin, APIView):
     Get conversation starters/suggestions.
     
     GET /api/ai/suggestions/
+    
+    Responses are cached per language for performance.
     """
     authentication_classes = [CustomJWTAuthentication]
     permission_classes = [IsAuthenticated]
@@ -463,6 +593,15 @@ class SuggestionsView(ConsentRequiredMixin, APIView):
                 status_code=status.HTTP_400_BAD_REQUEST
             )
         language = requested_language
+        
+        # Check cache first
+        cache_key = f'ai_suggestions_{language}'
+        cached_data = cache.get(cache_key)
+        if cached_data:
+            return success_response(
+                data={'suggestions': cached_data, 'language': language, 'cached': True},
+                message="Suggestions retrieved successfully"
+            )
         
         if language == 'tl':
             suggestions = [
@@ -487,8 +626,11 @@ class SuggestionsView(ConsentRequiredMixin, APIView):
                 "How does blockchain verification work?",
             ]
         
+        # Cache for future requests
+        cache.set(cache_key, suggestions, CACHE_TTL.get('suggestions', 43200))
+        
         return success_response(
-            data={'suggestions': suggestions, 'language': language},
+            data={'suggestions': suggestions, 'language': language, 'cached': False},
             message="Suggestions retrieved successfully"
         )
 
@@ -529,9 +671,126 @@ class EducationView(AccessControlMixin, APIView):
     
     GET /api/ai/education/
     GET /api/ai/education/<topic>/
+    
+    Responses are cached for performance (content rarely changes).
     """
     authentication_classes = [CustomJWTAuthentication]
     permission_classes = [IsAuthenticated]
+    
+    # Education content is static, define once
+    TOPICS = {
+        'what_is_a_loan': {
+            'title': 'What is a Loan?',
+            'content': 'A loan is money you borrow and agree to pay back with interest. Think of it as a tool to help your business grow when you need funds.',
+            'key_points': [
+                'You receive money upfront',
+                'You pay it back in installments',
+                'Interest is the cost of borrowing'
+            ]
+        },
+        'interest_rates': {
+            'title': 'Understanding Interest Rates',
+            'content': 'Interest is what you pay for borrowing money. MSME Pathways uses a flat interest rate, meaning you pay the same interest amount each month. Lower rates mean lower total cost.',
+            'key_points': [
+                'Flat rate: Same interest amount every month (not compounding)',
+                'Default rate: 1.5% per month (18% per year), varies by product',
+                'Compare rates before choosing a loan product'
+            ]
+        },
+        'loan_process': {
+            'title': 'The Loan Process',
+            'content': 'Applying for a loan is simple with our AI-assisted process. Every step is tracked and recorded on the blockchain for transparency.',
+            'key_points': [
+                'Step 1: Complete your profile (personal, business, and alternative credit data)',
+                'Step 2: Upload required documents (valid ID is always required)',
+                'Step 3: Browse loan products and get AI pre-qualification',
+                'Step 4: Submit your application with your preferred amount and term',
+                'Step 5: A loan officer reviews your application',
+                'Step 6: Get approved or receive feedback on what to improve',
+                'Step 7: Loan is disbursed via your preferred method',
+                'Step 8: Repay in monthly installments'
+            ]
+        },
+        'documents_needed': {
+            'title': 'Documents You Need',
+            'content': 'We keep requirements simple for MSMEs. Many small businesses operate informally, so we don\'t always require a business permit.',
+            'key_points': [
+                'Valid government ID (required for all loans)',
+                'Selfie with your ID',
+                'Proof of address (utility bill, barangay certificate)',
+                'Business permit (DTI/SEC/Mayor\'s permit — if available)',
+                'Business photo (photo of your business or workplace)',
+                'Income proof (bank statements, sales records — optional)'
+            ]
+        },
+        'improving_chances': {
+            'title': 'Improving Your Approval Chances',
+            'content': 'Tips to increase your likelihood of getting approved.',
+            'key_points': [
+                'Complete your profile fully',
+                'Upload clear, valid documents',
+                'Start with a smaller loan amount',
+                'Show consistent business activity'
+            ]
+        },
+        'payment_methods': {
+            'title': 'Payment Methods',
+            'content': 'MSME Pathways supports 5 payment methods in two categories: automatic and manual.',
+            'key_points': [
+                'AUTOMATIC — recorded instantly when you pay:',
+                '  • GCash — pay using your GCash mobile wallet',
+                '  • Bank Transfer — pay via electronic bank transfer',
+                '  • Wallet (ETH) — pay using your Ethereum cryptocurrency wallet',
+                'MANUAL — your loan officer records the payment for you:',
+                '  • Cash — pay at a partner location',
+                '  • Check — pay by check; recorded after clearance',
+                'For cash and check, visit a partner location and your loan officer will record it in the system'
+            ]
+        },
+        'repayment_schedule': {
+            'title': 'Understanding Your Repayment Schedule',
+            'content': 'After your loan is disbursed, a repayment schedule is automatically created with equal monthly installments.',
+            'key_points': [
+                'Each installment has a due date, principal portion, and interest portion',
+                'Installment statuses: Pending, Paid, Partial, or Overdue',
+                'Partial payments are supported — pay what you can',
+                'View your schedule in the app: Track → select your loan → Schedule tab',
+                'View payment history: Track → select your loan → Payments tab'
+            ]
+        },
+        'blockchain_basics': {
+            'title': 'Blockchain Verification',
+            'content': 'MSME Pathways records all major loan events on the Ethereum blockchain, providing a transparent and tamper-proof record of your loan history.',
+            'key_points': [
+                'Every loan application, approval, disbursement, and payment is recorded on-chain',
+                'Blockchain records cannot be altered or deleted — ensuring transparency',
+                'You can view blockchain verification details in the app',
+                'This protects both borrowers and lenders with an immutable audit trail'
+            ]
+        },
+        'after_approval': {
+            'title': 'After Your Loan is Approved',
+            'content': 'Once approved, here\'s what happens next and what you need to know about managing your loan.',
+            'key_points': [
+                'You\'ll receive a notification with your approved loan amount',
+                'Set your preferred disbursement method (GCash, bank transfer, cash, check, or wallet)',
+                'The loan officer processes the disbursement',
+                'A repayment schedule is automatically created after disbursement',
+                'Make monthly payments on time to maintain good standing',
+                'Track everything in the app under the "Track" section'
+            ]
+        },
+        'wallet_setup': {
+            'title': 'Using the ETH Wallet',
+            'content': 'MSME Pathways supports Ethereum (ETH) wallet payments for both disbursement and repayment. This is a cryptocurrency-based payment option.',
+            'key_points': [
+                'Wallet (ETH) is one of the 5 accepted payment methods',
+                'Payments via ETH wallet are automatically recorded in the system',
+                'You can also choose to receive your loan disbursement via ETH wallet',
+                'All wallet transactions are verified on the Ethereum blockchain'
+            ]
+        }
+    }
     
     def get(self, request, topic=None):
         """Get education content on loan topics"""
@@ -539,133 +798,36 @@ class EducationView(AccessControlMixin, APIView):
         if not has_permission:
             return result
         
-        topics = {
-            'what_is_a_loan': {
-                'title': 'What is a Loan?',
-                'content': 'A loan is money you borrow and agree to pay back with interest. Think of it as a tool to help your business grow when you need funds.',
-                'key_points': [
-                    'You receive money upfront',
-                    'You pay it back in installments',
-                    'Interest is the cost of borrowing'
-                ]
-            },
-            'interest_rates': {
-                'title': 'Understanding Interest Rates',
-                'content': 'Interest is what you pay for borrowing money. MSME Pathways uses a flat interest rate, meaning you pay the same interest amount each month. Lower rates mean lower total cost.',
-                'key_points': [
-                    'Flat rate: Same interest amount every month (not compounding)',
-                    'Default rate: 1.5% per month (18% per year), varies by product',
-                    'Compare rates before choosing a loan product'
-                ]
-            },
-            'loan_process': {
-                'title': 'The Loan Process',
-                'content': 'Applying for a loan is simple with our AI-assisted process. Every step is tracked and recorded on the blockchain for transparency.',
-                'key_points': [
-                    'Step 1: Complete your profile (personal, business, and alternative credit data)',
-                    'Step 2: Upload required documents (valid ID is always required)',
-                    'Step 3: Browse loan products and get AI pre-qualification',
-                    'Step 4: Submit your application with your preferred amount and term',
-                    'Step 5: A loan officer reviews your application',
-                    'Step 6: Get approved or receive feedback on what to improve',
-                    'Step 7: Loan is disbursed via your preferred method',
-                    'Step 8: Repay in monthly installments'
-                ]
-            },
-            'documents_needed': {
-                'title': 'Documents You Need',
-                'content': 'We keep requirements simple for MSMEs. Many small businesses operate informally, so we don\'t always require a business permit.',
-                'key_points': [
-                    'Valid government ID (required for all loans)',
-                    'Selfie with your ID',
-                    'Proof of address (utility bill, barangay certificate)',
-                    'Business permit (DTI/SEC/Mayor\'s permit — if available)',
-                    'Business photo (photo of your business or workplace)',
-                    'Income proof (bank statements, sales records — optional)'
-                ]
-            },
-            'improving_chances': {
-                'title': 'Improving Your Approval Chances',
-                'content': 'Tips to increase your likelihood of getting approved.',
-                'key_points': [
-                    'Complete your profile fully',
-                    'Upload clear, valid documents',
-                    'Start with a smaller loan amount',
-                    'Show consistent business activity'
-                ]
-            },
-            'payment_methods': {
-                'title': 'Payment Methods',
-                'content': 'MSME Pathways supports 5 payment methods in two categories: automatic and manual.',
-                'key_points': [
-                    'AUTOMATIC — recorded instantly when you pay:',
-                    '  • GCash — pay using your GCash mobile wallet',
-                    '  • Bank Transfer — pay via electronic bank transfer',
-                    '  • Wallet (ETH) — pay using your Ethereum cryptocurrency wallet',
-                    'MANUAL — your loan officer records the payment for you:',
-                    '  • Cash — pay at a partner location',
-                    '  • Check — pay by check; recorded after clearance',
-                    'For cash and check, visit a partner location and your loan officer will record it in the system'
-                ]
-            },
-            'repayment_schedule': {
-                'title': 'Understanding Your Repayment Schedule',
-                'content': 'After your loan is disbursed, a repayment schedule is automatically created with equal monthly installments.',
-                'key_points': [
-                    'Each installment has a due date, principal portion, and interest portion',
-                    'Installment statuses: Pending, Paid, Partial, or Overdue',
-                    'Partial payments are supported — pay what you can',
-                    'View your schedule in the app: Track → select your loan → Schedule tab',
-                    'View payment history: Track → select your loan → Payments tab'
-                ]
-            },
-            'blockchain_basics': {
-                'title': 'Blockchain Verification',
-                'content': 'MSME Pathways records all major loan events on the Ethereum blockchain, providing a transparent and tamper-proof record of your loan history.',
-                'key_points': [
-                    'Every loan application, approval, disbursement, and payment is recorded on-chain',
-                    'Blockchain records cannot be altered or deleted — ensuring transparency',
-                    'You can view blockchain verification details in the app',
-                    'This protects both borrowers and lenders with an immutable audit trail'
-                ]
-            },
-            'after_approval': {
-                'title': 'After Your Loan is Approved',
-                'content': 'Once approved, here\'s what happens next and what you need to know about managing your loan.',
-                'key_points': [
-                    'You\'ll receive a notification with your approved loan amount',
-                    'Set your preferred disbursement method (GCash, bank transfer, cash, check, or wallet)',
-                    'The loan officer processes the disbursement',
-                    'A repayment schedule is automatically created after disbursement',
-                    'Make monthly payments on time to maintain good standing',
-                    'Track everything in the app under the "Track" section'
-                ]
-            },
-            'wallet_setup': {
-                'title': 'Using the ETH Wallet',
-                'content': 'MSME Pathways supports Ethereum (ETH) wallet payments for both disbursement and repayment. This is a cryptocurrency-based payment option.',
-                'key_points': [
-                    'Wallet (ETH) is one of the 5 accepted payment methods',
-                    'Payments via ETH wallet are automatically recorded in the system',
-                    'You can also choose to receive your loan disbursement via ETH wallet',
-                    'All wallet transactions are verified on the Ethereum blockchain'
-                ]
-            }
-        }
-        
         if topic:
-            if topic in topics:
-                return success_response(data=topics[topic])
+            # Check cache for specific topic
+            cache_key = f'ai_education_{topic}'
+            cached_data = cache.get(cache_key)
+            if cached_data:
+                return success_response(data={**cached_data, 'cached': True})
+            
+            if topic in self.TOPICS:
+                topic_data = self.TOPICS[topic]
+                cache.set(cache_key, topic_data, CACHE_TTL.get('education', 86400))
+                return success_response(data={**topic_data, 'cached': False})
             else:
                 return error_response(
                     message="Topic not found",
                     status_code=status.HTTP_404_NOT_FOUND
                 )
         
-        # Return list of available topics
-        topic_list = [{'id': k, 'title': v['title']} for k, v in topics.items()]
+        # Return list of available topics (cached)
+        cache_key = 'ai_education_topics_list'
+        cached_list = cache.get(cache_key)
+        if cached_list:
+            return success_response(
+                data={'topics': cached_list, 'cached': True},
+                message="Education topics retrieved"
+            )
+        
+        topic_list = [{'id': k, 'title': v['title']} for k, v in self.TOPICS.items()]
+        cache.set(cache_key, topic_list, CACHE_TTL.get('education', 86400))
         return success_response(
-            data={'topics': topic_list},
+            data={'topics': topic_list, 'cached': False},
             message="Education topics retrieved"
         )
 
@@ -675,9 +837,59 @@ class FAQsView(AccessControlMixin, APIView):
     Get frequently asked questions.
     
     GET /api/ai/faqs/
+    
+    Responses are cached for performance (FAQs rarely change).
     """
     authentication_classes = [CustomJWTAuthentication]
     permission_classes = [IsAuthenticated]
+    
+    # FAQs are static, define once
+    FAQS = [
+        {
+            'question': 'How much can I borrow?',
+            'answer': 'Loan amounts range from ₱5,000 to ₱500,000 depending on the loan product, your profile, and business needs.'
+        },
+        {
+            'question': 'How long does approval take?',
+            'answer': 'Most applications are reviewed within 1-3 business days with our AI-assisted process.'
+        },
+        {
+            'question': 'What if I get rejected?',
+            'answer': 'You can reapply after improving your profile or try a smaller loan amount. Our AI will explain what to improve.'
+        },
+        {
+            'question': 'Do I need a business permit?',
+            'answer': 'Not necessarily! We understand many MSMEs operate informally. A valid government ID is the main requirement.'
+        },
+        {
+            'question': 'How do I make payments?',
+            'answer': 'There are 5 payment methods in two categories. Automatic (recorded instantly): GCash, Bank Transfer, and Wallet (ETH) — you pay directly and it\'s automatically recorded. Manual (recorded by your loan officer): Cash and Check — you pay at a partner location and the loan officer records it for you.'
+        },
+        {
+            'question': 'What happens if I miss a payment?',
+            'answer': 'Your installment will be marked as overdue. Contact us immediately — we offer flexible arrangements for genuine difficulties.'
+        },
+        {
+            'question': 'How do I check my loan status?',
+            'answer': 'Open the app and go to Track → Applications. You\'ll see the current status of all your loan applications (draft, submitted, under review, approved, rejected, or disbursed).'
+        },
+        {
+            'question': 'What is blockchain verification?',
+            'answer': 'Every major event in your loan — application, approval, disbursement, and each payment — is permanently recorded on the Ethereum blockchain. This creates a transparent, tamper-proof audit trail that protects both you and the lender.'
+        },
+        {
+            'question': 'How does the repayment schedule work?',
+            'answer': 'After your loan is disbursed, a repayment schedule is automatically created with equal monthly installments. Each installment includes a principal and interest portion. You can view it in the app under Track → select your loan → Schedule tab.'
+        },
+        {
+            'question': 'What happens after my loan is disbursed?',
+            'answer': 'Once disbursed, your repayment schedule is automatically created. You\'ll need to make monthly payments according to the schedule. You can track your payments and remaining balance in the app under the Track section.'
+        },
+        {
+            'question': 'What is the ETH Wallet payment method?',
+            'answer': 'Wallet (ETH) lets you make payments using an Ethereum cryptocurrency wallet. Payments via ETH wallet are automatically recorded in the system and verified on the blockchain. You can also receive your loan disbursement via ETH wallet.'
+        }
+    ]
     
     def get(self, request):
         """Get FAQs"""
@@ -685,54 +897,19 @@ class FAQsView(AccessControlMixin, APIView):
         if not has_permission:
             return result
         
-        faqs = [
-            {
-                'question': 'How much can I borrow?',
-                'answer': 'Loan amounts range from ₱5,000 to ₱500,000 depending on the loan product, your profile, and business needs.'
-            },
-            {
-                'question': 'How long does approval take?',
-                'answer': 'Most applications are reviewed within 1-3 business days with our AI-assisted process.'
-            },
-            {
-                'question': 'What if I get rejected?',
-                'answer': 'You can reapply after improving your profile or try a smaller loan amount. Our AI will explain what to improve.'
-            },
-            {
-                'question': 'Do I need a business permit?',
-                'answer': 'Not necessarily! We understand many MSMEs operate informally. A valid government ID is the main requirement.'
-            },
-            {
-                'question': 'How do I make payments?',
-                'answer': 'There are 5 payment methods in two categories. Automatic (recorded instantly): GCash, Bank Transfer, and Wallet (ETH) — you pay directly and it\'s automatically recorded. Manual (recorded by your loan officer): Cash and Check — you pay at a partner location and the loan officer records it for you.'
-            },
-            {
-                'question': 'What happens if I miss a payment?',
-                'answer': 'Your installment will be marked as overdue. Contact us immediately — we offer flexible arrangements for genuine difficulties.'
-            },
-            {
-                'question': 'How do I check my loan status?',
-                'answer': 'Open the app and go to Track → Applications. You\'ll see the current status of all your loan applications (draft, submitted, under review, approved, rejected, or disbursed).'
-            },
-            {
-                'question': 'What is blockchain verification?',
-                'answer': 'Every major event in your loan — application, approval, disbursement, and each payment — is permanently recorded on the Ethereum blockchain. This creates a transparent, tamper-proof audit trail that protects both you and the lender.'
-            },
-            {
-                'question': 'How does the repayment schedule work?',
-                'answer': 'After your loan is disbursed, a repayment schedule is automatically created with equal monthly installments. Each installment includes a principal and interest portion. You can view it in the app under Track → select your loan → Schedule tab.'
-            },
-            {
-                'question': 'What happens after my loan is disbursed?',
-                'answer': 'Once disbursed, your repayment schedule is automatically created. You\'ll need to make monthly payments according to the schedule. You can track your payments and remaining balance in the app under the Track section.'
-            },
-            {
-                'question': 'What is the ETH Wallet payment method?',
-                'answer': 'Wallet (ETH) lets you make payments using an Ethereum cryptocurrency wallet. Payments via ETH wallet are automatically recorded in the system and verified on the blockchain. You can also receive your loan disbursement via ETH wallet.'
-            }
-        ]
+        # Check cache first
+        cache_key = 'ai_faqs'
+        cached_data = cache.get(cache_key)
+        if cached_data:
+            return success_response(
+                data={'faqs': cached_data, 'total': len(cached_data), 'cached': True},
+                message="FAQs retrieved"
+            )
+        
+        # Cache for future requests
+        cache.set(cache_key, self.FAQS, CACHE_TTL.get('faqs', 86400))
         
         return success_response(
-            data={'faqs': faqs, 'total': len(faqs)},
+            data={'faqs': self.FAQS, 'total': len(self.FAQS), 'cached': False},
             message="FAQs retrieved"
         )

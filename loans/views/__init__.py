@@ -34,4 +34,5 @@ from .officer_views import (
     OfficerPaymentHistoryView,
     PaymentSearchView,
     BlockchainStatusView,
+    ExchangeRateView,
 )
