@@ -626,7 +626,15 @@ class LoanOfficerManagementView(AdminRequiredMixin, APIView):
             )
             officer.set_password(temp_password)
             officer.save()
-            
+
+            email_sent = EmailUtils.send_officer_temporary_password_email(
+                email_normalized,
+                first_name_normalized,
+                temp_password
+            )
+            if not email_sent:
+                logger.warning("Temporary password email failed for loan officer %s", email_normalized)
+
             logger.info(f"Loan officer created: {email_normalized} by admin {admin.username}")
             
             # Audit log
@@ -651,8 +659,8 @@ class LoanOfficerManagementView(AdminRequiredMixin, APIView):
                         'full_name': officer.full_name,
                         'department': officer.department
                     },
-                    'temporary_password': temp_password,
-                    'message': 'Send this temporary password to the loan officer securely. They will be required to change it on first login.'
+                    'email_sent': email_sent,
+                    'message': 'Temporary password emailed to the loan officer. They will be required to change it on first login.'
                 },
                 message="Loan officer created successfully",
                 status_code=status.HTTP_201_CREATED

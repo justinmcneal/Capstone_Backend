@@ -56,3 +56,18 @@ class EmailUtils:
             context=context
         )
 
+    @staticmethod
+    def send_officer_temporary_password_email(email, first_name, temporary_password):
+        from accounts.services.email_service import email_service
+    
+        context = {
+            'first_name': first_name or 'Officer',
+            'temporary_password': temporary_password,
+        }
+    
+        return email_service.send_template_email(
+            to_emails=[email],
+            subject='Your Loan Officer Temporary Password',
+            template_name='loan_officer_temp_password',
+            context=context
+        )
