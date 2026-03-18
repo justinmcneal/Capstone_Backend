@@ -20,6 +20,7 @@ from loans.views import (
     AssignApplicationView,
     ReassignApplicationView,
     OfficerWorkloadView,
+    AdminBlockchainTransactionsView,
     # Officer
     OfficerApplicationListView,
     OfficerApplicationDetailView,
@@ -65,6 +66,7 @@ urlpatterns = [
     path('admin/applications/<str:application_id>/assign/', AssignApplicationView.as_view(), name='admin-assign'),
     path('admin/applications/<str:application_id>/reassign/', ReassignApplicationView.as_view(), name='admin-reassign'),
     path('admin/officers/workload/', OfficerWorkloadView.as_view(), name='admin-workload'),
+    path('admin/blockchain/transactions/', AdminBlockchainTransactionsView.as_view(), name='admin-blockchain-transactions'),
     
     # Loan officer endpoints
     path('officer/applications/', OfficerApplicationListView.as_view(), name='officer-applications'),

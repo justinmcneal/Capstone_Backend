@@ -19,7 +19,8 @@ from .admin_views import (
     AdminProductDetailView,
     AssignApplicationView,
     ReassignApplicationView,
-    OfficerWorkloadView
+    OfficerWorkloadView,
+    AdminBlockchainTransactionsView,
 )
 from .officer_views import (
     OfficerApplicationListView,
