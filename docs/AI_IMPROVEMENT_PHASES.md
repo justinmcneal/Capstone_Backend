@@ -95,16 +95,37 @@ CACHE_TTL = {
 
 ---
 
-## Phase 2 — Knowledge Accuracy & Consistency
+## Phase 2 — Knowledge Accuracy & Consistency ✅
 
 **Goal:** Reduce hallucinations and keep product details accurate.  
 **Priority:** 🟠 High
 
 ### Tasks
-- [ ] Centralize canonical platform facts in a single source of truth
-- [ ] Add versioned “AI knowledge” document used in prompt injection
-- [ ] Add automated tests for system prompt regressions
-- [ ] Define a “do not answer / redirect” policy for unknowns
+- [x] Centralize canonical platform facts in a single source of truth (`knowledge_base.py`)
+- [x] Add versioned "AI knowledge" document used in prompt injection (v1.0)
+- [x] Add automated tests for system prompt regressions (20 tests)
+- [x] Define a "do not answer / redirect" policy for unknowns
+
+### Implementation Details
+
+**New File: `ai_assistant/services/knowledge_base.py`**
+- `KNOWLEDGE_VERSION` — Version tracking for knowledge updates
+- `PLATFORM_INFO` — Platform name, type, blockchain info
+- `LOAN_PRODUCTS_INFO` — Canonical amounts, terms, interest rates
+- `PAYMENT_METHODS` — Automatic vs manual payment methods
+- `PROHIBITED_TOPICS` — Topics AI should not discuss
+- `REDIRECT_RESPONSES` — Pre-written responses for prohibited requests
+- `build_system_prompt()` — Generates prompt from knowledge base
+- `check_prohibited_content()` — Filters dangerous/off-topic requests
+
+**Content Filter (Pre-LLM Check):**
+| Prohibited Request | Example | Response |
+|-------------------|---------|----------|
+| Credentials | "What is your password?" | Scam warning |
+| Guarantees | "Will I be approved?" | Cannot guarantee |
+| Legal advice | "Should I sue?" | Consult a lawyer |
+
+**Tests:** `tests/test_ai_knowledge.py` (20 tests)
 
 ---
 
