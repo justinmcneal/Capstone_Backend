@@ -446,7 +446,7 @@ else:
 
 # Gas settings
 BLOCKCHAIN_GAS_LIMIT = int(os.getenv('BLOCKCHAIN_GAS_LIMIT', '6721975'))
-BLOCKCHAIN_GAS_PRICE_GWEI = int(os.getenv('BLOCKCHAIN_GAS_PRICE_GWEI', '20'))
+BLOCKCHAIN_GAS_PRICE_GWEI = int(float(os.getenv('BLOCKCHAIN_GAS_PRICE_GWEI', '20')))
 
 # Block explorer URL (e.g. https://etherscan.io, https://sepolia.etherscan.io)
 # Leave empty for local Ganache (no explorer available)
