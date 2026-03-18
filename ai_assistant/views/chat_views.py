@@ -18,6 +18,11 @@ from ai_assistant.models import AIInteraction
 from ai_assistant.services import get_llm_service
 from ai_assistant.services.llm_service import SYSTEM_PROMPT, needs_user_context
 from ai_assistant.services.knowledge_base import check_prohibited_content
+from ai_assistant.services.context_builder import (
+    build_user_context,
+    get_context_for_intent,
+    build_minimal_context,
+)
 from ai_assistant.services.tools import TOOL_SCHEMAS
 import logging
 
@@ -33,134 +38,7 @@ CACHE_TTL = getattr(settings, 'CACHE_TTL', {
     'ai_status': 60,
 })
 
-
-def build_user_context(customer_id):
-    """
-    Build a dynamic context block with the user's current data
-    to append to the system prompt. Returns empty string on any failure
-    so the chatbot still works without context.
-    """
-    try:
-        from profiles.models.profile_models import CustomerProfile, BusinessProfile
-        from documents.models.document import Document
-        from loans.models.application import LoanApplication
-        from loans.models.repayment import RepaymentSchedule
-        from loans.models.payment import LoanPayment
-
-        lines = ["\n\n=== CURRENT USER CONTEXT ==="]
-        logger.info(f"Building user context for customer_id: {customer_id}")
-
-        # --- Profile ---
-        profile = CustomerProfile.find_by_customer(customer_id)
-        logger.info(f"Profile lookup result: {profile is not None}")
-        if profile:
-            pct = getattr(profile, 'completion_percentage', None)
-            if pct is not None:
-                lines.append(f"Profile: {pct}% complete")
-                if pct < 100:
-                    missing = []
-                    if not getattr(profile, 'date_of_birth', None):
-                        missing.append('date of birth')
-                    if not getattr(profile, 'mobile_number', None):
-                        missing.append('mobile number')
-                    if not getattr(profile, 'address_line1', None):
-                        missing.append('address')
-                    if not getattr(profile, 'emergency_contact_name', None):
-                        missing.append('emergency contact')
-                    if missing:
-                        lines.append(f"  Missing: {', '.join(missing)}")
-            else:
-                lines.append("Profile: Created but completion not calculated")
-        else:
-            lines.append("Profile: Not created yet")
-
-        # --- Business ---
-        business = BusinessProfile.find_by_customer(customer_id)
-        logger.info(f"Business lookup result: {business is not None}")
-        if business and getattr(business, 'business_name', None):
-            btype = getattr(business, 'business_type', 'unknown')
-            age = getattr(business, 'business_age_months', None)
-            income = getattr(business, 'estimated_monthly_income', None)
-            parts = [f"Business: {business.business_name} ({btype})"]
-            if age is not None:
-                parts.append(f"operating for {age} months")
-            if income is not None:
-                parts.append(f"monthly income ₱{income:,.0f}")
-            lines.append(', '.join(parts))
-        else:
-            lines.append("Business Profile: Not set up yet")
-
-        # --- Documents ---
-        docs = Document.find_by_customer(customer_id)
-        logger.info(f"Documents found: {len(docs) if docs else 0}")
-        if docs:
-            doc_summary = []
-            for doc in docs:
-                dtype = getattr(doc, 'document_type', 'unknown')
-                dstatus = getattr(doc, 'status', 'unknown')
-                label = dtype.replace('_', ' ').title()
-                doc_summary.append(f"{label} ({dstatus})")
-            lines.append(f"Documents: {', '.join(doc_summary)}")
-        else:
-            lines.append("Documents: None uploaded yet")
-
-        # --- Loan Applications ---
-        apps = LoanApplication.find_by_customer(customer_id)
-        logger.info(f"Loan applications found: {len(apps) if apps else 0}")
-        if apps:
-            for app in apps[:3]:
-                app_status = getattr(app, 'status', 'unknown')
-                amount = getattr(app, 'approved_amount', None) or getattr(app, 'requested_amount', None)
-                term = getattr(app, 'term_months', None)
-                app_line = f"Loan Application: {app_status}"
-                if amount:
-                    app_line += f", ₱{amount:,.0f}"
-                if term:
-                    app_line += f", {term} months"
-                lines.append(app_line)
-
-                # --- Repayment Schedule (for disbursed loans) ---
-                if app_status == 'disbursed' and hasattr(app, 'id'):
-                    schedule = RepaymentSchedule.find_by_loan(str(app.id))
-                    if schedule:
-                        installments = getattr(schedule, 'installments', [])
-                        total = len(installments)
-                        paid = sum(1 for i in installments if i.get('status') == 'paid')
-                        overdue = sum(1 for i in installments if i.get('status') == 'overdue')
-                        remaining = schedule.get_remaining_balance()
-                        lines.append(f"  Repayment: {paid} of {total} installments paid, remaining balance ₱{remaining:,.0f}")
-                        if overdue > 0:
-                            lines.append(f"  ⚠ {overdue} overdue installment(s)")
-
-                        next_payment = schedule.get_next_payment()
-                        if next_payment:
-                            due = next_payment.get('due_date')
-                            amt = next_payment.get('total_amount', 0)
-                            due_str = due.strftime('%B %d, %Y') if due else 'unknown'
-                            lines.append(f"  Next payment: ₱{amt:,.0f} due {due_str}")
-
-                    # --- Recent Payments ---
-                    payments = LoanPayment.find_by_loan(str(app.id))
-                    if payments:
-                        recent = payments[:3]
-                        for p in recent:
-                            p_amt = getattr(p, 'amount', 0)
-                            p_method = getattr(p, 'payment_method', 'unknown')
-                            p_date = getattr(p, 'recorded_at', None)
-                            p_date_str = p_date.strftime('%B %d, %Y') if p_date else 'unknown'
-                            lines.append(f"  Payment: ₱{p_amt:,.0f} via {p_method} on {p_date_str}")
-        else:
-            lines.append("Loan Applications: None yet")
-
-        lines.append("Note: You have access to this user's real data above. When answering their questions, ALWAYS use this data directly. Do NOT tell them to check the app — instead, tell them the actual values from the context above.")
-
-        context = '\n'.join(lines)
-        logger.info(f"Built user context ({len(context)} chars): {context[:200]}...")
-        return context
-
-    except Exception as e:
-        logger.error(f"Failed to build user context for {customer_id}: {e}", exc_info=True)
-        return ""
+# Note: build_user_context and related functions are now in context_builder.py
 
 
 class ConsentRequiredMixin(AccessControlMixin):
@@ -302,9 +180,10 @@ class ChatView(ConsentRequiredMixin, APIView):
                     status_code=status.HTTP_503_SERVICE_UNAVAILABLE
                 )
             
-            # Build context-aware system prompt only if needed
+            # Build context-aware system prompt based on intent
             if needs_user_context(message):
-                user_context = build_user_context(customer_id)
+                # Use intent-based context selection for optimized token usage
+                user_context = get_context_for_intent(message, customer_id)
                 contextualized_prompt = SYSTEM_PROMPT + user_context
             else:
                 contextualized_prompt = SYSTEM_PROMPT
@@ -473,9 +352,9 @@ class StreamingChatView(ConsentRequiredMixin, APIView):
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE
             )
         
-        # Build context-aware system prompt only if needed
+        # Build context-aware system prompt based on intent
         if needs_user_context(message):
-            user_context = build_user_context(customer_id)
+            user_context = get_context_for_intent(message, customer_id)
             contextualized_prompt = SYSTEM_PROMPT + user_context
         else:
             contextualized_prompt = SYSTEM_PROMPT
