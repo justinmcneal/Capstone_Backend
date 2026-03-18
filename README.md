@@ -123,7 +123,7 @@ The API caches static content (FAQs, education, suggestions, loan products) to i
 
 **Default: In-memory cache** — works out of the box, no setup required.
 
-**Optional: Redis cache** — for multi-server deployments:
+**Optional but still do it: Redis cache** — for multi-server deployments:
 ```bash
 # In .env
 USE_REDIS_CACHE=true
