@@ -26,6 +26,7 @@ import json
 import requests
 import logging
 from django.conf import settings
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import time
 
 logger = logging.getLogger('ai_assistant')
@@ -291,6 +292,58 @@ class GroqService:
             logger.error(f"Groq error: {str(e)}")
             return {'success': False, 'error': "Could not connect to Groq API."}
     
+    def _execute_tools_parallel(self, tool_calls, customer_id, max_workers=4):
+        """
+        Execute multiple tool calls concurrently using ThreadPoolExecutor.
+        
+        Args:
+            tool_calls: List of tool call objects from the LLM
+            customer_id: Customer ID for scoping queries
+            max_workers: Max concurrent threads (default 4)
+        
+        Returns:
+            List of (tool_call_id, tool_name, result_json) tuples in original order
+        """
+        from ai_assistant.services.tools import execute_tool
+        
+        def run_tool(tool_call):
+            func = tool_call.get('function', {})
+            tool_name = func.get('name', '')
+            tool_call_id = tool_call.get('id', '')
+            try:
+                tool_args = json.loads(func.get('arguments', '{}'))
+            except json.JSONDecodeError:
+                tool_args = {}
+            
+            logger.info(f"[Parallel] Tool call: {tool_name}({tool_args}) for customer {customer_id}")
+            result = execute_tool(tool_name, tool_args, customer_id)
+            return (tool_call_id, tool_name, result)
+        
+        results = []
+        # Use ThreadPoolExecutor for I/O-bound MongoDB queries
+        with ThreadPoolExecutor(max_workers=min(max_workers, len(tool_calls))) as executor:
+            # Submit all tasks and maintain order
+            future_to_idx = {executor.submit(run_tool, tc): idx for idx, tc in enumerate(tool_calls)}
+            results = [None] * len(tool_calls)
+            
+            for future in as_completed(future_to_idx):
+                idx = future_to_idx[future]
+                try:
+                    results[idx] = future.result()
+                except Exception as e:
+                    # Handle individual tool failure
+                    tool_call = tool_calls[idx]
+                    tool_name = tool_call.get('function', {}).get('name', 'unknown')
+                    logger.error(f"Parallel tool error ({tool_name}): {e}")
+                    results[idx] = (
+                        tool_call.get('id', ''),
+                        tool_name,
+                        json.dumps({"error": "Failed to retrieve data"})
+                    )
+        
+        logger.info(f"[Parallel] Executed {len(tool_calls)} tools concurrently")
+        return results
+    
     def generate(self, prompt):
         """
         Simple text generation without conversation history.
@@ -407,7 +460,20 @@ class GroqService:
                 if tool_calls and finish_reason == 'tool_calls':
                     messages.append(assistant_message)
 
-                    for tool_call in tool_calls:
+                    # Execute tools in parallel for better performance
+                    if len(tool_calls) > 1:
+                        # Multiple tools - run concurrently
+                        tool_results = self._execute_tools_parallel(tool_calls, customer_id)
+                        for tool_call_id, tool_name, tool_result in tool_results:
+                            tools_called.append(tool_name)
+                            messages.append({
+                                "role": "tool",
+                                "tool_call_id": tool_call_id,
+                                "content": tool_result,
+                            })
+                    else:
+                        # Single tool - run directly (no thread overhead)
+                        tool_call = tool_calls[0]
                         func = tool_call.get('function', {})
                         tool_name = func.get('name', '')
                         try:
@@ -645,7 +711,29 @@ class GroqService:
                 if tool_calls and finish_reason == 'tool_calls':
                     messages.append(assistant_message)
 
-                    for tool_call in tool_calls:
+                    # Execute tools in parallel for better performance
+                    if len(tool_calls) > 1:
+                        # Yield all tool_call events first
+                        for tool_call in tool_calls:
+                            func = tool_call.get('function', {})
+                            tool_name = func.get('name', '')
+                            yield {'type': 'tool_call', 'name': tool_name}
+                        
+                        # Execute all tools concurrently
+                        tool_results = self._execute_tools_parallel(tool_calls, customer_id)
+                        
+                        # Yield results and add to messages
+                        for tool_call_id, tool_name, tool_result in tool_results:
+                            tools_called.append(tool_name)
+                            yield {'type': 'tool_result', 'name': tool_name, 'success': True}
+                            messages.append({
+                                "role": "tool",
+                                "tool_call_id": tool_call_id,
+                                "content": tool_result,
+                            })
+                    else:
+                        # Single tool - run directly
+                        tool_call = tool_calls[0]
                         func = tool_call.get('function', {})
                         tool_name = func.get('name', '')
                         try:
