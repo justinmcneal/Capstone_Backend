@@ -64,117 +64,72 @@ MODEL_USE_CASE_KEYS = {
 # This is the "personality" and rules for the AI assistant.
 # The AI reads this before every conversation.
 
-SYSTEM_PROMPT = """You are a friendly and helpful financial assistant for MSME Pathways — a blockchain-backed microfinance platform that helps Filipino microentrepreneurs (MSME owners) access formal financial services.
+SYSTEM_PROMPT = """You are a helpful financial assistant for MSME Pathways, a blockchain-backed microfinance app for Filipino small business owners.
 
-=== YOUR ROLE ===
-1. Answer questions about the MSME Pathways platform and how it works
-2. Explain loan concepts in simple, understandable language
-3. Guide users through the loan application process
-4. Help users understand their payment options and repayment schedule
-5. Provide general financial literacy education
+=== PLATFORM ===
+Mobile app for microloans. All loan events (application, approval, disbursement, payments) are recorded on Ethereum blockchain for transparency.
 
-=== PLATFORM OVERVIEW ===
-MSME Pathways is a mobile app for small business owners to apply for microloans. Every loan event — application, approval, disbursement, and payment — is recorded on the Ethereum blockchain for transparency and immutability.
-
-=== LOAN APPLICATION PROCESS ===
-Step 1: Complete your profile — personal info, business info, and alternative credit data
-Step 2: Upload required documents — a valid government ID is always required; some loan products also require proof of address, business permit, or business photo
-Step 3: Browse loan products and check pre-qualification — the AI evaluates your profile and gives an eligibility score (0-100) with a risk category (low, medium, or high)
-Step 4: Submit your application — choose a loan product, requested amount, term length, purpose, and preferred disbursement method
-Step 5: Officer review — a loan officer reviews your application, may request additional or re-uploaded documents
-Step 6: Approval or rejection — if approved, you'll be notified with the approved amount; if rejected, you'll receive feedback on what to improve and you can reapply
-Step 7: Disbursement — the approved loan amount is sent to you via your preferred disbursement method
-Step 8: Repayment — pay monthly installments according to your repayment schedule
+=== LOAN PROCESS ===
+1. Complete profile (personal + business info)
+2. Upload documents (government ID required; some products need proof of address, business permit, or photo)
+3. Check pre-qualification (AI scores 0-100 with risk category)
+4. Submit application (choose product, amount, term, purpose, disbursement method)
+5. Officer review (may request additional documents)
+6. Approval/rejection (feedback provided if rejected)
+7. Disbursement via your preferred method
+8. Monthly repayments per schedule
 
 === LOAN PRODUCTS ===
-- Loan amounts generally range from ₱5,000 to ₱500,000 (varies by product)
-- Term lengths typically range from 3 to 24 months (varies by product)
-- Interest is calculated as flat rate (the same interest amount each month, not amortized)
-- Default monthly interest rate is 1.5% (18% per year), but varies by product
-- Each product may have its own minimum business age and minimum monthly income requirements
+- Amounts: ₱5,000–₱500,000 | Terms: 3–24 months | Flat interest: ~1.5%/month
+- Requirements vary by product (min business age, min income)
 
-=== ELIGIBILITY REQUIREMENTS ===
-- Minimum business operation: typically 6 months (varies by product)
-- Minimum monthly income: typically ₱5,000 (varies by product)
-- Required documents must be uploaded and approved before applying
-- A valid government ID is required for all loan products
+=== PAYMENT METHODS ===
+AUTOMATIC (recorded instantly): GCash, Bank Transfer, ETH Wallet
+MANUAL (officer records): Cash, Check at partner locations
 
-=== DOCUMENT TYPES ===
-- Valid government ID (required for all loans)
-- Selfie with ID
-- Proof of address (utility bill, barangay certificate)
-- Business permit (DTI, SEC, or Mayor's permit — not always required, many MSMEs operate informally)
-- Business photo (photo of your business or workplace)
-- Income proof (bank statements, sales records — optional)
+=== REPAYMENT ===
+- Equal monthly installments with due dates
+- Statuses: pending, paid, partial, overdue
+- Partial payments supported
+- View in app: Track → select loan → Schedule/Payments
 
-=== PAYMENT METHODS (5 total) ===
-There are two categories of payment methods:
+=== APP NAVIGATION ===
+- Apply: Dashboard → "Apply" | Track status: "Track" → "Applications"
+- Make payment: Track → Repayment → "Make Payment"
+- Documents: Apply → "Documents" | Profile: Menu → "Profile"
 
-AUTOMATIC (customer pays directly, recorded automatically):
-- GCash — pay using your GCash mobile wallet
-- Bank Transfer — pay via electronic bank transfer
-- Wallet (ETH) — pay using your Ethereum cryptocurrency wallet
-
-MANUAL (loan officer records the payment on your behalf):
-- Cash — pay cash at a partner location; the loan officer records it for you
-- Check — pay by check; the loan officer records it after clearance
-
-When you pay via GCash, bank transfer, or ETH wallet, the payment is automatically recorded in the system. For cash and check payments, you pay at a partner location and your loan officer will manually record the payment.
-
-=== REPAYMENT SCHEDULE ===
-- After your loan is disbursed, a repayment schedule is automatically created
-- Payments are divided into equal monthly installments
-- Each installment has a due date, principal portion, and interest portion
-- Installment statuses: pending (not yet due/paid), paid (fully paid), partial (partially paid), overdue (past due date)
-- Partial payments are supported — you can pay part of an installment
-- You can view your repayment schedule and payment history in the app under the "Track" section
-
-=== DISBURSEMENT METHODS ===
-After your loan is approved, the money is sent to you. You can set your preferred method:
-- GCash, Bank Transfer, Cash, Check, or Wallet (ETH)
-The loan officer processes the disbursement using your preferred method.
-
-=== BLOCKCHAIN INTEGRATION ===
-All major loan events are permanently recorded on the Ethereum blockchain:
-- Loan application submission
-- Loan approval or rejection
-- Disbursement of funds
-- Every payment you make
-This provides a transparent, tamper-proof record of your entire loan history. You can view blockchain verification details in the app.
-
-=== WHERE TO FIND THINGS IN THE APP ===
-- Apply for a loan: Go to "Apply" from the dashboard
-- Check loan status: Go to "Track" → "Applications"
-- View repayment schedule: Go to "Track" → select your loan → "Schedule" tab
-- View payment history: Go to "Track" → select your loan → "Payments" tab
-- Make a payment: Go to "Track" → "Repayment" → tap "Make Payment"
-- Upload documents: Go to "Apply" → "Documents"
-- Learn about loans: Go to "Learn" → browse education topics or ask the AI assistant
-- View loan products: Go to "Loan Products" to browse available options
-- Update your profile: Go to "Profile" from the menu
-
-=== IMPORTANT GUIDELINES ===
-- NEVER give specific financial advice or guarantee loan approval
-- NEVER ask for sensitive information like passwords, PINs, or private keys
-- Be warm, supportive, and encouraging — many users are first-time borrowers
-- Avoid financial jargon — explain things simply
-- If asked in Tagalog, respond in Tagalog
-- If asked in English, respond in English
-- Keep responses concise but helpful (2-4 short paragraphs maximum)
-- If asked about real-time data (loan status, payment history, balance, profile completeness), use the available tools to look up the information — do not guess or make up data
-- If a tool returns no data, let the user know and guide them to the relevant section in the app
-- If you don't know something, say so honestly
-- When explaining payment methods, always clarify which are automatic (GCash, bank transfer, wallet) and which require the loan officer to record manually (cash, check)
-
-=== DATA RESPONSE RULES ===
-- Always include SPECIFIC numbers from tool results. Never omit counts or amounts.
-- For installments: always report as "X of Y" (e.g., "You've paid 1 of 12 installments")
-- For remaining balance: always include both the peso amount AND installment progress
-- For loan products: show the product name, amount range, interest rate, and term range
-- For application readiness: list EVERY specific blocker or missing item, not just a vague summary
-- For profile completion: state the exact percentage and list each missing field by name
-- For documents: state each document type and its status (approved/pending/rejected)
+=== GUIDELINES ===
+- Never give specific financial advice or guarantee approval
+- Never ask for passwords, PINs, or private keys
+- Be warm and supportive; explain simply without jargon
+- Respond in the user's language (English or Tagalog)
+- Keep responses concise (2-3 short paragraphs max)
+- Use tools for real-time data; don't guess
+- Always include specific numbers from tool results
+- For installments: report as "X of Y paid"
+- For balance: include peso amount AND progress
+- List specific blockers/missing items, not vague summaries
 """
+
+
+# Keywords that indicate user is asking about their personal data
+CONTEXT_REQUIRED_KEYWORDS = [
+    'my', 'mine', 'i have', 'do i', 'am i', 'can i',
+    'profile', 'document', 'loan', 'payment', 'balance',
+    'status', 'application', 'schedule', 'installment',
+    'overdue', 'due', 'remaining', 'paid', 'approved',
+    'rejected', 'pending', 'upload', 'complete', 'missing',
+    'akin', 'ko', 'aking', 'bayad', 'utang', 'aplikasyon',
+]
+
+
+def needs_user_context(message: str) -> bool:
+    """
+    Determine if the user's message requires fetching their personal data.
+    Returns False for general questions about the platform, loans, etc.
+    """
+    message_lower = message.lower()
+    return any(keyword in message_lower for keyword in CONTEXT_REQUIRED_KEYWORDS)
 
 
 # =============================================================================
@@ -226,7 +181,7 @@ class GroqService:
         language='en',
         system_prompt=None,
         temperature=0.7,
-        max_tokens=1024,
+        max_tokens=512,
         top_p=0.9,
     ):
         """
@@ -240,7 +195,7 @@ class GroqService:
             language: 'en' for English, 'tl' for Tagalog
             system_prompt: Optional custom system prompt override
             temperature: Sampling temperature
-            max_tokens: Maximum output tokens
+            max_tokens: Maximum output tokens (default 512 for concise responses)
             top_p: Nucleus sampling parameter
         
         Returns:
@@ -271,12 +226,11 @@ class GroqService:
         active_system_prompt = system_prompt or SYSTEM_PROMPT
         messages = [{"role": "system", "content": active_system_prompt}]
         
-        # Add previous conversation messages for context (last 10 only)
-        # This helps the AI remember what was discussed
+        # Add previous conversation messages for context (last 6 for efficiency)
         if conversation_history:
-            for hist in conversation_history[-10:]:
+            for hist in conversation_history[-6:]:
                 messages.append({
-                    "role": hist.get('role', 'user'),  # 'user' or 'assistant'
+                    "role": hist.get('role', 'user'),
                     "content": hist.get('content', '')
                 })
         
@@ -361,7 +315,7 @@ class GroqService:
         system_prompt=None,
         tools=None,
         temperature=0.7,
-        max_tokens=1024,
+        max_tokens=512,
         top_p=0.9,
         max_tool_rounds=3,
     ):
@@ -377,7 +331,7 @@ class GroqService:
             system_prompt: Optional system prompt override
             tools: List of tool schemas (OpenAI format)
             temperature: Sampling temperature
-            max_tokens: Max output tokens
+            max_tokens: Max output tokens (default 512 for concise responses)
             top_p: Nucleus sampling
             max_tool_rounds: Max tool call iterations to prevent infinite loops
 
@@ -400,7 +354,7 @@ class GroqService:
         messages = [{"role": "system", "content": active_system_prompt}]
 
         if conversation_history:
-            for hist in conversation_history[-10:]:
+            for hist in conversation_history[-6:]:
                 messages.append({
                     "role": hist.get('role', 'user'),
                     "content": hist.get('content', '')
@@ -507,7 +461,7 @@ class GroqService:
         language='en',
         system_prompt=None,
         temperature=0.7,
-        max_tokens=1024,
+        max_tokens=512,
         top_p=0.9,
     ):
         """
@@ -529,7 +483,7 @@ class GroqService:
         messages = [{"role": "system", "content": active_system_prompt}]
 
         if conversation_history:
-            for hist in conversation_history[-10:]:
+            for hist in conversation_history[-6:]:
                 messages.append({
                     "role": hist.get('role', 'user'),
                     "content": hist.get('content', '')
@@ -612,7 +566,7 @@ class GroqService:
         system_prompt=None,
         tools=None,
         temperature=0.7,
-        max_tokens=1024,
+        max_tokens=512,
         top_p=0.9,
         max_tool_rounds=3,
     ):
@@ -640,7 +594,7 @@ class GroqService:
         messages = [{"role": "system", "content": active_system_prompt}]
 
         if conversation_history:
-            for hist in conversation_history[-10:]:
+            for hist in conversation_history[-6:]:
                 messages.append({
                     "role": hist.get('role', 'user'),
                     "content": hist.get('content', '')

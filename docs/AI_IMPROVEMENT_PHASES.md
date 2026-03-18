@@ -40,10 +40,10 @@ This document outlines a phased plan to improve the AI assistant experience, acc
 - [x] Show typing indicator with progressive token display
 
 ### 1.3 Prompt & Token Optimization
-- [ ] Reduce history window (e.g., last 4–6 messages instead of 10)
-- [ ] Lower `max_tokens` for standard replies (e.g., 256–512)
-- [ ] Compress system prompt without losing meaning (~30% reduction target)
-- [ ] Only build user context when question requires it (intent detection)
+- [x] Reduce history window (e.g., last 4–6 messages instead of 10)
+- [x] Lower `max_tokens` for standard replies (e.g., 256–512)
+- [x] Compress system prompt without losing meaning (~60% reduction achieved)
+- [x] Only build user context when question requires it (intent detection)
 
 ### 1.4 Response Caching
 - [ ] Add Redis/in-memory cache for frequent queries

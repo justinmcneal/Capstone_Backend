@@ -14,7 +14,7 @@ from accounts.utils.validation_utils import sanitize_text, sanitize_multiline_te
 from accounts.models import Consent
 from ai_assistant.models import AIInteraction
 from ai_assistant.services import get_llm_service
-from ai_assistant.services.llm_service import SYSTEM_PROMPT
+from ai_assistant.services.llm_service import SYSTEM_PROMPT, needs_user_context
 from ai_assistant.services.tools import TOOL_SCHEMAS
 import logging
 
@@ -257,9 +257,12 @@ class ChatView(ConsentRequiredMixin, APIView):
                     status_code=status.HTTP_503_SERVICE_UNAVAILABLE
                 )
             
-            # Build context-aware system prompt
-            user_context = build_user_context(customer_id)
-            contextualized_prompt = SYSTEM_PROMPT + user_context
+            # Build context-aware system prompt only if needed
+            if needs_user_context(message):
+                user_context = build_user_context(customer_id)
+                contextualized_prompt = SYSTEM_PROMPT + user_context
+            else:
+                contextualized_prompt = SYSTEM_PROMPT
 
             result = llm.chat_with_tools(
                 message=message,
@@ -409,9 +412,12 @@ class StreamingChatView(ConsentRequiredMixin, APIView):
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE
             )
         
-        # Build context-aware system prompt
-        user_context = build_user_context(customer_id)
-        contextualized_prompt = SYSTEM_PROMPT + user_context
+        # Build context-aware system prompt only if needed
+        if needs_user_context(message):
+            user_context = build_user_context(customer_id)
+            contextualized_prompt = SYSTEM_PROMPT + user_context
+        else:
+            contextualized_prompt = SYSTEM_PROMPT
 
         def event_stream():
             """Generator that yields SSE formatted events"""
