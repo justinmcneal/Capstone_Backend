@@ -500,6 +500,288 @@ class GroqService:
             'tools_called': tools_called,
         }
 
+    def chat_stream(
+        self,
+        message,
+        conversation_history=None,
+        language='en',
+        system_prompt=None,
+        temperature=0.7,
+        max_tokens=1024,
+        top_p=0.9,
+    ):
+        """
+        Stream chat response token by token.
+        
+        Yields chunks as they arrive from the LLM.
+        Each chunk is a dict with 'type' and 'content' keys.
+        
+        Yields:
+            {'type': 'token', 'content': '...'} - A token chunk
+            {'type': 'done', 'model': '...', 'tokens_used': N} - Stream complete
+            {'type': 'error', 'content': '...'} - Error occurred
+        """
+        if not self.api_key:
+            yield {'type': 'error', 'content': "API key not configured"}
+            return
+
+        active_system_prompt = system_prompt or SYSTEM_PROMPT
+        messages = [{"role": "system", "content": active_system_prompt}]
+
+        if conversation_history:
+            for hist in conversation_history[-10:]:
+                messages.append({
+                    "role": hist.get('role', 'user'),
+                    "content": hist.get('content', '')
+                })
+
+        if language == 'tl':
+            message = f"[Please respond in Tagalog/Filipino] {message}"
+
+        messages.append({"role": "user", "content": message})
+
+        try:
+            response = requests.post(
+                self.api_url,
+                headers={
+                    "Authorization": f"Bearer {self.api_key}",
+                    "Content-Type": "application/json"
+                },
+                json={
+                    "model": self.model,
+                    "messages": messages,
+                    "temperature": temperature,
+                    "max_tokens": max_tokens,
+                    "top_p": top_p,
+                    "stream": True,
+                },
+                timeout=120,
+                stream=True,
+            )
+
+            if response.status_code != 200:
+                error_msg = response.text
+                try:
+                    error_msg = response.json().get('error', {}).get('message', response.text)
+                except Exception:
+                    pass
+                yield {'type': 'error', 'content': f"LLM error: {error_msg}"}
+                return
+
+            total_tokens = 0
+            for line in response.iter_lines():
+                if line:
+                    line_str = line.decode('utf-8')
+                    if line_str.startswith('data: '):
+                        data_str = line_str[6:]
+                        if data_str.strip() == '[DONE]':
+                            break
+                        try:
+                            data = json.loads(data_str)
+                            choice = data.get('choices', [{}])[0]
+                            delta = choice.get('delta', {})
+                            content = delta.get('content', '')
+                            if content:
+                                yield {'type': 'token', 'content': content}
+                            
+                            usage = data.get('usage')
+                            if usage:
+                                total_tokens = usage.get('total_tokens', 0)
+                        except json.JSONDecodeError:
+                            continue
+
+            yield {
+                'type': 'done',
+                'model': self.model,
+                'provider': self.provider,
+                'tokens_used': total_tokens,
+            }
+
+        except requests.Timeout:
+            yield {'type': 'error', 'content': "Request timed out"}
+        except requests.RequestException as e:
+            logger.error(f"Stream error: {str(e)}")
+            yield {'type': 'error', 'content': "Connection error"}
+
+    def chat_with_tools_stream(
+        self,
+        message,
+        customer_id,
+        conversation_history=None,
+        language='en',
+        system_prompt=None,
+        tools=None,
+        temperature=0.7,
+        max_tokens=1024,
+        top_p=0.9,
+        max_tool_rounds=3,
+    ):
+        """
+        Stream chat with function calling support.
+        
+        First executes any tool calls (non-streaming), then streams the final response.
+        This hybrid approach ensures tools complete before streaming the answer.
+        
+        Yields:
+            {'type': 'tool_call', 'name': '...'} - Tool being called
+            {'type': 'tool_result', 'name': '...', 'success': bool} - Tool completed
+            {'type': 'token', 'content': '...'} - Response token
+            {'type': 'done', ...} - Stream complete
+            {'type': 'error', 'content': '...'} - Error
+        """
+        from ai_assistant.services.tools import execute_tool
+
+        if not self.api_key:
+            yield {'type': 'error', 'content': "API key not configured"}
+            return
+
+        tools_called = []
+        active_system_prompt = system_prompt or SYSTEM_PROMPT
+        messages = [{"role": "system", "content": active_system_prompt}]
+
+        if conversation_history:
+            for hist in conversation_history[-10:]:
+                messages.append({
+                    "role": hist.get('role', 'user'),
+                    "content": hist.get('content', '')
+                })
+
+        if language == 'tl':
+            message = f"[Please respond in Tagalog/Filipino] {message}"
+
+        messages.append({"role": "user", "content": message})
+
+        # Phase 1: Execute tool calls (non-streaming)
+        for round_num in range(max_tool_rounds):
+            try:
+                request_body = {
+                    "model": self.model,
+                    "messages": messages,
+                    "temperature": temperature,
+                    "max_tokens": max_tokens,
+                    "top_p": top_p,
+                }
+
+                if tools:
+                    request_body["tools"] = tools
+                    request_body["tool_choice"] = "auto"
+
+                timeout = 120 if self.provider == 'ollama' else 30
+                response = requests.post(
+                    self.api_url,
+                    headers={
+                        "Authorization": f"Bearer {self.api_key}",
+                        "Content-Type": "application/json"
+                    },
+                    json=request_body,
+                    timeout=timeout,
+                )
+
+                if response.status_code != 200:
+                    error_msg = response.json().get('error', {}).get('message', response.text)
+                    yield {'type': 'error', 'content': f"LLM error: {error_msg}"}
+                    return
+
+                result = response.json()
+                choice = result.get('choices', [{}])[0]
+                assistant_message = choice.get('message', {})
+                finish_reason = choice.get('finish_reason', '')
+                tool_calls = assistant_message.get('tool_calls')
+
+                if tool_calls and finish_reason == 'tool_calls':
+                    messages.append(assistant_message)
+
+                    for tool_call in tool_calls:
+                        func = tool_call.get('function', {})
+                        tool_name = func.get('name', '')
+                        try:
+                            tool_args = json.loads(func.get('arguments', '{}'))
+                        except json.JSONDecodeError:
+                            tool_args = {}
+
+                        yield {'type': 'tool_call', 'name': tool_name}
+                        
+                        tool_result = execute_tool(tool_name, tool_args, customer_id)
+                        tools_called.append(tool_name)
+
+                        yield {'type': 'tool_result', 'name': tool_name, 'success': True}
+
+                        messages.append({
+                            "role": "tool",
+                            "tool_call_id": tool_call.get('id', ''),
+                            "content": tool_result,
+                        })
+                    continue
+                else:
+                    # No more tool calls, break to streaming phase
+                    break
+
+            except requests.Timeout:
+                yield {'type': 'error', 'content': "Request timed out"}
+                return
+            except requests.RequestException as e:
+                yield {'type': 'error', 'content': "Connection error"}
+                return
+
+        # Phase 2: Stream the final response
+        try:
+            response = requests.post(
+                self.api_url,
+                headers={
+                    "Authorization": f"Bearer {self.api_key}",
+                    "Content-Type": "application/json"
+                },
+                json={
+                    "model": self.model,
+                    "messages": messages,
+                    "temperature": temperature,
+                    "max_tokens": max_tokens,
+                    "top_p": top_p,
+                    "stream": True,
+                },
+                timeout=120,
+                stream=True,
+            )
+
+            if response.status_code != 200:
+                yield {'type': 'error', 'content': "Failed to stream response"}
+                return
+
+            total_tokens = 0
+            for line in response.iter_lines():
+                if line:
+                    line_str = line.decode('utf-8')
+                    if line_str.startswith('data: '):
+                        data_str = line_str[6:]
+                        if data_str.strip() == '[DONE]':
+                            break
+                        try:
+                            data = json.loads(data_str)
+                            choice = data.get('choices', [{}])[0]
+                            delta = choice.get('delta', {})
+                            content = delta.get('content', '')
+                            if content:
+                                yield {'type': 'token', 'content': content}
+                            
+                            usage = data.get('usage')
+                            if usage:
+                                total_tokens = usage.get('total_tokens', 0)
+                        except json.JSONDecodeError:
+                            continue
+
+            yield {
+                'type': 'done',
+                'model': self.model,
+                'provider': self.provider,
+                'tokens_used': total_tokens,
+                'tools_called': tools_called,
+            }
+
+        except requests.Timeout:
+            yield {'type': 'error', 'content': "Stream timed out"}
+        except requests.RequestException as e:
+            yield {'type': 'error', 'content': "Stream connection error"}
+
 
 # =============================================================================
 # FACTORY FUNCTION - Gets the LLM service instance
