@@ -17,6 +17,7 @@ from accounts.models import Consent
 from ai_assistant.models import AIInteraction
 from ai_assistant.services import get_llm_service
 from ai_assistant.services.llm_service import SYSTEM_PROMPT, needs_user_context
+from ai_assistant.services.knowledge_base import check_prohibited_content
 from ai_assistant.services.tools import TOOL_SCHEMAS
 import logging
 
@@ -257,6 +258,39 @@ class ChatView(ConsentRequiredMixin, APIView):
                 for h in history[-10:]  # Last 10 messages
             ]
             
+            # Check for prohibited content (credentials, guarantees, etc.)
+            is_prohibited, redirect_response = check_prohibited_content(message)
+            if is_prohibited:
+                # Save the interaction but return the redirect response
+                user_interaction = AIInteraction(
+                    customer_id=customer_id,
+                    message=message,
+                    response='',
+                    conversation_id=conversation_id,
+                    role='user'
+                )
+                user_interaction.save()
+                
+                ai_interaction = AIInteraction(
+                    customer_id=customer_id,
+                    message=message,
+                    response=redirect_response,
+                    conversation_id=conversation_id,
+                    role='assistant',
+                    model='content_filter',
+                    response_time_ms=0,
+                )
+                ai_interaction.save()
+                
+                return success_response(
+                    data={
+                        'message': redirect_response,
+                        'conversation_id': conversation_id,
+                        'filtered': True,
+                    },
+                    message="Response generated"
+                )
+            
             # Get LLM response
             llm = get_llm_service(use_case='chat')
             
@@ -403,6 +437,22 @@ class StreamingChatView(ConsentRequiredMixin, APIView):
                 status_code=status.HTTP_400_BAD_REQUEST
             )
         language = requested_language
+        
+        # Check for prohibited content before processing
+        is_prohibited, redirect_response = check_prohibited_content(message)
+        if is_prohibited:
+            # Return redirect response as a simple SSE stream
+            def filtered_stream():
+                yield f"event: token\ndata: {json.dumps({'content': redirect_response})}\n\n"
+                yield f"event: done\ndata: {json.dumps({'filtered': True})}\n\n"
+            
+            response = StreamingHttpResponse(
+                filtered_stream(),
+                content_type='text/event-stream'
+            )
+            response['Cache-Control'] = 'no-cache'
+            response['X-Accel-Buffering'] = 'no'
+            return response
         
         # Get conversation history
         history = AIInteraction.find_by_conversation(
