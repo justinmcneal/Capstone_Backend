@@ -257,6 +257,7 @@ class GroqService:
     def _execute_tools_parallel(self, tool_calls, customer_id, max_workers=4):
         """
         Execute multiple tool calls concurrently using ThreadPoolExecutor.
+        Includes rate limiting and safety checks.
         
         Args:
             tool_calls: List of tool call objects from the LLM
@@ -266,7 +267,7 @@ class GroqService:
         Returns:
             List of (tool_call_id, tool_name, result_json) tuples in original order
         """
-        from ai_assistant.services.tools import execute_tool
+        from ai_assistant.services.tool_safety import safe_execute_tool, rate_limiter
         
         def run_tool(tool_call):
             func = tool_call.get('function', {})
@@ -278,8 +279,21 @@ class GroqService:
                 tool_args = {}
             
             logger.info(f"[Parallel] Tool call: {tool_name}({tool_args}) for customer {customer_id}")
-            result = execute_tool(tool_name, tool_args, customer_id)
-            return (tool_call_id, tool_name, result)
+            
+            # Use safe executor with rate limiting and validation
+            result = safe_execute_tool(tool_name, tool_args, customer_id)
+            
+            if result['success']:
+                return (tool_call_id, tool_name, result['result'])
+            elif result.get('rate_limited'):
+                # Return rate limit error as tool result
+                return (tool_call_id, tool_name, json.dumps({
+                    "error": result['error'],
+                    "rate_limited": True,
+                    "retry_after_seconds": result.get('retry_after_seconds', 60)
+                }))
+            else:
+                return (tool_call_id, tool_name, json.dumps({"error": result['error']}))
         
         results = []
         # Use ThreadPoolExecutor for I/O-bound MongoDB queries
