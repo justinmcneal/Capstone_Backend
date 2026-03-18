@@ -102,6 +102,7 @@ def sync_application_to_chain(self, loan_id):
             tx_hash=submit_result["tx_hash"],
             gas_used=create_result["gas_used"] + submit_result["gas_used"],
             block_number=submit_result["block_number"],
+            gas_price=submit_result.get("gas_price", 0),
         )
 
         # Update application with tx hash
@@ -160,6 +161,7 @@ def sync_approval_to_chain(self, loan_id):
             tx_hash=result["tx_hash"],
             gas_used=result["gas_used"],
             block_number=result["block_number"],
+            gas_price=result.get("gas_price", 0),
         )
 
         _update_application_tx(loan_id, "approve", result["tx_hash"])
@@ -229,6 +231,7 @@ def sync_disbursement_to_chain(self, loan_id):
             tx_hash=complete_tx["tx_hash"],
             gas_used=complete_tx["gas_used"],
             block_number=complete_tx["block_number"],
+            gas_price=complete_tx.get("gas_price", 0),
         )
 
         _update_application_tx(loan_id, "disburse", complete_tx["tx_hash"])
@@ -308,6 +311,7 @@ def sync_schedule_to_chain(self, loan_id):
             tx_hash=result["tx_hash"],
             gas_used=result["gas_used"],
             block_number=result["block_number"],
+            gas_price=result.get("gas_price", 0),
         )
 
         # Update schedule with tx hash
@@ -379,6 +383,7 @@ def sync_payment_to_chain(self, loan_id, payment_id):
             tx_hash=result["tx_hash"],
             gas_used=result["gas_used"],
             block_number=result["block_number"],
+            gas_price=result.get("gas_price", 0),
         )
 
         # Update payment with tx hash

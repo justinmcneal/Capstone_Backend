@@ -37,6 +37,7 @@ class BlockchainTransaction:
         self.action = kwargs.get('action', '')  # submit, approve, disburse, schedule, payment
         self.status = kwargs.get('status', self.STATUS_PENDING)
         self.gas_used = kwargs.get('gas_used', 0)
+        self.gas_price = kwargs.get('gas_price', 0)  # Gas price in Wei
         self.block_number = kwargs.get('block_number', 0)
         self.error = kwargs.get('error', '')
         self.details = kwargs.get('details', {})
@@ -56,6 +57,7 @@ class BlockchainTransaction:
             'action': self.action,
             'status': self.status,
             'gas_used': self.gas_used,
+            'gas_price': self.gas_price,
             'block_number': self.block_number,
             'error': self.error,
             'details': self.details,
@@ -92,10 +94,11 @@ class BlockchainTransaction:
         )
         return tx.save()
 
-    def mark_confirmed(self, tx_hash, gas_used, block_number):
+    def mark_confirmed(self, tx_hash, gas_used, block_number, gas_price=0):
         """Update record after successful on-chain confirmation."""
         self.tx_hash = tx_hash
         self.gas_used = gas_used
+        self.gas_price = gas_price
         self.block_number = block_number
         self.status = self.STATUS_CONFIRMED
         self.completed_at = datetime.utcnow()
