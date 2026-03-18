@@ -228,7 +228,7 @@ def _sync_disbursement_impl(loan_id, include_schedule=True):
         complete_disbursement_onchain,
         set_method_onchain,
     )
-    from loans.blockchain.client import get_contract, send_transaction
+    from loans.blockchain.client import get_contract, send_transaction, send_eth_transfer
     from loans.models.application import LoanApplication
     from web3 import Web3
 
@@ -245,6 +245,11 @@ def _sync_disbursement_impl(loan_id, include_schedule=True):
             raise ValueError(f"LoanApplication {loan_id} not found")
 
         method_str = app.disbursement_method or app.preferred_disbursement_method or "other"
+
+        # ETH transfer for wallet disbursements
+        if method_str == "wallet":
+            _execute_eth_disbursement(loan_id, app)
+
         set_method_onchain(loan_id=loan_id, method=method_str)
 
         amount = int(app.disbursed_amount or app.approved_amount or app.requested_amount)
@@ -278,6 +283,50 @@ def _sync_disbursement_impl(loan_id, include_schedule=True):
     except Exception as exc:
         logger.error("sync_disbursement FAILED: loan=%s error=%s", loan_id, exc)
         tx_record.mark_failed(str(exc))
+
+
+def _execute_eth_disbursement(loan_id, app):
+    """Send actual ETH to the customer's wallet for wallet-based disbursements."""
+    from loans.blockchain.client import send_eth_transfer, get_web3
+    from loans.blockchain.services.eth_price_service import php_to_eth
+    from profiles.models.profile_models import CustomerProfile
+
+    profile = CustomerProfile.find_by_customer(app.customer_id)
+    if not profile or not profile.wallet_address:
+        raise ValueError(
+            f"Customer {app.customer_id} has no wallet address. "
+            "Cannot disburse via wallet without a valid Ethereum address."
+        )
+
+    php_amount = float(app.disbursed_amount or app.approved_amount or app.requested_amount)
+    conversion = php_to_eth(php_amount)
+
+    w3 = get_web3()
+    amount_wei = w3.to_wei(conversion["eth_amount"], "ether")
+
+    eth_result = send_eth_transfer(profile.wallet_address, amount_wei)
+
+    # Store ETH transfer details in the loan document
+    db = getattr(settings, "MONGODB", None)
+    if db is not None:
+        from bson import ObjectId as BsonObjectId
+        db["loan_applications"].update_one(
+            {"_id": BsonObjectId(loan_id)},
+            {"$set": {
+                "eth_disbursement_tx_hash": eth_result["tx_hash"],
+                "eth_disbursement_amount": str(conversion["eth_amount"]),
+                "eth_disbursement_amount_wei": str(amount_wei),
+                "eth_disbursement_rate": conversion["rate"],
+                "eth_disbursement_rate_source": conversion["source"],
+                "eth_disbursement_recipient": profile.wallet_address,
+            }},
+        )
+
+    logger.info(
+        "ETH disbursement OK: loan=%s amount=%.6f ETH to=%s tx=%s",
+        loan_id, conversion["eth_amount"], profile.wallet_address[:10],
+        eth_result["tx_hash"][:18],
+    )
 
 
 def _sync_schedule_impl(loan_id):
@@ -344,6 +393,7 @@ def _sync_schedule_impl(loan_id):
 
 def _sync_payment_impl(loan_id, payment_id):
     from bson import ObjectId
+    from datetime import datetime
 
     from loans.blockchain.models import BlockchainTransaction
     from loans.blockchain.services.repayment_service import record_payment_onchain
@@ -381,12 +431,23 @@ def _sync_payment_impl(loan_id, payment_id):
 
         settings.MONGODB["loan_payments"].update_one(
             {"_id": ObjectId(payment_id)},
-            {"$set": {"blockchain_tx_hash": result["tx_hash"]}},
+            {"$set": {
+                "blockchain_tx_hash": result["tx_hash"],
+                "blockchain_sync_status": "synced",
+                "blockchain_synced_at": datetime.utcnow(),
+            }},
         )
         logger.info("sync_payment OK: loan=%s payment=%s tx=%s",
                      loan_id, payment_id, result["tx_hash"][:18])
 
     except Exception as exc:
+        settings.MONGODB["loan_payments"].update_one(
+            {"_id": ObjectId(payment_id)},
+            {"$set": {
+                "blockchain_sync_status": "failed",
+                "blockchain_sync_error": str(exc)[:500],
+            }},
+        )
         logger.error("sync_payment FAILED: loan=%s payment=%s error=%s",
                      loan_id, payment_id, exc)
         tx_record.mark_failed(str(exc))
