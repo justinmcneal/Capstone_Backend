@@ -164,11 +164,8 @@ def send_transaction(contract, method_name, *args):
     except Exception:
         gas = settings.BLOCKCHAIN_GAS_LIMIT
 
-    # Use network gas price if available (EIP-1559 or legacy), else fall back to configured value
-    try:
-        gas_price = w3.eth.gas_price
-    except Exception:
-        gas_price = Web3.to_wei(settings.BLOCKCHAIN_GAS_PRICE_GWEI, "gwei")
+    # Use configured gas price (allows control over costs in dev/test environments)
+    gas_price = Web3.to_wei(settings.BLOCKCHAIN_GAS_PRICE_GWEI, "gwei")
 
     tx = fn.build_transaction({
         "from": account.address,
@@ -195,6 +192,9 @@ def send_transaction(contract, method_name, *args):
             receipt=receipt,
         )
 
+    # Get effective gas price from receipt (EIP-1559) or use the gas price we set
+    effective_gas_price = receipt.get("effectiveGasPrice", gas_price)
+
     logger.info(
         "Transaction OK: %s.%s() tx=%s gas=%d",
         contract.address[:10], method_name, tx_hash_hex[:18], receipt["gasUsed"],
@@ -203,6 +203,7 @@ def send_transaction(contract, method_name, *args):
     return {
         "tx_hash": tx_hash_hex,
         "gas_used": receipt["gasUsed"],
+        "gas_price": effective_gas_price,  # Gas price in Wei
         "block_number": receipt["blockNumber"],
         "status": receipt["status"],
     }
@@ -237,11 +238,13 @@ def send_eth_transfer(to_address, amount_wei):
         amount_wei: Amount in Wei (int)
 
     Returns:
-        dict with keys: tx_hash, gas_used, block_number, status, amount_wei
+        dict with keys: tx_hash, gas_used, gas_price, block_number, status, amount_wei
     """
     _check_enabled()
     w3 = get_web3()
     account = get_account()
+
+    gas_price = w3.eth.gas_price
 
     tx = {
         "from": account.address,
@@ -249,7 +252,7 @@ def send_eth_transfer(to_address, amount_wei):
         "value": int(amount_wei),
         "nonce": w3.eth.get_transaction_count(account.address),
         "gas": 21000,  # Standard ETH transfer gas
-        "gasPrice": w3.eth.gas_price,
+        "gasPrice": gas_price,
         "chainId": settings.BLOCKCHAIN_CHAIN_ID,
     }
 
@@ -267,6 +270,9 @@ def send_eth_transfer(to_address, amount_wei):
             receipt=receipt,
         )
 
+    # Get effective gas price from receipt (EIP-1559) or use the gas price we set
+    effective_gas_price = receipt.get("effectiveGasPrice", gas_price)
+
     logger.info(
         "ETH transfer OK: tx=%s amount=%s wei to=%s",
         tx_hash_hex[:18], amount_wei, to_address[:10],
@@ -275,6 +281,7 @@ def send_eth_transfer(to_address, amount_wei):
     return {
         "tx_hash": tx_hash_hex,
         "gas_used": receipt["gasUsed"],
+        "gas_price": effective_gas_price,  # Gas price in Wei
         "block_number": receipt["blockNumber"],
         "status": receipt["status"],
         "amount_wei": int(amount_wei),
