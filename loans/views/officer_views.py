@@ -2008,3 +2008,49 @@ class BlockchainStatusView(LoanOfficerRequiredMixin, APIView):
             data=data,
             message="Blockchain status retrieved"
         )
+
+
+class ExchangeRateView(LoanOfficerRequiredMixin, APIView):
+    """
+    Loan Officer: Get current ETH/PHP exchange rate for wallet disbursements.
+    
+    GET /api/loans/officer/exchange-rate/
+    """
+    authentication_classes = [CustomJWTAuthentication]
+    permission_classes = [IsAuthenticated]
+    
+    def get(self, request):
+        has_permission, result = self.check_officer_permission(request)
+        if not has_permission:
+            return result
+        
+        if not getattr(settings, 'BLOCKCHAIN_ENABLED', False):
+            return error_response(
+                message="Blockchain is not enabled",
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE
+            )
+        
+        from loans.blockchain.services.eth_price_service import (
+            get_eth_php_rate,
+            ExchangeRateUnavailableError,
+        )
+        
+        try:
+            rate_info = get_eth_php_rate()
+        except ExchangeRateUnavailableError as e:
+            return error_response(
+                message=str(e),
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE
+            )
+        
+        from datetime import datetime, timezone
+        return success_response(
+            data={
+                'eth_php_rate': rate_info['rate'],
+                'rate_source': rate_info['source'],
+                'rate_cached_at': datetime.fromtimestamp(
+                    rate_info['fetched_at'], tz=timezone.utc
+                ).isoformat() if rate_info['fetched_at'] else None,
+            },
+            message="Exchange rate retrieved"
+        )

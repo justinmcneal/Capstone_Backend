@@ -26,7 +26,15 @@ import json
 import requests
 import logging
 from django.conf import settings
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import time
+
+# Import from centralized knowledge base
+from ai_assistant.services.knowledge_base import (
+    build_system_prompt,
+    check_prohibited_content,
+    KNOWLEDGE_VERSION,
+)
 
 logger = logging.getLogger('ai_assistant')
 
@@ -59,122 +67,32 @@ MODEL_USE_CASE_KEYS = {
 
 
 # =============================================================================
-# SYSTEM PROMPT - This tells the AI how to behave
+# SYSTEM PROMPT - Built from centralized knowledge base
 # =============================================================================
-# This is the "personality" and rules for the AI assistant.
 # The AI reads this before every conversation.
+# To update AI knowledge, modify knowledge_base.py (single source of truth)
 
-SYSTEM_PROMPT = """You are a friendly and helpful financial assistant for MSME Pathways — a blockchain-backed microfinance platform that helps Filipino microentrepreneurs (MSME owners) access formal financial services.
+SYSTEM_PROMPT = build_system_prompt()
 
-=== YOUR ROLE ===
-1. Answer questions about the MSME Pathways platform and how it works
-2. Explain loan concepts in simple, understandable language
-3. Guide users through the loan application process
-4. Help users understand their payment options and repayment schedule
-5. Provide general financial literacy education
 
-=== PLATFORM OVERVIEW ===
-MSME Pathways is a mobile app for small business owners to apply for microloans. Every loan event — application, approval, disbursement, and payment — is recorded on the Ethereum blockchain for transparency and immutability.
+# Keywords that indicate user is asking about their personal data
+CONTEXT_REQUIRED_KEYWORDS = [
+    'my', 'mine', 'i have', 'do i', 'am i', 'can i',
+    'profile', 'document', 'loan', 'payment', 'balance',
+    'status', 'application', 'schedule', 'installment',
+    'overdue', 'due', 'remaining', 'paid', 'approved',
+    'rejected', 'pending', 'upload', 'complete', 'missing',
+    'akin', 'ko', 'aking', 'bayad', 'utang', 'aplikasyon',
+]
 
-=== LOAN APPLICATION PROCESS ===
-Step 1: Complete your profile — personal info, business info, and alternative credit data
-Step 2: Upload required documents — a valid government ID is always required; some loan products also require proof of address, business permit, or business photo
-Step 3: Browse loan products and check pre-qualification — the AI evaluates your profile and gives an eligibility score (0-100) with a risk category (low, medium, or high)
-Step 4: Submit your application — choose a loan product, requested amount, term length, purpose, and preferred disbursement method
-Step 5: Officer review — a loan officer reviews your application, may request additional or re-uploaded documents
-Step 6: Approval or rejection — if approved, you'll be notified with the approved amount; if rejected, you'll receive feedback on what to improve and you can reapply
-Step 7: Disbursement — the approved loan amount is sent to you via your preferred disbursement method
-Step 8: Repayment — pay monthly installments according to your repayment schedule
 
-=== LOAN PRODUCTS ===
-- Loan amounts generally range from ₱5,000 to ₱500,000 (varies by product)
-- Term lengths typically range from 3 to 24 months (varies by product)
-- Interest is calculated as flat rate (the same interest amount each month, not amortized)
-- Default monthly interest rate is 1.5% (18% per year), but varies by product
-- Each product may have its own minimum business age and minimum monthly income requirements
-
-=== ELIGIBILITY REQUIREMENTS ===
-- Minimum business operation: typically 6 months (varies by product)
-- Minimum monthly income: typically ₱5,000 (varies by product)
-- Required documents must be uploaded and approved before applying
-- A valid government ID is required for all loan products
-
-=== DOCUMENT TYPES ===
-- Valid government ID (required for all loans)
-- Selfie with ID
-- Proof of address (utility bill, barangay certificate)
-- Business permit (DTI, SEC, or Mayor's permit — not always required, many MSMEs operate informally)
-- Business photo (photo of your business or workplace)
-- Income proof (bank statements, sales records — optional)
-
-=== PAYMENT METHODS (5 total) ===
-There are two categories of payment methods:
-
-AUTOMATIC (customer pays directly, recorded automatically):
-- GCash — pay using your GCash mobile wallet
-- Bank Transfer — pay via electronic bank transfer
-- Wallet (ETH) — pay using your Ethereum cryptocurrency wallet
-
-MANUAL (loan officer records the payment on your behalf):
-- Cash — pay cash at a partner location; the loan officer records it for you
-- Check — pay by check; the loan officer records it after clearance
-
-When you pay via GCash, bank transfer, or ETH wallet, the payment is automatically recorded in the system. For cash and check payments, you pay at a partner location and your loan officer will manually record the payment.
-
-=== REPAYMENT SCHEDULE ===
-- After your loan is disbursed, a repayment schedule is automatically created
-- Payments are divided into equal monthly installments
-- Each installment has a due date, principal portion, and interest portion
-- Installment statuses: pending (not yet due/paid), paid (fully paid), partial (partially paid), overdue (past due date)
-- Partial payments are supported — you can pay part of an installment
-- You can view your repayment schedule and payment history in the app under the "Track" section
-
-=== DISBURSEMENT METHODS ===
-After your loan is approved, the money is sent to you. You can set your preferred method:
-- GCash, Bank Transfer, Cash, Check, or Wallet (ETH)
-The loan officer processes the disbursement using your preferred method.
-
-=== BLOCKCHAIN INTEGRATION ===
-All major loan events are permanently recorded on the Ethereum blockchain:
-- Loan application submission
-- Loan approval or rejection
-- Disbursement of funds
-- Every payment you make
-This provides a transparent, tamper-proof record of your entire loan history. You can view blockchain verification details in the app.
-
-=== WHERE TO FIND THINGS IN THE APP ===
-- Apply for a loan: Go to "Apply" from the dashboard
-- Check loan status: Go to "Track" → "Applications"
-- View repayment schedule: Go to "Track" → select your loan → "Schedule" tab
-- View payment history: Go to "Track" → select your loan → "Payments" tab
-- Make a payment: Go to "Track" → "Repayment" → tap "Make Payment"
-- Upload documents: Go to "Apply" → "Documents"
-- Learn about loans: Go to "Learn" → browse education topics or ask the AI assistant
-- View loan products: Go to "Loan Products" to browse available options
-- Update your profile: Go to "Profile" from the menu
-
-=== IMPORTANT GUIDELINES ===
-- NEVER give specific financial advice or guarantee loan approval
-- NEVER ask for sensitive information like passwords, PINs, or private keys
-- Be warm, supportive, and encouraging — many users are first-time borrowers
-- Avoid financial jargon — explain things simply
-- If asked in Tagalog, respond in Tagalog
-- If asked in English, respond in English
-- Keep responses concise but helpful (2-4 short paragraphs maximum)
-- If asked about real-time data (loan status, payment history, balance, profile completeness), use the available tools to look up the information — do not guess or make up data
-- If a tool returns no data, let the user know and guide them to the relevant section in the app
-- If you don't know something, say so honestly
-- When explaining payment methods, always clarify which are automatic (GCash, bank transfer, wallet) and which require the loan officer to record manually (cash, check)
-
-=== DATA RESPONSE RULES ===
-- Always include SPECIFIC numbers from tool results. Never omit counts or amounts.
-- For installments: always report as "X of Y" (e.g., "You've paid 1 of 12 installments")
-- For remaining balance: always include both the peso amount AND installment progress
-- For loan products: show the product name, amount range, interest rate, and term range
-- For application readiness: list EVERY specific blocker or missing item, not just a vague summary
-- For profile completion: state the exact percentage and list each missing field by name
-- For documents: state each document type and its status (approved/pending/rejected)
-"""
+def needs_user_context(message: str) -> bool:
+    """
+    Determine if the user's message requires fetching their personal data.
+    Returns False for general questions about the platform, loans, etc.
+    """
+    message_lower = message.lower()
+    return any(keyword in message_lower for keyword in CONTEXT_REQUIRED_KEYWORDS)
 
 
 # =============================================================================
@@ -226,7 +144,7 @@ class GroqService:
         language='en',
         system_prompt=None,
         temperature=0.7,
-        max_tokens=1024,
+        max_tokens=512,
         top_p=0.9,
     ):
         """
@@ -240,7 +158,7 @@ class GroqService:
             language: 'en' for English, 'tl' for Tagalog
             system_prompt: Optional custom system prompt override
             temperature: Sampling temperature
-            max_tokens: Maximum output tokens
+            max_tokens: Maximum output tokens (default 512 for concise responses)
             top_p: Nucleus sampling parameter
         
         Returns:
@@ -271,12 +189,11 @@ class GroqService:
         active_system_prompt = system_prompt or SYSTEM_PROMPT
         messages = [{"role": "system", "content": active_system_prompt}]
         
-        # Add previous conversation messages for context (last 10 only)
-        # This helps the AI remember what was discussed
+        # Add previous conversation messages for context (last 6 for efficiency)
         if conversation_history:
-            for hist in conversation_history[-10:]:
+            for hist in conversation_history[-6:]:
                 messages.append({
-                    "role": hist.get('role', 'user'),  # 'user' or 'assistant'
+                    "role": hist.get('role', 'user'),
                     "content": hist.get('content', '')
                 })
         
@@ -337,6 +254,72 @@ class GroqService:
             logger.error(f"Groq error: {str(e)}")
             return {'success': False, 'error': "Could not connect to Groq API."}
     
+    def _execute_tools_parallel(self, tool_calls, customer_id, max_workers=4):
+        """
+        Execute multiple tool calls concurrently using ThreadPoolExecutor.
+        Includes rate limiting and safety checks.
+        
+        Args:
+            tool_calls: List of tool call objects from the LLM
+            customer_id: Customer ID for scoping queries
+            max_workers: Max concurrent threads (default 4)
+        
+        Returns:
+            List of (tool_call_id, tool_name, result_json) tuples in original order
+        """
+        from ai_assistant.services.tool_safety import safe_execute_tool, rate_limiter
+        
+        def run_tool(tool_call):
+            func = tool_call.get('function', {})
+            tool_name = func.get('name', '')
+            tool_call_id = tool_call.get('id', '')
+            try:
+                tool_args = json.loads(func.get('arguments', '{}'))
+            except json.JSONDecodeError:
+                tool_args = {}
+            
+            logger.info(f"[Parallel] Tool call: {tool_name}({tool_args}) for customer {customer_id}")
+            
+            # Use safe executor with rate limiting and validation
+            result = safe_execute_tool(tool_name, tool_args, customer_id)
+            
+            if result['success']:
+                return (tool_call_id, tool_name, result['result'])
+            elif result.get('rate_limited'):
+                # Return rate limit error as tool result
+                return (tool_call_id, tool_name, json.dumps({
+                    "error": result['error'],
+                    "rate_limited": True,
+                    "retry_after_seconds": result.get('retry_after_seconds', 60)
+                }))
+            else:
+                return (tool_call_id, tool_name, json.dumps({"error": result['error']}))
+        
+        results = []
+        # Use ThreadPoolExecutor for I/O-bound MongoDB queries
+        with ThreadPoolExecutor(max_workers=min(max_workers, len(tool_calls))) as executor:
+            # Submit all tasks and maintain order
+            future_to_idx = {executor.submit(run_tool, tc): idx for idx, tc in enumerate(tool_calls)}
+            results = [None] * len(tool_calls)
+            
+            for future in as_completed(future_to_idx):
+                idx = future_to_idx[future]
+                try:
+                    results[idx] = future.result()
+                except Exception as e:
+                    # Handle individual tool failure
+                    tool_call = tool_calls[idx]
+                    tool_name = tool_call.get('function', {}).get('name', 'unknown')
+                    logger.error(f"Parallel tool error ({tool_name}): {e}")
+                    results[idx] = (
+                        tool_call.get('id', ''),
+                        tool_name,
+                        json.dumps({"error": "Failed to retrieve data"})
+                    )
+        
+        logger.info(f"[Parallel] Executed {len(tool_calls)} tools concurrently")
+        return results
+    
     def generate(self, prompt):
         """
         Simple text generation without conversation history.
@@ -361,7 +344,7 @@ class GroqService:
         system_prompt=None,
         tools=None,
         temperature=0.7,
-        max_tokens=1024,
+        max_tokens=512,
         top_p=0.9,
         max_tool_rounds=3,
     ):
@@ -377,7 +360,7 @@ class GroqService:
             system_prompt: Optional system prompt override
             tools: List of tool schemas (OpenAI format)
             temperature: Sampling temperature
-            max_tokens: Max output tokens
+            max_tokens: Max output tokens (default 512 for concise responses)
             top_p: Nucleus sampling
             max_tool_rounds: Max tool call iterations to prevent infinite loops
 
@@ -400,7 +383,7 @@ class GroqService:
         messages = [{"role": "system", "content": active_system_prompt}]
 
         if conversation_history:
-            for hist in conversation_history[-10:]:
+            for hist in conversation_history[-6:]:
                 messages.append({
                     "role": hist.get('role', 'user'),
                     "content": hist.get('content', '')
@@ -453,7 +436,20 @@ class GroqService:
                 if tool_calls and finish_reason == 'tool_calls':
                     messages.append(assistant_message)
 
-                    for tool_call in tool_calls:
+                    # Execute tools in parallel for better performance
+                    if len(tool_calls) > 1:
+                        # Multiple tools - run concurrently
+                        tool_results = self._execute_tools_parallel(tool_calls, customer_id)
+                        for tool_call_id, tool_name, tool_result in tool_results:
+                            tools_called.append(tool_name)
+                            messages.append({
+                                "role": "tool",
+                                "tool_call_id": tool_call_id,
+                                "content": tool_result,
+                            })
+                    else:
+                        # Single tool - run directly (no thread overhead)
+                        tool_call = tool_calls[0]
                         func = tool_call.get('function', {})
                         tool_name = func.get('name', '')
                         try:
@@ -499,6 +495,310 @@ class GroqService:
             'response_time_ms': elapsed_ms,
             'tools_called': tools_called,
         }
+
+    def chat_stream(
+        self,
+        message,
+        conversation_history=None,
+        language='en',
+        system_prompt=None,
+        temperature=0.7,
+        max_tokens=512,
+        top_p=0.9,
+    ):
+        """
+        Stream chat response token by token.
+        
+        Yields chunks as they arrive from the LLM.
+        Each chunk is a dict with 'type' and 'content' keys.
+        
+        Yields:
+            {'type': 'token', 'content': '...'} - A token chunk
+            {'type': 'done', 'model': '...', 'tokens_used': N} - Stream complete
+            {'type': 'error', 'content': '...'} - Error occurred
+        """
+        if not self.api_key:
+            yield {'type': 'error', 'content': "API key not configured"}
+            return
+
+        active_system_prompt = system_prompt or SYSTEM_PROMPT
+        messages = [{"role": "system", "content": active_system_prompt}]
+
+        if conversation_history:
+            for hist in conversation_history[-6:]:
+                messages.append({
+                    "role": hist.get('role', 'user'),
+                    "content": hist.get('content', '')
+                })
+
+        if language == 'tl':
+            message = f"[Please respond in Tagalog/Filipino] {message}"
+
+        messages.append({"role": "user", "content": message})
+
+        try:
+            response = requests.post(
+                self.api_url,
+                headers={
+                    "Authorization": f"Bearer {self.api_key}",
+                    "Content-Type": "application/json"
+                },
+                json={
+                    "model": self.model,
+                    "messages": messages,
+                    "temperature": temperature,
+                    "max_tokens": max_tokens,
+                    "top_p": top_p,
+                    "stream": True,
+                },
+                timeout=120,
+                stream=True,
+            )
+
+            if response.status_code != 200:
+                error_msg = response.text
+                try:
+                    error_msg = response.json().get('error', {}).get('message', response.text)
+                except Exception:
+                    pass
+                yield {'type': 'error', 'content': f"LLM error: {error_msg}"}
+                return
+
+            total_tokens = 0
+            for line in response.iter_lines():
+                if line:
+                    line_str = line.decode('utf-8')
+                    if line_str.startswith('data: '):
+                        data_str = line_str[6:]
+                        if data_str.strip() == '[DONE]':
+                            break
+                        try:
+                            data = json.loads(data_str)
+                            choice = data.get('choices', [{}])[0]
+                            delta = choice.get('delta', {})
+                            content = delta.get('content', '')
+                            if content:
+                                yield {'type': 'token', 'content': content}
+                            
+                            usage = data.get('usage')
+                            if usage:
+                                total_tokens = usage.get('total_tokens', 0)
+                        except json.JSONDecodeError:
+                            continue
+
+            yield {
+                'type': 'done',
+                'model': self.model,
+                'provider': self.provider,
+                'tokens_used': total_tokens,
+            }
+
+        except requests.Timeout:
+            yield {'type': 'error', 'content': "Request timed out"}
+        except requests.RequestException as e:
+            logger.error(f"Stream error: {str(e)}")
+            yield {'type': 'error', 'content': "Connection error"}
+
+    def chat_with_tools_stream(
+        self,
+        message,
+        customer_id,
+        conversation_history=None,
+        language='en',
+        system_prompt=None,
+        tools=None,
+        temperature=0.7,
+        max_tokens=512,
+        top_p=0.9,
+        max_tool_rounds=3,
+    ):
+        """
+        Stream chat with function calling support.
+        
+        First executes any tool calls (non-streaming), then streams the final response.
+        This hybrid approach ensures tools complete before streaming the answer.
+        
+        Yields:
+            {'type': 'tool_call', 'name': '...'} - Tool being called
+            {'type': 'tool_result', 'name': '...', 'success': bool} - Tool completed
+            {'type': 'token', 'content': '...'} - Response token
+            {'type': 'done', ...} - Stream complete
+            {'type': 'error', 'content': '...'} - Error
+        """
+        from ai_assistant.services.tools import execute_tool
+
+        if not self.api_key:
+            yield {'type': 'error', 'content': "API key not configured"}
+            return
+
+        tools_called = []
+        active_system_prompt = system_prompt or SYSTEM_PROMPT
+        messages = [{"role": "system", "content": active_system_prompt}]
+
+        if conversation_history:
+            for hist in conversation_history[-6:]:
+                messages.append({
+                    "role": hist.get('role', 'user'),
+                    "content": hist.get('content', '')
+                })
+
+        if language == 'tl':
+            message = f"[Please respond in Tagalog/Filipino] {message}"
+
+        messages.append({"role": "user", "content": message})
+
+        # Phase 1: Execute tool calls (non-streaming)
+        for round_num in range(max_tool_rounds):
+            try:
+                request_body = {
+                    "model": self.model,
+                    "messages": messages,
+                    "temperature": temperature,
+                    "max_tokens": max_tokens,
+                    "top_p": top_p,
+                }
+
+                if tools:
+                    request_body["tools"] = tools
+                    request_body["tool_choice"] = "auto"
+
+                timeout = 120 if self.provider == 'ollama' else 30
+                response = requests.post(
+                    self.api_url,
+                    headers={
+                        "Authorization": f"Bearer {self.api_key}",
+                        "Content-Type": "application/json"
+                    },
+                    json=request_body,
+                    timeout=timeout,
+                )
+
+                if response.status_code != 200:
+                    error_msg = response.json().get('error', {}).get('message', response.text)
+                    yield {'type': 'error', 'content': f"LLM error: {error_msg}"}
+                    return
+
+                result = response.json()
+                choice = result.get('choices', [{}])[0]
+                assistant_message = choice.get('message', {})
+                finish_reason = choice.get('finish_reason', '')
+                tool_calls = assistant_message.get('tool_calls')
+
+                if tool_calls and finish_reason == 'tool_calls':
+                    messages.append(assistant_message)
+
+                    # Execute tools in parallel for better performance
+                    if len(tool_calls) > 1:
+                        # Yield all tool_call events first
+                        for tool_call in tool_calls:
+                            func = tool_call.get('function', {})
+                            tool_name = func.get('name', '')
+                            yield {'type': 'tool_call', 'name': tool_name}
+                        
+                        # Execute all tools concurrently
+                        tool_results = self._execute_tools_parallel(tool_calls, customer_id)
+                        
+                        # Yield results and add to messages
+                        for tool_call_id, tool_name, tool_result in tool_results:
+                            tools_called.append(tool_name)
+                            yield {'type': 'tool_result', 'name': tool_name, 'success': True}
+                            messages.append({
+                                "role": "tool",
+                                "tool_call_id": tool_call_id,
+                                "content": tool_result,
+                            })
+                    else:
+                        # Single tool - run directly
+                        tool_call = tool_calls[0]
+                        func = tool_call.get('function', {})
+                        tool_name = func.get('name', '')
+                        try:
+                            tool_args = json.loads(func.get('arguments', '{}'))
+                        except json.JSONDecodeError:
+                            tool_args = {}
+
+                        yield {'type': 'tool_call', 'name': tool_name}
+                        
+                        tool_result = execute_tool(tool_name, tool_args, customer_id)
+                        tools_called.append(tool_name)
+
+                        yield {'type': 'tool_result', 'name': tool_name, 'success': True}
+
+                        messages.append({
+                            "role": "tool",
+                            "tool_call_id": tool_call.get('id', ''),
+                            "content": tool_result,
+                        })
+                    continue
+                else:
+                    # No more tool calls, break to streaming phase
+                    break
+
+            except requests.Timeout:
+                yield {'type': 'error', 'content': "Request timed out"}
+                return
+            except requests.RequestException as e:
+                yield {'type': 'error', 'content': "Connection error"}
+                return
+
+        # Phase 2: Stream the final response
+        try:
+            response = requests.post(
+                self.api_url,
+                headers={
+                    "Authorization": f"Bearer {self.api_key}",
+                    "Content-Type": "application/json"
+                },
+                json={
+                    "model": self.model,
+                    "messages": messages,
+                    "temperature": temperature,
+                    "max_tokens": max_tokens,
+                    "top_p": top_p,
+                    "stream": True,
+                },
+                timeout=120,
+                stream=True,
+            )
+
+            if response.status_code != 200:
+                yield {'type': 'error', 'content': "Failed to stream response"}
+                return
+
+            total_tokens = 0
+            for line in response.iter_lines():
+                if line:
+                    line_str = line.decode('utf-8')
+                    if line_str.startswith('data: '):
+                        data_str = line_str[6:]
+                        if data_str.strip() == '[DONE]':
+                            break
+                        try:
+                            data = json.loads(data_str)
+                            choice = data.get('choices', [{}])[0]
+                            delta = choice.get('delta', {})
+                            content = delta.get('content', '')
+                            if content:
+                                yield {'type': 'token', 'content': content}
+                            
+                            usage = data.get('usage')
+                            if usage:
+                                total_tokens = usage.get('total_tokens', 0)
+                        except json.JSONDecodeError:
+                            continue
+
+            yield {
+                'type': 'done',
+                'model': self.model,
+                'provider': self.provider,
+                'tokens_used': total_tokens,
+                'tools_called': tools_called,
+            }
+
+        except requests.Timeout:
+            yield {'type': 'error', 'content': "Stream timed out"}
+        except requests.RequestException as e:
+            yield {'type': 'error', 'content': "Stream connection error"}
 
 
 # =============================================================================

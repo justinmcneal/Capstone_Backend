@@ -1,1 +1,1 @@
-from .chat_views import ChatView, ChatHistoryView, SuggestionsView, AIStatusView, EducationView, FAQsView
+from .chat_views import ChatView, StreamingChatView, ChatHistoryView, SuggestionsView, AIStatusView, EducationView, FAQsView

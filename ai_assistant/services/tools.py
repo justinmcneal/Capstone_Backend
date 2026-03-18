@@ -14,8 +14,44 @@ All tools are READ-ONLY — no mutations via chatbot.
 import json
 import logging
 from datetime import datetime
+from django.core.cache import cache
+from django.conf import settings
 
 logger = logging.getLogger('ai_assistant')
+
+# Cache TTL for tool results
+CACHE_TTL = getattr(settings, 'CACHE_TTL', {})
+TOOL_CACHE_TTL = {
+    'loan_products': CACHE_TTL.get('loan_products', 1800),  # 30 min - rarely changes
+    'profile_status': 60,  # 1 min - changes occasionally
+    'document_status': 60,  # 1 min - changes occasionally
+    'loan_status': 30,  # 30 sec - may change during conversations
+    'repayment': 30,  # 30 sec - payment status may update
+}
+
+
+def _get_user_cache_key(customer_id: str, tool_name: str) -> str:
+    """Generate a per-user cache key for tool results."""
+    return f"ai_tool:{tool_name}:{customer_id}"
+
+
+def invalidate_user_tool_cache(customer_id: str, tool_names: list = None):
+    """
+    Invalidate cached tool results for a user.
+    Called when user data changes (e.g., after document upload).
+    
+    Args:
+        customer_id: The customer's ID
+        tool_names: List of tools to invalidate, or None for all
+    """
+    if tool_names is None:
+        tool_names = ['profile_status', 'document_status', 'loan_status', 
+                      'repayment_schedule', 'next_payment_due', 'application_readiness']
+    
+    for tool_name in tool_names:
+        cache_key = _get_user_cache_key(customer_id, tool_name)
+        cache.delete(cache_key)
+        logger.debug(f"Invalidated cache: {cache_key}")
 
 
 # =============================================================================
@@ -161,7 +197,14 @@ def execute_tool(tool_name, tool_args, customer_id):
 
 
 def _get_profile_status(customer_id, **kwargs):
+    """Get profile status with short-term caching."""
     from profiles.models.profile_models import CustomerProfile, BusinessProfile
+
+    # Check cache first
+    cache_key = _get_user_cache_key(customer_id, 'profile_status')
+    cached = cache.get(cache_key)
+    if cached is not None:
+        return cached
 
     result = {"profile": None, "business": None}
 
@@ -199,15 +242,26 @@ def _get_profile_status(customer_id, **kwargs):
             "is_registered": getattr(business, 'is_registered', False),
         }
 
+    # Cache for short period
+    cache.set(cache_key, result, TOOL_CACHE_TTL['profile_status'])
     return result
 
 
 def _get_document_status(customer_id, **kwargs):
+    """Get document status with short-term caching."""
     from documents.models.document import Document
+
+    # Check cache first
+    cache_key = _get_user_cache_key(customer_id, 'document_status')
+    cached = cache.get(cache_key)
+    if cached is not None:
+        return cached
 
     docs = Document.find_by_customer(customer_id)
     if not docs:
-        return {"documents": [], "summary": "No documents uploaded yet."}
+        result = {"documents": [], "summary": "No documents uploaded yet."}
+        cache.set(cache_key, result, TOOL_CACHE_TTL['document_status'])
+        return result
 
     doc_list = []
     for doc in docs:
@@ -221,18 +275,29 @@ def _get_document_status(customer_id, **kwargs):
     pending = sum(1 for d in doc_list if d['status'] == 'pending')
     rejected = sum(1 for d in doc_list if d['status'] == 'rejected')
 
-    return {
+    result = {
         "documents": doc_list,
         "summary": f"{len(doc_list)} document(s): {approved} approved, {pending} pending, {rejected} rejected"
     }
+    cache.set(cache_key, result, TOOL_CACHE_TTL['document_status'])
+    return result
 
 
 def _get_loan_status(customer_id, **kwargs):
+    """Get loan application status with short-term caching."""
     from loans.models.application import LoanApplication
+
+    # Check cache first
+    cache_key = _get_user_cache_key(customer_id, 'loan_status')
+    cached = cache.get(cache_key)
+    if cached is not None:
+        return cached
 
     apps = LoanApplication.find_by_customer(customer_id)
     if not apps:
-        return {"applications": [], "summary": "No loan applications yet."}
+        result = {"applications": [], "summary": "No loan applications yet."}
+        cache.set(cache_key, result, TOOL_CACHE_TTL['loan_status'])
+        return result
 
     app_list = []
     for app in apps[:5]:
@@ -246,11 +311,13 @@ def _get_loan_status(customer_id, **kwargs):
             "decision_date": getattr(app, 'decision_date', None),
         })
 
-    return {
+    result = {
         "applications": app_list,
         "total": len(apps),
         "summary": f"{len(apps)} application(s). Most recent: {app_list[0]['status']}" if app_list else "None"
     }
+    cache.set(cache_key, result, TOOL_CACHE_TTL['loan_status'])
+    return result
 
 
 def _get_repayment_schedule(customer_id, **kwargs):
@@ -360,11 +427,20 @@ def _get_payment_history(customer_id, limit=5, **kwargs):
 
 
 def _get_loan_products(customer_id, **kwargs):
+    """Get available loan products. Results are cached for performance."""
+    # Check cache first (loan products don't change frequently)
+    cache_key = 'ai_tool_loan_products'
+    cached_result = cache.get(cache_key)
+    if cached_result:
+        return cached_result
+    
     from loans.models.product import LoanProduct
 
     products = LoanProduct.find(active_only=True)
     if not products:
-        return {"products": [], "summary": "No loan products available at this time."}
+        result = {"products": [], "summary": "No loan products available at this time."}
+        cache.set(cache_key, result, TOOL_CACHE_TTL['loan_products'])
+        return result
 
     product_list = []
     for p in products:
@@ -382,11 +458,15 @@ def _get_loan_products(customer_id, **kwargs):
             "required_documents": getattr(p, 'required_documents', []),
         })
 
-    return {
+    result = {
         "products": product_list,
         "total": len(product_list),
         "summary": f"{len(product_list)} loan product(s) available."
     }
+    
+    # Cache for future requests
+    cache.set(cache_key, result, TOOL_CACHE_TTL['loan_products'])
+    return result
 
 
 def _get_application_readiness(customer_id, **kwargs):
