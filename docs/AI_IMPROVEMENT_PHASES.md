@@ -129,7 +129,7 @@ CACHE_TTL = {
     'education': 86400,   # 24 hours  
     'suggestions': 43200, # 12 hours
     'loan_products': 1800,# 30 minutes
-    'ai_status': 60,      # 1 minute
+    'ai_status': 60      # 1 minute
 }
 ```
 

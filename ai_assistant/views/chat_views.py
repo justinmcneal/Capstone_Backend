@@ -1,6 +1,7 @@
 from rest_framework.views import APIView
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
+from rest_framework.renderers import BaseRenderer
 from django.http import StreamingHttpResponse
 from django.core.cache import cache
 from django.conf import settings
@@ -28,6 +29,16 @@ import logging
 
 logger = logging.getLogger('ai_assistant')
 ALLOWED_LANGUAGES = {'en', 'tl'}
+
+
+class EventStreamRenderer(BaseRenderer):
+    """Custom renderer for Server-Sent Events"""
+    media_type = 'text/event-stream'
+    format = 'txt'
+
+    def render(self, data, accepted_media_type=None, renderer_context=None):
+        return data
+
 
 # Cache TTL defaults (fallback if not in settings)
 CACHE_TTL = getattr(settings, 'CACHE_TTL', {
@@ -271,6 +282,7 @@ class StreamingChatView(ConsentRequiredMixin, APIView):
     authentication_classes = [CustomJWTAuthentication]
     permission_classes = [IsAuthenticated]
     throttle_classes = [ChatRateThrottle]
+    renderer_classes = [EventStreamRenderer]
 
     def post(self, request):
         """Stream AI response as Server-Sent Events"""
