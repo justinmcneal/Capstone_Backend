@@ -192,14 +192,13 @@ REDIS_URL = os.getenv('REDIS_URL', os.getenv('CELERY_BROKER_URL', 'redis://local
 USE_REDIS_CACHE = env_bool('USE_REDIS_CACHE', False)
 
 if USE_REDIS_CACHE and REDIS_URL:
+    # Use Django's built-in Redis cache (Django 4.0+)
+    # Compatible with redis>=4.0
     CACHES = {
         'default': {
             'BACKEND': 'django.core.cache.backends.redis.RedisCache',
             'LOCATION': REDIS_URL,
             'KEY_PREFIX': 'msme_ai',
-            'OPTIONS': {
-                'CLIENT_CLASS': 'django_redis.client.DefaultClient',
-            }
         }
     }
 else:
