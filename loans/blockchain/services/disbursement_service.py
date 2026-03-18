@@ -15,8 +15,8 @@ logger = logging.getLogger("blockchain")
 # DisbursementMethod.Method enum mapping (Django string → Solidity uint)
 DISBURSEMENT_METHOD_MAP = {
     "bank_transfer": 0,
-    "cash": 1,
-    "gcash": 2,
+    "gcash": 1,
+    "cash": 2,
     "check": 3,
     "wallet": 4,
 }
@@ -42,8 +42,16 @@ def set_method_onchain(loan_id, method, details_hash=""):
         dict with tx_hash, gas_used, block_number, status
     """
     contract = get_contract("disbursementMethod")
+    app_contract = get_contract("loanApplication")
     loan_id_bytes = _to_bytes32(loan_id)
     method_enum = DISBURSEMENT_METHOD_MAP.get(method, 4)  # Default to Other
+
+    # Fail fast with a clear message instead of opaque VM revert from modifier checks.
+    if not call_view(app_contract, "exists", loan_id_bytes):
+        raise ValueError(
+            f"Loan {loan_id} not found on-chain (LoanApplication.exists=false). "
+            "Run application/approval sync before disbursement."
+        )
 
     result = send_transaction(
         contract,
@@ -101,8 +109,15 @@ def complete_disbursement_onchain(loan_id, amount, reference_hash):
             complete_tx: tx result from completeDisbursement
     """
     contract_exec = get_contract("disbursementExecution")
+    app_contract = get_contract("loanApplication")
     loan_id_bytes = _to_bytes32(loan_id)
     ref_bytes = _to_bytes32(reference_hash)
+
+    if not call_view(app_contract, "exists", loan_id_bytes):
+        raise ValueError(
+            f"Loan {loan_id} not found on-chain (LoanApplication.exists=false). "
+            "Run application/approval sync before disbursement."
+        )
 
     # Step 1: Initiate
     initiate_result = send_transaction(
