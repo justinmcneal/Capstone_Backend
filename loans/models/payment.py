@@ -38,6 +38,9 @@ class LoanPayment:
 
         # Blockchain sync tracking
         self.blockchain_tx_hash = kwargs.get('blockchain_tx_hash', '')
+        self.blockchain_sync_status = kwargs.get('blockchain_sync_status', 'pending')
+        self.blockchain_sync_error = kwargs.get('blockchain_sync_error', '')
+        self.blockchain_synced_at = kwargs.get('blockchain_synced_at')
     
     @property
     def id(self):
@@ -56,6 +59,9 @@ class LoanPayment:
             'recorded_by': self.recorded_by,
             'recorded_at': self.recorded_at,
             'blockchain_tx_hash': self.blockchain_tx_hash,
+            'blockchain_sync_status': self.blockchain_sync_status,
+            'blockchain_sync_error': self.blockchain_sync_error,
+            'blockchain_synced_at': self.blockchain_synced_at,
         }
         if self._id:
             data['_id'] = self._id

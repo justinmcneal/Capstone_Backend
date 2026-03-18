@@ -66,6 +66,7 @@ class CustomerProfileView(CustomerProfileAccessMixin, APIView):
                     'emergency_contact_name': profile.emergency_contact_name,
                     'emergency_contact_phone': profile.emergency_contact_phone,
                     'emergency_contact_relationship': profile.emergency_contact_relationship,
+                    'wallet_address': profile.wallet_address,
                     'profile_completed': profile.profile_completed,
                     'completion_percentage': profile.completion_percentage
                 },

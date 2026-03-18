@@ -78,6 +78,12 @@ class LoanApplication:
         self.disbursement_reference = kwargs.get('disbursement_reference', '')
         self.disbursed_by = kwargs.get('disbursed_by')  # Officer/Admin who processed
         
+        # ETH wallet disbursement details
+        self.eth_disbursement_tx_hash = kwargs.get('eth_disbursement_tx_hash')
+        self.eth_disbursement_amount = kwargs.get('eth_disbursement_amount')
+        self.eth_disbursement_rate = kwargs.get('eth_disbursement_rate')
+        self.eth_disbursement_recipient = kwargs.get('eth_disbursement_recipient')
+        
         # Timestamps
         self.submitted_at = kwargs.get('submitted_at')
         self.created_at = kwargs.get('created_at', datetime.utcnow())
@@ -119,6 +125,10 @@ class LoanApplication:
             'disbursement_method': self.disbursement_method,
             'disbursement_reference': self.disbursement_reference,
             'disbursed_by': self.disbursed_by,
+            'eth_disbursement_tx_hash': self.eth_disbursement_tx_hash,
+            'eth_disbursement_amount': self.eth_disbursement_amount,
+            'eth_disbursement_rate': self.eth_disbursement_rate,
+            'eth_disbursement_recipient': self.eth_disbursement_recipient,
             'submitted_at': self.submitted_at,
             'created_at': self.created_at,
             'updated_at': self.updated_at,
