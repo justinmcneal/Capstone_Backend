@@ -34,6 +34,7 @@ from loans.views import (
     PaymentSearchView,
     BlockchainStatusView,
     CustomerBlockchainView,
+    ExchangeRateView,
 )
 
 
@@ -78,4 +79,5 @@ urlpatterns = [
     path('officer/applications/<str:application_id>/schedule/', OfficerScheduleView.as_view(), name='officer-schedule'),
     path('officer/applications/<str:application_id>/payments/', OfficerPaymentHistoryView.as_view(), name='officer-payment-history'),
     path('officer/applications/<str:application_id>/blockchain/', BlockchainStatusView.as_view(), name='officer-blockchain'),
+    path('officer/exchange-rate/', ExchangeRateView.as_view(), name='officer-exchange-rate'),
 ]
