@@ -5,6 +5,7 @@ from analytics.views import (
     AuditLogUsersView,
     AuditLogDetailView,
     OfficerDashboardView,
+    OfficerAuditLogsView,
     CustomerDashboardView
 )
 
@@ -19,6 +20,7 @@ urlpatterns = [
     
     # Loan officer dashboard
     path('officer/', OfficerDashboardView.as_view(), name='officer-dashboard'),
+    path('officer/audit-logs/', OfficerAuditLogsView.as_view(), name='officer-audit-logs'),
     
     # Customer dashboard
     path('customer/', CustomerDashboardView.as_view(), name='customer-dashboard'),

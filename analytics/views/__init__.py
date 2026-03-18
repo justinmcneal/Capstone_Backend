@@ -4,5 +4,5 @@ from .admin_dashboard import (
     AuditLogUsersView,
     AuditLogDetailView,
 )
-from .officer_dashboard import OfficerDashboardView
+from .officer_dashboard import OfficerDashboardView, OfficerAuditLogsView
 from .customer_dashboard import CustomerDashboardView
