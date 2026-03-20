@@ -107,3 +107,6 @@ Expected:
 Notes:
 - If the knowledge base changes, update these tests to match.
 - If a response is partially correct but misses a required item, mark Fail and note the missing fact.
+
+
+python scripts/eval_ai_assistant_accuracy.py --token "<customer_access_token>"
