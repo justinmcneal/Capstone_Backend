@@ -33,6 +33,15 @@ class AuthService:
             'role': customer.role,
             'two_factor_enabled': customer.two_factor_enabled,
             'language': getattr(customer, 'language', 'en'),
+            'has_taken_pretest': getattr(customer, 'has_taken_pretest', False),
+            'pretest_score': getattr(customer, 'pretest_score', None),
+            'pretest_total_questions': getattr(
+                customer,
+                'pretest_total_questions',
+                None,
+            ),
+            'pretest_percentage': getattr(customer, 'pretest_percentage', None),
+            'pretest_completed_at': getattr(customer, 'pretest_completed_at', None),
         }
         if include_last_name:
             data['last_name'] = customer.last_name

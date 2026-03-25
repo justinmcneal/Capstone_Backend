@@ -6,6 +6,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 
 from accounts.authentication import CustomJWTAuthentication
+from accounts.services.auth_service import AuthService
 from accounts.utils.response_helpers import error_response, success_response
 
 
@@ -188,6 +189,14 @@ class PreTestQuestionsView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
+        customer = AuthService.get_customer_by_id(request.user.customer_id)
+        if customer and getattr(customer, 'has_taken_pretest', False):
+            return error_response(
+                message='Pre-test already completed',
+                errors={'pre_test': 'This assessment can only be taken once'},
+                status_code=status.HTTP_409_CONFLICT,
+            )
+
         try:
             raw_count = request.query_params.get('count', '10')
             count = int(raw_count)
@@ -227,6 +236,14 @@ class PreTestSubmitView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
+        customer = AuthService.get_customer_by_id(request.user.customer_id)
+        if customer and getattr(customer, 'has_taken_pretest', False):
+            return error_response(
+                message='Pre-test already completed',
+                errors={'pre_test': 'This assessment can only be submitted once'},
+                status_code=status.HTTP_409_CONFLICT,
+            )
+
         answers = request.data.get('answers')
 
         if not isinstance(answers, dict) or not answers:
@@ -259,6 +276,15 @@ class PreTestSubmitView(APIView):
             )
 
         percentage = round((correct_answers / total_questions) * 100, 2)
+        completed_at = timezone.now()
+
+        if customer:
+            customer.has_taken_pretest = True
+            customer.pretest_score = correct_answers
+            customer.pretest_total_questions = total_questions
+            customer.pretest_percentage = percentage
+            customer.pretest_completed_at = completed_at
+            customer.save()
 
         return success_response(
             data={
@@ -266,7 +292,8 @@ class PreTestSubmitView(APIView):
                 'correct_answers': correct_answers,
                 'total_questions': total_questions,
                 'percentage': percentage,
-                'completed_at': timezone.now().isoformat(),
+                'completed_at': completed_at.isoformat(),
+                'has_taken_pretest': True,
             },
             message='Pre-test submitted successfully',
         )

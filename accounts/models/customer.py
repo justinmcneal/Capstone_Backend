@@ -64,6 +64,13 @@ class Customer:
             'email_payment_reminders': True,
             'email_promotions': False
         })
+
+        # Learn personalization baseline tracking
+        self.has_taken_pretest = kwargs.get('has_taken_pretest', False)
+        self.pretest_score = kwargs.get('pretest_score')
+        self.pretest_total_questions = kwargs.get('pretest_total_questions')
+        self.pretest_percentage = kwargs.get('pretest_percentage')
+        self.pretest_completed_at = kwargs.get('pretest_completed_at')
     
     @property
     def id(self):
@@ -109,6 +116,11 @@ class Customer:
             'two_factor_enabled': self.two_factor_enabled,
             'two_factor_secret': self.two_factor_secret,
             'backup_codes': self.backup_codes,
+            'has_taken_pretest': self.has_taken_pretest,
+            'pretest_score': self.pretest_score,
+            'pretest_total_questions': self.pretest_total_questions,
+            'pretest_percentage': self.pretest_percentage,
+            'pretest_completed_at': self.pretest_completed_at,
         }
         if self._id:
             data['_id'] = self._id
