@@ -26,6 +26,7 @@ urlpatterns = [
     path('api/profile/', include('profiles.urls')),
     path('api/documents/', include('documents.urls')),
     path('api/ai/', include('ai_assistant.urls')),
+    path('api/learn/', include('ai_assistant.learn_urls')),
     path('api/loans/', include('loans.urls')),
     path('api/analytics/', include('analytics.urls')),
     path('api/notifications/', include('notifications.urls')),
