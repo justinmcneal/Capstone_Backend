@@ -166,7 +166,7 @@ class ChatView(ConsentRequiredMixin, APIView):
                     response=redirect_response,
                     conversation_id=conversation_id,
                     role='assistant',
-                    model='content_filter',
+                    model_used='content_filter',
                     response_time_ms=0,
                 )
                 ai_interaction.save()
