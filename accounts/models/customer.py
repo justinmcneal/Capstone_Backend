@@ -71,6 +71,8 @@ class Customer:
         self.pretest_total_questions = kwargs.get('pretest_total_questions')
         self.pretest_percentage = kwargs.get('pretest_percentage')
         self.pretest_completed_at = kwargs.get('pretest_completed_at')
+        self.pretest_weak_areas = kwargs.get('pretest_weak_areas', [])
+        self.learn_module_progress = kwargs.get('learn_module_progress', {})
     
     @property
     def id(self):
@@ -121,6 +123,8 @@ class Customer:
             'pretest_total_questions': self.pretest_total_questions,
             'pretest_percentage': self.pretest_percentage,
             'pretest_completed_at': self.pretest_completed_at,
+            'pretest_weak_areas': self.pretest_weak_areas,
+            'learn_module_progress': self.learn_module_progress,
         }
         if self._id:
             data['_id'] = self._id

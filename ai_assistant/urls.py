@@ -6,6 +6,7 @@ from ai_assistant.views import (
     SuggestionsView,
     AIStatusView,
     EducationView,
+    ModuleProgressView,
     FAQsView
 )
 
@@ -29,6 +30,7 @@ urlpatterns = [
     
     # Education content
     path('education/', EducationView.as_view(), name='education'),
+    path('education/progress/', ModuleProgressView.as_view(), name='education-progress'),
     path('education/<str:topic>/', EducationView.as_view(), name='education-topic'),
     
     # FAQs

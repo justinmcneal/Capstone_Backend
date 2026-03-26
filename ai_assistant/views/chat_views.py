@@ -10,6 +10,7 @@ import math
 import time
 
 from accounts.authentication import CustomJWTAuthentication
+from accounts.services.auth_service import AuthService
 from accounts.utils.access_control import AccessControlMixin
 from accounts.utils.response_helpers import success_response, error_response
 from accounts.utils.throttles import ChatRateThrottle
@@ -676,11 +677,20 @@ class EducationView(AccessControlMixin, APIView):
     """
     authentication_classes = [CustomJWTAuthentication]
     permission_classes = [IsAuthenticated]
+    ENABLE_MODULE_SEQUENCING = bool(
+        getattr(settings, 'ENABLE_LEARN_MODULE_SEQUENCING', False)
+    )
     
     # Education content is static, define once
     TOPICS = {
         'what_is_a_loan': {
+            'title_fil': 'Ano ang Loan?',
+            'title_en': 'What is a Loan?',
             'title': 'What is a Loan?',
+            'description': 'Praktikal na paliwanag kung paano gamitin ang loan sa negosyo.',
+            'weak_area_tag': 'loan_basics',
+            'order': 3,
+            'duration_minutes': 6,
             'content': 'A loan is money you borrow and agree to pay back with interest. Think of it as a tool to help your business grow when you need funds.',
             'key_points': [
                 'You receive money upfront',
@@ -689,7 +699,13 @@ class EducationView(AccessControlMixin, APIView):
             ]
         },
         'interest_rates': {
+            'title_fil': 'Paano Gumagana ang Interes',
+            'title_en': 'Understanding Interest Rates',
             'title': 'Understanding Interest Rates',
+            'description': 'Gabayan sa interes para makapagplano ng hulog nang tama.',
+            'weak_area_tag': 'loan_basics',
+            'order': 6,
+            'duration_minutes': 5,
             'content': 'Interest is what you pay for borrowing money. MSME Pathways uses a flat interest rate, meaning you pay the same interest amount each month. Lower rates mean lower total cost.',
             'key_points': [
                 'Flat rate: Same interest amount every month (not compounding)',
@@ -698,7 +714,13 @@ class EducationView(AccessControlMixin, APIView):
             ]
         },
         'loan_process': {
+            'title_fil': 'Hakbang sa Pag-apply',
+            'title_en': 'Loan Process',
             'title': 'The Loan Process',
+            'description': 'Sunod-sunod na hakbang mula profile hanggang paglabas ng pondo.',
+            'weak_area_tag': 'loan_basics',
+            'order': 7,
+            'duration_minutes': 7,
             'content': 'Applying for a loan is simple with our AI-assisted process. Every step is tracked and recorded on the blockchain for transparency.',
             'key_points': [
                 'Step 1: Complete your profile (personal, business, and alternative credit data)',
@@ -712,7 +734,13 @@ class EducationView(AccessControlMixin, APIView):
             ]
         },
         'documents_needed': {
+            'title_fil': 'Mga Dokumentong Kailangan',
+            'title_en': 'Documents You Need',
             'title': 'Documents You Need',
+            'description': 'Checklist ng pangunahing dokumento para mabilis ang proseso.',
+            'weak_area_tag': 'loan_basics',
+            'order': 8,
+            'duration_minutes': 4,
             'content': 'We keep requirements simple for MSMEs. Many small businesses operate informally, so we don\'t always require a business permit.',
             'key_points': [
                 'Valid government ID (required for all loans)',
@@ -724,7 +752,13 @@ class EducationView(AccessControlMixin, APIView):
             ]
         },
         'improving_chances': {
+            'title_fil': 'Paano Lumakas ang Iyong Application',
+            'title_en': 'Improving Approval Chances',
             'title': 'Improving Your Approval Chances',
+            'description': 'Mga praktikal na gawin para mas handa sa susunod na hakbang.',
+            'weak_area_tag': 'loan_basics',
+            'order': 9,
+            'duration_minutes': 5,
             'content': 'Tips to increase your likelihood of getting approved.',
             'key_points': [
                 'Complete your profile fully',
@@ -733,8 +767,59 @@ class EducationView(AccessControlMixin, APIView):
                 'Show consistent business activity'
             ]
         },
+        'budgeting_basics': {
+            'title_fil': 'Badyet ng Tindahan',
+            'title_en': 'Store Budgeting Basics',
+            'title': 'Badyet ng Tindahan',
+            'description': 'Ayusin ang kita at gastos para laging may pondo sa negosyo.',
+            'weak_area_tag': 'budgeting',
+            'order': 1,
+            'duration_minutes': 6,
+            'content': 'Ang badyet ay simpleng plano ng papasok na kita at lalabas na gastos. Kapag maayos ang badyet, mas kontrolado ang puhunan at hulog.',
+            'key_points': [
+                'Ilista araw-araw ang benta at gastos',
+                'Ihiwalay ang puhunan sa personal na gastos',
+                'Maglaan ng emergency buffer kada linggo'
+            ]
+        },
+        'debt_credit': {
+            'title_fil': 'Utang at Kredito',
+            'title_en': 'Debt and Credit',
+            'title': 'Utang at Kredito',
+            'description': 'Unawain kung kailan tama ang pangungutang at paano umiwas sa penalty.',
+            'weak_area_tag': 'debt_credit',
+            'order': 2,
+            'duration_minutes': 7,
+            'content': 'Ang utang ay pwedeng makatulong sa paglago kung may malinaw na plano ng bayad. Ang kredito ay dapat gamitin ayon sa cash flow ng negosyo.',
+            'key_points': [
+                'Pumili ng hulog na kaya ng lingguhang benta',
+                'Unahin bayaran ang may mas mataas na interes',
+                'Iwasan ang sabay-sabay na utang na walang plano'
+            ]
+        },
+        'savings_fund': {
+            'title_fil': 'Ipon at Pondo',
+            'title_en': 'Savings and Fund Building',
+            'title': 'Ipon at Pondo',
+            'description': 'Gumawa ng maliit pero tuloy-tuloy na ipon para sa negosyo.',
+            'weak_area_tag': 'savings',
+            'order': 4,
+            'duration_minutes': 5,
+            'content': 'Ang regular na ipon ay proteksyon ng negosyo laban sa biglaang gastos at bagal ng benta.',
+            'key_points': [
+                'Magtabi ng porsyento ng kita kada araw',
+                'Magkaroon ng pondo para sa 1-2 buwang gastos',
+                'Gamitin lang ang ipon para sa mahalagang pangangailangan'
+            ]
+        },
         'payment_methods': {
+            'title_fil': 'Paraan ng Bayad',
+            'title_en': 'Payment Methods',
             'title': 'Payment Methods',
+            'description': 'Piliin ang pinaka-angkop na paraan ng bayad para sa iyo.',
+            'weak_area_tag': 'debt_credit',
+            'order': 10,
+            'duration_minutes': 6,
             'content': 'MSME Pathways supports 5 payment methods in two categories: automatic and manual.',
             'key_points': [
                 'AUTOMATIC — recorded instantly when you pay:',
@@ -748,7 +833,13 @@ class EducationView(AccessControlMixin, APIView):
             ]
         },
         'repayment_schedule': {
+            'title_fil': 'Pag-unawa sa Iskedyul ng Bayad',
+            'title_en': 'Repayment Schedule',
             'title': 'Understanding Your Repayment Schedule',
+            'description': 'Alamin ang due dates at status ng bawat hulog.',
+            'weak_area_tag': 'debt_credit',
+            'order': 5,
+            'duration_minutes': 6,
             'content': 'After your loan is disbursed, a repayment schedule is automatically created with equal monthly installments.',
             'key_points': [
                 'Each installment has a due date, principal portion, and interest portion',
@@ -759,7 +850,13 @@ class EducationView(AccessControlMixin, APIView):
             ]
         },
         'blockchain_basics': {
+            'title_fil': 'Blockchain Verification',
+            'title_en': 'Blockchain Verification',
             'title': 'Blockchain Verification',
+            'description': 'Paano nakakatulong ang blockchain sa malinaw na records.',
+            'weak_area_tag': 'loan_basics',
+            'order': 11,
+            'duration_minutes': 5,
             'content': 'MSME Pathways records all major loan events on the Ethereum blockchain, providing a transparent and tamper-proof record of your loan history.',
             'key_points': [
                 'Every loan application, approval, disbursement, and payment is recorded on-chain',
@@ -769,7 +866,13 @@ class EducationView(AccessControlMixin, APIView):
             ]
         },
         'after_approval': {
+            'title_fil': 'Pagkatapos Maaprubahan',
+            'title_en': 'After Approval',
             'title': 'After Your Loan is Approved',
+            'description': 'Ano ang susunod na hakbang pagkatapos ng approval.',
+            'weak_area_tag': 'loan_basics',
+            'order': 12,
+            'duration_minutes': 5,
             'content': 'Once approved, here\'s what happens next and what you need to know about managing your loan.',
             'key_points': [
                 'You\'ll receive a notification with your approved loan amount',
@@ -781,7 +884,13 @@ class EducationView(AccessControlMixin, APIView):
             ]
         },
         'wallet_setup': {
+            'title_fil': 'Gamitin ang ETH Wallet',
+            'title_en': 'Using the ETH Wallet',
             'title': 'Using the ETH Wallet',
+            'description': 'Gabay sa paggamit ng wallet para sa bayad at paglabas ng pondo.',
+            'weak_area_tag': 'loan_basics',
+            'order': 13,
+            'duration_minutes': 5,
             'content': 'MSME Pathways supports Ethereum (ETH) wallet payments for both disbursement and repayment. This is a cryptocurrency-based payment option.',
             'key_points': [
                 'Wallet (ETH) is one of the 5 accepted payment methods',
@@ -816,19 +925,132 @@ class EducationView(AccessControlMixin, APIView):
                 )
         
         # Return list of available topics (cached)
-        cache_key = 'ai_education_topics_list'
+        customer = AuthService.get_customer_by_id(request.user.customer_id)
+        weak_areas = []
+        progress_map = {}
+        if customer:
+            if isinstance(getattr(customer, 'pretest_weak_areas', None), list):
+                weak_areas = [str(item) for item in customer.pretest_weak_areas if item]
+            if isinstance(getattr(customer, 'learn_module_progress', None), dict):
+                progress_map = customer.learn_module_progress
+
+        cache_key = f'ai_education_topics_list_v2_{request.user.customer_id}'
         cached_list = cache.get(cache_key)
         if cached_list:
             return success_response(
                 data={'topics': cached_list, 'cached': True},
                 message="Education topics retrieved"
             )
-        
-        topic_list = [{'id': k, 'title': v['title']} for k, v in self.TOPICS.items()]
+
+        topic_list = []
+        for topic_id, topic_data in self.TOPICS.items():
+            status_value = str(progress_map.get(topic_id, '')).strip().lower()
+            if self.ENABLE_MODULE_SEQUENCING:
+                if status_value not in {'locked', 'in_progress', 'completed'}:
+                    status_value = 'locked'
+            else:
+                # Default behavior: unlock all modules unless explicitly completed.
+                if status_value not in {'in_progress', 'completed'}:
+                    status_value = 'in_progress'
+            topic_list.append({
+                'id': topic_id,
+                'title': topic_data.get('title_en') or topic_data['title'],
+                'title_fil': topic_data.get('title_fil') or topic_data['title'],
+                'title_en': topic_data.get('title_en') or topic_data['title'],
+                'description': topic_data.get('description', ''),
+                'weak_area_tag': topic_data.get('weak_area_tag'),
+                'order': int(topic_data.get('order', 999)),
+                'duration_minutes': int(topic_data.get('duration_minutes', 5)),
+                'status': status_value,
+                'recommended': topic_data.get('weak_area_tag') in weak_areas,
+            })
+
+        if self.ENABLE_MODULE_SEQUENCING:
+            has_accessible = any(t['status'] != 'locked' for t in topic_list)
+            if not has_accessible and topic_list:
+                prioritized = sorted(
+                    topic_list,
+                    key=lambda t: (
+                        0 if t['recommended'] else 1,
+                        t['order'],
+                    ),
+                )
+                prioritized[0]['status'] = 'in_progress'
+
+        topic_list.sort(
+            key=lambda t: (
+                1 if t['status'] == 'completed' else 0,
+                0 if t['recommended'] and t['status'] != 'completed' else 1,
+                t['order'],
+            )
+        )
+
         cache.set(cache_key, topic_list, CACHE_TTL.get('education', 86400))
         return success_response(
-            data={'topics': topic_list, 'cached': False},
+            data={
+                'topics': topic_list,
+                'cached': False,
+                'module_sequencing_enabled': self.ENABLE_MODULE_SEQUENCING,
+            },
             message="Education topics retrieved"
+        )
+
+
+class ModuleProgressView(AccessControlMixin, APIView):
+    """Update progress state for a learning module."""
+
+    authentication_classes = [CustomJWTAuthentication]
+    permission_classes = [IsAuthenticated]
+    ALLOWED_STATUSES = {'in_progress', 'completed'}
+
+    def post(self, request):
+        has_permission, result = self.require_customer(request)
+        if not has_permission:
+            return result
+
+        topic_id = str(request.data.get('topic_id') or '').strip()
+        status_value = str(request.data.get('status') or '').strip().lower()
+
+        if not topic_id:
+            return error_response(
+                message='topic_id is required',
+                errors={'topic_id': 'This field is required'},
+                status_code=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if status_value not in self.ALLOWED_STATUSES:
+            return error_response(
+                message='Invalid status',
+                errors={
+                    'status': (
+                        'Status must be one of: '
+                        + ', '.join(sorted(self.ALLOWED_STATUSES))
+                    )
+                },
+                status_code=status.HTTP_400_BAD_REQUEST,
+            )
+
+        customer = AuthService.get_customer_by_id(request.user.customer_id)
+        if not customer:
+            return error_response(
+                message='Customer not found',
+                status_code=status.HTTP_404_NOT_FOUND,
+            )
+
+        if not isinstance(getattr(customer, 'learn_module_progress', None), dict):
+            customer.learn_module_progress = {}
+
+        customer.learn_module_progress[topic_id] = status_value
+        customer.save()
+
+        cache.delete(f'ai_education_topics_list_v2_{request.user.customer_id}')
+
+        return success_response(
+            data={
+                'topic_id': topic_id,
+                'status': status_value,
+            },
+            message='Module progress updated',
         )
 
 

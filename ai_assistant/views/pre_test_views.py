@@ -236,6 +236,14 @@ class PreTestSubmitView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
+        weak_area_by_topic = {
+            'budgeting_basics': 'budgeting',
+            'debt_management': 'debt_credit',
+            'loan_types': 'loan_basics',
+            'interest_rates': 'loan_basics',
+            'repayment_concepts': 'debt_credit',
+        }
+
         customer = AuthService.get_customer_by_id(request.user.customer_id)
         if customer and getattr(customer, 'has_taken_pretest', False):
             return error_response(
@@ -256,6 +264,7 @@ class PreTestSubmitView(APIView):
         lookup = {q['id']: q for q in QUESTION_BANK}
         total_questions = 0
         correct_answers = 0
+        missed_topic_counts = {}
 
         for question_id, selected_answer in answers.items():
             question = lookup.get(str(question_id))
@@ -267,6 +276,10 @@ class PreTestSubmitView(APIView):
             actual = str(selected_answer).strip().lower()
             if expected == actual:
                 correct_answers += 1
+            else:
+                topic = str(question.get('topic') or '').strip().lower()
+                if topic:
+                    missed_topic_counts[topic] = missed_topic_counts.get(topic, 0) + 1
 
         if total_questions == 0:
             return error_response(
@@ -277,6 +290,19 @@ class PreTestSubmitView(APIView):
 
         percentage = round((correct_answers / total_questions) * 100, 2)
         completed_at = timezone.now()
+        ordered_missed_topics = [
+            topic
+            for topic, _ in sorted(
+                missed_topic_counts.items(),
+                key=lambda item: item[1],
+                reverse=True,
+            )
+        ]
+        weak_areas = []
+        for topic in ordered_missed_topics:
+            mapped = weak_area_by_topic.get(topic)
+            if mapped and mapped not in weak_areas:
+                weak_areas.append(mapped)
 
         if customer:
             customer.has_taken_pretest = True
@@ -284,6 +310,9 @@ class PreTestSubmitView(APIView):
             customer.pretest_total_questions = total_questions
             customer.pretest_percentage = percentage
             customer.pretest_completed_at = completed_at
+            customer.pretest_weak_areas = weak_areas
+            if not isinstance(getattr(customer, 'learn_module_progress', None), dict):
+                customer.learn_module_progress = {}
             customer.save()
 
         return success_response(
@@ -294,6 +323,7 @@ class PreTestSubmitView(APIView):
                 'percentage': percentage,
                 'completed_at': completed_at.isoformat(),
                 'has_taken_pretest': True,
+                'weak_areas': weak_areas,
             },
             message='Pre-test submitted successfully',
         )

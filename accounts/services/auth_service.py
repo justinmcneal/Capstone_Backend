@@ -42,6 +42,8 @@ class AuthService:
             ),
             'pretest_percentage': getattr(customer, 'pretest_percentage', None),
             'pretest_completed_at': getattr(customer, 'pretest_completed_at', None),
+            'pretest_weak_areas': getattr(customer, 'pretest_weak_areas', []),
+            'learn_module_progress': getattr(customer, 'learn_module_progress', {}),
         }
         if include_last_name:
             data['last_name'] = customer.last_name
