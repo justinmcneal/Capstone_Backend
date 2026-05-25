@@ -25,13 +25,13 @@ This document outlines a phased plan to improve the AI assistant experience, acc
 **Priority:** 🔴 Critical
 
 ### 1.1 Model Optimization (Ollama)
-- [ ] Use smaller/quantized models for faster CPU inference:
+- [x] Use smaller/quantized models for faster CPU inference:
   - `llama3.1:8b-instruct-q4_0` — 4-bit quantized (~4GB, 3-5x faster)
   - `llama3.2:3b` — Smaller 3B model
   - `phi3:mini` — 3.8B, very fast on CPU
   - `gemma2:2b` — 2B, fastest option for CPU
-- [ ] Document recommended models for CPU vs GPU deployments
-- [ ] Add Ollama keep-alive/health-ping strategy to avoid cold starts
+- [x] Document recommended models for CPU vs GPU deployments
+- [x] Add Ollama keep-alive/health-ping strategy to avoid cold starts
 
 ### 1.2 Response Streaming ✅
 - [x] Implement streaming responses via Server-Sent Events (SSE)

@@ -235,3 +235,29 @@ class RepaymentSchedule:
                 self.save()
                 return inst
         return None
+
+    def mark_overdue_installments(self, now=None):
+        """
+        Mark past-due installments as overdue.
+
+        Returns:
+            list of installment numbers updated
+        """
+        now = now or datetime.utcnow()
+        updated = []
+        for i, inst in enumerate(self.installments):
+            due_date = inst.get('due_date')
+            status = inst.get('status', 'pending')
+            if status not in {'pending', 'partial'}:
+                continue
+            if not due_date or not hasattr(due_date, 'date'):
+                continue
+            if due_date.date() < now.date():
+                inst['status'] = 'overdue'
+                inst['overdue_at'] = now
+                self.installments[i] = inst
+                updated.append(inst.get('number'))
+
+        if updated:
+            self.save()
+        return updated

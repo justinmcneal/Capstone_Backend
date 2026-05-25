@@ -90,7 +90,7 @@ MongoDB (off-chain data)                    Blockchain (on-chain immutable recor
 |---|---|---|---|---|---|
 | Create repayment schedule | After disbursement | `Repayment` | `createSchedule(loanId, principal, interestBps, termMonths, startDate)` | System | `ScheduleCreated` |
 | Record a payment | `POST /api/loans/payment/` | `Repayment` | `recordPayment(loanId, installmentNumber, amount, method, referenceHash)` | Loan Officer / System | `PaymentRecorded` |
-| Installment marked overdue | Celery scheduled task | `Repayment` | `markOverdue(loanId, installmentNumber)` | System | `InstallmentOverdue` |
+| Installment marked overdue | `check_overdue_installments_task` (Celery) | `Repayment` | `markOverdue(loanId, installmentNumber)` | System | `InstallmentOverdue` |
 | Loan fully repaid | Auto-triggered on last payment | `Repayment` | *(auto-emitted when `totalPaid >= totalAmount`)* | — | `LoanFullyRepaid` |
 
 **Installment Statuses (on-chain):** `Pending → Partial → Paid` or `Pending → Overdue`
@@ -117,6 +117,8 @@ Every state-changing transaction above automatically writes an entry to `AuditRe
 | `LoanRejected` | `LoanCore.rejectLoan()` |
 | `LoanDisbursed` | `Disbursement.completeDisbursement()` |
 | `PaymentRecorded` | `Repayment.recordPayment()` |
+| `PenaltyApplied` | Backend → `AuditRegistry.log()` |
+| `PenaltyWaived` | Backend → `AuditRegistry.log()` |
 | `DocumentVerified` | Backend → `AuditRegistry.log()` |
 | `ConsentRecorded` | Backend → `AuditRegistry.log()` |
 | `SystemConfigChanged` | Admin → `AuditRegistry.log()` |

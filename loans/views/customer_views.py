@@ -860,7 +860,9 @@ class RepaymentScheduleView(CustomerRoleRequiredMixin, APIView):
                 'interest': inst['interest'],
                 'total_amount': inst['total_amount'],
                 'status': inst['status'],
-                'paid_amount': inst.get('paid_amount', 0)
+                'paid_amount': inst.get('paid_amount', 0),
+                'penalty_amount': inst.get('penalty_amount', 0),
+                'penalty_status': inst.get('penalty_status'),
             })
         
         return success_response(
@@ -1663,4 +1665,3 @@ class SystemWalletInfoView(CustomerRoleRequiredMixin, APIView):
             },
             message="System wallet info retrieved"
         )
-

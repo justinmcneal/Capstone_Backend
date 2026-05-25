@@ -74,16 +74,16 @@ The `accounts/` module has strong foundations (peppered password hashing, lockou
 - `accounts/utils/access_control.py:221`
 
 ## Production Readiness Checklist
-- [ ] Enforce refresh-token membership during refresh for customers.
-- [ ] Enforce `active` checks for admin/loan-officer on refresh and token issue.
-- [ ] Persist non-customer refresh sessions or introduce equivalent revocation/session controls.
-- [ ] Fail startup in production when `FIELD_ENCRYPTION_KEY` is missing/invalid.
-- [ ] Ensure index bootstrap is mandatory in deploy pipeline for all account-related models.
-- [ ] Normalize auth/reset/OTP failure messaging to prevent enumeration.
-- [ ] Add throttles to admin/loan-officer refresh endpoints.
+- [x] Enforce refresh-token membership during refresh for customers.
+- [x] Enforce `active` checks for admin/loan-officer on refresh and token issue.
+- [x] Persist non-customer refresh sessions or introduce equivalent revocation/session controls.
+- [x] Fail startup in production when `FIELD_ENCRYPTION_KEY` is missing/invalid.
+- [x] Ensure index bootstrap is mandatory in deploy pipeline for all account-related models.
+- [x] Normalize auth/reset/OTP failure messaging to prevent enumeration.
+- [x] Add throttles to admin/loan-officer refresh endpoints.
 - [x] Add per-account password-reset OTP cooldown and attempt limits.
 - [x] Make 2FA temp tokens one-time-use.
-- [ ] Add automated tests for `accounts` auth/security flows.
+- [x] Add automated tests for `accounts` auth/security flows.
 
 ## Recommended Implementation Order
 1. Refresh/session control fixes (customer + privileged roles).

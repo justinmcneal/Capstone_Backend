@@ -30,6 +30,8 @@ AUDIT_ACTIONS = [
     'loan_disbursed',
     # Payments
     'payment_recorded',
+    'penalty_applied',
+    'penalty_waived',
     # Admin
     'admin_action',
 ]
@@ -50,6 +52,8 @@ ACTION_GROUPS = {
         'loan_approved',
         'loan_rejected',
         'loan_disbursed',
+        'penalty_applied',
+        'penalty_waived',
         'admin_action',
     ],
 }

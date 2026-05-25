@@ -824,13 +824,13 @@ This is the complete happy path to verify everything works together.
 
 After completing all steps:
 
-- [ ] **Ganache Transactions tab** — shows: 1 ETH disbursement + 3 ETH repayments + audit trail contract calls
-- [ ] **System wallet balance** — decreased by disbursement, increased by 3 repayments (net ≈ 0)
-- [ ] **Customer wallet balance** — increased by disbursement, decreased by 3 repayments (net ≈ 0)
-- [ ] **MongoDB `loan_applications`** — has `eth_disbursement_tx_hash`, `eth_disbursement_amount`, `eth_disbursement_rate`
-- [ ] **MongoDB `loan_payments`** — 3 payments with `payment_method: "wallet"` and `blockchain_tx_hash` set
-- [ ] **Web app audit trail** — all blockchain transactions show green "Confirmed" badges
-- [ ] **Mobile app blockchain card** — all transactions listed with tx hashes
+- [x] **Ganache Transactions tab** — shows: 1 ETH disbursement + 3 ETH repayments + audit trail contract calls
+- [x] **System wallet balance** — decreased by disbursement, increased by 3 repayments (net ≈ 0)
+- [x] **Customer wallet balance** — increased by disbursement, decreased by 3 repayments (net ≈ 0)
+- [x] **MongoDB `loan_applications`** — has `eth_disbursement_tx_hash`, `eth_disbursement_amount`, `eth_disbursement_rate`
+- [x] **MongoDB `loan_payments`** — 3 payments with `payment_method: "wallet"` and `blockchain_tx_hash` set
+- [x] **Web app audit trail** — all blockchain transactions show green "Confirmed" badges
+- [x] **Mobile app blockchain card** — all transactions listed with tx hashes
 
 ---
 

@@ -194,6 +194,8 @@ Content-Type: application/json
 | `GET` | `/api/loans/officer/payments/search/` | Search payments |
 | `GET` | `/api/loans/officer/active-loans/` | List active/disbursed loans |
 | `GET` | `/api/loans/officer/applications/<str:application_id>/schedule/` | Get repayment schedule (officer view) |
+| `POST` | `/api/loans/officer/applications/<str:application_id>/penalties/apply/` | Apply penalty to installment |
+| `POST` | `/api/loans/officer/applications/<str:application_id>/penalties/waive/` | Waive penalty on installment |
 | `GET` | `/api/loans/officer/applications/<str:application_id>/payments/` | Get payment history (officer view) |
 
 ---
