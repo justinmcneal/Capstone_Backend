@@ -32,6 +32,8 @@ from .officer_views import (
     RecordPaymentView,
     ActiveLoansView,
     OfficerScheduleView,
+    ApplyPenaltyView,
+    WaivePenaltyView,
     OfficerPaymentHistoryView,
     PaymentSearchView,
     BlockchainStatusView,

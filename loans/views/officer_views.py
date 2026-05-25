@@ -894,6 +894,13 @@ class OfficerReviewView(LoanOfficerRequiredMixin, APIView):
                     )
                 except Exception as e:
                     logger.warning(f"Failed to send rejection email: {e}")
+
+            # Blockchain sync — rejection (background thread, no Celery needed)
+            try:
+                from loans.blockchain.sync import sync_rejection
+                sync_rejection(app.id)
+            except Exception as e:
+                logger.warning(f"Blockchain sync skipped for rejection {app.id}: {e}")
         
         return success_response(
             data={
@@ -1496,7 +1503,12 @@ class OfficerScheduleView(LoanOfficerRequiredMixin, APIView):
                 'interest': inst['interest'],
                 'total_amount': inst['total_amount'],
                 'status': inst_status,
-                'paid_amount': inst.get('paid_amount', 0)
+                'paid_amount': inst.get('paid_amount', 0),
+                'penalty_amount': inst.get('penalty_amount', 0),
+                'penalty_status': inst.get('penalty_status'),
+                'penalty_reason': inst.get('penalty_reason'),
+                'penalty_applied_at': inst.get('penalty_applied_at').isoformat() if inst.get('penalty_applied_at') else None,
+                'penalty_waived_at': inst.get('penalty_waived_at').isoformat() if inst.get('penalty_waived_at') else None,
             })
         
         return success_response(
@@ -1514,6 +1526,249 @@ class OfficerScheduleView(LoanOfficerRequiredMixin, APIView):
                 'installments': installments
             },
             message="Repayment schedule retrieved"
+        )
+
+
+class ApplyPenaltyView(LoanOfficerRequiredMixin, APIView):
+    """
+    Loan Officer: Apply a penalty to a repayment installment.
+
+    POST /api/loans/officer/applications/<id>/penalties/apply/
+    """
+    authentication_classes = [CustomJWTAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, application_id):
+        has_permission, user = self.check_officer_permission(request)
+        if not has_permission:
+            return user
+
+        app = LoanApplication.find_by_id(application_id)
+        if not app:
+            return error_response(
+                message="Application not found",
+                status_code=status.HTTP_404_NOT_FOUND
+            )
+        has_scope, scope_result = self.check_application_scope(
+            request,
+            app,
+            allow_unassigned=False,
+        )
+        if not has_scope:
+            return scope_result
+
+        if app.status != 'disbursed':
+            return error_response(
+                message="Penalties can only be applied to disbursed loans",
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+
+        try:
+            installment_number = int(request.data.get('installment_number', 0))
+        except (TypeError, ValueError):
+            installment_number = 0
+        try:
+            penalty_amount = float(request.data.get('penalty_amount', 0))
+        except (TypeError, ValueError):
+            penalty_amount = 0
+        reason = sanitize_text(request.data.get('reason', ''))
+
+        if installment_number <= 0:
+            return error_response(
+                message="installment_number must be a positive integer",
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+        if penalty_amount <= 0:
+            return error_response(
+                message="penalty_amount must be greater than 0",
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+
+        from loans.models import RepaymentSchedule
+        schedule = RepaymentSchedule.find_by_loan(application_id)
+        if not schedule:
+            return error_response(
+                message="Repayment schedule not found",
+                status_code=status.HTTP_404_NOT_FOUND
+            )
+
+        installment = schedule.get_installment(installment_number)
+        if not installment:
+            return error_response(
+                message=f"Installment #{installment_number} not found",
+                status_code=status.HTTP_404_NOT_FOUND
+            )
+        if installment.get('status') == 'paid':
+            return error_response(
+                message=f"Installment #{installment_number} is already paid",
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+        if installment.get('penalty_status') == 'applied':
+            return error_response(
+                message=f"Penalty already applied to installment #{installment_number}",
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+
+        now = datetime.utcnow()
+        installment['penalty_status'] = 'applied'
+        installment['penalty_amount'] = round(penalty_amount, 2)
+        installment['penalty_reason'] = reason
+        installment['penalty_applied_at'] = now
+        installment['penalty_applied_by'] = self._actor_id(user)
+        installment.pop('penalty_waived_at', None)
+        installment.pop('penalty_waived_by', None)
+        installment.pop('penalty_waive_reason', None)
+
+        for idx, inst in enumerate(schedule.installments):
+            if inst.get('number') == installment_number:
+                schedule.installments[idx] = installment
+                break
+        schedule.save()
+
+        AuditLog.log_action(
+            action='penalty_applied',
+            user_id=self._actor_id(user),
+            user_type='loan_officer',
+            description=f'Penalty applied - ₱{penalty_amount:,.2f} for installment #{installment_number}',
+            resource_type='loan',
+            resource_id=application_id,
+            details={
+                'installment_number': installment_number,
+                'penalty_amount': penalty_amount,
+                'reason': reason,
+            },
+            ip_address=request.META.get('REMOTE_ADDR', '')
+        )
+
+        # Blockchain sync — penalty applied
+        try:
+            from loans.blockchain.sync import sync_penalty
+            sync_penalty(application_id, installment_number, penalty_amount, "apply", reason)
+        except Exception as e:
+            logger.warning(f"Blockchain sync skipped for penalty apply {application_id}: {e}")
+
+        return success_response(
+            data={
+                'loan_id': application_id,
+                'installment_number': installment_number,
+                'penalty_amount': penalty_amount,
+                'penalty_status': installment.get('penalty_status'),
+                'penalty_reason': reason,
+                'penalty_applied_at': installment.get('penalty_applied_at').isoformat() if installment.get('penalty_applied_at') else None,
+            },
+            message="Penalty applied"
+        )
+
+
+class WaivePenaltyView(LoanOfficerRequiredMixin, APIView):
+    """
+    Loan Officer: Waive an applied penalty on an installment.
+
+    POST /api/loans/officer/applications/<id>/penalties/waive/
+    """
+    authentication_classes = [CustomJWTAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, application_id):
+        has_permission, user = self.check_officer_permission(request)
+        if not has_permission:
+            return user
+
+        app = LoanApplication.find_by_id(application_id)
+        if not app:
+            return error_response(
+                message="Application not found",
+                status_code=status.HTTP_404_NOT_FOUND
+            )
+        has_scope, scope_result = self.check_application_scope(
+            request,
+            app,
+            allow_unassigned=False,
+        )
+        if not has_scope:
+            return scope_result
+
+        if app.status != 'disbursed':
+            return error_response(
+                message="Penalties can only be waived for disbursed loans",
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+
+        try:
+            installment_number = int(request.data.get('installment_number', 0))
+        except (TypeError, ValueError):
+            installment_number = 0
+        reason = sanitize_text(request.data.get('reason', ''))
+
+        if installment_number <= 0:
+            return error_response(
+                message="installment_number must be a positive integer",
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+
+        from loans.models import RepaymentSchedule
+        schedule = RepaymentSchedule.find_by_loan(application_id)
+        if not schedule:
+            return error_response(
+                message="Repayment schedule not found",
+                status_code=status.HTTP_404_NOT_FOUND
+            )
+
+        installment = schedule.get_installment(installment_number)
+        if not installment:
+            return error_response(
+                message=f"Installment #{installment_number} not found",
+                status_code=status.HTTP_404_NOT_FOUND
+            )
+        if installment.get('penalty_status') != 'applied':
+            return error_response(
+                message=f"No applied penalty to waive for installment #{installment_number}",
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+
+        now = datetime.utcnow()
+        installment['penalty_status'] = 'waived'
+        installment['penalty_waived_at'] = now
+        installment['penalty_waived_by'] = self._actor_id(user)
+        installment['penalty_waive_reason'] = reason
+
+        for idx, inst in enumerate(schedule.installments):
+            if inst.get('number') == installment_number:
+                schedule.installments[idx] = installment
+                break
+        schedule.save()
+
+        AuditLog.log_action(
+            action='penalty_waived',
+            user_id=self._actor_id(user),
+            user_type='loan_officer',
+            description=f'Penalty waived for installment #{installment_number}',
+            resource_type='loan',
+            resource_id=application_id,
+            details={
+                'installment_number': installment_number,
+                'penalty_amount': installment.get('penalty_amount'),
+                'reason': reason,
+            },
+            ip_address=request.META.get('REMOTE_ADDR', '')
+        )
+
+        # Blockchain sync — penalty waived
+        try:
+            from loans.blockchain.sync import sync_penalty
+            sync_penalty(application_id, installment_number, installment.get('penalty_amount', 0), "waive", reason)
+        except Exception as e:
+            logger.warning(f"Blockchain sync skipped for penalty waive {application_id}: {e}")
+
+        return success_response(
+            data={
+                'loan_id': application_id,
+                'installment_number': installment_number,
+                'penalty_amount': installment.get('penalty_amount'),
+                'penalty_status': installment.get('penalty_status'),
+                'penalty_waived_at': installment.get('penalty_waived_at').isoformat() if installment.get('penalty_waived_at') else None,
+            },
+            message="Penalty waived"
         )
 
 

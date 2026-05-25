@@ -133,6 +133,17 @@ Django View (OfficerReviewView)
       └→ LoanCore.approveLoan(loanId, approvedAmount, notesHash)
 ```
 
+#### 2b. Officer Rejects Loan → 4 blockchain transactions
+
+```
+Django View (OfficerReviewView)
+  └→ Background Thread (sync_rejection)
+      ├→ LoanReview.assignOfficer(loanId, officerAddress)
+      ├→ LoanApproval.rejectLoan(loanId, reasonHash, notesHash)
+      ├→ LoanCore.assignOfficer(loanId, officerAddress)
+      └→ LoanCore.rejectLoan(loanId, reasonHash, notesHash)
+```
+
 #### 3. Officer Disburses Loan → 5 blockchain transactions
 
 ```
@@ -151,6 +162,30 @@ Django View (DisburseView)
 Django View (PaymentRecordingView)
   └→ Background Thread (sync_payment)
       └→ PaymentRecording.recordPayment(loanId, installmentNum, amount, method, refHash)
+```
+
+#### 5. Installment Marked Overdue → 1 blockchain transaction
+
+```
+Celery Task (check_overdue_installments_task)
+  └→ Background Thread (sync_overdue)
+      └→ PaymentRecording.markOverdue(loanId, installmentNum)
+```
+
+#### 6. Penalty Apply/Waive → 1 blockchain transaction
+
+```
+Django View (ApplyPenaltyView / WaivePenaltyView)
+  └→ Background Thread (sync_penalty)
+      └→ AuditRegistry.log(..., PenaltyApplied | PenaltyWaived)
+```
+
+#### 7. Consent Record/Update → 1 blockchain transaction
+
+```
+Django View (ConsentView)
+  └→ Background Thread (sync_consent)
+      └→ AuditRegistry.log(..., ConsentRecorded)
 ```
 
 ---

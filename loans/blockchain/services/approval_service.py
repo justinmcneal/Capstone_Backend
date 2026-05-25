@@ -47,3 +47,32 @@ def approve_loan_onchain(loan_id, approved_amount, notes_hash):
     logger.info("approveLoan on-chain: loan=%s amount=%d tx=%s",
                 loan_id, approved_amount, result["tx_hash"][:18])
     return result
+
+
+def reject_loan_onchain(loan_id, rejection_reason_hash, notes_hash):
+    """
+    Reject a loan on-chain (transitions UnderReview → Rejected).
+
+    Args:
+        loan_id: Loan identifier (string, hashed to bytes32)
+        rejection_reason_hash: Hash of rejection reason (string, hashed to bytes32)
+        notes_hash: Hash of rejection notes (string, hashed to bytes32)
+
+    Returns:
+        dict with tx_hash, gas_used, block_number, status
+    """
+    contract = get_contract("loanApproval")
+    loan_id_bytes = _to_bytes32(loan_id)
+    reason_bytes = _to_bytes32(rejection_reason_hash)
+    notes_bytes = _to_bytes32(notes_hash)
+
+    result = send_transaction(
+        contract,
+        "rejectLoan",
+        loan_id_bytes,
+        reason_bytes,
+        notes_bytes,
+    )
+
+    logger.info("rejectLoan on-chain: loan=%s tx=%s", loan_id, result["tx_hash"][:18])
+    return result

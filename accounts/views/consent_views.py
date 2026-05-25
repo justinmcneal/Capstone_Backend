@@ -119,6 +119,21 @@ class ConsentView(APIView):
                 'consent_date': consent.consent_date,
                 'can_access_ai': consent.can_access_ai
             }
+
+            # Blockchain sync — consent record
+            try:
+                from loans.blockchain.sync import sync_consent
+                sync_consent(
+                    user_id=user_id,
+                    user_type=user_type,
+                    data_consent=consent.data_consent,
+                    ai_consent=consent.ai_consent,
+                    consent_version=consent.consent_version,
+                    consent_timestamp=consent.consent_date or consent.updated_at,
+                    previous_state=None,
+                )
+            except Exception as e:
+                logger.warning(f"Blockchain sync skipped for consent {user_id}: {e}")
             
             return success_response(
                 data=response_data,
@@ -165,6 +180,19 @@ class ConsentView(APIView):
             user_id = user.customer_id
             user_type = user.role if hasattr(user, 'role') else 'customer'
             ip_address = get_client_ip(request)
+
+            previous_state = None
+            try:
+                from accounts.models.consent import Consent
+                existing = Consent.find_by_user(user_id, user_type)
+                if existing:
+                    previous_state = {
+                        'data_consent': existing.data_consent,
+                        'ai_consent': existing.ai_consent,
+                        'consent_version': existing.consent_version,
+                    }
+            except Exception:
+                previous_state = None
             
             consent = ConsentService.update_consent(
                 user_id=user_id,
@@ -179,6 +207,21 @@ class ConsentView(APIView):
                 'updated_at': consent.updated_at,
                 'can_access_ai': consent.can_access_ai
             }
+
+            # Blockchain sync — consent update
+            try:
+                from loans.blockchain.sync import sync_consent
+                sync_consent(
+                    user_id=user_id,
+                    user_type=user_type,
+                    data_consent=consent.data_consent,
+                    ai_consent=consent.ai_consent,
+                    consent_version=consent.consent_version,
+                    consent_timestamp=consent.updated_at,
+                    previous_state=previous_state,
+                )
+            except Exception as e:
+                logger.warning(f"Blockchain sync skipped for consent update {user_id}: {e}")
             
             return success_response(
                 data=response_data,

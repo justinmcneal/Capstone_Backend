@@ -1,7 +1,7 @@
 """
-Service for AuditRegistry contract interactions (read-only).
+Service for AuditRegistry contract interactions.
 
-Handles: getFullAuditTrail, getEntry
+Handles: getFullAuditTrail, getEntry, log
 """
 
 import logging
@@ -20,6 +20,16 @@ def _to_bytes32(value):
     return Web3.keccak(text=str(value))
 
 
+def _to_bytes32_label(value):
+    """Convert a short label to bytes32 (padded ASCII)."""
+    if isinstance(value, bytes) and len(value) == 32:
+        return value
+    raw = Web3.to_bytes(text=str(value))
+    if len(raw) <= 32:
+        return raw.ljust(32, b"\x00")
+    return Web3.keccak(text=str(value))
+
+
 # AuditAction enum labels for human-readable output
 AUDIT_ACTION_LABELS = {
     0: "LoanCreated",
@@ -35,6 +45,96 @@ AUDIT_ACTION_LABELS = {
     10: "ConsentRecorded",
     11: "SystemConfigChanged",
 }
+
+AUDIT_ACTION_ENUM = {
+    "PenaltyApplied": 7,
+    "PenaltyWaived": 8,
+    "ConsentRecorded": 10,
+}
+
+
+def log_audit_entry_onchain(resource_id, resource_type, action, details_hash,
+                            previous_state_hash=None, new_state_hash=None):
+    """
+    Log an audit entry to AuditRegistry.
+
+    Args:
+        resource_id: Unique resource identifier (string, hashed to bytes32)
+        resource_type: Resource type label (string, bytes32 padded)
+        action: AuditAction enum int
+        details_hash: Hashable detail payload (string, hashed to bytes32)
+        previous_state_hash: Optional previous state (string, hashed to bytes32)
+        new_state_hash: Optional new state (string, hashed to bytes32)
+
+    Returns:
+        dict with tx_hash, gas_used, block_number, status
+    """
+    from loans.blockchain.client import send_transaction
+
+    contract = get_contract("auditRegistry")
+    resource_id_bytes = _to_bytes32(resource_id)
+    resource_type_bytes = _to_bytes32_label(resource_type)
+    details_bytes = _to_bytes32(details_hash)
+    prev_bytes = _to_bytes32(previous_state_hash) if previous_state_hash else b"\x00" * 32
+    new_bytes = _to_bytes32(new_state_hash) if new_state_hash else b"\x00" * 32
+
+    result = send_transaction(
+        contract,
+        "log",
+        resource_id_bytes,
+        resource_type_bytes,
+        int(action),
+        details_bytes,
+        prev_bytes,
+        new_bytes,
+    )
+
+    logger.info("auditRegistry.log on-chain: resource=%s action=%s tx=%s",
+                resource_id, action, result["tx_hash"][:18])
+    return result
+
+
+def log_penalty_onchain(loan_id, installment_number, amount, reason="", waived=False):
+    """
+    Record a penalty apply/waive event on-chain via AuditRegistry.
+    """
+    action = AUDIT_ACTION_ENUM["PenaltyWaived"] if waived else AUDIT_ACTION_ENUM["PenaltyApplied"]
+    details = f"{loan_id}:{installment_number}:{amount}:{reason}".strip()
+    previous_state = "applied" if waived else "none"
+    new_state = "waived" if waived else "applied"
+    return log_audit_entry_onchain(
+        resource_id=f"{loan_id}:{installment_number}",
+        resource_type="penalty",
+        action=action,
+        details_hash=details or "penalty",
+        previous_state_hash=previous_state,
+        new_state_hash=new_state,
+    )
+
+
+def log_consent_onchain(user_id, user_type, data_consent, ai_consent,
+                        consent_version, consent_timestamp, previous_state=None):
+    """
+    Record a consent update event on-chain via AuditRegistry.
+    """
+    action = AUDIT_ACTION_ENUM["ConsentRecorded"]
+    resource_id = f"{user_id}:{consent_version}:{consent_timestamp}"
+    detail_payload = f"{user_type}:{data_consent}:{ai_consent}:{consent_version}:{consent_timestamp}"
+    prev_state = None
+    if previous_state:
+        prev_state = (
+            f"{previous_state.get('data_consent')}:{previous_state.get('ai_consent')}:"
+            f"{previous_state.get('consent_version')}"
+        )
+    new_state = f"{data_consent}:{ai_consent}:{consent_version}"
+    return log_audit_entry_onchain(
+        resource_id=resource_id,
+        resource_type="consent",
+        action=action,
+        details_hash=detail_payload,
+        previous_state_hash=prev_state,
+        new_state_hash=new_state,
+    )
 
 
 def get_audit_trail(resource_id):
