@@ -35,6 +35,8 @@ from .officer_views import (
     ApplyPenaltyView,
     WaivePenaltyView,
     OfficerPaymentHistoryView,
+    ApplyPenaltyView,
+    WaivePenaltyView,
     PaymentSearchView,
     BlockchainStatusView,
     ExchangeRateView,

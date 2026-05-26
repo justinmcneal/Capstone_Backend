@@ -1496,6 +1496,13 @@ class OfficerScheduleView(LoanOfficerRequiredMixin, APIView):
                 # Derive overdue dynamically so stale pending records still show correctly.
                 inst_status = 'overdue'
 
+            penalty_applied_at = inst.get('penalty_applied_at')
+            if hasattr(penalty_applied_at, 'isoformat'):
+                penalty_applied_at = penalty_applied_at.isoformat()
+            penalty_waived_at = inst.get('penalty_waived_at')
+            if hasattr(penalty_waived_at, 'isoformat'):
+                penalty_waived_at = penalty_waived_at.isoformat()
+
             installments.append({
                 'number': inst['number'],
                 'due_date': due_date.isoformat() if due_date else None,
@@ -1504,11 +1511,14 @@ class OfficerScheduleView(LoanOfficerRequiredMixin, APIView):
                 'total_amount': inst['total_amount'],
                 'status': inst_status,
                 'paid_amount': inst.get('paid_amount', 0),
-                'penalty_amount': inst.get('penalty_amount', 0),
                 'penalty_status': inst.get('penalty_status'),
-                'penalty_reason': inst.get('penalty_reason'),
-                'penalty_applied_at': inst.get('penalty_applied_at').isoformat() if inst.get('penalty_applied_at') else None,
-                'penalty_waived_at': inst.get('penalty_waived_at').isoformat() if inst.get('penalty_waived_at') else None,
+                'penalty_amount': inst.get('penalty_amount'),
+                'penalty_reason': inst.get('penalty_reason', ''),
+                'penalty_applied_at': penalty_applied_at,
+                'penalty_applied_by': inst.get('penalty_applied_by'),
+                'penalty_waived_at': penalty_waived_at,
+                'penalty_waived_by': inst.get('penalty_waived_by'),
+                'penalty_waived_reason': inst.get('penalty_waived_reason', ''),
             })
         
         return success_response(
@@ -1531,7 +1541,7 @@ class OfficerScheduleView(LoanOfficerRequiredMixin, APIView):
 
 class ApplyPenaltyView(LoanOfficerRequiredMixin, APIView):
     """
-    Loan Officer: Apply a penalty to a repayment installment.
+    Loan Officer: Apply penalty to a repayment installment.
 
     POST /api/loans/officer/applications/<id>/penalties/apply/
     """
@@ -1539,9 +1549,9 @@ class ApplyPenaltyView(LoanOfficerRequiredMixin, APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request, application_id):
-        has_permission, user = self.check_officer_permission(request)
+        has_permission, result = self.check_officer_permission(request)
         if not has_permission:
-            return user
+            return result
 
         app = LoanApplication.find_by_id(application_id)
         if not app:
@@ -1563,19 +1573,38 @@ class ApplyPenaltyView(LoanOfficerRequiredMixin, APIView):
                 status_code=status.HTTP_400_BAD_REQUEST
             )
 
-        try:
-            installment_number = int(request.data.get('installment_number', 0))
-        except (TypeError, ValueError):
-            installment_number = 0
-        try:
-            penalty_amount = float(request.data.get('penalty_amount', 0))
-        except (TypeError, ValueError):
-            penalty_amount = 0
+        installment_number_raw = request.data.get('installment_number')
+        amount_raw = request.data.get('penalty_amount')
         reason = sanitize_text(request.data.get('reason', ''))
 
-        if installment_number <= 0:
+        if installment_number_raw in (None, ''):
             return error_response(
-                message="installment_number must be a positive integer",
+                message="installment_number is required",
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+        try:
+            installment_number = int(installment_number_raw)
+        except (TypeError, ValueError):
+            return error_response(
+                message="installment_number must be an integer",
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+        if installment_number < 1:
+            return error_response(
+                message="installment_number must be at least 1",
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+
+        if amount_raw in (None, ''):
+            return error_response(
+                message="penalty_amount is required",
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+        try:
+            penalty_amount = float(amount_raw)
+        except (TypeError, ValueError):
+            return error_response(
+                message="penalty_amount must be a valid number",
                 status_code=status.HTTP_400_BAD_REQUEST
             )
         if penalty_amount <= 0:
@@ -1605,42 +1634,43 @@ class ApplyPenaltyView(LoanOfficerRequiredMixin, APIView):
             )
         if installment.get('penalty_status') == 'applied':
             return error_response(
-                message=f"Penalty already applied to installment #{installment_number}",
+                message=f"Penalty already applied for installment #{installment_number}",
                 status_code=status.HTTP_400_BAD_REQUEST
             )
 
+        actor_id = self._actor_id(request.user)
         now = datetime.utcnow()
-        installment['penalty_status'] = 'applied'
-        installment['penalty_amount'] = round(penalty_amount, 2)
-        installment['penalty_reason'] = reason
-        installment['penalty_applied_at'] = now
-        installment['penalty_applied_by'] = self._actor_id(user)
-        installment.pop('penalty_waived_at', None)
-        installment.pop('penalty_waived_by', None)
-        installment.pop('penalty_waive_reason', None)
-
-        for idx, inst in enumerate(schedule.installments):
+        for i, inst in enumerate(schedule.installments):
             if inst.get('number') == installment_number:
-                schedule.installments[idx] = installment
+                inst['penalty_status'] = 'applied'
+                inst['penalty_amount'] = round(penalty_amount, 2)
+                inst['penalty_reason'] = reason
+                inst['penalty_applied_at'] = now
+                inst['penalty_applied_by'] = actor_id
+                inst['penalty_waived_at'] = None
+                inst['penalty_waived_by'] = None
+                inst['penalty_waived_reason'] = ''
+                schedule.installments[i] = inst
                 break
         schedule.save()
 
         AuditLog.log_action(
             action='penalty_applied',
-            user_id=self._actor_id(user),
+            user_id=actor_id,
             user_type='loan_officer',
             description=f'Penalty applied - ₱{penalty_amount:,.2f} for installment #{installment_number}',
-            resource_type='loan',
-            resource_id=application_id,
+            resource_type='penalty',
+            resource_id=f"{application_id}:{installment_number}",
             details={
+                'loan_id': application_id,
                 'installment_number': installment_number,
-                'penalty_amount': penalty_amount,
+                'amount': penalty_amount,
                 'reason': reason,
             },
             ip_address=request.META.get('REMOTE_ADDR', '')
         )
 
-        # Blockchain sync — penalty applied
+        # Blockchain sync — penalty apply (background thread, no Celery needed)
         try:
             from loans.blockchain.sync import sync_penalty
             sync_penalty(application_id, installment_number, penalty_amount, "apply", reason)
@@ -1651,18 +1681,20 @@ class ApplyPenaltyView(LoanOfficerRequiredMixin, APIView):
             data={
                 'loan_id': application_id,
                 'installment_number': installment_number,
-                'penalty_amount': penalty_amount,
-                'penalty_status': installment.get('penalty_status'),
+                'penalty_status': 'applied',
+                'penalty_amount': round(penalty_amount, 2),
                 'penalty_reason': reason,
-                'penalty_applied_at': installment.get('penalty_applied_at').isoformat() if installment.get('penalty_applied_at') else None,
+                'penalty_applied_at': now.isoformat(),
+                'penalty_applied_by': actor_id,
             },
-            message="Penalty applied"
+            message="Penalty applied successfully",
+            status_code=status.HTTP_201_CREATED
         )
 
 
 class WaivePenaltyView(LoanOfficerRequiredMixin, APIView):
     """
-    Loan Officer: Waive an applied penalty on an installment.
+    Loan Officer: Waive penalty for a repayment installment.
 
     POST /api/loans/officer/applications/<id>/penalties/waive/
     """
@@ -1670,9 +1702,9 @@ class WaivePenaltyView(LoanOfficerRequiredMixin, APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request, application_id):
-        has_permission, user = self.check_officer_permission(request)
+        has_permission, result = self.check_officer_permission(request)
         if not has_permission:
-            return user
+            return result
 
         app = LoanApplication.find_by_id(application_id)
         if not app:
@@ -1694,15 +1726,24 @@ class WaivePenaltyView(LoanOfficerRequiredMixin, APIView):
                 status_code=status.HTTP_400_BAD_REQUEST
             )
 
-        try:
-            installment_number = int(request.data.get('installment_number', 0))
-        except (TypeError, ValueError):
-            installment_number = 0
+        installment_number_raw = request.data.get('installment_number')
         reason = sanitize_text(request.data.get('reason', ''))
 
-        if installment_number <= 0:
+        if installment_number_raw in (None, ''):
             return error_response(
-                message="installment_number must be a positive integer",
+                message="installment_number is required",
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+        try:
+            installment_number = int(installment_number_raw)
+        except (TypeError, ValueError):
+            return error_response(
+                message="installment_number must be an integer",
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+        if installment_number < 1:
+            return error_response(
+                message="installment_number must be at least 1",
                 status_code=status.HTTP_400_BAD_REQUEST
             )
 
@@ -1722,41 +1763,43 @@ class WaivePenaltyView(LoanOfficerRequiredMixin, APIView):
             )
         if installment.get('penalty_status') != 'applied':
             return error_response(
-                message=f"No applied penalty to waive for installment #{installment_number}",
+                message=f"No applied penalty found for installment #{installment_number}",
                 status_code=status.HTTP_400_BAD_REQUEST
             )
 
+        penalty_amount = float(installment.get('penalty_amount', 0) or 0)
+        actor_id = self._actor_id(request.user)
         now = datetime.utcnow()
-        installment['penalty_status'] = 'waived'
-        installment['penalty_waived_at'] = now
-        installment['penalty_waived_by'] = self._actor_id(user)
-        installment['penalty_waive_reason'] = reason
-
-        for idx, inst in enumerate(schedule.installments):
+        for i, inst in enumerate(schedule.installments):
             if inst.get('number') == installment_number:
-                schedule.installments[idx] = installment
+                inst['penalty_status'] = 'waived'
+                inst['penalty_waived_at'] = now
+                inst['penalty_waived_by'] = actor_id
+                inst['penalty_waived_reason'] = reason
+                schedule.installments[i] = inst
                 break
         schedule.save()
 
         AuditLog.log_action(
             action='penalty_waived',
-            user_id=self._actor_id(user),
+            user_id=actor_id,
             user_type='loan_officer',
-            description=f'Penalty waived for installment #{installment_number}',
-            resource_type='loan',
-            resource_id=application_id,
+            description=f'Penalty waived - ₱{penalty_amount:,.2f} for installment #{installment_number}',
+            resource_type='penalty',
+            resource_id=f"{application_id}:{installment_number}",
             details={
+                'loan_id': application_id,
                 'installment_number': installment_number,
-                'penalty_amount': installment.get('penalty_amount'),
+                'amount': penalty_amount,
                 'reason': reason,
             },
             ip_address=request.META.get('REMOTE_ADDR', '')
         )
 
-        # Blockchain sync — penalty waived
+        # Blockchain sync — penalty waive (background thread, no Celery needed)
         try:
             from loans.blockchain.sync import sync_penalty
-            sync_penalty(application_id, installment_number, installment.get('penalty_amount', 0), "waive", reason)
+            sync_penalty(application_id, installment_number, penalty_amount, "waive", reason)
         except Exception as e:
             logger.warning(f"Blockchain sync skipped for penalty waive {application_id}: {e}")
 
@@ -1764,11 +1807,13 @@ class WaivePenaltyView(LoanOfficerRequiredMixin, APIView):
             data={
                 'loan_id': application_id,
                 'installment_number': installment_number,
-                'penalty_amount': installment.get('penalty_amount'),
-                'penalty_status': installment.get('penalty_status'),
-                'penalty_waived_at': installment.get('penalty_waived_at').isoformat() if installment.get('penalty_waived_at') else None,
+                'penalty_status': 'waived',
+                'penalty_amount': round(penalty_amount, 2),
+                'penalty_waived_at': now.isoformat(),
+                'penalty_waived_by': actor_id,
+                'penalty_waived_reason': reason,
             },
-            message="Penalty waived"
+            message="Penalty waived successfully"
         )
 
 

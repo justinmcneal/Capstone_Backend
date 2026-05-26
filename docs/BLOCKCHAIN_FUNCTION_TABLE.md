@@ -104,6 +104,16 @@ MongoDB (off-chain data)                    Blockchain (on-chain immutable recor
 
 ---
 
+### 4b. PENALTY + CONSENT — AuditRegistry Logging
+
+| Backend Action | Backend Endpoint | Smart Contract | Function | Who Calls | Event Emitted |
+|---|---|---|---|---|---|
+| Apply penalty | `POST /api/loans/officer/applications/<id>/penalties/apply/` | `AuditRegistry` | `log(...)` | Loan Officer | `PenaltyApplied` |
+| Waive penalty | `POST /api/loans/officer/applications/<id>/penalties/waive/` | `AuditRegistry` | `log(...)` | Loan Officer | `PenaltyWaived` |
+| Record consent | `POST/PUT /api/auth/consent/` | `AuditRegistry` | `log(...)` | System | `ConsentRecorded` |
+
+---
+
 ### 5. AUDIT REGISTRY — Immutable Audit Trail
 
 Every state-changing transaction above automatically writes an entry to `AuditRegistry`. This is called internally by `LoanCore`, `Disbursement`, and `Repayment` — no manual action needed.

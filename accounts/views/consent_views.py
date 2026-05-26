@@ -3,6 +3,7 @@ from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
 from bson import ObjectId
+from datetime import datetime
 
 from accounts.authentication import CustomJWTAuthentication
 from accounts.services.consent_service import ConsentService
@@ -25,6 +26,14 @@ def get_client_ip(request):
     else:
         ip = request.META.get('REMOTE_ADDR')
     return ip
+
+
+def _to_iso(value):
+    if value is None:
+        return None
+    if hasattr(value, 'isoformat'):
+        return value.isoformat()
+    return str(value)
 
 
 class ConsentView(APIView):
@@ -104,6 +113,16 @@ class ConsentView(APIView):
             user_id = user.customer_id
             user_type = user.role if hasattr(user, 'role') else 'customer'
             ip_address = get_client_ip(request)
+
+            from accounts.models.consent import Consent
+            previous_state = None
+            existing = Consent.find_by_user(user_id, user_type)
+            if existing:
+                previous_state = {
+                    'data_consent': existing.data_consent,
+                    'ai_consent': existing.ai_consent,
+                    'consent_version': existing.consent_version,
+                }
             
             consent = ConsentService.record_consent(
                 user_id=user_id,
@@ -112,6 +131,22 @@ class ConsentView(APIView):
                 ai_consent=serializer.validated_data['ai_consent'],
                 ip_address=ip_address
             )
+
+            # Blockchain sync — consent (background thread, no Celery needed)
+            try:
+                from loans.blockchain.sync import sync_consent
+                consent_timestamp = consent.updated_at or consent.consent_date or datetime.utcnow()
+                sync_consent(
+                    user_id=str(user_id),
+                    user_type=user_type,
+                    data_consent=consent.data_consent,
+                    ai_consent=consent.ai_consent,
+                    consent_version=consent.consent_version,
+                    consent_timestamp=_to_iso(consent_timestamp),
+                    previous_state=previous_state,
+                )
+            except Exception as e:
+                logger.warning(f"Blockchain sync skipped for consent {user_id}: {e}")
             
             response_data = {
                 'data_consent': consent.data_consent,
@@ -181,18 +216,15 @@ class ConsentView(APIView):
             user_type = user.role if hasattr(user, 'role') else 'customer'
             ip_address = get_client_ip(request)
 
+            from accounts.models.consent import Consent
             previous_state = None
-            try:
-                from accounts.models.consent import Consent
-                existing = Consent.find_by_user(user_id, user_type)
-                if existing:
-                    previous_state = {
-                        'data_consent': existing.data_consent,
-                        'ai_consent': existing.ai_consent,
-                        'consent_version': existing.consent_version,
-                    }
-            except Exception:
-                previous_state = None
+            existing = Consent.find_by_user(user_id, user_type)
+            if existing:
+                previous_state = {
+                    'data_consent': existing.data_consent,
+                    'ai_consent': existing.ai_consent,
+                    'consent_version': existing.consent_version,
+                }
             
             consent = ConsentService.update_consent(
                 user_id=user_id,
@@ -200,6 +232,22 @@ class ConsentView(APIView):
                 updates=serializer.validated_data,
                 ip_address=ip_address
             )
+
+            # Blockchain sync — consent (background thread, no Celery needed)
+            try:
+                from loans.blockchain.sync import sync_consent
+                consent_timestamp = consent.updated_at or consent.consent_date or datetime.utcnow()
+                sync_consent(
+                    user_id=str(user_id),
+                    user_type=user_type,
+                    data_consent=consent.data_consent,
+                    ai_consent=consent.ai_consent,
+                    consent_version=consent.consent_version,
+                    consent_timestamp=_to_iso(consent_timestamp),
+                    previous_state=previous_state,
+                )
+            except Exception as e:
+                logger.warning(f"Blockchain sync skipped for consent {user_id}: {e}")
             
             response_data = {
                 'data_consent': consent.data_consent,

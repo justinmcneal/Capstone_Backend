@@ -41,7 +41,7 @@ Merged documentation for pending backend gaps and remaining feature endpoints.
 
 ## Recommended Order
 
-1. Enable blockchain in env, verify contracts/ABIs, and add missing on-chain flows.
+1. Enable blockchain in env and verify deployed contract addresses/ABIs.
 2. Implement S3 storage backend and switch production storage to S3.
 3. Deploy to Railway and run end-to-end verification.
 4. Improve Tagalog chatbot quality with multilingual prompt/routing enhancements.
