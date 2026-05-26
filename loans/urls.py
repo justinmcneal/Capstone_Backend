@@ -34,6 +34,8 @@ from loans.views import (
     ApplyPenaltyView,
     WaivePenaltyView,
     OfficerPaymentHistoryView,
+    ApplyPenaltyView,
+    WaivePenaltyView,
     PaymentSearchView,
     BlockchainStatusView,
     CustomerBlockchainView,

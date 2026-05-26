@@ -1,48 +1,49 @@
 """
 Loan-related background tasks.
 """
+from datetime import datetime
 import logging
 
 from celery import shared_task
 from django.conf import settings
 
-from loans.models.repayment import RepaymentSchedule
-from loans.blockchain.sync import sync_overdue
-
-logger = logging.getLogger("loans")
+logger = logging.getLogger(__name__)
 
 
 @shared_task
 def check_overdue_installments_task():
-    """Mark overdue installments and sync to blockchain."""
+    """Mark overdue installments and sync them to the blockchain."""
     db = getattr(settings, "MONGODB", None)
     if db is None:
-        return {"skipped": True, "reason": "mongodb not configured"}
+        logger.warning("Overdue check skipped: MONGODB not configured")
+        return {"overdue_marked": 0}
 
-    schedules = db["repayment_schedules"].find({})
-    updated_installments = 0
-    synced = 0
+    from loans.models import RepaymentSchedule
+    from loans.blockchain.sync import sync_overdue
 
-    for doc in schedules:
+    now = datetime.utcnow()
+    updated_count = 0
+
+    for doc in db["repayment_schedules"].find({}):
         schedule = RepaymentSchedule.from_dict(doc)
         if not schedule:
             continue
 
-        updated = schedule.mark_overdue_installments()
-        if not updated:
-            continue
-
-        updated_installments += len(updated)
-        for installment_number in updated:
+        overdue_installments = schedule.mark_overdue_installments(as_of=now)
+        for installment_number in overdue_installments:
             try:
                 sync_overdue(schedule.loan_id, installment_number)
-                synced += 1
             except Exception as exc:
                 logger.warning(
-                    "Blockchain sync skipped for overdue loan=%s installment=%s error=%s",
+                    "Blockchain sync skipped for overdue loan=%s installment=%s: %s",
                     schedule.loan_id,
                     installment_number,
                     exc,
                 )
 
-    return {"updated_installments": updated_installments, "synced": synced}
+        updated_count += len(overdue_installments)
+
+    if updated_count:
+        logger.info("Marked %s overdue installments", updated_count)
+
+    return {"overdue_marked": updated_count}

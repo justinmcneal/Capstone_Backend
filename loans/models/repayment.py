@@ -125,7 +125,15 @@ class RepaymentSchedule:
                 'total_amount': round(monthly_payment, 2),
                 'status': 'pending',
                 'paid_amount': 0,
-                'paid_at': None
+                'paid_at': None,
+                'penalty_status': None,
+                'penalty_amount': 0,
+                'penalty_reason': '',
+                'penalty_applied_at': None,
+                'penalty_applied_by': None,
+                'penalty_waived_at': None,
+                'penalty_waived_by': None,
+                'penalty_waived_reason': '',
             })
         
         schedule = cls(
@@ -236,14 +244,16 @@ class RepaymentSchedule:
                 return inst
         return None
 
-    def mark_overdue_installments(self, now=None):
+    def mark_overdue_installments(self, as_of=None):
         """
-        Mark past-due installments as overdue.
+        Mark pending/partial installments as overdue when past due date.
 
         Returns:
             list of installment numbers updated
         """
-        now = now or datetime.utcnow()
+        if as_of is None:
+            as_of = datetime.utcnow()
+
         updated = []
         for i, inst in enumerate(self.installments):
             due_date = inst.get('due_date')
@@ -252,12 +262,13 @@ class RepaymentSchedule:
                 continue
             if not due_date or not hasattr(due_date, 'date'):
                 continue
-            if due_date.date() < now.date():
+            if due_date.date() < as_of.date():
                 inst['status'] = 'overdue'
-                inst['overdue_at'] = now
+                inst['overdue_at'] = as_of
                 self.installments[i] = inst
                 updated.append(inst.get('number'))
 
         if updated:
             self.save()
+
         return updated

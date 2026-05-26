@@ -1,7 +1,7 @@
 """
 Service for LoanApproval contract interactions.
 
-Handles: approveLoan
+Handles: approveLoan, rejectLoan
 """
 
 import logging

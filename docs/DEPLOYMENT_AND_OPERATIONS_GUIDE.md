@@ -538,6 +538,7 @@ app.autodiscover_tasks()
 | Task | Schedule | Description |
 |------|----------|-------------|
 | `cleanup_unverified_accounts_task` | Every 30 minutes | Deletes unverified accounts older than 12 hours |
+| `check_overdue_installments_task` | Daily at midnight | Marks overdue installments and syncs them on-chain |
 
 ### Task Definition
 
@@ -596,7 +597,6 @@ celery -A config.celery beat --loglevel=info
 
 | Task | Purpose | Priority |
 |------|---------|----------|
-| `check_overdue_installments` | Mark installments as overdue | High |
 | `send_payment_reminders` | Email upcoming payment reminders | Medium |
 | `sync_blockchain_events` | Sync Django with smart contract events | Medium |
 | `generate_daily_reports` | Admin analytics reports | Low |
@@ -605,7 +605,7 @@ celery -A config.celery beat --loglevel=info
 
 ## Adding New Tasks
 
-1. Create task in appropriate module:
+1. Create task in appropriate module (note: `check_overdue_installments_task` is implemented):
 
 ```python
 # loans/tasks.py

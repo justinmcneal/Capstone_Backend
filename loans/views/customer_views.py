@@ -853,6 +853,12 @@ class RepaymentScheduleView(CustomerRoleRequiredMixin, APIView):
         # Format installments
         installments = []
         for inst in schedule.installments:
+            penalty_applied_at = inst.get('penalty_applied_at')
+            if hasattr(penalty_applied_at, 'isoformat'):
+                penalty_applied_at = penalty_applied_at.isoformat()
+            penalty_waived_at = inst.get('penalty_waived_at')
+            if hasattr(penalty_waived_at, 'isoformat'):
+                penalty_waived_at = penalty_waived_at.isoformat()
             installments.append({
                 'number': inst['number'],
                 'due_date': inst['due_date'].isoformat() if inst.get('due_date') else None,
@@ -861,8 +867,14 @@ class RepaymentScheduleView(CustomerRoleRequiredMixin, APIView):
                 'total_amount': inst['total_amount'],
                 'status': inst['status'],
                 'paid_amount': inst.get('paid_amount', 0),
-                'penalty_amount': inst.get('penalty_amount', 0),
                 'penalty_status': inst.get('penalty_status'),
+                'penalty_amount': inst.get('penalty_amount'),
+                'penalty_reason': inst.get('penalty_reason', ''),
+                'penalty_applied_at': penalty_applied_at,
+                'penalty_applied_by': inst.get('penalty_applied_by'),
+                'penalty_waived_at': penalty_waived_at,
+                'penalty_waived_by': inst.get('penalty_waived_by'),
+                'penalty_waived_reason': inst.get('penalty_waived_reason', ''),
             })
         
         return success_response(

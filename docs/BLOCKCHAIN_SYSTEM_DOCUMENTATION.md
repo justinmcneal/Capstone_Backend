@@ -86,10 +86,10 @@ Each backend service class maps to a specific smart contract:
 |----------------|---------------|-----------------|
 | `application_service.py` | `LoanApplication.sol` | `createApplication()`, `submitApplication()`, `getApplication()` |
 | `review_service.py` | `LoanReview.sol` | `assignOfficer()`, `getAssignedOfficer()` |
-| `approval_service.py` | `LoanApproval.sol` | `approveLoan()` |
+| `approval_service.py` | `LoanApproval.sol` | `approveLoan()`, `rejectLoan()` |
 | `disbursement_service.py` | `DisbursementMethod.sol` + `DisbursementExecution.sol` | `setPreferredMethod()`, `initiateDisbursement()`, `completeDisbursement()` |
 | `repayment_service.py` | `RepaymentSchedule.sol` + `PaymentRecording.sol` | `createSchedule()`, `recordPayment()`, `markOverdue()` |
-| `audit_service.py` | `AuditRegistry.sol` | `getFullAuditTrail()`, `getEntry()` (read-only) |
+| `audit_service.py` | `AuditRegistry.sol` | `log()`, `getFullAuditTrail()`, `getEntry()` |
 
 Additionally, `sync.py` calls **LoanCore.sol** as a mirror for: `createLoan()`, `submitLoan()`, `assignOfficer()`, `approveLoan()`, `markDisbursed()`.
 
@@ -136,7 +136,7 @@ Django View (OfficerReviewView)
 #### 2b. Officer Rejects Loan → 4 blockchain transactions
 
 ```
-Django View (OfficerReviewView)
+Django View (OfficerReviewView — reject)
   └→ Background Thread (sync_rejection)
       ├→ LoanReview.assignOfficer(loanId, officerAddress)
       ├→ LoanApproval.rejectLoan(loanId, reasonHash, notesHash)
@@ -164,7 +164,7 @@ Django View (PaymentRecordingView)
       └→ PaymentRecording.recordPayment(loanId, installmentNum, amount, method, refHash)
 ```
 
-#### 5. Installment Marked Overdue → 1 blockchain transaction
+#### 5. Overdue Installment Sync → 1 blockchain transaction per overdue installment
 
 ```
 Celery Task (check_overdue_installments_task)
@@ -175,17 +175,17 @@ Celery Task (check_overdue_installments_task)
 #### 6. Penalty Apply/Waive → 1 blockchain transaction
 
 ```
-Django View (ApplyPenaltyView / WaivePenaltyView)
+Django Views (ApplyPenaltyView / WaivePenaltyView)
   └→ Background Thread (sync_penalty)
-      └→ AuditRegistry.log(..., PenaltyApplied | PenaltyWaived)
+      └→ AuditRegistry.log(resourceType=penalty, action=PenaltyApplied/PenaltyWaived, ...)
 ```
 
-#### 7. Consent Record/Update → 1 blockchain transaction
+#### 7. Consent Record → 1 blockchain transaction
 
 ```
-Django View (ConsentView)
+Django View (ConsentView POST/PUT)
   └→ Background Thread (sync_consent)
-      └→ AuditRegistry.log(..., ConsentRecorded)
+      └→ AuditRegistry.log(resourceType=consent, action=ConsentRecorded, ...)
 ```
 
 ---

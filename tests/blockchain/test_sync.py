@@ -57,9 +57,20 @@ class TestSyncApplication:
 
     @patch("loans.blockchain.services.application_service.submit_application_onchain")
     @patch("loans.blockchain.services.application_service.create_application_onchain")
+    @patch("loans.blockchain.client.send_transaction")
+    @patch("loans.blockchain.client.get_contract")
     @patch("loans.blockchain.models.BlockchainTransaction.create_pending")
     @patch("loans.models.application.LoanApplication.find_by_id")
-    def test_impl_success(self, mock_find, mock_pending, mock_create, mock_submit, blockchain_settings):
+    def test_impl_success(
+        self,
+        mock_find,
+        mock_pending,
+        mock_get_contract,
+        mock_send_tx,
+        mock_create,
+        mock_submit,
+        blockchain_settings,
+    ):
         from loans.blockchain.sync import _sync_application_impl
 
         mock_app = MagicMock()
@@ -73,6 +84,8 @@ class TestSyncApplication:
 
         mock_tx = MagicMock()
         mock_pending.return_value = mock_tx
+        mock_get_contract.return_value = MagicMock()
+        mock_send_tx.return_value = {"tx_hash": "0xcore", "gas_used": 1, "block_number": 1}
 
         mock_create.return_value = {"tx_hash": "0xaaa", "gas_used": 100000, "block_number": 1}
         mock_submit.return_value = {"tx_hash": "0xbbb", "gas_used": 80000, "block_number": 2}
@@ -114,9 +127,23 @@ class TestSyncApproval:
         mock_thread.assert_called_once_with(_sync_approval_impl, "loan123")
 
     @patch("loans.blockchain.services.approval_service.approve_loan_onchain")
+    @patch("loans.blockchain.services.review_service.assign_officer_onchain")
+    @patch("loans.blockchain.client.send_transaction")
+    @patch("loans.blockchain.client.get_contract")
+    @patch("loans.blockchain.client.get_account")
     @patch("loans.blockchain.models.BlockchainTransaction.create_pending")
     @patch("loans.models.application.LoanApplication.find_by_id")
-    def test_impl_success(self, mock_find, mock_pending, mock_approve, blockchain_settings):
+    def test_impl_success(
+        self,
+        mock_find,
+        mock_pending,
+        mock_get_account,
+        mock_get_contract,
+        mock_send_tx,
+        mock_assign,
+        mock_approve,
+        blockchain_settings,
+    ):
         from loans.blockchain.sync import _sync_approval_impl
 
         mock_app = MagicMock()
@@ -126,12 +153,70 @@ class TestSyncApproval:
 
         mock_tx = MagicMock()
         mock_pending.return_value = mock_tx
+        mock_get_account.return_value = MagicMock(address="0x1234567890")
+        mock_get_contract.return_value = MagicMock()
+        mock_send_tx.return_value = {"tx_hash": "0xcore", "gas_used": 1, "block_number": 1}
 
         mock_approve.return_value = {"tx_hash": "0xccc", "gas_used": 90000, "block_number": 3}
 
         _sync_approval_impl("loan123")
 
         mock_approve.assert_called_once()
+        mock_tx.mark_confirmed.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# sync_rejection
+# ---------------------------------------------------------------------------
+
+class TestSyncRejection:
+    def test_skips_when_disabled(self):
+        settings.BLOCKCHAIN_ENABLED = False
+        from loans.blockchain.sync import sync_rejection
+        sync_rejection("fake_id")
+
+    @patch("loans.blockchain.sync._run_in_thread")
+    def test_calls_thread_when_enabled(self, mock_thread, blockchain_settings):
+        from loans.blockchain.sync import sync_rejection, _sync_rejection_impl
+        sync_rejection("loan123")
+        mock_thread.assert_called_once_with(_sync_rejection_impl, "loan123")
+
+    @patch("loans.blockchain.client.send_transaction")
+    @patch("loans.blockchain.client.get_contract")
+    @patch("loans.blockchain.client.get_account")
+    @patch("loans.blockchain.services.review_service.assign_officer_onchain")
+    @patch("loans.blockchain.services.approval_service.reject_loan_onchain")
+    @patch("loans.blockchain.models.BlockchainTransaction.create_pending")
+    @patch("loans.models.application.LoanApplication.find_by_id")
+    def test_impl_success(
+        self,
+        mock_find,
+        mock_pending,
+        mock_reject,
+        mock_assign,
+        mock_get_account,
+        mock_get_contract,
+        mock_send_tx,
+        blockchain_settings,
+    ):
+        from loans.blockchain.sync import _sync_rejection_impl
+
+        mock_app = MagicMock()
+        mock_app.rejection_reason = "Incomplete documents"
+        mock_app.officer_notes = "Missing income proof"
+        mock_find.return_value = mock_app
+
+        mock_tx = MagicMock()
+        mock_pending.return_value = mock_tx
+
+        mock_reject.return_value = {"tx_hash": "0xrrr", "gas_used": 90000, "block_number": 7}
+        mock_get_account.return_value = MagicMock(address="0x1234567890")
+        mock_get_contract.return_value = MagicMock()
+
+        _sync_rejection_impl("loan123")
+
+        mock_assign.assert_called_once()
+        mock_reject.assert_called_once()
         mock_tx.mark_confirmed.assert_called_once()
 
 
@@ -147,9 +232,20 @@ class TestSyncDisbursement:
 
     @patch("loans.blockchain.services.disbursement_service.complete_disbursement_onchain")
     @patch("loans.blockchain.services.disbursement_service.set_method_onchain")
+    @patch("loans.blockchain.client.send_transaction")
+    @patch("loans.blockchain.client.get_contract")
     @patch("loans.blockchain.models.BlockchainTransaction.create_pending")
     @patch("loans.models.application.LoanApplication.find_by_id")
-    def test_impl_success(self, mock_find, mock_pending, mock_set_method, mock_complete, blockchain_settings):
+    def test_impl_success(
+        self,
+        mock_find,
+        mock_pending,
+        mock_get_contract,
+        mock_send_tx,
+        mock_set_method,
+        mock_complete,
+        blockchain_settings,
+    ):
         from loans.blockchain.sync import _sync_disbursement_impl
 
         mock_app = MagicMock()
@@ -161,6 +257,8 @@ class TestSyncDisbursement:
 
         mock_tx = MagicMock()
         mock_pending.return_value = mock_tx
+        mock_get_contract.return_value = MagicMock()
+        mock_send_tx.return_value = {"tx_hash": "0xcore", "gas_used": 1, "block_number": 1}
 
         mock_complete.return_value = {
             "complete_tx": {"tx_hash": "0xddd", "gas_used": 120000, "block_number": 4}
@@ -256,6 +354,116 @@ class TestSyncPayment:
         _sync_payment_impl("loan123", str(payment_id))
 
         mock_record.assert_called_once()
+        mock_tx.mark_confirmed.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# sync_overdue
+# ---------------------------------------------------------------------------
+
+class TestSyncOverdue:
+    def test_skips_when_disabled(self):
+        settings.BLOCKCHAIN_ENABLED = False
+        from loans.blockchain.sync import sync_overdue
+        sync_overdue("fake_id", 1)
+
+    @patch("loans.blockchain.sync._run_in_thread")
+    def test_calls_thread_when_enabled(self, mock_thread, blockchain_settings):
+        from loans.blockchain.sync import sync_overdue, _sync_overdue_impl
+        sync_overdue("loan123", 1)
+        mock_thread.assert_called_once_with(_sync_overdue_impl, "loan123", 1)
+
+    @patch("loans.blockchain.services.repayment_service.mark_overdue_onchain")
+    @patch("loans.blockchain.models.BlockchainTransaction.create_pending")
+    def test_impl_success(self, mock_pending, mock_mark, blockchain_settings):
+        from loans.blockchain.sync import _sync_overdue_impl
+
+        mock_tx = MagicMock()
+        mock_pending.return_value = mock_tx
+        mock_mark.return_value = {"tx_hash": "0xov1", "gas_used": 60000, "block_number": 8}
+
+        _sync_overdue_impl("loan123", 1)
+
+        mock_mark.assert_called_once()
+        mock_tx.mark_confirmed.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# sync_penalty
+# ---------------------------------------------------------------------------
+
+class TestSyncPenalty:
+    def test_skips_when_disabled(self):
+        settings.BLOCKCHAIN_ENABLED = False
+        from loans.blockchain.sync import sync_penalty
+        sync_penalty("fake_id", 1, 100, "apply")
+
+    @patch("loans.blockchain.sync._run_in_thread")
+    def test_calls_thread_when_enabled(self, mock_thread, blockchain_settings):
+        from loans.blockchain.sync import sync_penalty, _sync_penalty_impl
+        sync_penalty("loan123", 2, 250, "apply", "late")
+        mock_thread.assert_called_once_with(_sync_penalty_impl, "loan123", 2, 250, "apply", "late")
+
+    @patch("loans.blockchain.services.audit_service.log_penalty_onchain")
+    @patch("loans.blockchain.models.BlockchainTransaction.create_pending")
+    def test_impl_success(self, mock_pending, mock_log, blockchain_settings):
+        from loans.blockchain.sync import _sync_penalty_impl
+
+        mock_tx = MagicMock()
+        mock_pending.return_value = mock_tx
+        mock_log.return_value = {"tx_hash": "0xpen", "gas_used": 70000, "block_number": 9}
+
+        _sync_penalty_impl("loan123", 2, 250, "apply", "late")
+
+        mock_log.assert_called_once()
+        mock_tx.mark_confirmed.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# sync_consent
+# ---------------------------------------------------------------------------
+
+class TestSyncConsent:
+    def test_skips_when_disabled(self):
+        settings.BLOCKCHAIN_ENABLED = False
+        from loans.blockchain.sync import sync_consent
+        sync_consent("user1", "customer", True, False, "1.0", "2026-05-26T00:00:00Z")
+
+    @patch("loans.blockchain.sync._run_in_thread")
+    def test_calls_thread_when_enabled(self, mock_thread, blockchain_settings):
+        from loans.blockchain.sync import sync_consent, _sync_consent_impl
+        sync_consent("user1", "customer", True, False, "1.0", "2026-05-26T00:00:00Z")
+        mock_thread.assert_called_once_with(
+            _sync_consent_impl,
+            "user1",
+            "customer",
+            True,
+            False,
+            "1.0",
+            "2026-05-26T00:00:00Z",
+            None,
+        )
+
+    @patch("loans.blockchain.services.audit_service.log_consent_onchain")
+    @patch("loans.blockchain.models.BlockchainTransaction.create_pending")
+    def test_impl_success(self, mock_pending, mock_log, blockchain_settings):
+        from loans.blockchain.sync import _sync_consent_impl
+
+        mock_tx = MagicMock()
+        mock_pending.return_value = mock_tx
+        mock_log.return_value = {"tx_hash": "0xcons", "gas_used": 80000, "block_number": 10}
+
+        _sync_consent_impl(
+            "user1",
+            "customer",
+            True,
+            False,
+            "1.0",
+            "2026-05-26T00:00:00Z",
+            None,
+        )
+
+        mock_log.assert_called_once()
         mock_tx.mark_confirmed.assert_called_once()
 
 
