@@ -894,13 +894,13 @@ class OfficerReviewView(LoanOfficerRequiredMixin, APIView):
                     )
                 except Exception as e:
                     logger.warning(f"Failed to send rejection email: {e}")
-
             # Blockchain sync — rejection (background thread, no Celery needed)
             try:
                 from loans.blockchain.sync import sync_rejection
                 sync_rejection(app.id)
             except Exception as e:
                 logger.warning(f"Blockchain sync skipped for rejection {app.id}: {e}")
+            
         
         return success_response(
             data={

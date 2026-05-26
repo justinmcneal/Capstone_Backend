@@ -35,6 +35,9 @@ MongoDB (off-chain data)                    Blockchain (on-chain immutable recor
 
 ---
 
+**Implementation notes:** The backend now wires the main on-chain flows: application submit/assign/approve/reject, disbursement, schedule creation, payment recording, penalty apply/waive, consent recording, and overdue marking. The officer review rejection path was previously missing blockchain sync and has been added; penalties and consent actions call the audit sync; overdue marking is triggered by the scheduled `check_overdue_installments_task`.
+
+
 ### 1. ACCOUNTS MODULE — User Registration
 
 | Backend Action | Smart Contract | Function | Who Calls | Event Emitted |
@@ -77,8 +80,8 @@ MongoDB (off-chain data)                    Blockchain (on-chain immutable recor
 - `0` → Bank Transfer
 - `1` → Cash
 - `2` → GCash
-- `3` → Maya
-- `4` → Other
+ - `2` → GCash
+ - `3` → Other
 
 **Duplicate prevention:** A `referenceHash` mapping prevents the same external transaction reference from being recorded twice.
 
@@ -99,8 +102,8 @@ MongoDB (off-chain data)                    Blockchain (on-chain immutable recor
 - `0` → Cash
 - `1` → Bank Transfer
 - `2` → GCash
-- `3` → Maya
-- `4` → Other
+ - `2` → GCash
+ - `3` → Other
 
 ---
 
