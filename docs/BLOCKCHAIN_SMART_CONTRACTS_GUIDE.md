@@ -52,8 +52,8 @@ Note: `ILoanCore.sol` still contains legacy enum values (`Active`, `Completed`, 
 | `3` | `Overdue` | `overdue` |
 
 ### Method Enums (Ordering Matters)
-- `Repayment.PaymentMethod`: `Cash(0)`, `BankTransfer(1)`, `GCash(2)`, `Maya(3)`, `Other(4)`
-- `Disbursement.DisbursementMethod`: `BankTransfer(0)`, `Cash(1)`, `GCash(2)`, `Maya(3)`, `Other(4)`
+- `Repayment.PaymentMethod`: `Cash(0)`, `BankTransfer(1)`, `GCash(2)`, `Other(3)`
+- `Disbursement.DisbursementMethod`: `BankTransfer(0)`, `Cash(1)`, `GCash(2)`, `Other(3)`
 
 ## Local Development and Testing
 ```bash

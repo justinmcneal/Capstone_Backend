@@ -201,7 +201,7 @@ Django Status      →    Smart Contract Status
 ### Payment Methods
 
 ```solidity
-enum PaymentMethod { BankTransfer, Cash, GCash, Maya, Other }
+enum PaymentMethod { BankTransfer, Cash, GCash, Other }
 ```
 
 ---

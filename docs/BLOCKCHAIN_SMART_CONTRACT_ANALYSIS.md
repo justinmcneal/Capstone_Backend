@@ -5,7 +5,7 @@
 The system is a **Philippine MSME lending platform** built on Django REST + MongoDB with:
 - AI-driven loan pre-qualification (Groq LLM)
 - Manual loan officer review/approval
-- Payment recording via officer input (cash, bank transfer, GCash, Maya)
+- Payment recording via officer input (cash, bank transfer, GCash)
 - Field encryption, 2FA, role-based access
 - No existing escrow, collateral, or on-chain component
 
@@ -103,7 +103,7 @@ contract LoanAgreement {
 - Automates penalty accrual without cron jobs or manual override.
 
 **Risks / Limitations**
-- Most payments today are **cash or GCash/Maya** (not crypto). You need an oracle or bridge: a trusted officer/gateway posts a signed payment confirmation to the contract. This re-introduces a trust assumption but narrows it to the payment gateway layer, not the internal officer layer.
+- Most payments today are **cash or GCash** (not crypto). You need an oracle or bridge: a trusted officer/gateway posts a signed payment confirmation to the contract. This re-introduces a trust assumption but narrows it to the payment gateway layer, not the internal officer layer.
 - Over-payments must be handled (partial credit mapping).
 
 **Recommended Contract Logic**
@@ -134,7 +134,7 @@ contract RepaymentTracker {
         uint256 timestamp
     );
 
-    // Called by payment oracle (GCash/Maya webhook bridge)
+    // Called by payment oracle (GCash webhook bridge)
     function recordPayment(
         bytes32 loanId,
         uint8   installmentNo,
@@ -224,7 +224,7 @@ contract ConsentRegistry {
 
 **Current Traditional Flow**
 
-In `loans/models/application.py`, disbursement fields (`disbursed_amount`, `disbursed_at`, `disbursement_method`, `disbursement_reference`, `disbursed_by`) are set manually by the officer who processed the transfer. The actual money movement (bank transfer, GCash, Maya) is recorded after the fact as a reference number — there is no cryptographic proof the transfer happened before the record was written.
+ In `loans/models/application.py`, disbursement fields (`disbursed_amount`, `disbursed_at`, `disbursement_method`, `disbursement_reference`, `disbursed_by`) are set manually by the officer who processed the transfer. The actual money movement (bank transfer, GCash) is recorded after the fact as a reference number — there is no cryptographic proof the transfer happened before the record was written.
 
 **Suitable for Smart Contract?** ⚡ Medium Value
 
@@ -233,7 +233,7 @@ In `loans/models/application.py`, disbursement fields (`disbursed_amount`, `disb
 - If ever migrated to stablecoin disbursement, the contract directly controls fund release, making fraud impossible.
 
 **Risks / Limitations**
-- Today's disbursement is via bank/GCash/Maya (fiat). Smart contract adds an additional step without controlling the actual fiat movement. The benefit is audit, not enforcement.
+- Today's disbursement is via bank/GCash (fiat). Smart contract adds an additional step without controlling the actual fiat movement. The benefit is audit, not enforcement.
 - Cost/complexity may not justify the gain unless the platform migrates to stablecoin lending.
 
 **Recommended Approach:** A lightweight **multi-sig authorization log** — require both the system (backend key) and loan officer key to sign a disbursement event before it is accepted by the contract. This is auditable without being fiat-blocking.
@@ -350,7 +350,7 @@ Django Backend (existing)
         │
         ├── Disbursement ────────────────────────────────► [Contract: MultiSigDisbursement]
         │
-        └── Payment Recording  ◄──── GCash/Maya Oracle ──► [Contract: RepaymentTracker]
+        └── Payment Recording  ◄──── GCash Oracle ──► [Contract: RepaymentTracker]
                                       (signed webhook bridge)
 ```
 

@@ -252,7 +252,7 @@ Add missing disbursement method selection and refactor existing disbursement exe
 
 **Implementation:**
 ```solidity
-enum Method { BankTransfer, GCash, Cash, Maya, Other }
+enum Method { BankTransfer, GCash, Cash, Other }
 
 function setPreferredMethod(bytes32 loanId, Method method) external returns (bool)
 function getPreferredMethod(bytes32 loanId) external view returns (Method)
@@ -286,7 +286,7 @@ function isMethodLocked(bytes32 loanId) external view returns (bool)
 - [x] Access control enforced
 
 **Test Coverage:**
-- ✅ All 5 disbursement methods (BankTransfer, GCash, Cash, Maya, Other)
+- ✅ All 4 disbursement methods (BankTransfer, GCash, Cash, Other)
 - ✅ Method selection and updates
 - ✅ Method locking by SYSTEM_ROLE
 - ✅ Access control (borrower-only, SYSTEM_ROLE for locking)
@@ -412,7 +412,7 @@ Total tests: 353 (258 Sprint 1 + 46 DisbursementMethod + 49 DisbursementExecutio
 - **DisbursementMethod.test.js Lines 294-305:** Revert if loan in Draft status
 - **DisbursementMethod.test.js Lines 307-318:** Revert if loan in Submitted status
 - **DisbursementMethod.test.js Lines 155-166:** Success if loan in Approved status
-- **Coverage:** All 5 method types tested (BankTransfer, GCash, Cash, Maya, Other)
+- **Coverage:** All 4 method types tested (BankTransfer, GCash, Cash, Other)
 
 #### ✅ Scenario 2: Method Lock After Disbursement Initiation
 - **DisbursementMethod.test.js Lines 425-432:** Lock method successfully (SYSTEM_ROLE)

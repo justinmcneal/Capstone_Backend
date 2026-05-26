@@ -126,7 +126,7 @@ or
 ```
 - Allowed only when application status is `approved`.
 - Generates repayment schedule automatically on success.
-- Accepted methods in view validation: `bank_transfer`, `cash`, `gcash`, `maya`, `check`, `other`.
+- Accepted methods in view validation: `bank_transfer`, `cash`, `gcash`, `check`, `other`.
 
 6. `POST /officer/payments/`
 - Body:
