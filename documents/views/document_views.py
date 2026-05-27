@@ -238,9 +238,9 @@ class DocumentUploadView(AccessControlMixin, APIView):
                 try:
                     from documents.services import analyze_document
                     
-                    # Get the full file path for analysis
-                    full_path = storage.get_full_path(file_info['file_path'])
-                    ai_analysis = analyze_document(full_path, expected_type=document_type)
+                    # Read storage-agnostic bytes so S3 and local backends both work.
+                    document_bytes = storage.get_file_bytes(file_info['file_path'])
+                    ai_analysis = analyze_document(document_bytes, expected_type=document_type)
                     
                     logger.info(f"AI analysis complete: quality={ai_analysis.get('quality_score', 0):.2f}")
                 except Exception as e:
@@ -670,6 +670,66 @@ class DocumentDetailView(AccessControlMixin, APIView):
                 message="Failed to delete document",
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+
+
+
+class DocumentPresignedUploadView(AccessControlMixin, APIView):
+    """Provide presigned POST data for browser/client direct uploads to S3.
+
+    POST /api/documents/presigned-upload/
+    Body: { "document_type": "id_card", "original_filename": "photo.jpg" }
+    """
+    authentication_classes = [CustomJWTAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        try:
+            has_permission, result = self.require_customer(request)
+            if not has_permission:
+                return result
+
+            user = request.user
+            customer_id = str(user.customer_id)
+
+            document_type = sanitize_text(request.data.get('document_type', '')).lower()
+            original_filename = sanitize_filename(request.data.get('original_filename', ''))
+
+            if not document_type or document_type not in DOCUMENT_TYPES:
+                return error_response(
+                    message="Invalid or missing document_type",
+                    status_code=status.HTTP_400_BAD_REQUEST
+                )
+            if not original_filename:
+                return error_response(
+                    message="original_filename is required",
+                    status_code=status.HTTP_400_BAD_REQUEST
+                )
+
+            storage = get_storage_backend()
+
+            # Only S3 backend supports presigned POST in this implementation
+            if hasattr(storage, 'get_presigned_upload_for_new_object'):
+                post = storage.get_presigned_upload_for_new_object(
+                    customer_id=customer_id,
+                    document_type=document_type,
+                    original_filename=original_filename,
+                )
+                if not post:
+                    return error_response(
+                        message="Failed to generate presigned upload data",
+                        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
+                    )
+
+                return success_response(data=post, message="Presigned upload data generated")
+
+            return error_response(
+                message="Presigned uploads are not supported by the active storage backend",
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+
+        except Exception as e:
+            logger.exception("Failed to generate presigned upload data: %s", e)
+            return error_response(message="Failed to generate presigned upload data", status_code=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 class DocumentVerifyView(AccessControlMixin, APIView):
