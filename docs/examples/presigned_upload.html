@@ -1,0 +1,37 @@
+<!doctype html>
+<html>
+<body>
+  <h3>Presigned Upload Example</h3>
+  <input id="file" type="file" />
+  <button id="upload">Upload</button>
+  <div id="log"></div>
+  <script>
+  async function getPresigned(file) {
+    const res = await fetch('/api/documents/presigned-upload/', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({document_type: 'other', original_filename: file.name})
+    });
+    return res.json();
+  }
+
+  function log(msg){document.getElementById('log').innerText += msg + '\n'}
+
+  document.getElementById('upload').onclick = async () => {
+    const fileEl = document.getElementById('file');
+    if (!fileEl.files.length) return alert('Choose a file');
+    const file = fileEl.files[0];
+    log('Requesting presigned POST...')
+    const presigned = await getPresigned(file);
+    if(!presigned || !presigned.data){log('Failed to get presigned data'); return}
+    const formData = new FormData();
+    Object.entries(presigned.data.fields).forEach(([k,v])=>formData.append(k,v));
+    formData.append('file', file);
+    log('Uploading to S3...');
+    const upload = await fetch(presigned.data.url, {method: 'POST', body: formData});
+    log('Upload status: ' + upload.status);
+    if (upload.ok) alert('Uploaded'); else alert('Upload failed');
+  };
+  </script>
+ </body>
+</html>

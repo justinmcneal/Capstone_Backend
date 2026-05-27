@@ -13,6 +13,7 @@ https://docs.djangoproject.com/en/4.2/ref/settings/
 from pathlib import Path
 import os
 import json
+import json
 from dotenv import load_dotenv
 from pymongo import MongoClient
 from cryptography.fernet import Fernet
@@ -180,11 +181,32 @@ MEDIA_URL = '/media/'
 MEDIA_ROOT = BASE_DIR / 'media'
 
 # Document Storage Configuration
-# Options: 'local', 's3', 'gcs' (cloud backends to be implemented)
-DOCUMENT_STORAGE_BACKEND = 'local'
+# Options: 'local', 's3'
+DOCUMENT_STORAGE_BACKEND = os.getenv('DOCUMENT_STORAGE_BACKEND', 'local').strip().lower()
 DOCUMENT_UPLOAD_AI_ANALYSIS = os.getenv('DOCUMENT_UPLOAD_AI_ANALYSIS', 'True') == 'True'
 DOCUMENT_UPLOAD_NOTIFY_REVIEWERS = os.getenv('DOCUMENT_UPLOAD_NOTIFY_REVIEWERS', 'True') == 'True'
 DOCUMENT_UPLOAD_NOTIFY_ASYNC = os.getenv('DOCUMENT_UPLOAD_NOTIFY_ASYNC', 'True') == 'True'
+
+# S3 storage configuration (used when DOCUMENT_STORAGE_BACKEND=s3)
+AWS_ACCESS_KEY_ID = os.getenv('AWS_ACCESS_KEY_ID', '')
+AWS_SECRET_ACCESS_KEY = os.getenv('AWS_SECRET_ACCESS_KEY', '')
+AWS_STORAGE_BUCKET_NAME = os.getenv('AWS_STORAGE_BUCKET_NAME', '')
+AWS_S3_REGION_NAME = os.getenv('AWS_S3_REGION_NAME', 'us-east-1')
+AWS_S3_ENDPOINT_URL = os.getenv('AWS_S3_ENDPOINT_URL', '') or None
+AWS_S3_CUSTOM_DOMAIN = os.getenv('AWS_S3_CUSTOM_DOMAIN', '') or None
+AWS_DEFAULT_ACL = os.getenv('AWS_DEFAULT_ACL', 'private')
+AWS_S3_FILE_OVERWRITE = env_bool('AWS_S3_FILE_OVERWRITE', False)
+AWS_S3_SIGNATURE_VERSION = os.getenv('AWS_S3_SIGNATURE_VERSION', 's3v4')
+AWS_S3_OBJECT_PARAMETERS = {}
+_s3_object_parameters = os.getenv('AWS_S3_OBJECT_PARAMETERS', '').strip()
+if _s3_object_parameters:
+    try:
+        parsed_s3_object_parameters = json.loads(_s3_object_parameters)
+        if isinstance(parsed_s3_object_parameters, dict):
+            AWS_S3_OBJECT_PARAMETERS = parsed_s3_object_parameters
+    except Exception:
+        AWS_S3_OBJECT_PARAMETERS = {'CacheControl': _s3_object_parameters}
+AWS_S3_PRESIGNED_URL_EXPIRY_SECONDS = int(os.getenv('AWS_S3_PRESIGNED_URL_EXPIRY_SECONDS', '3600'))
 
 # Cache Configuration
 # Uses Redis if available, falls back to local memory cache

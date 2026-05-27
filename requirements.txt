@@ -38,6 +38,10 @@ python-dotenv>=1.0.0
 # Utilities
 pytz>=2023.3
 certifi>=2023.7.22
+boto3>=1.34.0
+
+# S3 testing/mocking
+moto[s3]>=4.1.0
 
 # ASGI Server
 asgiref>=3.7.0
