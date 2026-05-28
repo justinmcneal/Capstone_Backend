@@ -44,8 +44,12 @@ def approve_loan_onchain(loan_id, approved_amount, notes_hash):
         notes_bytes,
     )
 
-    logger.info("approveLoan on-chain: loan=%s amount=%d tx=%s",
-                loan_id, approved_amount, result["tx_hash"][:18])
+    logger.info(
+        "approveLoan on-chain: loan=%s amount=%d tx=%s",
+        loan_id,
+        approved_amount,
+        result["tx_hash"][:18],
+    )
     return result
 
 

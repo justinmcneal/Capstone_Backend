@@ -65,7 +65,9 @@ def get_web3():
         ) from exc
 
     if not w3.is_connected():
-        raise BlockchainConnectionError(f"Cannot connect to blockchain node at {rpc_url}")
+        raise BlockchainConnectionError(
+            f"Cannot connect to blockchain node at {rpc_url}"
+        )
 
     logger.debug("Connected to blockchain at %s (chain %s)", rpc_url, w3.eth.chain_id)
     return w3
@@ -160,20 +162,24 @@ def send_transaction(contract, method_name, *args):
     # Auto-estimate gas; fall back to configured limit if estimation fails
     try:
         estimated_gas = fn.estimate_gas({"from": account.address})
-        gas = min(int(estimated_gas * 1.2), settings.BLOCKCHAIN_GAS_LIMIT)  # 20% buffer, capped
+        gas = min(
+            int(estimated_gas * 1.2), settings.BLOCKCHAIN_GAS_LIMIT
+        )  # 20% buffer, capped
     except Exception:
         gas = settings.BLOCKCHAIN_GAS_LIMIT
 
     # Use configured gas price (allows control over costs in dev/test environments)
     gas_price = Web3.to_wei(settings.BLOCKCHAIN_GAS_PRICE_GWEI, "gwei")
 
-    tx = fn.build_transaction({
-        "from": account.address,
-        "nonce": w3.eth.get_transaction_count(account.address),
-        "gas": gas,
-        "gasPrice": gas_price,
-        "chainId": settings.BLOCKCHAIN_CHAIN_ID,
-    })
+    tx = fn.build_transaction(
+        {
+            "from": account.address,
+            "nonce": w3.eth.get_transaction_count(account.address),
+            "gas": gas,
+            "gasPrice": gas_price,
+            "chainId": settings.BLOCKCHAIN_CHAIN_ID,
+        }
+    )
 
     signed = account.sign_transaction(tx)
     tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
@@ -185,7 +191,10 @@ def send_transaction(contract, method_name, *args):
     if receipt["status"] != 1:
         logger.error(
             "Transaction REVERTED: %s.%s(%s) tx=0x%s",
-            contract.address, method_name, args, tx_hash_hex,
+            contract.address,
+            method_name,
+            args,
+            tx_hash_hex,
         )
         raise BlockchainTransactionFailed(
             f"{method_name} reverted on-chain",
@@ -198,7 +207,10 @@ def send_transaction(contract, method_name, *args):
 
     logger.info(
         "Transaction OK: %s.%s() tx=0x%s gas=%d",
-        contract.address[:10], method_name, tx_hash_hex[:16], receipt["gasUsed"],
+        contract.address[:10],
+        method_name,
+        tx_hash_hex[:16],
+        receipt["gasUsed"],
     )
 
     return {
@@ -264,7 +276,12 @@ def send_eth_transfer(to_address, amount_wei):
     tx_hash_hex = "0x" + receipt["transactionHash"].hex()
 
     if receipt["status"] != 1:
-        logger.error("ETH transfer FAILED: to=%s amount=%s tx=%s", to_address, amount_wei, tx_hash_hex)
+        logger.error(
+            "ETH transfer FAILED: to=%s amount=%s tx=%s",
+            to_address,
+            amount_wei,
+            tx_hash_hex,
+        )
         raise BlockchainTransactionFailed(
             f"ETH transfer to {to_address} failed",
             tx_hash=tx_hash_hex,
@@ -276,7 +293,9 @@ def send_eth_transfer(to_address, amount_wei):
 
     logger.info(
         "ETH transfer OK: tx=%s amount=%s wei to=%s",
-        tx_hash_hex[:18], amount_wei, to_address[:10],
+        tx_hash_hex[:18],
+        amount_wei,
+        to_address[:10],
     )
 
     return {

@@ -1,29 +1,29 @@
 from rest_framework import serializers
-from loans.models import APPLICATION_STATUSES
 from documents.models import DOCUMENT_TYPES
 from accounts.serializers.base_serializers import InputSanitizationMixin
 
 
 class LoanProductSerializer(InputSanitizationMixin, serializers.Serializer):
     """Serializer for loan product data"""
+
     id = serializers.CharField(read_only=True)
     name = serializers.CharField(max_length=100)
     code = serializers.CharField(max_length=20)
-    description = serializers.CharField(max_length=1000, required=False, allow_blank=True)
+    description = serializers.CharField(
+        max_length=1000, required=False, allow_blank=True
+    )
     min_amount = serializers.FloatField(min_value=0)
     max_amount = serializers.FloatField(min_value=0)
     interest_rate = serializers.FloatField(min_value=0, max_value=100)
     min_term_months = serializers.IntegerField(min_value=1)
     max_term_months = serializers.IntegerField(min_value=1)
     required_documents = serializers.ListField(
-        child=serializers.CharField(),
-        required=False
+        child=serializers.CharField(), required=False
     )
     min_business_months = serializers.IntegerField(min_value=0, required=False)
     min_monthly_income = serializers.FloatField(min_value=0, required=False)
     business_types = serializers.ListField(
-        child=serializers.CharField(),
-        required=False
+        child=serializers.CharField(), required=False
     )
     target_description = serializers.CharField(required=False, allow_blank=True)
     active = serializers.BooleanField(required=False)
@@ -31,33 +31,38 @@ class LoanProductSerializer(InputSanitizationMixin, serializers.Serializer):
     def validate(self, data):
         """Validate product data with clear error messages"""
         errors = {}
-        
+
         # Validate min/max amounts
-        min_amt = data.get('min_amount', 0)
-        max_amt = data.get('max_amount', 0)
+        min_amt = data.get("min_amount", 0)
+        max_amt = data.get("max_amount", 0)
         if min_amt > max_amt:
-            errors['max_amount'] = "Maximum amount must be greater than or equal to minimum amount"
-        
+            errors["max_amount"] = (
+                "Maximum amount must be greater than or equal to minimum amount"
+            )
+
         # Validate min/max terms
-        min_term = data.get('min_term_months', 0)
-        max_term = data.get('max_term_months', 0)
+        min_term = data.get("min_term_months", 0)
+        max_term = data.get("max_term_months", 0)
         if min_term > max_term:
-            errors['max_term_months'] = "Maximum term must be greater than or equal to minimum term"
-            
+            errors["max_term_months"] = (
+                "Maximum term must be greater than or equal to minimum term"
+            )
+
         if errors:
             raise serializers.ValidationError(errors)
-        
+
         return data
 
 
 class LoanApplicationSerializer(InputSanitizationMixin, serializers.Serializer):
     """Serializer for loan application submission"""
+
     product_id = serializers.CharField(required=True)
     requested_amount = serializers.FloatField(min_value=1000)
     term_months = serializers.IntegerField(min_value=1)
     purpose = serializers.CharField(max_length=500, required=False, allow_blank=True)
     preferred_disbursement_method = serializers.ChoiceField(
-        choices=['cash', 'gcash', 'bank_transfer', 'check', 'wallet'],
+        choices=["cash", "gcash", "bank_transfer", "check", "wallet"],
         required=False,
         allow_blank=True,
     )
@@ -65,20 +70,24 @@ class LoanApplicationSerializer(InputSanitizationMixin, serializers.Serializer):
 
 class PreQualifyRequestSerializer(InputSanitizationMixin, serializers.Serializer):
     """Serializer for pre-qualification request"""
+
     product_id = serializers.CharField(required=True)
     amount = serializers.FloatField(min_value=1000)
     term_months = serializers.IntegerField(min_value=1, required=False, default=12)
-    purpose = serializers.CharField(max_length=500, required=False, allow_blank=True, default='')
+    purpose = serializers.CharField(
+        max_length=500, required=False, allow_blank=True, default=""
+    )
     requirements_scope = serializers.ChoiceField(
-        choices=['baseline', 'product'],
+        choices=["baseline", "product"],
         required=False,
         allow_null=True,
-        default='product',
+        default="product",
     )
 
 
 class LoanApplicationResponseSerializer(serializers.Serializer):
     """Serializer for application response"""
+
     id = serializers.CharField()
     product_id = serializers.CharField()
     product_name = serializers.CharField(required=False)
@@ -96,28 +105,31 @@ class LoanApplicationResponseSerializer(serializers.Serializer):
 
 class LoanReviewSerializer(InputSanitizationMixin, serializers.Serializer):
     """Serializer for loan officer review"""
-    action = serializers.ChoiceField(choices=['approve', 'reject'])
+
+    action = serializers.ChoiceField(choices=["approve", "reject"])
     approved_amount = serializers.FloatField(min_value=0, required=False)
-    rejection_reason = serializers.CharField(max_length=500, required=False, allow_blank=True)
+    rejection_reason = serializers.CharField(
+        max_length=500, required=False, allow_blank=True
+    )
     notes = serializers.CharField(max_length=1000, required=False, allow_blank=True)
 
     def validate(self, data):
-        if data['action'] == 'approve' and not data.get('approved_amount'):
-            raise serializers.ValidationError({
-                'approved_amount': 'Required when approving'
-            })
-        if data['action'] == 'reject' and not data.get('rejection_reason'):
-            raise serializers.ValidationError({
-                'rejection_reason': 'Required when rejecting'
-            })
+        if data["action"] == "approve" and not data.get("approved_amount"):
+            raise serializers.ValidationError(
+                {"approved_amount": "Required when approving"}
+            )
+        if data["action"] == "reject" and not data.get("rejection_reason"):
+            raise serializers.ValidationError(
+                {"rejection_reason": "Required when rejecting"}
+            )
         return data
 
 
 class MissingDocumentsRequestSerializer(InputSanitizationMixin, serializers.Serializer):
     """Serializer for requesting missing (not-yet-uploaded) documents"""
+
     missing_documents = serializers.ListField(
-        child=serializers.ChoiceField(choices=DOCUMENT_TYPES),
-        min_length=1
+        child=serializers.ChoiceField(choices=DOCUMENT_TYPES), min_length=1
     )
     reason = serializers.CharField(max_length=1000, required=False, allow_blank=True)
 
@@ -131,10 +143,11 @@ class MissingDocumentsRequestSerializer(InputSanitizationMixin, serializers.Seri
 
 class ApplicationInternalNoteSerializer(InputSanitizationMixin, serializers.Serializer):
     """Serializer for adding standalone internal notes on an application."""
+
     note = serializers.CharField(max_length=1000, required=True)
 
     def validate_note(self, value):
-        text = (value or '').strip()
+        text = (value or "").strip()
         if not text:
-            raise serializers.ValidationError('Note content is required')
+            raise serializers.ValidationError("Note content is required")
         return text

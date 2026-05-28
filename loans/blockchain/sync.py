@@ -20,12 +20,15 @@ def _is_enabled():
 
 def _run_in_thread(fn, *args):
     """Run blockchain sync in a background thread so the API response isn't delayed."""
+
     def wrapper():
         try:
             fn(*args)
         except Exception as exc:
-            logger.error("Blockchain sync error in %s: %s", getattr(fn, '__name__', str(fn)), exc)
-    
+            logger.error(
+                "Blockchain sync error in %s: %s", getattr(fn, "__name__", str(fn)), exc
+            )
+
     thread = threading.Thread(target=wrapper, daemon=True)
     thread.start()
 
@@ -43,7 +46,7 @@ def _risk_category_to_int(risk_str):
 
 def _update_application_tx(loan_id, action, tx_hash):
     try:
-        db = getattr(settings, 'MONGODB', None)
+        db = getattr(settings, "MONGODB", None)
         if db is None:
             return
         db["loan_applications"].update_one(
@@ -112,11 +115,20 @@ def sync_penalty(loan_id, installment_number, amount, action, reason=""):
     """Sync a penalty apply/waive audit log to the blockchain."""
     if not _is_enabled():
         return
-    _run_in_thread(_sync_penalty_impl, loan_id, installment_number, amount, action, reason)
+    _run_in_thread(
+        _sync_penalty_impl, loan_id, installment_number, amount, action, reason
+    )
 
 
-def sync_consent(user_id, user_type, data_consent, ai_consent,
-                 consent_version, consent_timestamp, previous_state=None):
+def sync_consent(
+    user_id,
+    user_type,
+    data_consent,
+    ai_consent,
+    consent_version,
+    consent_timestamp,
+    previous_state=None,
+):
     """Sync a consent record to the blockchain."""
     if not _is_enabled():
         return
@@ -161,12 +173,15 @@ def _sync_application_impl(loan_id):
 
         interest_bps = _monthly_rate_to_annual_bps(
             app.ai_recommendation.get("interest_rate", 0)
-            if isinstance(app.ai_recommendation, dict) else 0
+            if isinstance(app.ai_recommendation, dict)
+            else 0
         )
 
         create_result = create_application_onchain(
             loan_id=loan_id,
-            borrower_addr=settings.BLOCKCHAIN_CONTRACT_ADDRESSES.get("accessControl", ""),
+            borrower_addr=settings.BLOCKCHAIN_CONTRACT_ADDRESSES.get(
+                "accessControl", ""
+            ),
             product_id=str(app.product_id),
             amount=int(app.requested_amount),
             term_months=int(app.term_months),
@@ -177,19 +192,35 @@ def _sync_application_impl(loan_id):
             loan_id=loan_id,
             eligibility_score=int(app.eligibility_score or 0),
             risk_category=_risk_category_to_int(app.risk_category),
-            ai_recommendation_hash=str(app.ai_recommendation) if app.ai_recommendation else "none",
+            ai_recommendation_hash=(
+                str(app.ai_recommendation) if app.ai_recommendation else "none"
+            ),
         )
 
         # Mirror in LoanCore: createLoan + submitLoan
         loan_id_bytes = Web3.keccak(text=str(loan_id))
         product_bytes = Web3.keccak(text=str(app.product_id))
-        ai_hash_bytes = Web3.keccak(text=str(app.ai_recommendation) if app.ai_recommendation else "none")
+        ai_hash_bytes = Web3.keccak(
+            text=str(app.ai_recommendation) if app.ai_recommendation else "none"
+        )
         lc = get_contract("loanCore")
-        send_transaction(lc, "createLoan", loan_id_bytes, product_bytes,
-                         int(app.requested_amount), int(app.term_months), interest_bps)
-        send_transaction(lc, "submitLoan", loan_id_bytes,
-                         min(int(app.eligibility_score or 0), 255),
-                         _risk_category_to_int(app.risk_category), ai_hash_bytes)
+        send_transaction(
+            lc,
+            "createLoan",
+            loan_id_bytes,
+            product_bytes,
+            int(app.requested_amount),
+            int(app.term_months),
+            interest_bps,
+        )
+        send_transaction(
+            lc,
+            "submitLoan",
+            loan_id_bytes,
+            min(int(app.eligibility_score or 0), 255),
+            _risk_category_to_int(app.risk_category),
+            ai_hash_bytes,
+        )
         logger.info("LoanCore createLoan+submitLoan OK: loan=%s", loan_id)
 
         tx_record.mark_confirmed(
@@ -198,7 +229,9 @@ def _sync_application_impl(loan_id):
             block_number=submit_result["block_number"],
         )
         _update_application_tx(loan_id, "submit", submit_result["tx_hash"])
-        logger.info("sync_application OK: loan=%s tx=%s", loan_id, submit_result["tx_hash"][:18])
+        logger.info(
+            "sync_application OK: loan=%s tx=%s", loan_id, submit_result["tx_hash"][:18]
+        )
 
     except Exception as exc:
         logger.error("sync_application FAILED: loan=%s error=%s", loan_id, exc)
@@ -322,7 +355,7 @@ def _sync_disbursement_impl(loan_id, include_schedule=True):
         complete_disbursement_onchain,
         set_method_onchain,
     )
-    from loans.blockchain.client import get_contract, send_transaction, send_eth_transfer
+    from loans.blockchain.client import get_contract, send_transaction
     from loans.models.application import LoanApplication
     from web3 import Web3
 
@@ -338,7 +371,9 @@ def _sync_disbursement_impl(loan_id, include_schedule=True):
         if not app:
             raise ValueError(f"LoanApplication {loan_id} not found")
 
-        method_str = app.disbursement_method or app.preferred_disbursement_method or "other"
+        method_str = (
+            app.disbursement_method or app.preferred_disbursement_method or "other"
+        )
 
         # ETH transfer for wallet disbursements
         if method_str == "wallet":
@@ -346,7 +381,9 @@ def _sync_disbursement_impl(loan_id, include_schedule=True):
 
         set_method_onchain(loan_id=loan_id, method=method_str)
 
-        amount = int(app.disbursed_amount or app.approved_amount or app.requested_amount)
+        amount = int(
+            app.disbursed_amount or app.approved_amount or app.requested_amount
+        )
         ref_str = str(app.disbursement_reference or f"DISB_{loan_id}")
 
         result = complete_disbursement_onchain(
@@ -368,7 +405,9 @@ def _sync_disbursement_impl(loan_id, include_schedule=True):
             block_number=complete_tx["block_number"],
         )
         _update_application_tx(loan_id, "disburse", complete_tx["tx_hash"])
-        logger.info("sync_disbursement OK: loan=%s tx=%s", loan_id, complete_tx["tx_hash"][:18])
+        logger.info(
+            "sync_disbursement OK: loan=%s tx=%s", loan_id, complete_tx["tx_hash"][:18]
+        )
 
         # Schedule must run AFTER disbursement (contract requires Disbursed status)
         if include_schedule:
@@ -392,7 +431,9 @@ def _execute_eth_disbursement(loan_id, app):
             "Cannot disburse via wallet without a valid Ethereum address."
         )
 
-    php_amount = float(app.disbursed_amount or app.approved_amount or app.requested_amount)
+    php_amount = float(
+        app.disbursed_amount or app.approved_amount or app.requested_amount
+    )
     conversion = php_to_eth(php_amount)
 
     w3 = get_web3()
@@ -404,21 +445,26 @@ def _execute_eth_disbursement(loan_id, app):
     db = getattr(settings, "MONGODB", None)
     if db is not None:
         from bson import ObjectId as BsonObjectId
+
         db["loan_applications"].update_one(
             {"_id": BsonObjectId(loan_id)},
-            {"$set": {
-                "eth_disbursement_tx_hash": eth_result["tx_hash"],
-                "eth_disbursement_amount": str(conversion["eth_amount"]),
-                "eth_disbursement_amount_wei": str(amount_wei),
-                "eth_disbursement_rate": conversion["rate"],
-                "eth_disbursement_rate_source": conversion["source"],
-                "eth_disbursement_recipient": profile.wallet_address,
-            }},
+            {
+                "$set": {
+                    "eth_disbursement_tx_hash": eth_result["tx_hash"],
+                    "eth_disbursement_amount": str(conversion["eth_amount"]),
+                    "eth_disbursement_amount_wei": str(amount_wei),
+                    "eth_disbursement_rate": conversion["rate"],
+                    "eth_disbursement_rate_source": conversion["source"],
+                    "eth_disbursement_recipient": profile.wallet_address,
+                }
+            },
         )
 
     logger.info(
         "ETH disbursement OK: loan=%s amount=%.6f ETH to=%s tx=%s",
-        loan_id, conversion["eth_amount"], profile.wallet_address[:10],
+        loan_id,
+        conversion["eth_amount"],
+        profile.wallet_address[:10],
         eth_result["tx_hash"][:18],
     )
 
@@ -441,7 +487,9 @@ def _sync_schedule_impl(loan_id):
         if not app:
             raise ValueError(f"LoanApplication {loan_id} not found")
 
-        schedule_doc = settings.MONGODB["repayment_schedules"].find_one({"loan_id": loan_id})
+        schedule_doc = settings.MONGODB["repayment_schedules"].find_one(
+            {"loan_id": loan_id}
+        )
         if not schedule_doc:
             raise ValueError(f"RepaymentSchedule for loan {loan_id} not found")
 
@@ -451,11 +499,12 @@ def _sync_schedule_impl(loan_id):
         borrower_addr = settings.BLOCKCHAIN_CONTRACT_ADDRESSES.get("accessControl", "")
         if not borrower_addr:
             from loans.blockchain.client import get_account
+
             borrower_addr = get_account().address
 
         start_timestamp = (
             int(schedule.start_date.timestamp())
-            if hasattr(schedule.start_date, 'timestamp')
+            if hasattr(schedule.start_date, "timestamp")
             else int(schedule.start_date)
         )
 
@@ -502,7 +551,9 @@ def _sync_payment_impl(loan_id, payment_id):
     )
 
     try:
-        payment_doc = settings.MONGODB["loan_payments"].find_one({"_id": ObjectId(payment_id)})
+        payment_doc = settings.MONGODB["loan_payments"].find_one(
+            {"_id": ObjectId(payment_id)}
+        )
         if not payment_doc:
             raise ValueError(f"LoanPayment {payment_id} not found")
 
@@ -525,25 +576,34 @@ def _sync_payment_impl(loan_id, payment_id):
 
         settings.MONGODB["loan_payments"].update_one(
             {"_id": ObjectId(payment_id)},
-            {"$set": {
-                "blockchain_tx_hash": result["tx_hash"],
-                "blockchain_sync_status": "synced",
-                "blockchain_synced_at": datetime.utcnow(),
-            }},
+            {
+                "$set": {
+                    "blockchain_tx_hash": result["tx_hash"],
+                    "blockchain_sync_status": "synced",
+                    "blockchain_synced_at": datetime.utcnow(),
+                }
+            },
         )
-        logger.info("sync_payment OK: loan=%s payment=%s tx=%s",
-                     loan_id, payment_id, result["tx_hash"][:18])
+        logger.info(
+            "sync_payment OK: loan=%s payment=%s tx=%s",
+            loan_id,
+            payment_id,
+            result["tx_hash"][:18],
+        )
 
     except Exception as exc:
         settings.MONGODB["loan_payments"].update_one(
             {"_id": ObjectId(payment_id)},
-            {"$set": {
-                "blockchain_sync_status": "failed",
-                "blockchain_sync_error": str(exc)[:500],
-            }},
+            {
+                "$set": {
+                    "blockchain_sync_status": "failed",
+                    "blockchain_sync_error": str(exc)[:500],
+                }
+            },
         )
-        logger.error("sync_payment FAILED: loan=%s payment=%s error=%s",
-                     loan_id, payment_id, exc)
+        logger.error(
+            "sync_payment FAILED: loan=%s payment=%s error=%s", loan_id, payment_id, exc
+        )
         tx_record.mark_failed(str(exc))
 
 
@@ -573,14 +633,26 @@ def _sync_overdue_impl(loan_id, installment_number):
 
         settings.MONGODB["repayment_schedules"].update_one(
             {"loan_id": loan_id},
-            {"$set": {f"blockchain_overdue_tx.{installment_number}": result["tx_hash"]}},
+            {
+                "$set": {
+                    f"blockchain_overdue_tx.{installment_number}": result["tx_hash"]
+                }
+            },
         )
 
-        logger.info("sync_overdue OK: loan=%s installment=%s tx=%s",
-                    loan_id, installment_number, result["tx_hash"][:18])
+        logger.info(
+            "sync_overdue OK: loan=%s installment=%s tx=%s",
+            loan_id,
+            installment_number,
+            result["tx_hash"][:18],
+        )
     except Exception as exc:
-        logger.error("sync_overdue FAILED: loan=%s installment=%s error=%s",
-                     loan_id, installment_number, exc)
+        logger.error(
+            "sync_overdue FAILED: loan=%s installment=%s error=%s",
+            loan_id,
+            installment_number,
+            exc,
+        )
         tx_record.mark_failed(str(exc))
 
 
@@ -618,19 +690,42 @@ def _sync_penalty_impl(loan_id, installment_number, amount, action, reason=""):
 
         settings.MONGODB["repayment_schedules"].update_one(
             {"loan_id": loan_id},
-            {"$set": {f"blockchain_penalty_tx.{installment_number}.{action_key}": result["tx_hash"]}},
+            {
+                "$set": {
+                    f"blockchain_penalty_tx.{installment_number}.{action_key}": result[
+                        "tx_hash"
+                    ]
+                }
+            },
         )
 
-        logger.info("sync_penalty OK: loan=%s installment=%s action=%s tx=%s",
-                    loan_id, installment_number, action_key, result["tx_hash"][:18])
+        logger.info(
+            "sync_penalty OK: loan=%s installment=%s action=%s tx=%s",
+            loan_id,
+            installment_number,
+            action_key,
+            result["tx_hash"][:18],
+        )
     except Exception as exc:
-        logger.error("sync_penalty FAILED: loan=%s installment=%s action=%s error=%s",
-                     loan_id, installment_number, action_key, exc)
+        logger.error(
+            "sync_penalty FAILED: loan=%s installment=%s action=%s error=%s",
+            loan_id,
+            installment_number,
+            action_key,
+            exc,
+        )
         tx_record.mark_failed(str(exc))
 
 
-def _sync_consent_impl(user_id, user_type, data_consent, ai_consent,
-                       consent_version, consent_timestamp, previous_state):
+def _sync_consent_impl(
+    user_id,
+    user_type,
+    data_consent,
+    ai_consent,
+    consent_version,
+    consent_timestamp,
+    previous_state,
+):
     from loans.blockchain.models import BlockchainTransaction
     from loans.blockchain.services.audit_service import log_consent_onchain
 

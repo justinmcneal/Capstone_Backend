@@ -53,8 +53,14 @@ AUDIT_ACTION_ENUM = {
 }
 
 
-def log_audit_entry_onchain(resource_id, resource_type, action, details_hash,
-                            previous_state_hash=None, new_state_hash=None):
+def log_audit_entry_onchain(
+    resource_id,
+    resource_type,
+    action,
+    details_hash,
+    previous_state_hash=None,
+    new_state_hash=None,
+):
     """
     Log an audit entry to AuditRegistry.
 
@@ -75,7 +81,9 @@ def log_audit_entry_onchain(resource_id, resource_type, action, details_hash,
     resource_id_bytes = _to_bytes32(resource_id)
     resource_type_bytes = _to_bytes32_label(resource_type)
     details_bytes = _to_bytes32(details_hash)
-    prev_bytes = _to_bytes32(previous_state_hash) if previous_state_hash else b"\x00" * 32
+    prev_bytes = (
+        _to_bytes32(previous_state_hash) if previous_state_hash else b"\x00" * 32
+    )
     new_bytes = _to_bytes32(new_state_hash) if new_state_hash else b"\x00" * 32
 
     result = send_transaction(
@@ -89,8 +97,12 @@ def log_audit_entry_onchain(resource_id, resource_type, action, details_hash,
         new_bytes,
     )
 
-    logger.info("auditRegistry.log on-chain: resource=%s action=%s tx=%s",
-                resource_id, action, result["tx_hash"][:18])
+    logger.info(
+        "auditRegistry.log on-chain: resource=%s action=%s tx=%s",
+        resource_id,
+        action,
+        result["tx_hash"][:18],
+    )
     return result
 
 
@@ -98,7 +110,11 @@ def log_penalty_onchain(loan_id, installment_number, amount, reason="", waived=F
     """
     Record a penalty apply/waive event on-chain via AuditRegistry.
     """
-    action = AUDIT_ACTION_ENUM["PenaltyWaived"] if waived else AUDIT_ACTION_ENUM["PenaltyApplied"]
+    action = (
+        AUDIT_ACTION_ENUM["PenaltyWaived"]
+        if waived
+        else AUDIT_ACTION_ENUM["PenaltyApplied"]
+    )
     details = f"{loan_id}:{installment_number}:{amount}:{reason}".strip()
     previous_state = "applied" if waived else "none"
     new_state = "waived" if waived else "applied"
@@ -112,14 +128,23 @@ def log_penalty_onchain(loan_id, installment_number, amount, reason="", waived=F
     )
 
 
-def log_consent_onchain(user_id, user_type, data_consent, ai_consent,
-                        consent_version, consent_timestamp, previous_state=None):
+def log_consent_onchain(
+    user_id,
+    user_type,
+    data_consent,
+    ai_consent,
+    consent_version,
+    consent_timestamp,
+    previous_state=None,
+):
     """
     Record a consent update event on-chain via AuditRegistry.
     """
     action = AUDIT_ACTION_ENUM["ConsentRecorded"]
     resource_id = f"{user_id}:{consent_version}:{consent_timestamp}"
-    detail_payload = f"{user_type}:{data_consent}:{ai_consent}:{consent_version}:{consent_timestamp}"
+    detail_payload = (
+        f"{user_type}:{data_consent}:{ai_consent}:{consent_version}:{consent_timestamp}"
+    )
     prev_state = None
     if previous_state:
         prev_state = (
@@ -160,21 +185,35 @@ def get_audit_trail(resource_id):
         if isinstance(raw_action, int):
             action_int = raw_action
         elif isinstance(raw_action, bytes):
-            action_int = int.from_bytes(raw_action, byteorder='big')
+            action_int = int.from_bytes(raw_action, byteorder="big")
         else:
             action_int = int(raw_action)
-        entries.append({
-            "resource_id": entry[0].hex() if isinstance(entry[0], bytes) else entry[0],
-            "resource_type": entry[1].hex() if isinstance(entry[1], bytes) else entry[1],
-            "details_hash": entry[2].hex() if isinstance(entry[2], bytes) else entry[2],
-            "action": action_int,
-            "action_label": AUDIT_ACTION_LABELS.get(action_int, f"Unknown({action_int})"),
-            "previous_state_hash": entry[4].hex() if isinstance(entry[4], bytes) else entry[4],
-            "new_state_hash": entry[5].hex() if isinstance(entry[5], bytes) else entry[5],
-            "actor": entry[6],
-            "timestamp": entry[7],
-            "block_number": entry[8],
-        })
+        entries.append(
+            {
+                "resource_id": (
+                    entry[0].hex() if isinstance(entry[0], bytes) else entry[0]
+                ),
+                "resource_type": (
+                    entry[1].hex() if isinstance(entry[1], bytes) else entry[1]
+                ),
+                "details_hash": (
+                    entry[2].hex() if isinstance(entry[2], bytes) else entry[2]
+                ),
+                "action": action_int,
+                "action_label": AUDIT_ACTION_LABELS.get(
+                    action_int, f"Unknown({action_int})"
+                ),
+                "previous_state_hash": (
+                    entry[4].hex() if isinstance(entry[4], bytes) else entry[4]
+                ),
+                "new_state_hash": (
+                    entry[5].hex() if isinstance(entry[5], bytes) else entry[5]
+                ),
+                "actor": entry[6],
+                "timestamp": entry[7],
+                "block_number": entry[8],
+            }
+        )
 
     logger.debug("getFullAuditTrail: resource=%s entries=%d", resource_id, len(entries))
     return entries
@@ -203,7 +242,7 @@ def get_audit_entry(entry_id):
     if isinstance(raw_action, int):
         action_int = raw_action
     elif isinstance(raw_action, bytes):
-        action_int = int.from_bytes(raw_action, byteorder='big')
+        action_int = int.from_bytes(raw_action, byteorder="big")
     else:
         action_int = int(raw_action)
     return {
@@ -212,7 +251,9 @@ def get_audit_entry(entry_id):
         "details_hash": entry[2].hex() if isinstance(entry[2], bytes) else entry[2],
         "action": action_int,
         "action_label": AUDIT_ACTION_LABELS.get(action_int, f"Unknown({action_int})"),
-        "previous_state_hash": entry[4].hex() if isinstance(entry[4], bytes) else entry[4],
+        "previous_state_hash": (
+            entry[4].hex() if isinstance(entry[4], bytes) else entry[4]
+        ),
         "new_state_hash": entry[5].hex() if isinstance(entry[5], bytes) else entry[5],
         "actor": entry[6],
         "timestamp": entry[7],
