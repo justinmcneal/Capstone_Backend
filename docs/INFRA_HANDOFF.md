@@ -29,5 +29,6 @@ python scripts/migrate_media_to_s3.py --apply-db --confirm --prefix documents
 
 8. Run `scripts/migration_verifier.py` and review outputs.
 9. Flip staging env `DOCUMENT_STORAGE_BACKEND=s3` and run smoke tests.
+10. Run `scripts/smoke_test_railway.py` locally or dispatch the `Railway Smoke Tests` GitHub Actions workflow with the staging URL.
 
 If you want, provide these instructions as a PR description for infra to follow.
