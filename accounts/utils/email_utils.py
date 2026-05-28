@@ -9,7 +9,7 @@ class EmailUtils:
     def normalize_email(email):
         """Normalize email to lowercase and strip whitespace"""
         if not email:
-            return None
+            return ""
         return email.lower().strip()
 
     @staticmethod
