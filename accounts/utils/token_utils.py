@@ -3,7 +3,6 @@ from rest_framework_simplejwt.tokens import AccessToken, RefreshToken
 from django.conf import settings
 from accounts.models import BlacklistedToken
 from accounts.models import RefreshTokenEntry
-from rest_framework_simplejwt.tokens import RefreshToken as JWT_RefreshToken
 import hashlib
 import logging
 
@@ -40,7 +39,7 @@ class TokenUtils:
     @staticmethod
     def _store_refresh_token_entry(customer_id, refresh_token, role='customer', expires_at=None):
         if expires_at is None:
-            parsed_refresh = JWT_RefreshToken(refresh_token)
+            parsed_refresh = RefreshToken(refresh_token)
             expires_at = datetime.fromtimestamp(parsed_refresh['exp'])
 
         refresh_entry = RefreshTokenEntry(
@@ -206,7 +205,7 @@ class TokenUtils:
             token_hash = TokenUtils._hash_token(token)
 
             if token_type == 'refresh':
-                parsed_token = JWT_RefreshToken(token)
+                parsed_token = RefreshToken(token)
             else:
                 # For access tokens, we just store their hash
                 parsed_token = AccessToken(token)

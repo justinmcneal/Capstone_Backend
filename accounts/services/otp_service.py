@@ -7,7 +7,7 @@ class OTPService:
     
     # OTP Configuration - Security Best Practices
     OTP_LENGTH = 6
-    OTP_EXPIRY_MINUTES = 10          # Email verification OTP: 10 minutes (was 12 hours!)
+    OTP_EXPIRY_MINUTES = 10          # Email verification OTP: 10 minutes
     PASSWORD_RESET_EXPIRY_MINUTES = 15  # Password reset OTP: 15 minutes
     MAX_OTP_ATTEMPTS = 5             # Max wrong attempts before cooldown
     OTP_COOLDOWN_SECONDS = 600       # 10 minutes cooldown after max attempts
