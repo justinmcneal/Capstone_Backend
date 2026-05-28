@@ -1,112 +1,124 @@
-# Railway Production Deployment & Smoke Tests
+## Railway Production Deployment & Smoke Tests (Checklist)
 
-This runbook covers deploying the backend to Railway (production/staging) and a concise smoke‑test sequence to validate core flows after cutover.
+Purpose
+This file is the exact rollout checklist and environment-variable reference to deploy the backend to Railway (staging → production) and run a repeatable smoke-test sequence. Use this as the single source of truth for infra handoff.
 
-Related docs (read first):
-- `docs/DEPLOYMENT_AND_OPERATIONS_GUIDE.md` — canonical deployment vars and architecture
-- `docs/INFRA_HANDOFF.md` — infra handoff checklist and migration run order
-- `docs/MIGRATION_BACKUP_AND_FAQ.md` — DB/media backup commands and migration FAQ
-- `docs/PRODUCTION_S3.md` — S3 deployment notes, IAM policy, presigned uploads
-- `docs/API_REFERENCE.md` — endpoints used in smoke tests
+Read first
+- [docs/INFRA_HANDOFF.md](docs/INFRA_HANDOFF.md)
+- [docs/MIGRATION_BACKUP_AND_FAQ.md](docs/MIGRATION_BACKUP_AND_FAQ.md)
+- [docs/PRODUCTION_S3.md](docs/PRODUCTION_S3.md)
 
 Preconditions
-- Have a staging Railway project and a production Railway project (or equivalent). Do not run production cutover until staging smoke tests pass.
-- Ensure GitHub Actions CI passes on the branch to be deployed.
-- Obtain or ask infra to provision S3/KMS if `DOCUMENT_STORAGE_BACKEND=s3` will be used.
-- Backup MongoDB and snapshot local media (see `docs/MIGRATION_BACKUP_AND_FAQ.md`).
+- CI for the target branch is green and the branch has been merged.
+- Staging Railway project is provisioned and reachable.
+- Infra has provisioned S3/KMS and provided credentials if `DOCUMENT_STORAGE_BACKEND=s3`.
+- MongoDB backups and media snapshots taken (see MIGRATION_BACKUP_AND_FAQ).
 
-Environment variables (minimum)
-- `DEBUG=False`
-- `SECRET_KEY`, `SECRET_PEPPER`
-- `ALLOWED_HOSTS` (include Railway host)
-- `MONGODB_URI`, `MONGODB_NAME`
-- `GROQ_API_KEY` (LLM)
-- `DOCUMENT_STORAGE_BACKEND` (`local` or `s3`)
-- If `s3`: `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_STORAGE_BUCKET_NAME`, `AWS_S3_REGION_NAME`, `AWS_S3_CUSTOM_DOMAIN` (optional)
-- `EMAIL_*` settings, `CORS_ALLOWED_ORIGINS`, `CSRF_TRUSTED_ORIGINS`
+Railway secrets / env var canonical list (exact names to set in Railway)
+Set these as Railway project variables/secrets. For Railway UI use the same names below. Sample placeholders show expected format.
 
-Deployment checklist (staging)
-1. Confirm CI green and open PR merged to the target branch.
-2. Provision staging Railway app and set environment variables from the canonical list.
-3. (If using S3) Ensure bucket, policies, and GitHub secrets are configured for staging.
-4. Deploy the app on Railway and wait for the service to start.
-5. Run database migrations (if any) and ensure Celery/worker processes are running if required.
-6. Run quick health check:
+- `DEBUG` = "False"
+- `SECRET_KEY` = "<Django secret, 50+ chars>"
+- `SECRET_PEPPER` = "<random pepper used for hashing>"
+- `ALLOWED_HOSTS` = "<staging.example.com,production.example.com>"
+- `MONGODB_URI` = "mongodb+srv://<user>:<password>@cluster0.mongodb.net/?retryWrites=true&w=majority"
+- `MONGODB_NAME` = "capstone_db"
+- `DOCUMENT_STORAGE_BACKEND` = "s3"  # or "local"
+
+If using S3 (exact Railway secrets)
+- `AWS_ACCESS_KEY_ID` = "<AKIA...>"
+- `AWS_SECRET_ACCESS_KEY` = "<secret>"
+- `AWS_STORAGE_BUCKET_NAME` = "capstone-media-production"
+- `AWS_S3_REGION_NAME` = "us-east-1"
+- `AWS_S3_CUSTOM_DOMAIN` = "<optional custom domain>"
+
+Other optional/operational vars
+- `GROQ_API_KEY` = "<llm or search api key>"
+- `SENTRY_DSN` = "<sentry dsn>"
+- `EMAIL_HOST`, `EMAIL_PORT`, `EMAIL_HOST_USER`, `EMAIL_HOST_PASSWORD`
+- `CORS_ALLOWED_ORIGINS` = "https://my-frontend.example.com"
+- `CSRF_TRUSTED_ORIGINS` = "https://my-frontend.example.com"
+
+How to set Railway secrets (quick)
+1. Railway UI: Project → Variables → Add the exact name/value pairs from this list.
+2. Railway CLI (example):
+
+```bash
+railway variables set SECRET_KEY="$(openssl rand -hex 32)" --project <project_id>
+railway variables set MONGODB_URI="${MONGODB_URI}" --project <project_id>
+```
+
+Staging deployment checklist (exact steps)
+1. Merge PR and confirm GitHub Actions CI passed for the target branch.
+2. In Railway staging project: set the env vars from the canonical list above.
+3. Deploy from the target branch (Railway auto-deploy or manual deploy).
+4. Run DB migrations (if your deploy process does not run them automatically):
+
+```bash
+railway run --command "python manage.py migrate" --project <project_id>
+```
+
+5. Ensure background workers (Celery) are configured as a separate service in Railway and that their env vars match the web service.
+6. Wait until web service health endpoint is responding (below).
+
+Health check (quick)
 
 ```bash
 curl -fsS https://<staging-host>/api/health/ | jq
 ```
 
-Smoke test sequence (staging)
-Run these in order and record outputs. Replace `<host>` with staging host.
+Expect JSON with service and DB status fields and any AI/LLM checks.
 
-1) Health
+Repeatable smoke test (automated)
+Use `scripts/smoke_test_railway.py` — it supports `--base-url`, `--email/--password` or `--access-token`, and flags to skip optional checks.
+
+Examples
+
+Run the full smoke test with credentials provided as Railway variables:
+
 ```bash
-curl -sS https://<host>/api/health/ | jq
-```
-Expect: MongoDB + AI status OK
-
-2) Auth (signup -> login)
-```bash
-curl -sS -X POST https://<host>/api/auth/signup/ -H 'Content-Type: application/json' -d '{"email":"smoke+1@example.com","password":"Test1234"}' | jq
-# then login
-curl -sS -X POST https://<host>/api/auth/login/ -H 'Content-Type: application/json' -d '{"email":"smoke+1@example.com","password":"Test1234"}' | jq
-```
-Expect: user created or exists, login returns JWT
-
-3) Document upload (API flow)
-- If `DOCUMENT_STORAGE_BACKEND=local`: upload a small PDF image via `/api/documents/upload/` and confirm created document ID and `file_url` resolves.
-- If `DOCUMENT_STORAGE_BACKEND=s3`: either use presigned POST from `/api/documents/presigned-upload/` (if implemented) or call `/api/documents/upload/` and ensure S3 object is created.
-
-Example (local):
-```bash
-curl -sS -H "Authorization: Bearer $TOKEN" -F "file=@./tests/fixtures/minimal.pdf" -F "document_type=valid_id" https://<host>/api/documents/upload/ | jq
+export SMOKE_BASE_URL=https://<staging-host>
+export SMOKE_EMAIL=smoke+runner@example.com
+export SMOKE_PASSWORD=Test1234
+python scripts/smoke_test_railway.py --base-url "$SMOKE_BASE_URL" --email "$SMOKE_EMAIL" --password "$SMOKE_PASSWORD"
 ```
 
-Expect: 201 Created, `file_url` accessible (or presigned URL returned)
+Run using a pre-generated token:
 
-4) Document list / detail / delete
 ```bash
-curl -sS -H "Authorization: Bearer $TOKEN" https://<host>/api/documents/ | jq
-curl -sS -H "Authorization: Bearer $TOKEN" https://<host>/api/documents/<document_id>/ | jq
-curl -sS -X DELETE -H "Authorization: Bearer $TOKEN" https://<host>/api/documents/<document_id>/ | jq
+export SMOKE_BASE_URL=https://<staging-host>
+export SMOKE_ACCESS_TOKEN=<jwt>
+python scripts/smoke_test_railway.py --base-url "$SMOKE_BASE_URL" --access-token "$SMOKE_ACCESS_TOKEN"
 ```
-Expect: list returns document, detail returns metadata and file_url, delete returns success
 
-5) Loans flow (basic)
-```bash
-curl -sS -H "Authorization: Bearer $TOKEN" https://<host>/api/loans/products/ | jq
-curl -sS -H "Authorization: Bearer $TOKEN" -X POST https://<host>/api/loans/pre-qualify/ -H 'Content-Type: application/json' -d '{"income":10000}' | jq
-```
-Expect: products list, pre-qualify returns expected data
+GitHub Actions (manual workflow)
+- The repository includes `.github/workflows/railway-smoke-tests.yml`. It is manually triggered and expects repository secrets named `SMOKE_ACCESS_TOKEN` or `SMOKE_EMAIL`/`SMOKE_PASSWORD` and `SMOKE_BASE_URL`.
 
-6) Analytics & notifications (admin/officer)
-- If possible, exercise an admin path to hit `/api/analytics/admin/` and `/api/notifications/` to confirm role-based endpoints.
+Exact smoke test validation steps (what must pass)
+1. `health` returns HTTP 200 and all subcomponents OK.
+2. `auth` signup/login returns 200/201 and a usable token.
+3. `document upload` returns 201 and the `file_url` (and if S3, the object exists in the bucket).
+4. `document list/detail/delete` perform as expected (list contains created doc, detail returns metadata, delete removes it).
+5. `loans` base endpoints return 200 and expected payload shapes.
+6. Background worker jobs start and do not throw fatal exceptions in logs during basic tasks.
 
-7) Background jobs
-- Verify Celery worker(s) started and scheduled tasks are running (logs), or run a simple task if available.
+Production cutover (after staging sign-off)
+1. Ensure staging smoke tests passed and infra approved the S3/bucket/kms configuration.
+2. In Railway production project: set env vars (same canonical names) — ensure `DOCUMENT_STORAGE_BACKEND` is set to `s3` only after S3 and IAM are provisioned and tested.
+3. Deploy production release (manual or CI-driven). Run DB migrations as needed.
+4. Run smoke tests against production (ideally in maintenance window) and monitor logs/errors.
 
-Smoke test automation (recommended)
-- Add a minimal smoke test script (bash or pytest) in `scripts/` or `tests/integration/smoke_tests.py` that runs the above steps using a staging token. Keep tests idempotent.
-- Example: `tests/integration/test_smoke_endpoints.py` that uses a staging test account and asserts 200/201 responses for each endpoint.
+Rollback actions (exact)
+- Use Railway UI to roll back to the previous successful deployment.
+- If the failure is S3-specific, set `DOCUMENT_STORAGE_BACKEND=local` in production env vars and redeploy to restore prior file handling.
+- If DB corruption detected, follow `docs/MIGRATION_BACKUP_AND_FAQ.md` to restore MongoDB from backup and redeploy.
 
-Post-deploy verification
-- Check logs for errors and repeated exceptions during the first 30 minutes.
-- Confirm Sentry (or error tracking) has no new critical issues.
-- If S3 is used, verify objects exist in the bucket and permissions/presigned URLs function.
+Troubleshooting quick tips
+- Health 500: verify `MONGODB_URI`, network access, and Atlas IP allowlists.
+- Auth 401/403: verify `SECRET_KEY` and `SECRET_PEPPER` match across services and token signing settings.
+- Presigned upload failures: validate `AWS_*` credentials, bucket policy, and `AWS_S3_REGION_NAME`.
 
-Rollback steps
-- If failures are critical, revert to the previous release in Railway (use Railway rollback feature) and restore env vars.
-- If issue is S3-related, flip `DOCUMENT_STORAGE_BACKEND` back to `local` in staging and production envs and redeploy.
-- Restore MongoDB from backup if migration corrupted data (follow `docs/MIGRATION_BACKUP_AND_FAQ.md`).
+Contacts & sign-off
+- Provide infra with a link to this file and request: "Please provision S3, add the Railway variables above, then run staging smoke tests and report results." Leave a timestamped approval comment when staging passes.
 
-Troubleshooting hints
-- 500 on health endpoints: check MongoDB connection string and Atlas IP whitelist.
-- Auth failures: confirm JWT secret and token signing settings.
-- File errors: check `MEDIA_ROOT` permissions (when local) or S3 IAM policy (when s3).
-
-Handoff
-- Provide infra with `docs/INFRA_HANDOFF.md` and this runbook; run staging smoke tests and sign-off before production cutover.
-
-Notes
-- This file centralizes Railway-specific run steps; many modules already include smoke test sequences (search `"Smoke Test"` in `docs/`), adapt them into the scripted smoke tests for automation.
+This file is intentionally prescriptive: set the exact variable names shown in Railway, run the automated smoke test, and only cut over production after a successful staging run and infra sign-off.
