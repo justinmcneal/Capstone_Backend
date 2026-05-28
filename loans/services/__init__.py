@@ -2,7 +2,7 @@ from .assignment import (
     auto_assign_application,
     manual_assign_application,
     reassign_application,
-    get_officers_workload
+    get_officers_workload,
 )
 
 from .qualification import (

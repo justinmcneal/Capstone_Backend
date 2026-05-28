@@ -9,7 +9,6 @@ All tasks are gated by settings.BLOCKCHAIN_ENABLED — they no-op when disabled.
 """
 
 import logging
-import math
 
 from celery import shared_task
 from django.conf import settings
@@ -72,13 +71,17 @@ def sync_application_to_chain(self, loan_id):
             raise ValueError(f"LoanApplication {loan_id} not found")
 
         interest_bps = _monthly_rate_to_annual_bps(
-            app.ai_recommendation.get("interest_rate", 0) if isinstance(app.ai_recommendation, dict) else 0
+            app.ai_recommendation.get("interest_rate", 0)
+            if isinstance(app.ai_recommendation, dict)
+            else 0
         )
 
         # Step 1: Create application on-chain
         create_result = create_application_onchain(
             loan_id=loan_id,
-            borrower_addr=settings.BLOCKCHAIN_CONTRACT_ADDRESSES.get("accessControl", ""),
+            borrower_addr=settings.BLOCKCHAIN_CONTRACT_ADDRESSES.get(
+                "accessControl", ""
+            ),
             product_id=str(app.product_id),
             amount=int(app.requested_amount),
             term_months=int(app.term_months),
@@ -100,18 +103,22 @@ def sync_application_to_chain(self, loan_id):
         # Record success
         # Prepare mark_confirmed args; include gas_price only if present in result
         mc_kwargs = {
-            'tx_hash': submit_result['tx_hash'],
-            'gas_used': create_result['gas_used'] + submit_result['gas_used'],
-            'block_number': submit_result['block_number'],
+            "tx_hash": submit_result["tx_hash"],
+            "gas_used": create_result["gas_used"] + submit_result["gas_used"],
+            "block_number": submit_result["block_number"],
         }
-        if 'gas_price' in submit_result:
-            mc_kwargs['gas_price'] = submit_result['gas_price']
+        if "gas_price" in submit_result:
+            mc_kwargs["gas_price"] = submit_result["gas_price"]
         tx_record.mark_confirmed(**mc_kwargs)
 
         # Update application with tx hash
         _update_application_tx(loan_id, "submit", submit_result["tx_hash"])
 
-        logger.info("sync_application_to_chain OK: loan=%s tx=%s", loan_id, submit_result["tx_hash"][:18])
+        logger.info(
+            "sync_application_to_chain OK: loan=%s tx=%s",
+            loan_id,
+            submit_result["tx_hash"][:18],
+        )
         return {"tx_hash": submit_result["tx_hash"], "status": "confirmed"}
 
     except Exception as exc:
@@ -161,17 +168,19 @@ def sync_approval_to_chain(self, loan_id):
         )
 
         mc_kwargs = {
-            'tx_hash': result['tx_hash'],
-            'gas_used': result['gas_used'],
-            'block_number': result['block_number'],
+            "tx_hash": result["tx_hash"],
+            "gas_used": result["gas_used"],
+            "block_number": result["block_number"],
         }
-        if 'gas_price' in result:
-            mc_kwargs['gas_price'] = result['gas_price']
+        if "gas_price" in result:
+            mc_kwargs["gas_price"] = result["gas_price"]
         tx_record.mark_confirmed(**mc_kwargs)
 
         _update_application_tx(loan_id, "approve", result["tx_hash"])
 
-        logger.info("sync_approval_to_chain OK: loan=%s tx=%s", loan_id, result["tx_hash"][:18])
+        logger.info(
+            "sync_approval_to_chain OK: loan=%s tx=%s", loan_id, result["tx_hash"][:18]
+        )
         return {"tx_hash": result["tx_hash"], "status": "confirmed"}
 
     except Exception as exc:
@@ -218,11 +227,15 @@ def sync_disbursement_to_chain(self, loan_id):
             raise ValueError(f"LoanApplication {loan_id} not found")
 
         # Step 1: Set disbursement method
-        method_str = app.disbursement_method or app.preferred_disbursement_method or "other"
+        method_str = (
+            app.disbursement_method or app.preferred_disbursement_method or "other"
+        )
         set_method_onchain(loan_id=loan_id, method=method_str)
 
         # Step 2: Initiate + complete disbursement
-        amount = int(app.disbursed_amount or app.approved_amount or app.requested_amount)
+        amount = int(
+            app.disbursed_amount or app.approved_amount or app.requested_amount
+        )
         ref_str = str(app.disbursement_reference or f"DISB_{loan_id}")
 
         result = complete_disbursement_onchain(
@@ -241,11 +254,17 @@ def sync_disbursement_to_chain(self, loan_id):
 
         _update_application_tx(loan_id, "disburse", complete_tx["tx_hash"])
 
-        logger.info("sync_disbursement_to_chain OK: loan=%s tx=%s", loan_id, complete_tx["tx_hash"][:18])
+        logger.info(
+            "sync_disbursement_to_chain OK: loan=%s tx=%s",
+            loan_id,
+            complete_tx["tx_hash"][:18],
+        )
         return {"tx_hash": complete_tx["tx_hash"], "status": "confirmed"}
 
     except Exception as exc:
-        logger.error("sync_disbursement_to_chain FAILED: loan=%s error=%s", loan_id, exc)
+        logger.error(
+            "sync_disbursement_to_chain FAILED: loan=%s error=%s", loan_id, exc
+        )
         if self.request.retries >= self.max_retries:
             tx_record.mark_failed(str(exc))
         raise self.retry(exc=exc)
@@ -286,7 +305,9 @@ def sync_schedule_to_chain(self, loan_id):
             raise ValueError(f"LoanApplication {loan_id} not found")
 
         # Find the schedule
-        schedule_doc = settings.MONGODB["repayment_schedules"].find_one({"loan_id": loan_id})
+        schedule_doc = settings.MONGODB["repayment_schedules"].find_one(
+            {"loan_id": loan_id}
+        )
         if not schedule_doc:
             raise ValueError(f"RepaymentSchedule for loan {loan_id} not found")
 
@@ -299,9 +320,14 @@ def sync_schedule_to_chain(self, loan_id):
         borrower_addr = settings.BLOCKCHAIN_CONTRACT_ADDRESSES.get("accessControl", "")
         if not borrower_addr:
             from loans.blockchain.client import get_account
+
             borrower_addr = get_account().address
 
-        start_timestamp = int(schedule.start_date.timestamp()) if hasattr(schedule.start_date, 'timestamp') else int(schedule.start_date)
+        start_timestamp = (
+            int(schedule.start_date.timestamp())
+            if hasattr(schedule.start_date, "timestamp")
+            else int(schedule.start_date)
+        )
 
         result = create_schedule_onchain(
             loan_id=loan_id,
@@ -313,12 +339,12 @@ def sync_schedule_to_chain(self, loan_id):
         )
 
         mc_kwargs = {
-            'tx_hash': result['tx_hash'],
-            'gas_used': result['gas_used'],
-            'block_number': result['block_number'],
+            "tx_hash": result["tx_hash"],
+            "gas_used": result["gas_used"],
+            "block_number": result["block_number"],
         }
-        if 'gas_price' in result:
-            mc_kwargs['gas_price'] = result['gas_price']
+        if "gas_price" in result:
+            mc_kwargs["gas_price"] = result["gas_price"]
         tx_record.mark_confirmed(**mc_kwargs)
 
         # Update schedule with tx hash
@@ -327,7 +353,9 @@ def sync_schedule_to_chain(self, loan_id):
             {"$set": {"blockchain_schedule_tx": result["tx_hash"]}},
         )
 
-        logger.info("sync_schedule_to_chain OK: loan=%s tx=%s", loan_id, result["tx_hash"][:18])
+        logger.info(
+            "sync_schedule_to_chain OK: loan=%s tx=%s", loan_id, result["tx_hash"][:18]
+        )
         return {"tx_hash": result["tx_hash"], "status": "confirmed"}
 
     except Exception as exc:
@@ -369,7 +397,9 @@ def sync_payment_to_chain(self, loan_id, payment_id):
     )
 
     try:
-        payment_doc = settings.MONGODB["loan_payments"].find_one({"_id": ObjectId(payment_id)})
+        payment_doc = settings.MONGODB["loan_payments"].find_one(
+            {"_id": ObjectId(payment_id)}
+        )
         if not payment_doc:
             raise ValueError(f"LoanPayment {payment_id} not found")
 
@@ -387,12 +417,12 @@ def sync_payment_to_chain(self, loan_id, payment_id):
         )
 
         mc_kwargs = {
-            'tx_hash': result['tx_hash'],
-            'gas_used': result['gas_used'],
-            'block_number': result['block_number'],
+            "tx_hash": result["tx_hash"],
+            "gas_used": result["gas_used"],
+            "block_number": result["block_number"],
         }
-        if 'gas_price' in result:
-            mc_kwargs['gas_price'] = result['gas_price']
+        if "gas_price" in result:
+            mc_kwargs["gas_price"] = result["gas_price"]
         tx_record.mark_confirmed(**mc_kwargs)
 
         # Update payment with tx hash
@@ -401,13 +431,21 @@ def sync_payment_to_chain(self, loan_id, payment_id):
             {"$set": {"blockchain_tx_hash": result["tx_hash"]}},
         )
 
-        logger.info("sync_payment_to_chain OK: loan=%s payment=%s tx=%s",
-                     loan_id, payment_id, result["tx_hash"][:18])
+        logger.info(
+            "sync_payment_to_chain OK: loan=%s payment=%s tx=%s",
+            loan_id,
+            payment_id,
+            result["tx_hash"][:18],
+        )
         return {"tx_hash": result["tx_hash"], "status": "confirmed"}
 
     except Exception as exc:
-        logger.error("sync_payment_to_chain FAILED: loan=%s payment=%s error=%s",
-                     loan_id, payment_id, exc)
+        logger.error(
+            "sync_payment_to_chain FAILED: loan=%s payment=%s error=%s",
+            loan_id,
+            payment_id,
+            exc,
+        )
         if self.request.retries >= self.max_retries:
             tx_record.mark_failed(str(exc))
         raise self.retry(exc=exc)
@@ -416,7 +454,7 @@ def sync_payment_to_chain(self, loan_id, payment_id):
 def _update_application_tx(loan_id, action, tx_hash):
     """Helper to store a tx_hash in the application's blockchain_tx_hashes dict."""
     try:
-        db = getattr(settings, 'MONGODB', None)
+        db = getattr(settings, "MONGODB", None)
         if db is None:
             return
         db["loan_applications"].update_one(

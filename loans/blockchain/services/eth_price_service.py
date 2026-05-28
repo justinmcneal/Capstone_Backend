@@ -9,7 +9,6 @@ import logging
 import time
 
 import requests
-from django.conf import settings
 
 logger = logging.getLogger("blockchain")
 
@@ -21,6 +20,7 @@ _CACHE_TTL = 300  # 5 minutes
 
 class ExchangeRateUnavailableError(Exception):
     """Raised when the ETH/PHP exchange rate cannot be fetched."""
+
     pass
 
 

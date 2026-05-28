@@ -60,8 +60,12 @@ def set_method_onchain(loan_id, method, details_hash=""):
         method_enum,
     )
 
-    logger.info("setPreferredMethod on-chain: loan=%s method=%s tx=%s",
-                loan_id, method, result["tx_hash"][:18])
+    logger.info(
+        "setPreferredMethod on-chain: loan=%s method=%s tx=%s",
+        loan_id,
+        method,
+        result["tx_hash"][:18],
+    )
     return result
 
 
@@ -86,8 +90,12 @@ def initiate_disbursement_onchain(loan_id, amount):
         int(amount),
     )
 
-    logger.info("initiateDisbursement on-chain: loan=%s amount=%d tx=%s",
-                loan_id, amount, result["tx_hash"][:18])
+    logger.info(
+        "initiateDisbursement on-chain: loan=%s amount=%d tx=%s",
+        loan_id,
+        amount,
+        result["tx_hash"][:18],
+    )
     return result
 
 
@@ -128,7 +136,9 @@ def complete_disbursement_onchain(loan_id, amount, reference_hash):
     )
 
     # Step 2: Get the disbursementId via getDisbursementByLoan
-    disbursement_record = call_view(contract_exec, "getDisbursementByLoan", loan_id_bytes)
+    disbursement_record = call_view(
+        contract_exec, "getDisbursementByLoan", loan_id_bytes
+    )
     disbursement_id = disbursement_record[0]  # First field is disbursementId
 
     # Step 3: Complete
@@ -139,8 +149,11 @@ def complete_disbursement_onchain(loan_id, amount, reference_hash):
         ref_bytes,
     )
 
-    logger.info("completeDisbursement on-chain: loan=%s tx=%s",
-                loan_id, complete_result["tx_hash"][:18])
+    logger.info(
+        "completeDisbursement on-chain: loan=%s tx=%s",
+        loan_id,
+        complete_result["tx_hash"][:18],
+    )
 
     return {
         "initiate_tx": initiate_result,
