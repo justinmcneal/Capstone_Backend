@@ -18,6 +18,7 @@ class AuthService:
     @staticmethod
     def get_customer_by_id(customer_id):
         from bson import ObjectId
+
         try:
             return Customer.find_one({"_id": ObjectId(customer_id)})
         except Exception:
