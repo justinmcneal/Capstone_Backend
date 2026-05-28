@@ -6,25 +6,30 @@ from .base_serializers import InputSanitizationMixin, PasswordValidationMixin
 
 class UpdateLanguageSerializer(serializers.Serializer):
     """Validates a language preference update payload."""
-    language = serializers.ChoiceField(choices=[('en', 'English'), ('tl', 'Tagalog')])
+
+    language = serializers.ChoiceField(choices=[("en", "English"), ("tl", "Tagalog")])
 
 
-class SignUpSerializer(InputSanitizationMixin, PasswordValidationMixin, serializers.Serializer):
-    
+class SignUpSerializer(
+    InputSanitizationMixin, PasswordValidationMixin, serializers.Serializer
+):
+
     first_name = serializers.CharField(max_length=100)
-    middle_name = serializers.CharField(max_length=100, required=False, allow_blank=True)
+    middle_name = serializers.CharField(
+        max_length=100, required=False, allow_blank=True
+    )
     last_name = serializers.CharField(max_length=100)
     email = serializers.EmailField(required=True, write_only=True)
     password = serializers.CharField(write_only=True)
     password_confirm = serializers.CharField(write_only=True, required=False)
     phone = serializers.CharField(max_length=20, required=False, allow_blank=True)
-    language = serializers.ChoiceField(choices=[('en', 'English'), ('tl', 'Tagalog')], default='en', required=False)
-    
+    language = serializers.ChoiceField(
+        choices=[("en", "English"), ("tl", "Tagalog")], default="en", required=False
+    )
+
     def validate_first_name(self, value):
         is_valid, error_msg, normalized = validate_person_name(
-            value,
-            field_name='First name',
-            max_length=100
+            value, field_name="First name", max_length=100
         )
         if not is_valid:
             raise serializers.ValidationError(error_msg)
@@ -32,49 +37,49 @@ class SignUpSerializer(InputSanitizationMixin, PasswordValidationMixin, serializ
 
     def validate_middle_name(self, value):
         is_valid, error_msg, normalized = validate_person_name(
-            value,
-            field_name='Middle name',
-            allow_blank=True,
-            max_length=100
+            value, field_name="Middle name", allow_blank=True, max_length=100
         )
         if not is_valid:
             raise serializers.ValidationError(error_msg)
         return normalized
-    
+
     def validate_last_name(self, value):
         is_valid, error_msg, normalized = validate_person_name(
-            value,
-            field_name='Last name',
-            max_length=100
+            value, field_name="Last name", max_length=100
         )
         if not is_valid:
             raise serializers.ValidationError(error_msg)
         return normalized
-    
+
     def validate_email(self, value):
         """Validate and normalize email using centralized method"""
         return EmailUtils.normalize_email(value)
-    
+
     def validate_phone(self, value):
         """Validate phone number format"""
         if value:
             # Remove spaces and dashes
-            cleaned = value.replace(' ', '').replace('-', '')
+            cleaned = value.replace(" ", "").replace("-", "")
             # Basic validation for Philippine phone numbers
-            if not cleaned.startswith(('09', '+63', '63')):
-                raise serializers.ValidationError('Please enter a valid Philippine phone number')
+            if not cleaned.startswith(("09", "+63", "63")):
+                raise serializers.ValidationError(
+                    "Please enter a valid Philippine phone number"
+                )
             return cleaned
         return value
-    
+
     def validate(self, data):
         """Validate password confirmation if provided"""
-        password = data.get('password')
-        password_confirm = data.get('password_confirm')
-        
+        password = data.get("password")
+        password_confirm = data.get("password_confirm")
+
         if password_confirm and password != password_confirm:
-            raise serializers.ValidationError({'password_confirm': 'Passwords do not match'})
-        
+            raise serializers.ValidationError(
+                {"password_confirm": "Passwords do not match"}
+            )
+
         return data
+
 
 class LoginSerializer(InputSanitizationMixin, serializers.Serializer):
     email = serializers.EmailField()
