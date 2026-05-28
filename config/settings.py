@@ -13,7 +13,7 @@ https://docs.djangoproject.com/en/4.2/ref/settings/
 from pathlib import Path
 import os
 import json
-import json
+from datetime import timedelta
 from dotenv import load_dotenv
 from pymongo import MongoClient
 from cryptography.fernet import Fernet
@@ -29,15 +29,16 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/4.2/howto/deployment/checklist/
 
+
 def env_bool(name, default=False):
-    return os.getenv(name, str(default)).strip().lower() in {'1', 'true', 'yes', 'on'}
+    return os.getenv(name, str(default)).strip().lower() in {"1", "true", "yes", "on"}
 
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = env_bool('DEBUG', False)
+DEBUG = env_bool("DEBUG", False)
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = os.getenv('SECRET_KEY')
+SECRET_KEY = os.getenv("SECRET_KEY")
 if not SECRET_KEY:
     if DEBUG:
         SECRET_KEY = get_random_secret_key()
@@ -46,7 +47,7 @@ if not SECRET_KEY:
 
 ALLOWED_HOSTS = [
     host.strip()
-    for host in os.getenv('ALLOWED_HOSTS', 'localhost,127.0.0.1').split(',')
+    for host in os.getenv("ALLOWED_HOSTS", "localhost,127.0.0.1").split(",")
     if host.strip()
 ]
 
@@ -54,78 +55,78 @@ ALLOWED_HOSTS = [
 # Application definition
 
 INSTALLED_APPS = [
-    'django.contrib.auth',
-    'django.contrib.contenttypes',
-    'django.contrib.staticfiles',
-    'rest_framework',
+    "django.contrib.auth",
+    "django.contrib.contenttypes",
+    "django.contrib.staticfiles",
+    "rest_framework",
     # 'rest_framework_simplejwt.token_blacklist',  # Removed - using custom MongoDB blacklist
-    'corsheaders',
-    'accounts',
-    'profiles',
-    'documents',
-    'ai_assistant',
-    'loans',
-    'notifications',
-    'analytics',
+    "corsheaders",
+    "accounts",
+    "profiles",
+    "documents",
+    "ai_assistant",
+    "loans",
+    "notifications",
+    "analytics",
 ]
 
 MIDDLEWARE = [
-    'django.middleware.security.SecurityMiddleware',
-    'whitenoise.middleware.WhiteNoiseMiddleware',  # Serve static files in production
-    'django.contrib.sessions.middleware.SessionMiddleware',
-    'corsheaders.middleware.CorsMiddleware',  
-    'config.middleware.SecurityHeadersMiddleware',
-    'django.middleware.common.CommonMiddleware',
-    'config.middleware.NoSQLInjectionGuardMiddleware',
-    'django.middleware.csrf.CsrfViewMiddleware',
-    'config.middleware.CSRFSameSiteTokenMiddleware',
-    'django.contrib.auth.middleware.AuthenticationMiddleware',
-    'django.contrib.messages.middleware.MessageMiddleware',
-    'django.middleware.clickjacking.XFrameOptionsMiddleware',
+    "django.middleware.security.SecurityMiddleware",
+    "whitenoise.middleware.WhiteNoiseMiddleware",  # Serve static files in production
+    "django.contrib.sessions.middleware.SessionMiddleware",
+    "corsheaders.middleware.CorsMiddleware",
+    "config.middleware.SecurityHeadersMiddleware",
+    "django.middleware.common.CommonMiddleware",
+    "config.middleware.NoSQLInjectionGuardMiddleware",
+    "django.middleware.csrf.CsrfViewMiddleware",
+    "config.middleware.CSRFSameSiteTokenMiddleware",
+    "django.contrib.auth.middleware.AuthenticationMiddleware",
+    "django.contrib.messages.middleware.MessageMiddleware",
+    "django.middleware.clickjacking.XFrameOptionsMiddleware",
 ]
 
-ROOT_URLCONF = 'config.urls'
+ROOT_URLCONF = "config.urls"
 
 TEMPLATES = [
     {
-        'BACKEND': 'django.template.backends.django.DjangoTemplates',
-        'DIRS': [],
-        'APP_DIRS': True,
-        'OPTIONS': {
-            'context_processors': [
-                'django.template.context_processors.debug',
-                'django.template.context_processors.request',
-                'django.contrib.auth.context_processors.auth',
-                'django.contrib.messages.context_processors.messages',
+        "BACKEND": "django.template.backends.django.DjangoTemplates",
+        "DIRS": [],
+        "APP_DIRS": True,
+        "OPTIONS": {
+            "context_processors": [
+                "django.template.context_processors.debug",
+                "django.template.context_processors.request",
+                "django.contrib.auth.context_processors.auth",
+                "django.contrib.messages.context_processors.messages",
             ],
         },
     },
 ]
 
-WSGI_APPLICATION = 'config.wsgi.application'
+WSGI_APPLICATION = "config.wsgi.application"
 
 # Database - MongoDB only (via PyMongo)
 # Dummy database config required by Django
 DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.dummy',
+    "default": {
+        "ENGINE": "django.db.backends.dummy",
     }
 }
 
 # MongoDB Configuration
-MONGODB_URI = os.getenv('MONGODB_URI', '')
-MONGODB_NAME = os.getenv('MONGODB_NAME', 'capstone_db')
-FIELD_ENCRYPTION_KEY = os.getenv('FIELD_ENCRYPTION_KEY', '').strip()
+MONGODB_URI = os.getenv("MONGODB_URI", "")
+MONGODB_NAME = os.getenv("MONGODB_NAME", "capstone_db")
+FIELD_ENCRYPTION_KEY = os.getenv("FIELD_ENCRYPTION_KEY", "").strip()
 
 # Fail fast in production: sensitive fields must never be stored plaintext.
 if not DEBUG:
     if not FIELD_ENCRYPTION_KEY:
         raise ImproperlyConfigured("FIELD_ENCRYPTION_KEY must be set when DEBUG=False")
     try:
-        Fernet(FIELD_ENCRYPTION_KEY.encode('utf-8'))
+        Fernet(FIELD_ENCRYPTION_KEY.encode("utf-8"))
     except Exception as exc:
         raise ImproperlyConfigured(
-            'FIELD_ENCRYPTION_KEY is invalid. Generate one with: '
+            "FIELD_ENCRYPTION_KEY is invalid. Generate one with: "
             'python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"'
         ) from exc
 
@@ -143,16 +144,16 @@ else:
 
 AUTH_PASSWORD_VALIDATORS = [
     {
-        'NAME': 'django.contrib.auth.password_validation.UserAttributeSimilarityValidator',
+        "NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator",
     },
     {
-        'NAME': 'django.contrib.auth.password_validation.MinimumLengthValidator',
+        "NAME": "django.contrib.auth.password_validation.MinimumLengthValidator",
     },
     {
-        'NAME': 'django.contrib.auth.password_validation.CommonPasswordValidator',
+        "NAME": "django.contrib.auth.password_validation.CommonPasswordValidator",
     },
     {
-        'NAME': 'django.contrib.auth.password_validation.NumericPasswordValidator',
+        "NAME": "django.contrib.auth.password_validation.NumericPasswordValidator",
     },
 ]
 
@@ -160,9 +161,9 @@ AUTH_PASSWORD_VALIDATORS = [
 # Internationalization
 # https://docs.djangoproject.com/en/4.2/topics/i18n/
 
-LANGUAGE_CODE = 'en-us'
+LANGUAGE_CODE = "en-us"
 
-TIME_ZONE = 'UTC'
+TIME_ZONE = "UTC"
 
 USE_I18N = True
 
@@ -172,232 +173,243 @@ USE_TZ = True
 # Static files (CSS, JavaScript, Images)
 # https://docs.djangoproject.com/en/4.2/howto/static-files/
 
-STATIC_URL = '/static/'
-STATIC_ROOT = BASE_DIR / 'staticfiles'  # For collectstatic in production
-STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
+STATIC_URL = "/static/"
+STATIC_ROOT = BASE_DIR / "staticfiles"  # For collectstatic in production
+STATICFILES_STORAGE = "whitenoise.storage.CompressedManifestStaticFilesStorage"
 
 # Media files (user uploads)
-MEDIA_URL = '/media/'
-MEDIA_ROOT = BASE_DIR / 'media'
+MEDIA_URL = "/media/"
+MEDIA_ROOT = BASE_DIR / "media"
 
 # Document Storage Configuration
 # Options: 'local', 's3'
-DOCUMENT_STORAGE_BACKEND = os.getenv('DOCUMENT_STORAGE_BACKEND', 'local').strip().lower()
-DOCUMENT_UPLOAD_AI_ANALYSIS = os.getenv('DOCUMENT_UPLOAD_AI_ANALYSIS', 'True') == 'True'
-DOCUMENT_UPLOAD_NOTIFY_REVIEWERS = os.getenv('DOCUMENT_UPLOAD_NOTIFY_REVIEWERS', 'True') == 'True'
-DOCUMENT_UPLOAD_NOTIFY_ASYNC = os.getenv('DOCUMENT_UPLOAD_NOTIFY_ASYNC', 'True') == 'True'
+DOCUMENT_STORAGE_BACKEND = (
+    os.getenv("DOCUMENT_STORAGE_BACKEND", "local").strip().lower()
+)
+DOCUMENT_UPLOAD_AI_ANALYSIS = os.getenv("DOCUMENT_UPLOAD_AI_ANALYSIS", "True") == "True"
+DOCUMENT_UPLOAD_NOTIFY_REVIEWERS = (
+    os.getenv("DOCUMENT_UPLOAD_NOTIFY_REVIEWERS", "True") == "True"
+)
+DOCUMENT_UPLOAD_NOTIFY_ASYNC = (
+    os.getenv("DOCUMENT_UPLOAD_NOTIFY_ASYNC", "True") == "True"
+)
 
 # S3 storage configuration (used when DOCUMENT_STORAGE_BACKEND=s3)
-AWS_ACCESS_KEY_ID = os.getenv('AWS_ACCESS_KEY_ID', '')
-AWS_SECRET_ACCESS_KEY = os.getenv('AWS_SECRET_ACCESS_KEY', '')
-AWS_STORAGE_BUCKET_NAME = os.getenv('AWS_STORAGE_BUCKET_NAME', '')
-AWS_S3_REGION_NAME = os.getenv('AWS_S3_REGION_NAME', 'us-east-1')
-AWS_S3_ENDPOINT_URL = os.getenv('AWS_S3_ENDPOINT_URL', '') or None
-AWS_S3_CUSTOM_DOMAIN = os.getenv('AWS_S3_CUSTOM_DOMAIN', '') or None
-AWS_DEFAULT_ACL = os.getenv('AWS_DEFAULT_ACL', 'private')
-AWS_S3_FILE_OVERWRITE = env_bool('AWS_S3_FILE_OVERWRITE', False)
-AWS_S3_SIGNATURE_VERSION = os.getenv('AWS_S3_SIGNATURE_VERSION', 's3v4')
+AWS_ACCESS_KEY_ID = os.getenv("AWS_ACCESS_KEY_ID", "")
+AWS_SECRET_ACCESS_KEY = os.getenv("AWS_SECRET_ACCESS_KEY", "")
+AWS_STORAGE_BUCKET_NAME = os.getenv("AWS_STORAGE_BUCKET_NAME", "")
+AWS_S3_REGION_NAME = os.getenv("AWS_S3_REGION_NAME", "us-east-1")
+AWS_S3_ENDPOINT_URL = os.getenv("AWS_S3_ENDPOINT_URL", "") or None
+AWS_S3_CUSTOM_DOMAIN = os.getenv("AWS_S3_CUSTOM_DOMAIN", "") or None
+AWS_DEFAULT_ACL = os.getenv("AWS_DEFAULT_ACL", "private")
+AWS_S3_FILE_OVERWRITE = env_bool("AWS_S3_FILE_OVERWRITE", False)
+AWS_S3_SIGNATURE_VERSION = os.getenv("AWS_S3_SIGNATURE_VERSION", "s3v4")
 AWS_S3_OBJECT_PARAMETERS = {}
-_s3_object_parameters = os.getenv('AWS_S3_OBJECT_PARAMETERS', '').strip()
+_s3_object_parameters = os.getenv("AWS_S3_OBJECT_PARAMETERS", "").strip()
 if _s3_object_parameters:
     try:
         parsed_s3_object_parameters = json.loads(_s3_object_parameters)
         if isinstance(parsed_s3_object_parameters, dict):
             AWS_S3_OBJECT_PARAMETERS = parsed_s3_object_parameters
     except Exception:
-        AWS_S3_OBJECT_PARAMETERS = {'CacheControl': _s3_object_parameters}
-AWS_S3_PRESIGNED_URL_EXPIRY_SECONDS = int(os.getenv('AWS_S3_PRESIGNED_URL_EXPIRY_SECONDS', '3600'))
+        AWS_S3_OBJECT_PARAMETERS = {"CacheControl": _s3_object_parameters}
+AWS_S3_PRESIGNED_URL_EXPIRY_SECONDS = int(
+    os.getenv("AWS_S3_PRESIGNED_URL_EXPIRY_SECONDS", "3600")
+)
 
 # Cache Configuration
 # Uses Redis if available, falls back to local memory cache
-REDIS_URL = os.getenv('REDIS_URL', os.getenv('CELERY_BROKER_URL', 'redis://localhost:6379/0'))
-USE_REDIS_CACHE = env_bool('USE_REDIS_CACHE', False)
+REDIS_URL = os.getenv(
+    "REDIS_URL", os.getenv("CELERY_BROKER_URL", "redis://localhost:6379/0")
+)
+USE_REDIS_CACHE = env_bool("USE_REDIS_CACHE", False)
 
 if USE_REDIS_CACHE and REDIS_URL:
     # Use Django's built-in Redis cache (Django 4.0+)
     # Compatible with redis>=4.0
     CACHES = {
-        'default': {
-            'BACKEND': 'django.core.cache.backends.redis.RedisCache',
-            'LOCATION': REDIS_URL,
-            'KEY_PREFIX': 'msme_ai',
+        "default": {
+            "BACKEND": "django.core.cache.backends.redis.RedisCache",
+            "LOCATION": REDIS_URL,
+            "KEY_PREFIX": "msme_ai",
         }
     }
 else:
     # Local memory cache (good for single-server deployments)
     CACHES = {
-        'default': {
-            'BACKEND': 'django.core.cache.backends.locmem.LocMemCache',
-            'LOCATION': 'msme-ai-cache',
-            'OPTIONS': {
-                'MAX_ENTRIES': 1000,
-            }
+        "default": {
+            "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
+            "LOCATION": "msme-ai-cache",
+            "OPTIONS": {
+                "MAX_ENTRIES": 1000,
+            },
         }
     }
 
 # Cache TTL settings (in seconds)
 CACHE_TTL = {
-    'faqs': 60 * 60 * 24,       # 24 hours - FAQs rarely change
-    'education': 60 * 60 * 24,   # 24 hours - education content rarely changes
-    'suggestions': 60 * 60 * 12, # 12 hours - suggestions are static
-    'loan_products': 60 * 30,    # 30 minutes - products may be updated by admin
-    'ai_status': 60,             # 1 minute - status should be fresh
+    "faqs": 60 * 60 * 24,  # 24 hours - FAQs rarely change
+    "education": 60 * 60 * 24,  # 24 hours - education content rarely changes
+    "suggestions": 60 * 60 * 12,  # 12 hours - suggestions are static
+    "loan_products": 60 * 30,  # 30 minutes - products may be updated by admin
+    "ai_status": 60,  # 1 minute - status should be fresh
 }
 
 # Default primary key field type
 # https://docs.djangoproject.com/en/4.2/ref/settings/#default-auto-field
 
-DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
+DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 # REST Framework configuration
 REST_FRAMEWORK = {
-    'DEFAULT_PERMISSION_CLASSES': [
-        'rest_framework.permissions.IsAuthenticated',
+    "DEFAULT_PERMISSION_CLASSES": [
+        "rest_framework.permissions.IsAuthenticated",
     ],
-    'DEFAULT_AUTHENTICATION_CLASSES': [
-        'accounts.authentication.CustomJWTAuthentication',
+    "DEFAULT_AUTHENTICATION_CLASSES": [
+        "accounts.authentication.CustomJWTAuthentication",
     ],
-    'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',
-    'PAGE_SIZE': 10,
+    "DEFAULT_PAGINATION_CLASS": "rest_framework.pagination.PageNumberPagination",
+    "PAGE_SIZE": 10,
 }
-
-# JWT Settings
-from datetime import timedelta
 
 # Single source of truth for token lifetimes across all roles.
 TOKEN_LIFETIMES = {
-    'remember_me': {
-        'access': timedelta(minutes=30),
-        'refresh': timedelta(days=30),
+    "remember_me": {
+        "access": timedelta(minutes=30),
+        "refresh": timedelta(days=30),
     },
-    'no_remember_me': {
-        'access': timedelta(minutes=30),
-        'refresh': timedelta(days=7),
+    "no_remember_me": {
+        "access": timedelta(minutes=30),
+        "refresh": timedelta(days=7),
     },
-    'signup': {
-        'access': timedelta(minutes=30),
-        'refresh': timedelta(days=7),
+    "signup": {
+        "access": timedelta(minutes=30),
+        "refresh": timedelta(days=7),
     },
 }
 
 SIMPLE_JWT = {
-    'ACCESS_TOKEN_LIFETIME': TOKEN_LIFETIMES['no_remember_me']['access'],
-    'REFRESH_TOKEN_LIFETIME': TOKEN_LIFETIMES['no_remember_me']['refresh'],
-    'ROTATE_REFRESH_TOKENS': False,  # Disabled since we're using MongoDB
-    'BLACKLIST_AFTER_ROTATION': False,  # Disabled - using custom MongoDB blacklist
-    'AUTH_HEADER_TYPES': ('Bearer',),
-    'CHECK_REVOKE_TOKEN': False,  # Disable built-in token revocation check
+    "ACCESS_TOKEN_LIFETIME": TOKEN_LIFETIMES["no_remember_me"]["access"],
+    "REFRESH_TOKEN_LIFETIME": TOKEN_LIFETIMES["no_remember_me"]["refresh"],
+    "ROTATE_REFRESH_TOKENS": False,  # Disabled since we're using MongoDB
+    "BLACKLIST_AFTER_ROTATION": False,  # Disabled - using custom MongoDB blacklist
+    "AUTH_HEADER_TYPES": ("Bearer",),
+    "CHECK_REVOKE_TOKEN": False,  # Disable built-in token revocation check
 }
 
 # CORS configuration
-if env_bool('CORS_ALLOW_ALL_ORIGINS', False):
+if env_bool("CORS_ALLOW_ALL_ORIGINS", False):
     CORS_ALLOW_ALL_ORIGINS = True
 else:
-    CORS_ALLOWED_ORIGINS = os.getenv('CORS_ALLOWED_ORIGINS', 'http://localhost:3000,http://localhost:5173').split(',')
+    CORS_ALLOWED_ORIGINS = os.getenv(
+        "CORS_ALLOWED_ORIGINS", "http://localhost:3000,http://localhost:5173"
+    ).split(",")
 CORS_ALLOW_CREDENTIALS = True
 
 # CSRF / SameSite policy
-SESSION_COOKIE_SAMESITE = os.getenv('SESSION_COOKIE_SAMESITE', 'Lax')
-SESSION_COOKIE_HTTPONLY = env_bool('SESSION_COOKIE_HTTPONLY', True)
-SESSION_COOKIE_SECURE = env_bool('SESSION_COOKIE_SECURE', not DEBUG)
-CSRF_COOKIE_SAMESITE = os.getenv('CSRF_COOKIE_SAMESITE', 'Lax')
-CSRF_COOKIE_HTTPONLY = env_bool('CSRF_COOKIE_HTTPONLY', False)
-CSRF_COOKIE_SECURE = env_bool('CSRF_COOKIE_SECURE', not DEBUG)
-AUTH_ACCESS_COOKIE_NAME = os.getenv('AUTH_ACCESS_COOKIE_NAME', 'access_token')
-AUTH_REFRESH_COOKIE_NAME = os.getenv('AUTH_REFRESH_COOKIE_NAME', 'refresh_token')
-AUTH_COOKIE_SECURE = env_bool('AUTH_COOKIE_SECURE', not DEBUG)
-AUTH_COOKIE_HTTPONLY = env_bool('AUTH_COOKIE_HTTPONLY', True)
-AUTH_COOKIE_SAMESITE = os.getenv('AUTH_COOKIE_SAMESITE', 'Lax')
-AUTH_COOKIE_PATH = os.getenv('AUTH_COOKIE_PATH', '/')
+SESSION_COOKIE_SAMESITE = os.getenv("SESSION_COOKIE_SAMESITE", "Lax")
+SESSION_COOKIE_HTTPONLY = env_bool("SESSION_COOKIE_HTTPONLY", True)
+SESSION_COOKIE_SECURE = env_bool("SESSION_COOKIE_SECURE", not DEBUG)
+CSRF_COOKIE_SAMESITE = os.getenv("CSRF_COOKIE_SAMESITE", "Lax")
+CSRF_COOKIE_HTTPONLY = env_bool("CSRF_COOKIE_HTTPONLY", False)
+CSRF_COOKIE_SECURE = env_bool("CSRF_COOKIE_SECURE", not DEBUG)
+AUTH_ACCESS_COOKIE_NAME = os.getenv("AUTH_ACCESS_COOKIE_NAME", "access_token")
+AUTH_REFRESH_COOKIE_NAME = os.getenv("AUTH_REFRESH_COOKIE_NAME", "refresh_token")
+AUTH_COOKIE_SECURE = env_bool("AUTH_COOKIE_SECURE", not DEBUG)
+AUTH_COOKIE_HTTPONLY = env_bool("AUTH_COOKIE_HTTPONLY", True)
+AUTH_COOKIE_SAMESITE = os.getenv("AUTH_COOKIE_SAMESITE", "Lax")
+AUTH_COOKIE_PATH = os.getenv("AUTH_COOKIE_PATH", "/")
 CSRF_TRUSTED_ORIGINS = [
     origin.strip()
     for origin in os.getenv(
-        'CSRF_TRUSTED_ORIGINS',
-        'http://localhost:3000,http://localhost:5173,http://127.0.0.1:3000,http://127.0.0.1:5173'
-    ).split(',')
+        "CSRF_TRUSTED_ORIGINS",
+        "http://localhost:3000,http://localhost:5173,http://127.0.0.1:3000,http://127.0.0.1:5173",
+    ).split(",")
     if origin.strip()
 ]
 
 # Email configuration
-EMAIL_BACKEND = os.getenv('EMAIL_BACKEND', 'django.core.mail.backends.smtp.EmailBackend')
-EMAIL_HOST = os.getenv('EMAIL_HOST', 'smtp.gmail.com')
-EMAIL_PORT = int(os.getenv('EMAIL_PORT', 587))
-EMAIL_USE_TLS = os.getenv('EMAIL_USE_TLS', 'True') == 'True'
-EMAIL_HOST_USER = os.getenv('EMAIL_HOST_USER', '')
-EMAIL_HOST_PASSWORD = os.getenv('EMAIL_HOST_PASSWORD', '')
-DEFAULT_FROM_EMAIL = os.getenv('DEFAULT_FROM_EMAIL', EMAIL_HOST_USER)
-EMAIL_TIMEOUT = int(os.getenv('EMAIL_TIMEOUT', 10))
+EMAIL_BACKEND = os.getenv(
+    "EMAIL_BACKEND", "django.core.mail.backends.smtp.EmailBackend"
+)
+EMAIL_HOST = os.getenv("EMAIL_HOST", "smtp.gmail.com")
+EMAIL_PORT = int(os.getenv("EMAIL_PORT", 587))
+EMAIL_USE_TLS = os.getenv("EMAIL_USE_TLS", "True") == "True"
+EMAIL_HOST_USER = os.getenv("EMAIL_HOST_USER", "")
+EMAIL_HOST_PASSWORD = os.getenv("EMAIL_HOST_PASSWORD", "")
+DEFAULT_FROM_EMAIL = os.getenv("DEFAULT_FROM_EMAIL", EMAIL_HOST_USER)
+EMAIL_TIMEOUT = int(os.getenv("EMAIL_TIMEOUT", 10))
 
 # Templates configuration
 TEMPLATES = [
     {
-        'BACKEND': 'django.template.backends.django.DjangoTemplates',
-        'DIRS': [BASE_DIR / 'templates'],
-        'APP_DIRS': True,
-        'OPTIONS': {
-            'context_processors': [
-                'django.template.context_processors.debug',
-                'django.template.context_processors.request',
-                'django.contrib.auth.context_processors.auth',
-                'django.contrib.messages.context_processors.messages',
+        "BACKEND": "django.template.backends.django.DjangoTemplates",
+        "DIRS": [BASE_DIR / "templates"],
+        "APP_DIRS": True,
+        "OPTIONS": {
+            "context_processors": [
+                "django.template.context_processors.debug",
+                "django.template.context_processors.request",
+                "django.contrib.auth.context_processors.auth",
+                "django.contrib.messages.context_processors.messages",
             ],
         },
     },
 ]
 
 # Celery Configuration
-CELERY_BROKER_URL = os.getenv('CELERY_BROKER_URL', 'redis://localhost:6379/0')
-CELERY_RESULT_BACKEND = os.getenv('CELERY_RESULT_BACKEND', 'redis://localhost:6379/0')
-CELERY_ACCEPT_CONTENT = ['json']
-CELERY_TASK_SERIALIZER = 'json'
-CELERY_RESULT_SERIALIZER = 'json'
-CELERY_TIMEZONE = 'UTC'
+CELERY_BROKER_URL = os.getenv("CELERY_BROKER_URL", "redis://localhost:6379/0")
+CELERY_RESULT_BACKEND = os.getenv("CELERY_RESULT_BACKEND", "redis://localhost:6379/0")
+CELERY_ACCEPT_CONTENT = ["json"]
+CELERY_TASK_SERIALIZER = "json"
+CELERY_RESULT_SERIALIZER = "json"
+CELERY_TIMEZONE = "UTC"
 
 # Logging Configuration
 LOGGING = {
-    'version': 1,
-    'disable_existing_loggers': False,
-    'formatters': {
-        'verbose': {
-            'format': '{levelname} {asctime} {module} {process:d} {thread:d} {message}',
-            'style': '{',
+    "version": 1,
+    "disable_existing_loggers": False,
+    "formatters": {
+        "verbose": {
+            "format": "{levelname} {asctime} {module} {process:d} {thread:d} {message}",
+            "style": "{",
         },
-        'simple': {
-            'format': '{levelname} {asctime} {message}',
-            'style': '{',
-        },
-    },
-    'handlers': {
-        'console': {
-            'class': 'logging.StreamHandler',
-            'formatter': 'simple',
-        },
-        'file': {
-            'class': 'logging.FileHandler',
-            'filename': BASE_DIR / 'logs' / 'authentication.log',
-            'formatter': 'verbose',
+        "simple": {
+            "format": "{levelname} {asctime} {message}",
+            "style": "{",
         },
     },
-    'loggers': {
-        'authentication': {
-            'handlers': ['console', 'file'],
-            'level': 'INFO',
-            'propagate': False,
+    "handlers": {
+        "console": {
+            "class": "logging.StreamHandler",
+            "formatter": "simple",
         },
-        'admin_auth': {
-            'handlers': ['console', 'file'],
-            'level': 'INFO',
-            'propagate': False,
+        "file": {
+            "class": "logging.FileHandler",
+            "filename": BASE_DIR / "logs" / "authentication.log",
+            "formatter": "verbose",
         },
-        'loan_officer_auth': {
-            'handlers': ['console', 'file'],
-            'level': 'INFO',
-            'propagate': False,
+    },
+    "loggers": {
+        "authentication": {
+            "handlers": ["console", "file"],
+            "level": "INFO",
+            "propagate": False,
         },
-        'blockchain': {
-            'handlers': ['console'],
-            'level': 'INFO',
-            'propagate': False,
+        "admin_auth": {
+            "handlers": ["console", "file"],
+            "level": "INFO",
+            "propagate": False,
+        },
+        "loan_officer_auth": {
+            "handlers": ["console", "file"],
+            "level": "INFO",
+            "propagate": False,
+        },
+        "blockchain": {
+            "handlers": ["console"],
+            "level": "INFO",
+            "propagate": False,
         },
     },
 }
@@ -409,70 +421,70 @@ LOGGING = {
 
 if not DEBUG:
     # Force HTTPS
-    SECURE_SSL_REDIRECT = env_bool('SECURE_SSL_REDIRECT', True)
-    SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
-    
+    SECURE_SSL_REDIRECT = env_bool("SECURE_SSL_REDIRECT", True)
+    SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+
     # HSTS (HTTP Strict Transport Security)
-    SECURE_HSTS_SECONDS = int(os.getenv('SECURE_HSTS_SECONDS', '31536000'))  # 1 year
-    SECURE_HSTS_INCLUDE_SUBDOMAINS = env_bool('SECURE_HSTS_INCLUDE_SUBDOMAINS', True)
-    SECURE_HSTS_PRELOAD = env_bool('SECURE_HSTS_PRELOAD', True)
-    
+    SECURE_HSTS_SECONDS = int(os.getenv("SECURE_HSTS_SECONDS", "31536000"))  # 1 year
+    SECURE_HSTS_INCLUDE_SUBDOMAINS = env_bool("SECURE_HSTS_INCLUDE_SUBDOMAINS", True)
+    SECURE_HSTS_PRELOAD = env_bool("SECURE_HSTS_PRELOAD", True)
+
     # Secure cookies
-    SESSION_COOKIE_SECURE = env_bool('SESSION_COOKIE_SECURE', True)
-    CSRF_COOKIE_SECURE = env_bool('CSRF_COOKIE_SECURE', True)
-    
+    SESSION_COOKIE_SECURE = env_bool("SESSION_COOKIE_SECURE", True)
+    CSRF_COOKIE_SECURE = env_bool("CSRF_COOKIE_SECURE", True)
+
     # Use console logging only in production (Railway captures stdout)
-    LOGGING['handlers'] = {
-        'console': {
-            'class': 'logging.StreamHandler',
-            'formatter': 'simple',
+    LOGGING["handlers"] = {
+        "console": {
+            "class": "logging.StreamHandler",
+            "formatter": "simple",
         },
     }
-    for logger_name in ('authentication', 'admin_auth', 'loan_officer_auth'):
-        LOGGING['loggers'][logger_name]['handlers'] = ['console']
+    for logger_name in ("authentication", "admin_auth", "loan_officer_auth"):
+        LOGGING["loggers"][logger_name]["handlers"] = ["console"]
 
 # Groq LLM Configuration
-GROQ_API_KEY = os.getenv('GROQ_API_KEY', '')
-GROQ_MODEL = os.getenv('GROQ_MODEL', 'llama-3.1-8b-instant')
-GROQ_CHAT_MODEL = os.getenv('GROQ_CHAT_MODEL', GROQ_MODEL)
-GROQ_QUALIFICATION_MODEL = os.getenv('GROQ_QUALIFICATION_MODEL', GROQ_MODEL)
+GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
+GROQ_MODEL = os.getenv("GROQ_MODEL", "llama-3.1-8b-instant")
+GROQ_CHAT_MODEL = os.getenv("GROQ_CHAT_MODEL", GROQ_MODEL)
+GROQ_QUALIFICATION_MODEL = os.getenv("GROQ_QUALIFICATION_MODEL", GROQ_MODEL)
 
 # LLM Provider Configuration
 # Set LLM_PROVIDER to 'groq' or 'ollama' to switch AI backends
-LLM_PROVIDER = os.getenv('LLM_PROVIDER', 'groq')
-OLLAMA_BASE_URL = os.getenv('OLLAMA_BASE_URL', 'http://localhost:11434')
-OLLAMA_MODEL = os.getenv('OLLAMA_MODEL', 'llama3.1')
+LLM_PROVIDER = os.getenv("LLM_PROVIDER", "groq")
+OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3.1")
 
 # =============================================================================
 # BLOCKCHAIN INTEGRATION (Smart Contracts via web3.py)
 # =============================================================================
 
 # Kill switch — set to True to enable blockchain sync
-BLOCKCHAIN_ENABLED = env_bool('BLOCKCHAIN_ENABLED', False)
+BLOCKCHAIN_ENABLED = env_bool("BLOCKCHAIN_ENABLED", False)
 
 # RPC endpoint (Ganache local, or testnet/mainnet URL)
-BLOCKCHAIN_RPC_URL = os.getenv('BLOCKCHAIN_RPC_URL', 'http://127.0.0.1:7545')
+BLOCKCHAIN_RPC_URL = os.getenv("BLOCKCHAIN_RPC_URL", "http://127.0.0.1:7545")
 
 # Chain ID (1337=Ganache, 31337=Hardhat, 11155111=Sepolia, 137=Polygon)
-BLOCKCHAIN_CHAIN_ID = int(os.getenv('BLOCKCHAIN_CHAIN_ID', '1337'))
+BLOCKCHAIN_CHAIN_ID = int(os.getenv("BLOCKCHAIN_CHAIN_ID", "1337"))
 
 # Backend service wallet private key (signs all on-chain transactions)
-BLOCKCHAIN_WALLET_KEY = os.getenv('BLOCKCHAIN_WALLET_KEY', '')
+BLOCKCHAIN_WALLET_KEY = os.getenv("BLOCKCHAIN_WALLET_KEY", "")
 
 # Deployed contract addresses (JSON string from env, or loaded from deployment file)
-_contract_addresses_raw = os.getenv('BLOCKCHAIN_CONTRACT_ADDRESSES', '')
+_contract_addresses_raw = os.getenv("BLOCKCHAIN_CONTRACT_ADDRESSES", "")
 if _contract_addresses_raw:
     BLOCKCHAIN_CONTRACT_ADDRESSES = json.loads(_contract_addresses_raw)
 else:
     BLOCKCHAIN_CONTRACT_ADDRESSES = {}
 
 # Gas settings
-BLOCKCHAIN_GAS_LIMIT = int(os.getenv('BLOCKCHAIN_GAS_LIMIT', '6721975'))
-BLOCKCHAIN_GAS_PRICE_GWEI = int(float(os.getenv('BLOCKCHAIN_GAS_PRICE_GWEI', '20')))
+BLOCKCHAIN_GAS_LIMIT = int(os.getenv("BLOCKCHAIN_GAS_LIMIT", "6721975"))
+BLOCKCHAIN_GAS_PRICE_GWEI = int(float(os.getenv("BLOCKCHAIN_GAS_PRICE_GWEI", "20")))
 
 # Block explorer URL (e.g. https://etherscan.io, https://sepolia.etherscan.io)
 # Leave empty for local Ganache (no explorer available)
-BLOCKCHAIN_EXPLORER_URL = os.getenv('BLOCKCHAIN_EXPLORER_URL', '')
+BLOCKCHAIN_EXPLORER_URL = os.getenv("BLOCKCHAIN_EXPLORER_URL", "")
 
 # Path to ABI files (relative to BASE_DIR)
-BLOCKCHAIN_ABI_DIR = BASE_DIR / 'loans' / 'blockchain' / 'abis'
+BLOCKCHAIN_ABI_DIR = BASE_DIR / "loans" / "blockchain" / "abis"

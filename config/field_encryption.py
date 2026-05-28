@@ -4,21 +4,20 @@ from cryptography.fernet import Fernet, InvalidToken
 from django.conf import settings
 from django.core.exceptions import ImproperlyConfigured
 
-
-ENCRYPTED_PREFIX = 'enc::'
+ENCRYPTED_PREFIX = "enc::"
 
 
 @lru_cache(maxsize=1)
 def _get_fernet():
-    key = (getattr(settings, 'FIELD_ENCRYPTION_KEY', '') or '').strip()
+    key = (getattr(settings, "FIELD_ENCRYPTION_KEY", "") or "").strip()
     if not key:
         return None
 
     try:
-        return Fernet(key.encode('utf-8'))
+        return Fernet(key.encode("utf-8"))
     except Exception as exc:
         raise ImproperlyConfigured(
-            'FIELD_ENCRYPTION_KEY is invalid. Generate one with: '
+            "FIELD_ENCRYPTION_KEY is invalid. Generate one with: "
             'python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"'
         ) from exc
 
@@ -32,15 +31,15 @@ def encrypt_value(value):
         return None
     if not isinstance(value, str):
         return value
-    if value == '' or is_encrypted_value(value):
+    if value == "" or is_encrypted_value(value):
         return value
 
     fernet = _get_fernet()
     if fernet is None:
         return value
 
-    token = fernet.encrypt(value.encode('utf-8')).decode('utf-8')
-    return f'{ENCRYPTED_PREFIX}{token}'
+    token = fernet.encrypt(value.encode("utf-8")).decode("utf-8")
+    return f"{ENCRYPTED_PREFIX}{token}"
 
 
 def decrypt_value(value):
@@ -55,9 +54,9 @@ def decrypt_value(value):
     if fernet is None:
         return value
 
-    token = value[len(ENCRYPTED_PREFIX):]
+    token = value[len(ENCRYPTED_PREFIX) :]
     try:
-        return fernet.decrypt(token.encode('utf-8')).decode('utf-8')
+        return fernet.decrypt(token.encode("utf-8")).decode("utf-8")
     except InvalidToken:
         return value
 
