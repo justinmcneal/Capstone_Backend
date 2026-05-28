@@ -22,6 +22,19 @@ def _mock_mongodb(settings):
     client.close()
 
 
+@pytest.fixture(autouse=True)
+def _use_locmem_cache(settings):
+    """
+    Ensure tests use an in-memory cache backend to avoid external Redis dependency.
+    """
+    settings.CACHES = {
+        'default': {
+            'BACKEND': 'django.core.cache.backends.locmem.LocMemCache',
+        }
+    }
+    yield
+
+
 @pytest.fixture
 def blockchain_settings(settings):
     """Configure blockchain settings for testing."""
