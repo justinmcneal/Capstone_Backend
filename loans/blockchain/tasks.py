@@ -98,12 +98,15 @@ def sync_application_to_chain(self, loan_id):
         )
 
         # Record success
-        tx_record.mark_confirmed(
-            tx_hash=submit_result["tx_hash"],
-            gas_used=create_result["gas_used"] + submit_result["gas_used"],
-            block_number=submit_result["block_number"],
-            gas_price=submit_result.get("gas_price", 0),
-        )
+        # Prepare mark_confirmed args; include gas_price only if present in result
+        mc_kwargs = {
+            'tx_hash': submit_result['tx_hash'],
+            'gas_used': create_result['gas_used'] + submit_result['gas_used'],
+            'block_number': submit_result['block_number'],
+        }
+        if 'gas_price' in submit_result:
+            mc_kwargs['gas_price'] = submit_result['gas_price']
+        tx_record.mark_confirmed(**mc_kwargs)
 
         # Update application with tx hash
         _update_application_tx(loan_id, "submit", submit_result["tx_hash"])
@@ -157,12 +160,14 @@ def sync_approval_to_chain(self, loan_id):
             notes_hash=str(app.officer_notes or "approved"),
         )
 
-        tx_record.mark_confirmed(
-            tx_hash=result["tx_hash"],
-            gas_used=result["gas_used"],
-            block_number=result["block_number"],
-            gas_price=result.get("gas_price", 0),
-        )
+        mc_kwargs = {
+            'tx_hash': result['tx_hash'],
+            'gas_used': result['gas_used'],
+            'block_number': result['block_number'],
+        }
+        if 'gas_price' in result:
+            mc_kwargs['gas_price'] = result['gas_price']
+        tx_record.mark_confirmed(**mc_kwargs)
 
         _update_application_tx(loan_id, "approve", result["tx_hash"])
 
@@ -307,12 +312,14 @@ def sync_schedule_to_chain(self, loan_id):
             start_date=start_timestamp,
         )
 
-        tx_record.mark_confirmed(
-            tx_hash=result["tx_hash"],
-            gas_used=result["gas_used"],
-            block_number=result["block_number"],
-            gas_price=result.get("gas_price", 0),
-        )
+        mc_kwargs = {
+            'tx_hash': result['tx_hash'],
+            'gas_used': result['gas_used'],
+            'block_number': result['block_number'],
+        }
+        if 'gas_price' in result:
+            mc_kwargs['gas_price'] = result['gas_price']
+        tx_record.mark_confirmed(**mc_kwargs)
 
         # Update schedule with tx hash
         settings.MONGODB["repayment_schedules"].update_one(
@@ -379,12 +386,14 @@ def sync_payment_to_chain(self, loan_id, payment_id):
             reference_hash=ref_str,
         )
 
-        tx_record.mark_confirmed(
-            tx_hash=result["tx_hash"],
-            gas_used=result["gas_used"],
-            block_number=result["block_number"],
-            gas_price=result.get("gas_price", 0),
-        )
+        mc_kwargs = {
+            'tx_hash': result['tx_hash'],
+            'gas_used': result['gas_used'],
+            'block_number': result['block_number'],
+        }
+        if 'gas_price' in result:
+            mc_kwargs['gas_price'] = result['gas_price']
+        tx_record.mark_confirmed(**mc_kwargs)
 
         # Update payment with tx hash
         settings.MONGODB["loan_payments"].update_one(
