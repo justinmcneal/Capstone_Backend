@@ -1501,11 +1501,25 @@ class WalletPaymentView(CustomerRoleRequiredMixin, APIView):
 
             # Minimum payment threshold to prevent dust payments
             MIN_PAYMENT_PHP = 100.0
+            # Allow small fluctuations in exchange rate: ±2% tolerance
+            tolerance = 0.02
+            lower_bound = expected_php * (1 - tolerance)
+            upper_bound = expected_php * (1 + tolerance)
             
             if php_received < MIN_PAYMENT_PHP:
                 return error_response(
                     message=f"Payment too small. Minimum: ₱{MIN_PAYMENT_PHP:.2f} "
                             f"(received {eth_received:.6f} ETH ≈ ₱{php_received:.2f})",
+                    status_code=status.HTTP_400_BAD_REQUEST
+                )
+
+            # Reject payments that are significantly (more than tolerance) below expected amount
+            if php_received < lower_bound:
+                return error_response(
+                    message=(
+                        f"Payment is below the allowed tolerance of {tolerance*100:.0f}% for this installment. "
+                        f"Expected ~₱{expected_php:.2f}, received ₱{php_received:.2f}"
+                    ),
                     status_code=status.HTTP_400_BAD_REQUEST
                 )
 
