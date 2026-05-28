@@ -2,51 +2,50 @@ from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.exceptions import ErrorDetail
 
-
 VALIDATION_HINTS = {
-    'required': 'Provide this required field.',
-    'blank': 'Value cannot be blank.',
-    'null': 'Value cannot be null.',
-    'invalid': 'Use the expected format or data type.',
-    'invalid_choice': 'Use one of the allowed values.',
-    'max_length': 'Shorten this value to the allowed maximum length.',
-    'min_length': 'Increase this value to meet minimum length.',
-    'max_value': 'Use a smaller value.',
-    'min_value': 'Use a larger value.',
+    "required": "Provide this required field.",
+    "blank": "Value cannot be blank.",
+    "null": "Value cannot be null.",
+    "invalid": "Use the expected format or data type.",
+    "invalid_choice": "Use one of the allowed values.",
+    "max_length": "Shorten this value to the allowed maximum length.",
+    "min_length": "Increase this value to meet minimum length.",
+    "max_value": "Use a smaller value.",
+    "min_value": "Use a larger value.",
 }
 
 
 def _default_hint_for_message(message):
     lower = message.lower()
-    if 'at most' in lower or 'maximum' in lower:
-        return VALIDATION_HINTS['max_length']
-    if 'at least' in lower or 'minimum' in lower:
-        return VALIDATION_HINTS['min_length']
-    if 'format' in lower:
-        return VALIDATION_HINTS['invalid']
-    if 'valid choice' in lower:
-        return VALIDATION_HINTS['invalid_choice']
-    return VALIDATION_HINTS['invalid']
+    if "at most" in lower or "maximum" in lower:
+        return VALIDATION_HINTS["max_length"]
+    if "at least" in lower or "minimum" in lower:
+        return VALIDATION_HINTS["min_length"]
+    if "format" in lower:
+        return VALIDATION_HINTS["invalid"]
+    if "valid choice" in lower:
+        return VALIDATION_HINTS["invalid_choice"]
+    return VALIDATION_HINTS["invalid"]
 
 
 def _build_issue(path, error):
     if isinstance(error, ErrorDetail):
         message = str(error)
-        code = error.code or 'invalid'
+        code = error.code or "invalid"
     else:
         message = str(error)
-        code = 'invalid'
+        code = "invalid"
 
     hint = VALIDATION_HINTS.get(code) or _default_hint_for_message(message)
     return {
-        'field': path or 'non_field_errors',
-        'message': message,
-        'code': code,
-        'hint': hint,
+        "field": path or "non_field_errors",
+        "message": message,
+        "code": code,
+        "hint": hint,
     }
 
 
-def _flatten_validation_errors(errors, path=''):
+def _flatten_validation_errors(errors, path=""):
     issues = []
 
     if isinstance(errors, dict):
@@ -72,8 +71,8 @@ def _normalize_validation_errors(errors):
     if isinstance(errors, (dict, list, tuple)):
         return errors
     if errors is None:
-        return {'non_field_errors': ['Invalid input']}
-    return {'non_field_errors': [str(errors)]}
+        return {"non_field_errors": ["Invalid input"]}
+    return {"non_field_errors": [str(errors)]}
 
 
 def build_validation_feedback(errors):
@@ -88,39 +87,38 @@ def build_validation_feedback(errors):
     fields = []
     seen = set()
     for issue in issues:
-        field = issue['field']
+        field = issue["field"]
         if field in seen:
             continue
         seen.add(field)
         fields.append(field)
 
     return {
-        'error_count': len(issues),
-        'fields': fields,
-        'issues': issues,
+        "error_count": len(issues),
+        "fields": fields,
+        "issues": issues,
     }
 
 
 class APIResponseHelper:
     """Helper class for consistent API responses"""
-    
+
     @staticmethod
     def success_response(data=None, message=None, status_code=status.HTTP_200_OK):
-        response_data = {'status': 'success'}
+        response_data = {"status": "success"}
         if message:
-            response_data['message'] = message
+            response_data["message"] = message
         if data:
-            response_data['data'] = data
+            response_data["data"] = data
         return Response(response_data, status=status_code)
-    
+
     @staticmethod
-    def error_response(message, error_code=status.HTTP_400_BAD_REQUEST, errors=None, code=None):
-        response_data = {
-            'status': 'error',
-            'message': message
-        }
+    def error_response(
+        message, error_code=status.HTTP_400_BAD_REQUEST, errors=None, code=None
+    ):
+        response_data = {"status": "error", "message": message}
         if code:
-            response_data['code'] = code
+            response_data["code"] = code
         normalized_errors = None
         if errors is not None:
             normalized_errors = _normalize_validation_errors(errors)
@@ -128,51 +126,50 @@ class APIResponseHelper:
             normalized_errors = _normalize_validation_errors(message)
 
         if normalized_errors is not None:
-            response_data['errors'] = normalized_errors
+            response_data["errors"] = normalized_errors
             feedback = build_validation_feedback(normalized_errors)
             if feedback:
-                response_data['validation_feedback'] = feedback
+                response_data["validation_feedback"] = feedback
         return Response(response_data, status=error_code)
-    
+
     @staticmethod
     def validation_error_response(errors):
         normalized_errors = _normalize_validation_errors(errors)
         response_data = {
-            'status': 'error',
-            'errors': normalized_errors,
+            "status": "error",
+            "errors": normalized_errors,
         }
         feedback = build_validation_feedback(normalized_errors)
         if feedback:
-            response_data['validation_feedback'] = feedback
+            response_data["validation_feedback"] = feedback
         return Response(response_data, status=status.HTTP_400_BAD_REQUEST)
-    
+
     @staticmethod
-    def server_error_response(message='An unexpected error occurred'):
-        return Response({
-            'status': 'error',
-            'message': message
-        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    def server_error_response(message="An unexpected error occurred"):
+        return Response(
+            {"status": "error", "message": message},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        )
 
 
 # Standalone functions for easier imports
 def success_response(data=None, message=None, status_code=status.HTTP_200_OK):
     """Return a success response with consistent structure"""
-    response_data = {'status': 'success'}
+    response_data = {"status": "success"}
     if message:
-        response_data['message'] = message
+        response_data["message"] = message
     if data:
-        response_data['data'] = data
+        response_data["data"] = data
     return Response(response_data, status=status_code)
 
 
-def error_response(message, errors=None, code=None, status_code=status.HTTP_400_BAD_REQUEST):
+def error_response(
+    message, errors=None, code=None, status_code=status.HTTP_400_BAD_REQUEST
+):
     """Return an error response with consistent structure"""
-    response_data = {
-        'status': 'error',
-        'message': message
-    }
+    response_data = {"status": "error", "message": message}
     if code:
-        response_data['code'] = code
+        response_data["code"] = code
     normalized_errors = None
     if errors is not None:
         normalized_errors = _normalize_validation_errors(errors)
@@ -180,8 +177,8 @@ def error_response(message, errors=None, code=None, status_code=status.HTTP_400_
         normalized_errors = _normalize_validation_errors(message)
 
     if normalized_errors is not None:
-        response_data['errors'] = normalized_errors
+        response_data["errors"] = normalized_errors
         feedback = build_validation_feedback(normalized_errors)
         if feedback:
-            response_data['validation_feedback'] = feedback
+            response_data["validation_feedback"] = feedback
     return Response(response_data, status=status_code)
