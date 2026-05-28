@@ -33,6 +33,8 @@ class BlacklistedToken:
         if self._id:
             data["_id"] = self._id
         return data
+    def __repr__(self):
+        return f"<BlacklistedToken id={self.id} token_type={self.token_type}>"
 
     @classmethod
     def from_dict(cls, data):
@@ -109,6 +111,8 @@ class RefreshTokenEntry:
         if self._id:
             data["_id"] = self._id
         return data
+    def __repr__(self):
+        return f"<RefreshTokenEntry id={self.id} customer={self.customer} role={self.role}>"
 
     @classmethod
     def from_dict(cls, data):

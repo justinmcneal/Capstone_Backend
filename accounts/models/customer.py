@@ -119,6 +119,9 @@ class Customer:
             data["_id"] = self._id
         return encrypt_fields(data, self.encrypted_fields)
 
+    def __repr__(self):
+        return f"<Customer id={self.id} email={self.email}>"
+
     @classmethod
     def from_dict(cls, data):
         """Create Customer instance from MongoDB document"""
