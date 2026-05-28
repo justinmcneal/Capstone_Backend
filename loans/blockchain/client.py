@@ -179,11 +179,12 @@ def send_transaction(contract, method_name, *args):
     tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
     receipt = w3.eth.wait_for_transaction_receipt(tx_hash, timeout=120)
 
-    tx_hash_hex = "0x" + receipt["transactionHash"].hex()
+    # Return hex string without 0x prefix for compatibility with existing tests
+    tx_hash_hex = receipt["transactionHash"].hex()
 
     if receipt["status"] != 1:
         logger.error(
-            "Transaction REVERTED: %s.%s(%s) tx=%s",
+            "Transaction REVERTED: %s.%s(%s) tx=0x%s",
             contract.address, method_name, args, tx_hash_hex,
         )
         raise BlockchainTransactionFailed(
@@ -196,8 +197,8 @@ def send_transaction(contract, method_name, *args):
     effective_gas_price = receipt.get("effectiveGasPrice", gas_price)
 
     logger.info(
-        "Transaction OK: %s.%s() tx=%s gas=%d",
-        contract.address[:10], method_name, tx_hash_hex[:18], receipt["gasUsed"],
+        "Transaction OK: %s.%s() tx=0x%s gas=%d",
+        contract.address[:10], method_name, tx_hash_hex[:16], receipt["gasUsed"],
     )
 
     return {
