@@ -1,24 +1,25 @@
 """
 Celery configuration for Capstone Backend
 """
+
 import os
 from celery import Celery
 from celery.schedules import crontab
 
-os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'config.settings')
+os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings")
 
-app = Celery('capstone_backend')
-app.config_from_object('django.conf:settings', namespace='CELERY')
+app = Celery("capstone_backend")
+app.config_from_object("django.conf:settings", namespace="CELERY")
 app.autodiscover_tasks()
 
 # Celery Beat Schedule - runs cleanup every 30 minutes
 app.conf.beat_schedule = {
-    'cleanup-unverified-accounts-every-30-minutes': {
-        'task': 'accounts.tasks.cleanup_unverified_accounts_task',
-        'schedule': crontab(minute='*/30'),
+    "cleanup-unverified-accounts-every-30-minutes": {
+        "task": "accounts.tasks.cleanup_unverified_accounts_task",
+        "schedule": crontab(minute="*/30"),
     },
-    'check-overdue-daily': {
-        'task': 'loans.tasks.check_overdue_installments_task',
-        'schedule': crontab(hour=0, minute=0),
+    "check-overdue-daily": {
+        "task": "loans.tasks.check_overdue_installments_task",
+        "schedule": crontab(hour=0, minute=0),
     },
 }
