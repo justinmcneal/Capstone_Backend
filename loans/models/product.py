@@ -2,9 +2,10 @@
 LoanProduct Model - Admin managed loan products catalog.
 """
 
-from datetime import datetime
 from bson import ObjectId
 from django.conf import settings
+
+from loans.utils.time import utcnow
 
 
 def get_db():
@@ -45,8 +46,8 @@ class LoanProduct:
         # Status
         self.active = kwargs.get("active", True)
         self.created_by = kwargs.get("created_by")  # Admin ID
-        self.created_at = kwargs.get("created_at", datetime.utcnow())
-        self.updated_at = kwargs.get("updated_at", datetime.utcnow())
+        self.created_at = kwargs.get("created_at", utcnow())
+        self.updated_at = kwargs.get("updated_at", utcnow())
 
     @property
     def id(self):
@@ -85,7 +86,7 @@ class LoanProduct:
     def save(self):
         db = get_db()
         collection = db[self.collection_name]
-        self.updated_at = datetime.utcnow()
+        self.updated_at = utcnow()
         data = self.to_dict()
 
         if self._id:
@@ -128,7 +129,7 @@ class LoanProduct:
     def find_by_id(cls, product_id):
         try:
             return cls.find_one({"_id": ObjectId(product_id)})
-        except:
+        except Exception:
             return None
 
     @classmethod

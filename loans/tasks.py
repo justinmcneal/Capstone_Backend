@@ -2,11 +2,12 @@
 Loan-related background tasks.
 """
 
-from datetime import datetime
 import logging
 
 from celery import shared_task
 from django.conf import settings
+
+from loans.utils.time import utcnow
 
 logger = logging.getLogger(__name__)
 
@@ -22,7 +23,7 @@ def check_overdue_installments_task():
     from loans.models import RepaymentSchedule
     from loans.blockchain.sync import sync_overdue
 
-    now = datetime.utcnow()
+    now = utcnow()
     updated_count = 0
 
     for doc in db["repayment_schedules"].find({}):

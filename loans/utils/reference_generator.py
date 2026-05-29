@@ -5,8 +5,9 @@ Generates unique reference numbers for payments and disbursements.
 Uses MongoDB counters for sequential numbering.
 """
 
-from datetime import datetime
 from django.conf import settings
+
+from loans.utils.time import utcnow
 
 
 def get_db():
@@ -35,7 +36,7 @@ def generate_payment_reference() -> str:
     )
 
     seq = counter["seq"]
-    date_part = datetime.utcnow().strftime("%Y%m%d")
+    date_part = utcnow().strftime("%Y%m%d")
 
     return f"PAY-{date_part}-{seq:06d}"
 
@@ -61,7 +62,7 @@ def generate_disbursement_reference() -> str:
     )
 
     seq = counter["seq"]
-    date_part = datetime.utcnow().strftime("%Y%m%d")
+    date_part = utcnow().strftime("%Y%m%d")
 
     return f"DSB-{date_part}-{seq:06d}"
 
@@ -86,6 +87,6 @@ def generate_application_reference() -> str:
     )
 
     seq = counter["seq"]
-    date_part = datetime.utcnow().strftime("%Y%m%d")
+    date_part = utcnow().strftime("%Y%m%d")
 
     return f"APP-{date_part}-{seq:06d}"

@@ -46,6 +46,21 @@ def _check_enabled():
         )
 
 
+def _normalize_tx_hash(tx_hash):
+    """Return a hex transaction hash without any 0x prefix."""
+    if hasattr(tx_hash, "hex"):
+        value = tx_hash.hex()
+    else:
+        value = str(tx_hash)
+    return value[2:] if value.startswith("0x") else value
+
+
+def _format_tx_hash(tx_hash, with_prefix=False):
+    """Normalize a transaction hash and optionally prefix it with 0x."""
+    normalized = _normalize_tx_hash(tx_hash)
+    return f"0x{normalized}" if with_prefix else normalized
+
+
 @lru_cache(maxsize=1)
 def get_web3():
     """
@@ -186,7 +201,7 @@ def send_transaction(contract, method_name, *args):
     receipt = w3.eth.wait_for_transaction_receipt(tx_hash, timeout=120)
 
     # Return hex string without 0x prefix for compatibility with existing tests
-    tx_hash_hex = receipt["transactionHash"].hex()
+    tx_hash_hex = _format_tx_hash(receipt["transactionHash"])
 
     if receipt["status"] != 1:
         logger.error(
@@ -273,7 +288,7 @@ def send_eth_transfer(to_address, amount_wei):
     tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
     receipt = w3.eth.wait_for_transaction_receipt(tx_hash, timeout=120)
 
-    tx_hash_hex = "0x" + receipt["transactionHash"].hex()
+    tx_hash_hex = _format_tx_hash(receipt["transactionHash"], with_prefix=True)
 
     if receipt["status"] != 1:
         logger.error(

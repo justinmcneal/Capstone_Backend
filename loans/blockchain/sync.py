@@ -11,6 +11,8 @@ import threading
 
 from django.conf import settings
 
+from loans.utils.time import utcnow
+
 logger = logging.getLogger("blockchain")
 
 
@@ -536,7 +538,6 @@ def _sync_schedule_impl(loan_id):
 
 def _sync_payment_impl(loan_id, payment_id):
     from bson import ObjectId
-    from datetime import datetime
 
     from loans.blockchain.models import BlockchainTransaction
     from loans.blockchain.services.repayment_service import record_payment_onchain
@@ -580,7 +581,7 @@ def _sync_payment_impl(loan_id, payment_id):
                 "$set": {
                     "blockchain_tx_hash": result["tx_hash"],
                     "blockchain_sync_status": "synced",
-                    "blockchain_synced_at": datetime.utcnow(),
+                    "blockchain_synced_at": utcnow(),
                 }
             },
         )

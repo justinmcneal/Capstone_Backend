@@ -5,6 +5,7 @@ AI Qualification Service - Uses Groq LLM to analyze customer eligibility.
 import json
 import logging
 import re
+from django.conf import settings
 from ai_assistant.services import get_llm_service
 from accounts.models import Consent
 from accounts.utils.validation_utils import sanitize_multiline_text, sanitize_text
@@ -12,6 +13,10 @@ from profiles.models import CustomerProfile, BusinessProfile, AlternativeData
 from documents.models import Document, DOCUMENT_TYPES
 
 logger = logging.getLogger("loans")
+
+
+def _ai_qualification_enabled():
+    return getattr(settings, "LOANS_AI_QUALIFICATION_ENABLED", True)
 
 BASELINE_REQUIRED_DOCUMENTS = ["valid_id"]
 DOCUMENT_TYPE_ALIASES = {
@@ -526,6 +531,18 @@ def qualify_customer(
     """
     scope = _normalize_scope(requirements_scope)
     required_doc_types = resolve_required_document_types(product, scope)
+
+    if not _ai_qualification_enabled():
+        logger.info("AI qualification disabled; using rule-based assessment")
+        data = get_customer_data(customer_id)
+        return rule_based_qualification(
+            data,
+            product,
+            requested_amount,
+            requirements_scope=scope,
+            require_approved_documents=require_approved_documents,
+            reason="Rule-based assessment (AI disabled)",
+        )
 
     # Get customer data
     data = get_customer_data(customer_id)

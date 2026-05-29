@@ -2,8 +2,9 @@
 LoanPayment Model - Records customer payments.
 """
 
-from datetime import datetime
 from django.conf import settings
+
+from loans.utils.time import utcnow
 
 
 def get_db():
@@ -35,7 +36,7 @@ class LoanPayment:
 
         # Recording info
         self.recorded_by = kwargs.get("recorded_by")  # Officer ID
-        self.recorded_at = kwargs.get("recorded_at", datetime.utcnow())
+        self.recorded_at = kwargs.get("recorded_at", utcnow())
 
         # Blockchain sync tracking
         self.blockchain_tx_hash = kwargs.get("blockchain_tx_hash", "")

@@ -2,9 +2,10 @@
 RepaymentSchedule Model - Loan repayment installments.
 """
 
-from datetime import datetime
 from dateutil.relativedelta import relativedelta
 from django.conf import settings
+
+from loans.utils.time import utcnow
 
 
 def get_db():
@@ -38,8 +39,8 @@ class RepaymentSchedule:
         self.installments = kwargs.get("installments", [])
 
         # Timestamps
-        self.start_date = kwargs.get("start_date", datetime.utcnow())
-        self.created_at = kwargs.get("created_at", datetime.utcnow())
+        self.start_date = kwargs.get("start_date", utcnow())
+        self.created_at = kwargs.get("created_at", utcnow())
 
         # Blockchain sync tracking
         self.blockchain_schedule_tx = kwargs.get("blockchain_schedule_tx", "")
@@ -116,7 +117,7 @@ class RepaymentSchedule:
 
         # Generate installments
         installments = []
-        start_date = loan_application.disbursed_at or datetime.utcnow()
+        start_date = loan_application.disbursed_at or utcnow()
 
         for i in range(1, term_months + 1):
             due_date = start_date + relativedelta(months=i)
@@ -239,7 +240,7 @@ class RepaymentSchedule:
                 if new_paid_amount >= inst["total_amount"]:
                     inst["paid_amount"] = inst["total_amount"]
                     inst["status"] = "paid"
-                    inst["paid_at"] = datetime.utcnow()
+                    inst["paid_at"] = utcnow()
                 elif new_paid_amount > 0:
                     inst["paid_amount"] = new_paid_amount
                     inst["status"] = "partial"
@@ -257,7 +258,7 @@ class RepaymentSchedule:
             list of installment numbers updated
         """
         if as_of is None:
-            as_of = datetime.utcnow()
+            as_of = utcnow()
 
         updated = []
         for i, inst in enumerate(self.installments):
