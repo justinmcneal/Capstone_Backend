@@ -2,10 +2,11 @@
 LoanApplication Model - Customer loan applications.
 """
 
-from datetime import datetime
 from bson import ObjectId
 from django.conf import settings
 from config.field_encryption import decrypt_fields, encrypt_fields
+
+from loans.utils.time import utcnow
 
 
 def get_db():
@@ -96,8 +97,8 @@ class LoanApplication:
 
         # Timestamps
         self.submitted_at = kwargs.get("submitted_at")
-        self.created_at = kwargs.get("created_at", datetime.utcnow())
-        self.updated_at = kwargs.get("updated_at", datetime.utcnow())
+        self.created_at = kwargs.get("created_at", utcnow())
+        self.updated_at = kwargs.get("updated_at", utcnow())
 
         # Blockchain sync tracking
         self.blockchain_tx_hashes = kwargs.get("blockchain_tx_hashes", {})
@@ -157,7 +158,7 @@ class LoanApplication:
     def save(self):
         db = get_db()
         collection = db[self.collection_name]
-        self.updated_at = datetime.utcnow()
+        self.updated_at = utcnow()
         data = self.to_dict()
 
         if self._id:
@@ -170,7 +171,7 @@ class LoanApplication:
     def submit(self):
         """Submit the application for review"""
         self.status = "submitted"
-        self.submitted_at = datetime.utcnow()
+        self.submitted_at = utcnow()
         return self.save()
 
     def assign_officer(self, officer_id):
@@ -185,7 +186,7 @@ class LoanApplication:
         self.approved_amount = approved_amount
         self.assigned_officer = officer_id
         self.officer_notes = notes
-        self.decision_date = datetime.utcnow()
+        self.decision_date = utcnow()
         return self.save()
 
     def reject(self, officer_id, reason, notes=""):
@@ -194,7 +195,7 @@ class LoanApplication:
         self.assigned_officer = officer_id
         self.rejection_reason = reason
         self.officer_notes = notes
-        self.decision_date = datetime.utcnow()
+        self.decision_date = utcnow()
         return self.save()
 
     def add_internal_note(self, author_id, author_role, content):
@@ -207,7 +208,7 @@ class LoanApplication:
             "content": text,
             "author_id": str(author_id),
             "author_role": author_role or "loan_officer",
-            "created_at": datetime.utcnow(),
+            "created_at": utcnow(),
         }
 
         notes = self.internal_notes or []
@@ -234,7 +235,7 @@ class LoanApplication:
             if document_type not in unique_documents:
                 unique_documents.append(document_type)
 
-        now = datetime.utcnow()
+        now = utcnow()
         officer_id = str(officer_id)
 
         self.missing_documents_requested = unique_documents
@@ -269,7 +270,7 @@ class LoanApplication:
 
         self.status = "disbursed"
         self.disbursed_amount = amount
-        self.disbursed_at = datetime.utcnow()
+        self.disbursed_at = utcnow()
         self.disbursement_method = method
         self.disbursement_reference = reference
         self.disbursed_by = processed_by
@@ -288,7 +289,7 @@ class LoanApplication:
                 "Cannot change disbursement method for this application status"
             )
         self.preferred_disbursement_method = method
-        self.updated_at = datetime.utcnow()
+        self.updated_at = utcnow()
         return self.save()
 
     def can_resubmit(self):
@@ -310,7 +311,7 @@ class LoanApplication:
         self.missing_documents_reason = ""
         self.missing_documents_requested_by = None
         self.missing_documents_requested_at = None
-        self.updated_at = datetime.utcnow()
+        self.updated_at = utcnow()
         return self.save()
 
     @classmethod
@@ -335,7 +336,7 @@ class LoanApplication:
     def find_by_id(cls, app_id):
         try:
             return cls.find_one({"_id": ObjectId(app_id)})
-        except:
+        except Exception:
             return None
 
     @classmethod

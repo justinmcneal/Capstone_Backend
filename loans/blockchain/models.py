@@ -5,9 +5,9 @@ Provides an immutable log of every on-chain transaction attempted by the backend
 including pending, confirmed, and failed states.
 """
 
-from datetime import datetime
-
 from django.conf import settings
+
+from loans.utils.time import utcnow
 
 
 def _get_collection():
@@ -44,7 +44,7 @@ class BlockchainTransaction:
         self.block_number = kwargs.get("block_number", 0)
         self.error = kwargs.get("error", "")
         self.details = kwargs.get("details", {})
-        self.created_at = kwargs.get("created_at", datetime.utcnow())
+        self.created_at = kwargs.get("created_at", utcnow())
         self.completed_at = kwargs.get("completed_at")
 
     @property
@@ -112,14 +112,14 @@ class BlockchainTransaction:
         self.gas_price = gas_price
         self.block_number = block_number
         self.status = self.STATUS_CONFIRMED
-        self.completed_at = datetime.utcnow()
+        self.completed_at = utcnow()
         return self.save()
 
     def mark_failed(self, error_message):
         """Update record after a permanent failure."""
         self.error = str(error_message)[:2000]
         self.status = self.STATUS_FAILED
-        self.completed_at = datetime.utcnow()
+        self.completed_at = utcnow()
         return self.save()
 
     @classmethod

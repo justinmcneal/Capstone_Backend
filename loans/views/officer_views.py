@@ -2,7 +2,6 @@ from rest_framework.views import APIView
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
 from bson import ObjectId
-from datetime import datetime
 from django.conf import settings
 
 from accounts.authentication import CustomJWTAuthentication
@@ -16,6 +15,7 @@ from loans.serializers import (
     ApplicationInternalNoteSerializer,
 )
 from analytics.models import AuditLog
+from loans.utils.time import utcnow
 import logging
 
 logger = logging.getLogger("loans")
@@ -1645,7 +1645,7 @@ class OfficerScheduleView(LoanOfficerRequiredMixin, APIView):
 
         # Format installments
         installments = []
-        now = datetime.utcnow()
+        now = utcnow()
         for inst in schedule.installments:
             due_date = inst.get("due_date")
             inst_status = inst.get("status", "pending")
@@ -1804,7 +1804,7 @@ class ApplyPenaltyView(LoanOfficerRequiredMixin, APIView):
             )
 
         actor_id = self._actor_id(request.user)
-        now = datetime.utcnow()
+        now = utcnow()
         for i, inst in enumerate(schedule.installments):
             if inst.get("number") == installment_number:
                 inst["penalty_status"] = "applied"
@@ -1940,7 +1940,7 @@ class WaivePenaltyView(LoanOfficerRequiredMixin, APIView):
 
         penalty_amount = float(installment.get("penalty_amount", 0) or 0)
         actor_id = self._actor_id(request.user)
-        now = datetime.utcnow()
+        now = utcnow()
         for i, inst in enumerate(schedule.installments):
             if inst.get("number") == installment_number:
                 inst["penalty_status"] = "waived"

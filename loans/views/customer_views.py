@@ -1481,7 +1481,7 @@ class WalletPaymentView(CustomerRoleRequiredMixin, APIView):
             return error_response(
                 message="tx_hash is required", status_code=status.HTTP_400_BAD_REQUEST
             )
-        if not tx_hash.startswith("0x") or len(tx_hash) != 66:
+        if not tx_hash.startswith('0x') or len(tx_hash) != 66:
             return error_response(
                 message="Invalid transaction hash format",
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -1639,7 +1639,7 @@ class WalletPaymentView(CustomerRoleRequiredMixin, APIView):
             customer_id=customer_id,
             installment_number=installment_number,
             amount=payment_amount,
-            payment_method="wallet",
+            payment_method='wallet',
             reference=tx_hash[:18],
             notes=f"ETH wallet payment: {eth_received:.6f} ETH @ {rate_info['rate']:.2f} PHP/ETH",
             recorded_by=customer_id,
@@ -1703,18 +1703,18 @@ class WalletPaymentView(CustomerRoleRequiredMixin, APIView):
 
         return success_response(
             data={
-                "status": "verified",
-                "payment_id": payment.id,
-                "installment_number": installment_number,
-                "installment_status": updated_installment["status"],
-                "amount_php": payment_amount,
-                "amount_eth": str(eth_received),
-                "eth_rate": rate_info["rate"],
-                "tx_hash": tx_hash,
-                "block_number": receipt["blockNumber"],
-                "remaining_balance": schedule.get_remaining_balance(),
-                "blockchain_sync_status": "pending",
-                "blockchain_sync_message": "Payment recorded. Blockchain audit trail sync in progress...",
+                'status': 'verified',
+                'payment_id': payment.id,
+                'installment_number': installment_number,
+                'installment_status': updated_installment['status'],
+                'amount_php': payment_amount,
+                'amount_eth': str(eth_received),
+                'eth_rate': rate_info['rate'],
+                'tx_hash': tx_hash,
+                'block_number': receipt['blockNumber'],
+                'remaining_balance': schedule.get_remaining_balance(),
+                'blockchain_sync_status': 'pending',
+                'blockchain_sync_message': 'Payment recorded. Blockchain audit trail sync in progress...',
             },
             message="Wallet payment verified and recorded",
             status_code=status.HTTP_201_CREATED,
@@ -1774,24 +1774,20 @@ class SystemWalletInfoView(CustomerRoleRequiredMixin, APIView):
 
         return success_response(
             data={
-                "wallet_address": account.address,
-                "chain_id": settings.BLOCKCHAIN_CHAIN_ID,
-                "rpc_url": settings.BLOCKCHAIN_RPC_URL,
-                "eth_php_rate": rate_info["rate"],
-                "rate_source": rate_info["source"],
-                "rate_cached_at": (
-                    datetime.fromtimestamp(
-                        rate_info["fetched_at"], tz=timezone.utc
-                    ).isoformat()
-                    if rate_info["fetched_at"]
+                'wallet_address': account.address,
+                'chain_id': settings.BLOCKCHAIN_CHAIN_ID,
+                'rpc_url': settings.BLOCKCHAIN_RPC_URL,
+                'eth_php_rate': rate_info['rate'],
+                'rate_source': rate_info['source'],
+                'rate_cached_at': (
+                    datetime.fromtimestamp(rate_info['fetched_at'], tz=timezone.utc).isoformat()
+                    if rate_info['fetched_at']
                     else None
                 ),
                 # Also include rate_updated_at for backwards compatibility
-                "rate_updated_at": (
-                    datetime.fromtimestamp(
-                        rate_info["fetched_at"], tz=timezone.utc
-                    ).isoformat()
-                    if rate_info["fetched_at"]
+                'rate_updated_at': (
+                    datetime.fromtimestamp(rate_info['fetched_at'], tz=timezone.utc).isoformat()
+                    if rate_info['fetched_at']
                     else None
                 ),
             },
