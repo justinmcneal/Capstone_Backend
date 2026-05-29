@@ -1,5 +1,5 @@
 from celery import shared_task
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from accounts.models import Customer
 import logging
 
@@ -9,7 +9,7 @@ logger = logging.getLogger(__name__)
 @shared_task
 def cleanup_unverified_accounts_task():
     hours = 12
-    cutoff_time = datetime.utcnow() - timedelta(hours=hours)
+    cutoff_time = datetime.now(timezone.utc) - timedelta(hours=hours)
 
     unverified_customers = Customer.find(
         {"verified": False, "created_at": {"$lte": cutoff_time}}

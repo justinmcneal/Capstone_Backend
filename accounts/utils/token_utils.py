@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from rest_framework_simplejwt.tokens import AccessToken, RefreshToken
 from django.conf import settings
 from accounts.models import BlacklistedToken
@@ -52,7 +52,7 @@ class TokenUtils:
             customer=str(customer_id),
             role=role,
             token_hash=TokenUtils._hash_token(refresh_token),
-            issued_at=datetime.utcnow(),
+            issued_at=datetime.now(timezone.utc),
             expires_at=expires_at,
             is_active=True,
             revoked_at=None,
@@ -234,7 +234,7 @@ class TokenUtils:
             if token_type == "refresh":
                 RefreshTokenEntry.update_many(
                     {"token_hash": token_hash},
-                    {"$set": {"is_active": False, "revoked_at": datetime.utcnow()}},
+                    {"$set": {"is_active": False, "revoked_at": datetime.now(timezone.utc)}},
                 )
 
             logger.info(f"Blacklisted {token_type} token")
@@ -288,7 +288,7 @@ class TokenUtils:
             return False
         if getattr(entry, "revoked_at", None):
             return False
-        if entry.expires_at and entry.expires_at <= datetime.utcnow():
+        if entry.expires_at and entry.expires_at <= datetime.now(timezone.utc):
             return False
         if TokenUtils.is_token_blacklisted(token, token_type="refresh"):
             return False

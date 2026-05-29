@@ -857,7 +857,7 @@ class DocumentVerifyView(AccessControlMixin, APIView):
                 document.status = "approved"
                 document.verified = True
                 document.verified_by = user.customer_id
-                document.verified_at = datetime.utcnow()
+                document.verified_at = datetime.now(timezone.utc)
             else:  # reject
                 document.status = "rejected"
                 document.verified = False

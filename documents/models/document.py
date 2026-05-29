@@ -4,7 +4,7 @@ Document Model for MSME Pathways
 Stores document metadata and references to uploaded files.
 """
 
-from datetime import datetime
+from datetime import datetime, timezone
 from bson import ObjectId
 from django.conf import settings
 from config.field_encryption import decrypt_fields, encrypt_fields
@@ -91,8 +91,8 @@ class Document:
         self.reupload_requested_at = kwargs.get("reupload_requested_at")
 
         # Timestamps
-        self.uploaded_at = kwargs.get("uploaded_at", datetime.utcnow())
-        self.updated_at = kwargs.get("updated_at", datetime.utcnow())
+        self.uploaded_at = kwargs.get("uploaded_at", datetime.now(timezone.utc))
+        self.updated_at = kwargs.get("updated_at", datetime.now(timezone.utc))
 
     @property
     def id(self):
@@ -142,7 +142,7 @@ class Document:
         self.reupload_requested = True
         self.reupload_reason = reason
         self.reupload_requested_by = officer_id
-        self.reupload_requested_at = datetime.utcnow()
+        self.reupload_requested_at = datetime.now(timezone.utc)
         self.status = "needs_review"
         return self.save()
 
@@ -156,7 +156,7 @@ class Document:
         db = get_db()
         collection = db[self.collection_name]
 
-        self.updated_at = datetime.utcnow()
+        self.updated_at = datetime.now(timezone.utc)
         data = self.to_dict()
 
         if self._id:

@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from django.conf import settings
 from config.field_encryption import decrypt_fields, encrypt_fields
 
@@ -49,8 +49,8 @@ class Admin:
         self.permissions = kwargs.get("permissions", [])  # List of permission strings
         self.super_admin = kwargs.get("super_admin", False)  # Full system access
         self.active = kwargs.get("active", True)
-        self.created_at = kwargs.get("created_at", datetime.utcnow())
-        self.updated_at = kwargs.get("updated_at", datetime.utcnow())
+        self.created_at = kwargs.get("created_at", datetime.now(timezone.utc))
+        self.updated_at = kwargs.get("updated_at", datetime.now(timezone.utc))
 
         # Login rate limiting
         self.last_login_attempt = kwargs.get("last_login_attempt")
@@ -159,7 +159,7 @@ class Admin:
         db = get_db()
         collection = db[self.collection_name]
 
-        self.updated_at = datetime.utcnow()
+        self.updated_at = datetime.now(timezone.utc)
         data = self.to_dict()
 
         if self._id:

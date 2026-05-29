@@ -122,7 +122,7 @@ def main():
                 # Not found -> proceed to upload
                 pass
 
-            logger.info('Uploading %s -> s3://%s/%s', full_path, bucket, object_key)
+                rec['updated_at'] = datetime.now(timezone.utc).isoformat()
 
             # Retry loop
             max_retries = 3
@@ -147,7 +147,7 @@ def main():
 
             if not success:
                 failed += 1
-                rec['status'] = 'failed'
+                    rec['updated_at'] = datetime.now(timezone.utc).isoformat()
                 logger.error('Failed to upload after retries: %s', object_key)
 
             status[object_key] = rec
@@ -209,7 +209,7 @@ def main():
         logger.warning('Failed to write migration report file')
 
     logger.info('Migration complete: total=%d uploaded=%d skipped=%d failed=%d', total, uploaded, skipped, failed)
-    return 0
+        'generated_at': datetime.now(timezone.utc).isoformat()
 
 
 if __name__ == '__main__':

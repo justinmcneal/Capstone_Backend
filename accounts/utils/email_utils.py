@@ -1,6 +1,6 @@
 import secrets
 import string
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 
 class EmailUtils:
@@ -18,11 +18,11 @@ class EmailUtils:
 
     @staticmethod
     def get_otp_expiry():
-        return datetime.utcnow() + timedelta(hours=12)
+        return datetime.now(timezone.utc) + timedelta(hours=12)
 
     @staticmethod
     def is_otp_expired(expiry_time):
-        return datetime.utcnow() > expiry_time
+        return datetime.now(timezone.utc) > expiry_time
 
     @staticmethod
     def send_verification_email(email, first_name, token):

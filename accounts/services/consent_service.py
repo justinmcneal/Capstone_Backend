@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from bson import ObjectId
 from accounts.models.consent import Consent
 import logging
@@ -78,13 +78,13 @@ class ConsentService:
             return existing
 
         # Create new consent
-        consent = Consent(
+            consent = Consent(
             user_id=user_id,
             user_type=user_type,
             data_consent=data_consent,
             ai_consent=ai_consent,
             ip_address=ip_address,
-            consent_date=datetime.utcnow() if (data_consent or ai_consent) else None,
+            consent_date=datetime.now(timezone.utc) if (data_consent or ai_consent) else None,
         )
         consent.save()
         logger.info(

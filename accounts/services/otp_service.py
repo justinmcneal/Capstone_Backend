@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from accounts.utils.email_utils import EmailUtils
 
 
@@ -20,13 +20,13 @@ class OTPService:
     def get_otp_expiry(minutes=None):
         """Get OTP expiry time. Default is OTP_EXPIRY_MINUTES (10 min)."""
         expiry_minutes = minutes or OTPService.OTP_EXPIRY_MINUTES
-        return datetime.utcnow() + timedelta(minutes=expiry_minutes)
+        return datetime.now(timezone.utc) + timedelta(minutes=expiry_minutes)
 
     @staticmethod
     def is_otp_expired(expiry_time):
         if not expiry_time:
             return True
-        return datetime.utcnow() > expiry_time
+        return datetime.now(timezone.utc) > expiry_time
 
     @staticmethod
     def check_otp_rate_limit(
@@ -39,7 +39,7 @@ class OTPService:
 
         if attempt_count >= OTPService.MAX_OTP_ATTEMPTS:
             if last_attempt:
-                time_since_last = datetime.utcnow() - last_attempt
+                time_since_last = datetime.now(timezone.utc) - last_attempt
                 if time_since_last.total_seconds() < OTPService.OTP_COOLDOWN_SECONDS:
                     seconds_remaining = OTPService.OTP_COOLDOWN_SECONDS - int(
                         time_since_last.total_seconds()
@@ -61,7 +61,7 @@ class OTPService:
     ):
         current_count = getattr(customer, attempt_field, 0)
         setattr(customer, attempt_field, current_count + 1)
-        setattr(customer, last_attempt_field, datetime.utcnow())
+        setattr(customer, last_attempt_field, datetime.now(timezone.utc))
         customer.save()
 
     @staticmethod

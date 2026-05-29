@@ -285,7 +285,7 @@ class TestSyncSchedule:
     @patch("loans.blockchain.models.BlockchainTransaction.create_pending")
     @patch("loans.models.application.LoanApplication.find_by_id")
     def test_impl_success(self, mock_find, mock_pending, mock_create_sched, blockchain_settings):
-        from datetime import datetime
+        from datetime import datetime, timezone
         from loans.blockchain.sync import _sync_schedule_impl
         from loans.models.repayment import RepaymentSchedule
 
@@ -303,8 +303,8 @@ class TestSyncSchedule:
             "term_months": 12,
             "monthly_payment": 4583,
             "total_amount": 55000,
-            "start_date": datetime.utcnow(),
-            "created_at": datetime.utcnow(),
+            "start_date": datetime.now(timezone.utc),
+            "created_at": datetime.now(timezone.utc),
             "installments": [],
         }
         settings.MONGODB["repayment_schedules"].insert_one(schedule_doc)
@@ -330,7 +330,7 @@ class TestSyncPayment:
     @patch("loans.blockchain.services.repayment_service.record_payment_onchain")
     @patch("loans.blockchain.models.BlockchainTransaction.create_pending")
     def test_impl_success(self, mock_pending, mock_record, blockchain_settings):
-        from datetime import datetime
+        from datetime import datetime, timezone
         from bson import ObjectId
         from loans.blockchain.sync import _sync_payment_impl
 
@@ -345,7 +345,7 @@ class TestSyncPayment:
             "amount": 4583,
             "payment_method": "gcash",
             "reference": "PAY_REF_001",
-            "recorded_at": datetime.utcnow(),
+            "recorded_at": datetime.now(timezone.utc),
         }
         settings.MONGODB["loan_payments"].insert_one(payment_doc)
 

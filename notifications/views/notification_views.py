@@ -9,7 +9,7 @@ Endpoints:
 """
 import logging
 import math
-from datetime import datetime
+from datetime import datetime, timezone
 from bson import ObjectId
 
 from rest_framework.views import APIView
@@ -224,9 +224,9 @@ class NotificationMarkReadView(AccessControlMixin, APIView):
             )
         
         # Mark as read
-        collection.update_one(
+            collection.update_one(
             {'_id': doc['_id']},
-            {'$set': {'status': 'read', 'read_at': datetime.utcnow()}}
+            {'$set': {'status': 'read', 'read_at': datetime.now(timezone.utc)}}
         )
         
         logger.info(f"Notification {notification_id} marked as read")
@@ -263,7 +263,7 @@ class NotificationMarkAllReadView(AccessControlMixin, APIView):
 
         result = collection.update_many(
             update_query,
-            {'$set': {'status': 'read', 'read_at': datetime.utcnow()}}
+            {'$set': {'status': 'read', 'read_at': datetime.now(timezone.utc)}}
         )
         
         logger.info(f"Marked {result.modified_count} notifications as read")

@@ -1,7 +1,7 @@
 from rest_framework.views import APIView
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
-from datetime import datetime
+from datetime import datetime, timezone
 
 from accounts.authentication import CustomJWTAuthentication
 from accounts.services.consent_service import ConsentService
@@ -135,7 +135,7 @@ class ConsentView(APIView):
                 from loans.blockchain.sync import sync_consent
 
                 consent_timestamp = (
-                    consent.updated_at or consent.consent_date or datetime.utcnow()
+                    consent.updated_at or consent.consent_date or datetime.now(timezone.utc)
                 )
                 sync_consent(
                     user_id=str(user_id),
@@ -241,7 +241,7 @@ class ConsentView(APIView):
                 from loans.blockchain.sync import sync_consent
 
                 consent_timestamp = (
-                    consent.updated_at or consent.consent_date or datetime.utcnow()
+                    consent.updated_at or consent.consent_date or datetime.now(timezone.utc)
                 )
                 sync_consent(
                     user_id=str(user_id),

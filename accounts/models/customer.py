@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from django.conf import settings
 from config.field_encryption import decrypt_fields, encrypt_fields
 
@@ -27,8 +27,8 @@ class Customer:
         self.password = kwargs.get("password")
         self.role = kwargs.get("role", "customer")
         self.verified = kwargs.get("verified", False)
-        self.created_at = kwargs.get("created_at", datetime.utcnow())
-        self.updated_at = kwargs.get("updated_at", datetime.utcnow())
+        self.created_at = kwargs.get("created_at", datetime.now(timezone.utc))
+        self.updated_at = kwargs.get("updated_at", datetime.now(timezone.utc))
         self.phone = kwargs.get("phone", "")  # Phone number (records only)
         self.language = kwargs.get("language", "en")  # Language preference (en, tl)
 
@@ -146,7 +146,7 @@ class Customer:
         db = get_db()
         collection = db[self.collection_name]
 
-        self.updated_at = datetime.utcnow()
+        self.updated_at = datetime.now(timezone.utc)
         data = self.to_dict()
 
         if self._id:

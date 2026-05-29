@@ -5,7 +5,7 @@ Loan Officer Dashboard - Review activity and queue stats.
 from rest_framework.views import APIView
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
-from datetime import datetime
+from datetime import datetime, timezone
 from bson import ObjectId
 
 from accounts.authentication import CustomJWTAuthentication
@@ -51,7 +51,7 @@ class OfficerDashboardView(LoanOfficerRequiredMixin, APIView):
             )
         db = settings.MONGODB
 
-        today = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+        today = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
 
         # My reviews - applications I've reviewed
         my_approved = db["loan_applications"].count_documents(
