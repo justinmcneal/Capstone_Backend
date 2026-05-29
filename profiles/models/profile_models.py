@@ -6,7 +6,7 @@ Collections:
 - business_profiles: Business/MSME information
 - alternative_data: Alternative credit scoring data
 """
-from datetime import datetime, date, time
+from datetime import datetime, date, time, timezone
 from bson import ObjectId
 from django.conf import settings
 from config.field_encryption import decrypt_fields, encrypt_fields
@@ -151,8 +151,8 @@ class CustomerProfile:
         self.completion_percentage = kwargs.get('completion_percentage', 0)
         
         # Timestamps
-        self.created_at = kwargs.get('created_at', datetime.utcnow())
-        self.updated_at = kwargs.get('updated_at', datetime.utcnow())
+        self.created_at = kwargs.get('created_at', datetime.now(timezone.utc))
+        self.updated_at = kwargs.get('updated_at', datetime.now(timezone.utc))
     
     @property
     def id(self):
@@ -216,7 +216,7 @@ class CustomerProfile:
         db = get_db()
         collection = db[self.collection_name]
         
-        self.updated_at = datetime.utcnow()
+        self.updated_at = datetime.now(timezone.utc)
         self.calculate_completion()
         data = self.to_dict()
         

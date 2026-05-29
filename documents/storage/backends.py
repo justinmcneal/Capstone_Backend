@@ -6,7 +6,7 @@ Designed for easy migration from local filesystem to cloud storage (S3, GCS).
 
 import os
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from django.conf import settings
 import logging
 import time
@@ -57,7 +57,7 @@ class LocalStorageBackend(StorageBackend):
         """Generate unique filename while preserving extension"""
         ext = os.path.splitext(original_filename)[1].lower()
         unique_id = uuid.uuid4().hex[:12]
-        timestamp = datetime.utcnow().strftime("%Y%m%d")
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%d")
         return f"{timestamp}_{unique_id}{ext}"
 
     def _ensure_directory(self, path):
@@ -160,7 +160,7 @@ class S3StorageBackend(StorageBackend):
     def _generate_filename(self, original_filename):
         ext = os.path.splitext(original_filename)[1].lower()
         unique_id = uuid.uuid4().hex[:12]
-        timestamp = datetime.utcnow().strftime("%Y%m%d")
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%d")
         return f"{timestamp}_{unique_id}{ext}"
 
     def _build_object_key(self, customer_id, document_type, original_filename):

@@ -196,8 +196,8 @@ class AdminLoginView(APIView):
                 )
 
             # Check lockout
-            if admin.locked_until and admin.locked_until > datetime.utcnow():
-                remaining = (admin.locked_until - datetime.utcnow()).seconds // 60
+            if admin.locked_until and admin.locked_until > datetime.now(timezone.utc):
+                remaining = (admin.locked_until - datetime.now(timezone.utc)).seconds // 60
                 _log_admin_login_failure(
                     request,
                     username,
@@ -214,7 +214,7 @@ class AdminLoginView(APIView):
                 admin.failed_login_attempts += 1
 
                 if admin.failed_login_attempts >= 5:
-                    admin.locked_until = datetime.utcnow() + timedelta(minutes=30)
+                    admin.locked_until = datetime.now(timezone.utc) + timedelta(minutes=30)
                     admin.save()
                     _log_admin_login_failure(
                         request,
@@ -242,7 +242,7 @@ class AdminLoginView(APIView):
             # Reset failed attempts
             admin.failed_login_attempts = 0
             admin.locked_until = None
-            admin.last_login_attempt = datetime.utcnow()
+            admin.last_login_attempt = datetime.now(timezone.utc)
             admin.save()
 
             # MFA / 2FA is mandatory for all administrator accounts.

@@ -5,7 +5,7 @@ Admin Dashboard - System-wide analytics for admins.
 from rest_framework.views import APIView
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from bson import ObjectId
 
 from accounts.authentication import CustomJWTAuthentication
@@ -71,7 +71,7 @@ class AdminDashboardView(AdminRequiredMixin, APIView):
         }
 
         # AI usage (last 7 days)
-        week_ago = datetime.utcnow() - timedelta(days=7)
+        week_ago = datetime.now(timezone.utc) - timedelta(days=7)
         ai_sessions = db["ai_interactions"].count_documents(
             {"created_at": {"$gte": week_ago}}
         )

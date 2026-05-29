@@ -1,7 +1,7 @@
 from rest_framework.views import APIView
 from rest_framework import status
 from rest_framework.permissions import AllowAny
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from accounts.models import LoanOfficer
 from accounts.utils.token_utils import TokenUtils
@@ -123,8 +123,8 @@ class LoanOfficerLoginView(APIView):
                 )
 
             # Check lockout
-            if officer.locked_until and officer.locked_until > datetime.utcnow():
-                remaining = (officer.locked_until - datetime.utcnow()).seconds // 60
+            if officer.locked_until and officer.locked_until > datetime.now(timezone.utc):
+                remaining = (officer.locked_until - datetime.now(timezone.utc)).seconds // 60
                 _log_loan_officer_login_failure(
                     request,
                     email,
@@ -142,7 +142,7 @@ class LoanOfficerLoginView(APIView):
                 officer.failed_login_attempts += 1
 
                 if officer.failed_login_attempts >= 5:
-                    officer.locked_until = datetime.utcnow() + timedelta(minutes=15)
+                    officer.locked_until = datetime.now(timezone.utc) + timedelta(minutes=15)
                     officer.save()
                     _log_loan_officer_login_failure(
                         request,
@@ -170,7 +170,7 @@ class LoanOfficerLoginView(APIView):
             # Reset failed attempts on successful login
             officer.failed_login_attempts = 0
             officer.locked_until = None
-            officer.last_login_attempt = datetime.utcnow()
+            officer.last_login_attempt = datetime.now(timezone.utc)
             officer.save()
 
             # Check if 2FA is enabled

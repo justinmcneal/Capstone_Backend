@@ -9,8 +9,10 @@ https://docs.djangoproject.com/en/4.2/howto/deployment/asgi/
 
 import os
 
+os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings")
+
 from django.core.asgi import get_asgi_application
 
-os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings")
+from . import prometheus_metrics  # noqa: F401 - optional startup side-effects
 
 application = get_asgi_application()

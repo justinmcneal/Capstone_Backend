@@ -329,3 +329,46 @@ python scripts/restore_encrypted_backup.py /path/to/backup.archive.gz.enc
 - [Deployment Guide](docs/DEPLOYMENT_GUIDE.md)
 - [Authentication](docs/AUTHENTICATION.md)
 - [CNN Document Analysis](docs/CNN_DOCUMENT_ANALYSIS.md)
+
+---
+
+## Notifications: Email Sender & Metrics
+
+Configuration options added to improve email throughput and observability:
+
+- `EMAIL_SENDER_THREADPOOL_MAX_WORKERS` (Django `settings`): integer (default 4)
+	- Controls the size of the internal `ThreadPoolExecutor` used when `EmailSender(send_async=True)`.
+	- Example (in `settings.py` or via environment-backed settings):
+
+```python
+# config/settings.py
+EMAIL_SENDER_THREADPOOL_MAX_WORKERS = 8
+```
+
+- Prometheus metrics (optional): the email sender and Celery task expose simple counters
+	when `prometheus-client` is installed:
+
+	- `notifications_email_send_success_total`
+	- `notifications_email_send_failure_total`
+	- `notifications_email_task_success_total`
+	- `notifications_email_task_failure_total`
+
+	To enable scraping, run a Prometheus metrics HTTP server on startup (or integrate with
+	your existing metrics endpoint). Example (quick, development-friendly):
+
+```python
+# in config/wsgi.py or a startup module
+from prometheus_client import start_http_server
+
+# start metrics server on port 8001 (choose an appropriate port for your infra)
+start_http_server(8001)
+```
+
+	For production deployments, integrate with your existing metrics stack (e.g. expose
+	metrics via your application's central metrics endpoint or use a pushgateway).
+
+Notes:
+- The Prometheus counters are optional and guarded; the code falls back gracefully if
+	`prometheus-client` is not installed.
+- Adjust `EMAIL_SENDER_THREADPOOL_MAX_WORKERS` based on workload and available CPU.
+

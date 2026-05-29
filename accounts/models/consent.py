@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from bson import ObjectId
 from django.conf import settings
 
@@ -32,7 +32,7 @@ class Consent:
         )  # Consent to data collection
         self.ai_consent = kwargs.get("ai_consent", False)  # Consent to AI interactions
         self.consent_date = kwargs.get("consent_date")  # When consent was first given
-        self.updated_at = kwargs.get("updated_at", datetime.utcnow())
+        self.updated_at = kwargs.get("updated_at", datetime.now(timezone.utc))
         self.ip_address = kwargs.get(
             "ip_address", ""
         )  # IP at time of consent for audit
@@ -83,11 +83,11 @@ class Consent:
         db = get_db()
         collection = db[self.collection_name]
 
-        self.updated_at = datetime.utcnow()
+        self.updated_at = datetime.now(timezone.utc)
 
         # Set consent_date on first save if any consent is given
         if not self.consent_date and (self.data_consent or self.ai_consent):
-            self.consent_date = datetime.utcnow()
+            self.consent_date = datetime.now(timezone.utc)
 
         data = self.to_dict()
 

@@ -2,7 +2,7 @@
 AuditLog Model - Track all important actions in the system.
 """
 
-from datetime import datetime
+from datetime import datetime, timezone
 from django.conf import settings
 
 
@@ -92,7 +92,7 @@ class AuditLog:
         self.ip_address = kwargs.get("ip_address", "")
 
         # Timestamp
-        self.timestamp = kwargs.get("timestamp", datetime.utcnow())
+        self.timestamp = kwargs.get("timestamp", datetime.now(timezone.utc))
 
     @property
     def id(self):

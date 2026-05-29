@@ -1,8 +1,7 @@
 """
 Notification Model - Store notification history.
 """
-from datetime import datetime
-from bson import ObjectId
+from datetime import datetime, timezone
 from django.conf import settings
 
 
@@ -55,7 +54,7 @@ class Notification:
         self.error_message = kwargs.get('error_message', '')
         
         # Timestamps
-        self.created_at = kwargs.get('created_at', datetime.utcnow())
+        self.created_at = kwargs.get('created_at', datetime.now(timezone.utc))
         self.sent_at = kwargs.get('sent_at')
     
     @property
@@ -103,7 +102,7 @@ class Notification:
     
     def mark_sent(self):
         self.status = 'sent'
-        self.sent_at = datetime.utcnow()
+        self.sent_at = datetime.now(timezone.utc)
         return self.save()
     
     def mark_failed(self, error):

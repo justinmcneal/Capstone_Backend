@@ -3,7 +3,7 @@ from accounts.utils.token_utils import TokenUtils
 from accounts.utils.email_utils import EmailUtils
 from accounts.services.otp_service import OTPService
 from rest_framework_simplejwt.tokens import RefreshToken
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pymongo.errors import DuplicateKeyError
 
 
@@ -136,7 +136,7 @@ class AuthService:
         if not customer.last_login_attempt:
             return (True, 0)
 
-        last_attempt = datetime.utcnow() - customer.last_login_attempt
+        last_attempt = datetime.now(timezone.utc) - customer.last_login_attempt
         rate_limit_seconds = 30
 
         if last_attempt.total_seconds() < rate_limit_seconds:
@@ -147,7 +147,7 @@ class AuthService:
 
     @staticmethod
     def update_login_attempt(customer):
-        customer.last_login_attempt = datetime.utcnow()
+        customer.last_login_attempt = datetime.now(timezone.utc)
         customer.save()
 
     @staticmethod

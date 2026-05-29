@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from django.conf import settings
 
 
@@ -16,7 +16,7 @@ class BlacklistedToken:
         self._id = kwargs.get("_id")
         self.token = kwargs.get("token")
         self.token_type = kwargs.get("token_type", "refresh")
-        self.blacklisted_at = kwargs.get("blacklisted_at", datetime.utcnow())
+        self.blacklisted_at = kwargs.get("blacklisted_at", datetime.now(timezone.utc))
         self.expires_at = kwargs.get("expires_at")
 
     @property
@@ -90,7 +90,7 @@ class RefreshTokenEntry:
         self.customer = kwargs.get("customer")
         self.role = kwargs.get("role", "customer")
         self.token_hash = kwargs.get("token_hash")
-        self.issued_at = kwargs.get("issued_at", datetime.utcnow())
+        self.issued_at = kwargs.get("issued_at", datetime.now(timezone.utc))
         self.expires_at = kwargs.get("expires_at")
         self.is_active = kwargs.get("is_active", True)
         self.revoked_at = kwargs.get("revoked_at")

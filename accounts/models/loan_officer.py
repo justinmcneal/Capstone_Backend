@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from django.conf import settings
 from config.field_encryption import decrypt_fields, encrypt_fields
 
@@ -43,8 +43,8 @@ class LoanOfficer:
             "verified", True
         )  # Admin-created, so verified by default
         self.active = kwargs.get("active", True)  # Can be deactivated by admin
-        self.created_at = kwargs.get("created_at", datetime.utcnow())
-        self.updated_at = kwargs.get("updated_at", datetime.utcnow())
+        self.created_at = kwargs.get("created_at", datetime.now(timezone.utc))
+        self.updated_at = kwargs.get("updated_at", datetime.now(timezone.utc))
         self.created_by = kwargs.get(
             "created_by"
         )  # Admin ObjectId who created this officer
@@ -143,7 +143,7 @@ class LoanOfficer:
         db = get_db()
         collection = db[self.collection_name]
 
-        self.updated_at = datetime.utcnow()
+        self.updated_at = datetime.now(timezone.utc)
         data = self.to_dict()
 
         if self._id:

@@ -18,7 +18,8 @@ from documents.views import DocumentUploadView
 class FakeDocument:
     def __init__(self, **kwargs):
         self.id = 'fake-doc-id'
-        self.uploaded_at = __import__('datetime').datetime.utcnow()
+        from datetime import datetime, timezone
+        self.uploaded_at = datetime.now(timezone.utc)
         self.file_size = kwargs.get('file_size', 0)
         self.file_size_display = f"{self.file_size} bytes"
         self.status = 'pending'
