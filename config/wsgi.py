@@ -8,7 +8,7 @@ https://docs.djangoproject.com/en/4.2/howto/deployment/wsgi/
 """
 
 import os
-from typing import Callable
+from typing import Callable, Optional
 
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings")
 
@@ -33,7 +33,7 @@ def _not_found(environ, start_response):
 
 
 class _MetricsDispatcher:
-	def __init__(self, app: Callable, metrics_app: Callable | None) -> None:
+	def __init__(self, app: Callable, metrics_app: Optional[Callable]) -> None:
 		self.app = app
 		self.metrics_app = metrics_app
 
