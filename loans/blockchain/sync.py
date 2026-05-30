@@ -662,6 +662,28 @@ def _sync_penalty_impl(loan_id, installment_number, amount, action, reason=""):
     from loans.blockchain.services.audit_service import log_penalty_onchain
 
     action_key = "penalty_waived" if action == "waive" else "penalty_applied"
+    db = getattr(settings, "MONGODB", None)
+    existing = None
+    if db is not None:
+        existing = db["blockchain_transactions"].find_one(
+            {
+                "loan_id": loan_id,
+                "action": action_key,
+                "status": BlockchainTransaction.STATUS_CONFIRMED,
+                "details.installment_number": installment_number,
+                "details.amount": amount,
+                "details.reason": reason,
+            }
+        )
+    if existing:
+        logger.info(
+            "sync_penalty skipped existing confirmed tx: loan=%s installment=%s action=%s",
+            loan_id,
+            installment_number,
+            action_key,
+        )
+        return
+
     tx_record = BlockchainTransaction.create_pending(
         loan_id=loan_id,
         action=action_key,
