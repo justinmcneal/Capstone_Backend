@@ -1,7 +1,15 @@
 from .profile_views import (
-    CustomerProfileView,
-    BusinessProfileView,
     AlternativeDataView,
+    BusinessProfileView,
+    CustomerProfileView,
+    NotificationPreferencesView,
     ProfileSummaryView,
-    NotificationPreferencesView
 )
+
+__all__ = [
+    "CustomerProfileView",
+    "BusinessProfileView",
+    "AlternativeDataView",
+    "ProfileSummaryView",
+    "NotificationPreferencesView",
+]

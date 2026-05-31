@@ -1,6 +1,13 @@
 from .profile_serializers import (
-    CustomerProfileSerializer,
-    CustomerProfileResponseSerializer,
+    AlternativeDataSerializer,
     BusinessProfileSerializer,
-    AlternativeDataSerializer
+    CustomerProfileResponseSerializer,
+    CustomerProfileSerializer,
 )
+
+__all__ = [
+    "CustomerProfileSerializer",
+    "CustomerProfileResponseSerializer",
+    "BusinessProfileSerializer",
+    "AlternativeDataSerializer",
+]
