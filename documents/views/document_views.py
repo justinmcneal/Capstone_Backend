@@ -4,7 +4,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.parsers import MultiPartParser, FormParser
 from django.conf import settings
 from bson import ObjectId
-from datetime import datetime
+from datetime import datetime, timezone
 import threading
 
 from accounts.authentication import CustomJWTAuthentication
