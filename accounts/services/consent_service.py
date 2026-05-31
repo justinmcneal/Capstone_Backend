@@ -78,7 +78,7 @@ class ConsentService:
             return existing
 
         # Create new consent
-            consent = Consent(
+        consent = Consent(
             user_id=user_id,
             user_type=user_type,
             data_consent=data_consent,

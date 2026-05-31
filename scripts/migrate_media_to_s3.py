@@ -10,7 +10,6 @@ This script is intentionally conservative: default is dry-run.
 import os
 import argparse
 import logging
-
 import django
 
 # Bootstrap Django settings
@@ -22,7 +21,7 @@ import boto3
 from botocore.exceptions import ClientError
 import json
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 
 logger = logging.getLogger('migrate_media')
 logging.basicConfig(level=logging.INFO)
@@ -111,7 +110,7 @@ def main():
                 s3.head_object(Bucket=bucket, Key=object_key)
                 logger.info('Remote object exists, marking uploaded: %s', object_key)
                 rec['status'] = 'uploaded'
-                rec['updated_at'] = datetime.utcnow().isoformat()
+                rec['updated_at'] = datetime.now(timezone.utc).isoformat()
                 status[object_key] = rec
                 skipped += 1
                 # checkpoint
@@ -121,8 +120,6 @@ def main():
             except ClientError:
                 # Not found -> proceed to upload
                 pass
-
-                rec['updated_at'] = datetime.now(timezone.utc).isoformat()
 
             # Retry loop
             max_retries = 3
@@ -136,7 +133,7 @@ def main():
                     success = True
                     uploaded += 1
                     rec['status'] = 'uploaded'
-                    rec['updated_at'] = datetime.utcnow().isoformat()
+                    rec['updated_at'] = datetime.now(timezone.utc).isoformat()
                     logger.info('Uploaded: %s', object_key)
                 except Exception as exc:
                     rec['retries'] += 1
@@ -147,7 +144,7 @@ def main():
 
             if not success:
                 failed += 1
-                    rec['updated_at'] = datetime.now(timezone.utc).isoformat()
+                rec['updated_at'] = datetime.now(timezone.utc).isoformat()
                 logger.error('Failed to upload after retries: %s', object_key)
 
             status[object_key] = rec
@@ -198,7 +195,7 @@ def main():
         'uploaded': uploaded,
         'skipped': skipped,
         'failed': failed,
-        'generated_at': datetime.utcnow().isoformat()
+        'generated_at': datetime.now(timezone.utc).isoformat()
     }
     report_file = os.path.abspath(getattr(settings, 'MIGRATION_REPORT_FILE', 'migration_report.json'))
     try:
@@ -209,7 +206,6 @@ def main():
         logger.warning('Failed to write migration report file')
 
     logger.info('Migration complete: total=%d uploaded=%d skipped=%d failed=%d', total, uploaded, skipped, failed)
-        'generated_at': datetime.now(timezone.utc).isoformat()
 
 
 if __name__ == '__main__':

@@ -19,7 +19,7 @@ logger = logging.getLogger("notifications")
 
 # Prometheus metrics (optional, increments are safe when client not scraped)
 try:
-    from prometheus_client import Counter
+    from prometheus_client import Counter 
 
     EMAIL_SEND_SUCCESS_COUNTER = Counter(
         "notifications_email_send_success_total", "Total successful email sends"
