@@ -269,7 +269,7 @@ Content-Type: application/json
 7. Exercise the 2FA flow: `POST /2fa/setup/`, `POST /2fa/confirm/`, `POST /2fa/verify/`
 8. Test password reset: `POST /forgot-password/`, `POST /verify-reset-otp/`, `POST /reset-password/`
 9. Test `POST /refresh-token/` and `POST /logout/`
-10. If you have admin credentials, test `POST /admin/login/` and the admin management routes.
+10. If you have super-admin credentials, test `POST /admin/login/`, `POST /admin/admins/` (create admin), and the admin management routes.
 
 ## Common Errors
 1. `401 Unauthorized`
