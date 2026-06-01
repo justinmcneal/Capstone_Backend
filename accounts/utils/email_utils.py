@@ -21,7 +21,18 @@ class EmailUtils:
         return datetime.now(timezone.utc) + timedelta(hours=12)
 
     @staticmethod
+    def to_aware_utc(value):
+        if value is None:
+            return None
+        if value.tzinfo is None or value.tzinfo.utcoffset(value) is None:
+            return value.replace(tzinfo=timezone.utc)
+        return value.astimezone(timezone.utc)
+
+    @staticmethod
     def is_otp_expired(expiry_time):
+        expiry_time = EmailUtils.to_aware_utc(expiry_time)
+        if not expiry_time:
+            return True
         return datetime.now(timezone.utc) > expiry_time
 
     @staticmethod
