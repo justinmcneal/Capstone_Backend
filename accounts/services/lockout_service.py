@@ -1,5 +1,4 @@
-from datetime import datetime, timedelta
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from accounts.models import Customer
 import logging
 
@@ -53,7 +52,9 @@ class LockoutService:
         )
 
         if customer.failed_login_attempts >= LockoutService.MAX_ATTEMPTS:
-            customer.locked_until = datetime.now(timezone.utc) + LockoutService.LOCKOUT_DURATION
+            customer.locked_until = (
+                datetime.now(timezone.utc) + LockoutService.LOCKOUT_DURATION
+            )
             customer.save()
             logger.warning(
                 f"Account locked for {customer.email} after {LockoutService.MAX_ATTEMPTS} failed attempts"

@@ -197,7 +197,9 @@ class AdminLoginView(APIView):
 
             # Check lockout
             if admin.locked_until and admin.locked_until > datetime.now(timezone.utc):
-                remaining = (admin.locked_until - datetime.now(timezone.utc)).seconds // 60
+                remaining = (
+                    admin.locked_until - datetime.now(timezone.utc)
+                ).seconds // 60
                 _log_admin_login_failure(
                     request,
                     username,
@@ -214,7 +216,9 @@ class AdminLoginView(APIView):
                 admin.failed_login_attempts += 1
 
                 if admin.failed_login_attempts >= 5:
-                    admin.locked_until = datetime.now(timezone.utc) + timedelta(minutes=30)
+                    admin.locked_until = datetime.now(timezone.utc) + timedelta(
+                        minutes=30
+                    )
                     admin.save()
                     _log_admin_login_failure(
                         request,

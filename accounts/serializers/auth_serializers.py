@@ -21,7 +21,7 @@ class SignUpSerializer(
     last_name = serializers.CharField(max_length=100)
     email = serializers.EmailField(required=True, write_only=True)
     password = serializers.CharField(write_only=True)
-    password_confirm = serializers.CharField(write_only=True, required=False)
+    password_confirm = serializers.CharField(write_only=True, required=True)
     phone = serializers.CharField(max_length=20, required=False, allow_blank=True)
     language = serializers.ChoiceField(
         choices=[("en", "English"), ("tl", "Tagalog")], default="en", required=False
@@ -69,11 +69,16 @@ class SignUpSerializer(
         return value
 
     def validate(self, data):
-        """Validate password confirmation if provided"""
+        """Validate that password confirmation is provided and matches."""
         password = data.get("password")
         password_confirm = data.get("password_confirm")
 
-        if password_confirm and password != password_confirm:
+        if password_confirm is None:
+            raise serializers.ValidationError(
+                {"password_confirm": "This field is required."}
+            )
+
+        if password != password_confirm:
             raise serializers.ValidationError(
                 {"password_confirm": "Passwords do not match"}
             )

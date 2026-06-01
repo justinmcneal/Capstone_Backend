@@ -234,7 +234,12 @@ class TokenUtils:
             if token_type == "refresh":
                 RefreshTokenEntry.update_many(
                     {"token_hash": token_hash},
-                    {"$set": {"is_active": False, "revoked_at": datetime.now(timezone.utc)}},
+                    {
+                        "$set": {
+                            "is_active": False,
+                            "revoked_at": datetime.now(timezone.utc),
+                        }
+                    },
                 )
 
             logger.info(f"Blacklisted {token_type} token")
