@@ -135,7 +135,9 @@ class ConsentView(APIView):
                 from loans.blockchain.sync import sync_consent
 
                 consent_timestamp = (
-                    consent.updated_at or consent.consent_date or datetime.now(timezone.utc)
+                    consent.updated_at
+                    or consent.consent_date
+                    or datetime.now(timezone.utc)
                 )
                 sync_consent(
                     user_id=str(user_id),
@@ -241,7 +243,9 @@ class ConsentView(APIView):
                 from loans.blockchain.sync import sync_consent
 
                 consent_timestamp = (
-                    consent.updated_at or consent.consent_date or datetime.now(timezone.utc)
+                    consent.updated_at
+                    or consent.consent_date
+                    or datetime.now(timezone.utc)
                 )
                 sync_consent(
                     user_id=str(user_id),

@@ -123,8 +123,12 @@ class LoanOfficerLoginView(APIView):
                 )
 
             # Check lockout
-            if officer.locked_until and officer.locked_until > datetime.now(timezone.utc):
-                remaining = (officer.locked_until - datetime.now(timezone.utc)).seconds // 60
+            if officer.locked_until and officer.locked_until > datetime.now(
+                timezone.utc
+            ):
+                remaining = (
+                    officer.locked_until - datetime.now(timezone.utc)
+                ).seconds // 60
                 _log_loan_officer_login_failure(
                     request,
                     email,
@@ -142,7 +146,9 @@ class LoanOfficerLoginView(APIView):
                 officer.failed_login_attempts += 1
 
                 if officer.failed_login_attempts >= 5:
-                    officer.locked_until = datetime.now(timezone.utc) + timedelta(minutes=15)
+                    officer.locked_until = datetime.now(timezone.utc) + timedelta(
+                        minutes=15
+                    )
                     officer.save()
                     _log_loan_officer_login_failure(
                         request,
