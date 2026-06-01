@@ -123,6 +123,7 @@ class Verify2FAView(APIView):
     """
 
     permission_classes = [AllowAny]
+    authentication_classes = []
     throttle_classes = [TwoFactorRateThrottle]
 
     def post(self, request):

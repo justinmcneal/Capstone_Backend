@@ -20,6 +20,7 @@ logger = logging.getLogger("authentication")
 
 class ForgotPasswordView(APIView):
     permission_classes = [AllowAny]
+    authentication_classes = []
     throttle_classes = [ForgotPasswordRateThrottle]
 
     def post(self, request):
@@ -46,6 +47,7 @@ class ForgotPasswordView(APIView):
 
 class VerifyResetOTPView(APIView):
     permission_classes = [AllowAny]
+    authentication_classes = []
     throttle_classes = [OTPVerificationRateThrottle]
 
     def post(self, request):
@@ -71,6 +73,7 @@ class VerifyResetOTPView(APIView):
 
 class ResetPasswordView(APIView):
     permission_classes = [AllowAny]
+    authentication_classes = []
     throttle_classes = [OTPVerificationRateThrottle]
 
     def post(self, request):

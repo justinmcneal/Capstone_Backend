@@ -24,9 +24,7 @@ class OTPService:
 
     @staticmethod
     def is_otp_expired(expiry_time):
-        if not expiry_time:
-            return True
-        return datetime.now(timezone.utc) > expiry_time
+        return EmailUtils.is_otp_expired(expiry_time)
 
     @staticmethod
     def check_otp_rate_limit(
@@ -39,6 +37,7 @@ class OTPService:
 
         if attempt_count >= OTPService.MAX_OTP_ATTEMPTS:
             if last_attempt:
+                last_attempt = EmailUtils.to_aware_utc(last_attempt)
                 time_since_last = datetime.now(timezone.utc) - last_attempt
                 if time_since_last.total_seconds() < OTPService.OTP_COOLDOWN_SECONDS:
                     seconds_remaining = OTPService.OTP_COOLDOWN_SECONDS - int(
