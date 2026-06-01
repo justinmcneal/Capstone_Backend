@@ -71,6 +71,7 @@ class LoanOfficerLoginView(APIView):
     """
 
     permission_classes = [AllowAny]
+    authentication_classes = []
     throttle_classes = [LoanOfficerLoginRateThrottle]
 
     def post(self, request):
@@ -252,6 +253,7 @@ class LoanOfficerLogoutView(APIView):
     """
 
     permission_classes = [AllowAny]
+    authentication_classes = []
 
     def post(self, request):
         try:
