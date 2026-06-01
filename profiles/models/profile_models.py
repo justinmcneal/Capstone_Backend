@@ -304,7 +304,22 @@ class BusinessProfile:
         # Use explicit None check to handle 0 as valid value
         _age_months = kwargs.get("business_age_months")
         _years_op = kwargs.get("years_in_operation")
-        self.business_age_months = _age_months if _age_months is not None else _years_op
+        # If caller supplied canonical months, use it. Otherwise, if a legacy
+        # `years_in_operation` is provided, treat it as years and convert to months
+        # (rounded to nearest integer month). This keeps backward compatibility
+        # while normalizing stored data to months.
+        if _age_months is not None:
+            self.business_age_months = _age_months
+        elif _years_op is not None:
+            try:
+                # Accept numeric values (int/float) and convert years -> months
+                years = float(_years_op)
+                self.business_age_months = int(round(years * 12))
+            except Exception:
+                # If conversion fails, store the raw value to avoid data loss.
+                self.business_age_months = _years_op
+        else:
+            self.business_age_months = None
         self.is_registered = kwargs.get("is_registered", False)  # DTI/SEC registered
         self.registration_type = kwargs.get("registration_type")  # DTI, SEC, BIR
         self.registration_number = kwargs.get("registration_number", "")
