@@ -101,6 +101,7 @@ class CSRFTokenView(APIView):
 
 class SignUpView(APIView):
     permission_classes = [AllowAny]
+    authentication_classes = []
     throttle_classes = [SignUpRateThrottle]
 
     def post(self, request):
@@ -198,6 +199,7 @@ class UpdateLanguageView(APIView):
 
 class LoginView(APIView):
     permission_classes = [AllowAny]
+    authentication_classes = []
     throttle_classes = [LoginRateThrottle]
 
     def post(self, request):
@@ -348,6 +350,7 @@ class LoginView(APIView):
 
 class VerifyOTP(APIView):
     permission_classes = [AllowAny]
+    authentication_classes = []
     throttle_classes = [OTPVerificationRateThrottle]
 
     def post(self, request):
@@ -436,6 +439,7 @@ class VerifyOTP(APIView):
 
 class ResendOTP(APIView):
     permission_classes = [AllowAny]
+    authentication_classes = []
     throttle_classes = [OTPResendRateThrottle]
 
     def post(self, request):
@@ -492,6 +496,7 @@ class ResendOTP(APIView):
 
 class RefreshTokenView(APIView):
     permission_classes = [AllowAny]
+    authentication_classes = []
 
     def post(self, request):
         """Refresh access token and blacklist old refresh token"""
@@ -652,6 +657,7 @@ class RefreshTokenView(APIView):
 
 class LogoutView(APIView):
     permission_classes = [AllowAny]
+    authentication_classes = []
 
     def post(self, request):
         """Logout by blacklisting both access and refresh tokens"""

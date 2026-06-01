@@ -138,6 +138,7 @@ class AdminLoginView(APIView):
     """
 
     permission_classes = [AllowAny]
+    authentication_classes = []
     throttle_classes = [AdminLoginRateThrottle]
 
     def post(self, request):
@@ -294,6 +295,7 @@ class AdminLogoutView(APIView):
     """
 
     permission_classes = [AllowAny]
+    authentication_classes = []
 
     def post(self, request):
         try:
