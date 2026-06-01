@@ -46,7 +46,7 @@ class TokenUtils:
     ):
         if expires_at is None:
             parsed_refresh = RefreshToken(refresh_token)
-            expires_at = datetime.fromtimestamp(parsed_refresh["exp"])
+            expires_at = datetime.fromtimestamp(parsed_refresh["exp"], tz=timezone.utc)
 
         refresh_entry = RefreshTokenEntry(
             customer=str(customer_id),
@@ -118,7 +118,7 @@ class TokenUtils:
             customer_id=customer.id,
             refresh_token=str(refresh),
             role="customer",
-            expires_at=datetime.fromtimestamp(refresh["exp"]),
+            expires_at=datetime.fromtimestamp(refresh["exp"], tz=timezone.utc),
         )
 
         return {"access": str(access), "refresh": str(refresh)}
@@ -173,7 +173,7 @@ class TokenUtils:
             customer_id=user_id,
             refresh_token=str(refresh),
             role=role,
-            expires_at=datetime.fromtimestamp(refresh["exp"]),
+            expires_at=datetime.fromtimestamp(refresh["exp"], tz=timezone.utc),
         )
 
         return {"access": str(access), "refresh": str(refresh)}
@@ -223,7 +223,7 @@ class TokenUtils:
                 # For access tokens, we just store their hash
                 parsed_token = AccessToken(token)
 
-            expires_at = datetime.fromtimestamp(parsed_token["exp"])
+            expires_at = datetime.fromtimestamp(parsed_token["exp"], tz=timezone.utc)
 
             blacklisted_token = BlacklistedToken(
                 token=token_hash, token_type=token_type, expires_at=expires_at
@@ -293,8 +293,12 @@ class TokenUtils:
             return False
         if getattr(entry, "revoked_at", None):
             return False
-        if entry.expires_at and entry.expires_at <= datetime.now(timezone.utc):
-            return False
+        if entry.expires_at:
+            expires_at = entry.expires_at
+            if expires_at.tzinfo is None or expires_at.tzinfo.utcoffset(expires_at) is None:
+                expires_at = expires_at.replace(tzinfo=timezone.utc)
+            if expires_at <= datetime.now(timezone.utc):
+                return False
         if TokenUtils.is_token_blacklisted(token, token_type="refresh"):
             return False
 
