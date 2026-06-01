@@ -87,3 +87,31 @@ def test_send_failure_marks_notification(monkeypatch):
     assert notif.sent is False
     assert notif.failed is True
     assert "SMTP" in notif.error
+
+
+def test_missing_template_increments_failure_metric(monkeypatch):
+    # Arrange
+    failure_counter = MagicMock()
+
+    def raise_missing_template(tpl, ctx):
+        raise es_module.TemplateDoesNotExist(tpl)
+
+    monkeypatch.setattr(es_module, "render_to_string", raise_missing_template)
+    monkeypatch.setattr(es_module, "EMAIL_SEND_FAILURE_COUNTER", failure_counter)
+
+    sender = es_module.EmailSender()
+    notif = DummyNotification()
+
+    # Act
+    ok = sender.send(
+        to_email="user@example.com",
+        subject="Test",
+        template_name="missing_template",
+        context={},
+        notification=notif,
+    )
+
+    # Assert
+    assert ok is False
+    assert notif.failed is True
+    failure_counter.inc.assert_called_once_with()

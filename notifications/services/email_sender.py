@@ -32,6 +32,15 @@ except Exception:
     EMAIL_SEND_FAILURE_COUNTER = None
 
 
+def _increment_email_failure_metric() -> None:
+    if EMAIL_SEND_FAILURE_COUNTER is None:
+        return
+    try:
+        EMAIL_SEND_FAILURE_COUNTER.inc()
+    except Exception:
+        logger.exception("Failed to increment email failure metric")
+
+
 class EmailSender:
     """Service for sending email notifications.
 
@@ -78,6 +87,7 @@ class EmailSender:
                 text_content = render_to_string(f"email/{template_name}.txt", context)
             except TemplateDoesNotExist as e:
                 logger.error("Email template missing: %s", e)
+                _increment_email_failure_metric()
                 if notification:
                     notification.mark_failed(f"template missing: {e}")
                 return False
@@ -110,11 +120,7 @@ class EmailSender:
             return True
         except Exception as e:
             logger.exception("Email send failed")
-            if EMAIL_SEND_FAILURE_COUNTER is not None:
-                try:
-                    EMAIL_SEND_FAILURE_COUNTER.inc()
-                except Exception:
-                    logger.exception("Failed to increment email failure metric")
+            _increment_email_failure_metric()
             if notification:
                 try:
                     notification.mark_failed(str(e))
