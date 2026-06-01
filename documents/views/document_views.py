@@ -12,6 +12,7 @@ from accounts.utils.access_control import AccessControlMixin
 from accounts.utils.response_helpers import success_response, error_response
 from accounts.utils.validation_utils import sanitize_text, sanitize_filename
 from accounts.models import Admin, Customer, LoanOfficer
+from accounts.services.consent_service import ConsentService
 from documents.models import Document, DOCUMENT_TYPES, DOCUMENT_STATUSES
 
 from documents.serializers import (
@@ -235,7 +236,16 @@ class DocumentUploadView(AccessControlMixin, APIView):
             run_ai_analysis = getattr(settings, "DOCUMENT_UPLOAD_AI_ANALYSIS", True)
             file_content_type = (file.content_type or "").lower()
             is_image_upload = file_content_type.startswith("image/")
-            if run_ai_analysis and is_image_upload:
+
+            # Respect global toggle and per-user AI consent. If the global
+            # setting is enabled but the customer has not given AI consent,
+            # skip analysis.
+            try:
+                user_ai_consent = ConsentService.check_ai_consent(customer_id)
+            except Exception:
+                user_ai_consent = False
+
+            if run_ai_analysis and is_image_upload and user_ai_consent:
                 # Run AI analysis on the document
                 try:
                     from documents.services import analyze_document
@@ -252,6 +262,10 @@ class DocumentUploadView(AccessControlMixin, APIView):
                 except Exception as e:
                     logger.warning(f"AI analysis failed (continuing anyway): {e}")
                     ai_analysis = {"error": str(e), "is_valid": True}
+            elif run_ai_analysis and not user_ai_consent:
+                logger.info(
+                    f"Skipping AI analysis for document upload: customer {customer_id} has not given AI consent"
+                )
             elif run_ai_analysis:
                 logger.info(
                     f"Skipping AI analysis for non-image upload: content_type={file_content_type or 'unknown'}"
