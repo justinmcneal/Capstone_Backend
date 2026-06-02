@@ -31,8 +31,45 @@ Content-Type: application/json
 
 4. `PUT /business/`
 - Updates business profile.
-- Key fields: `business_name`, `business_type`, `business_type_other`, `years_in_operation`, `registration_type`, `income_range`, `estimated_monthly_income`.
-- Validation: if `business_type=other`, `business_type_other` is required.
+- Key fields:
+  - `business_name`
+  - `business_type`
+  - `business_type_other`
+  - `business_description`
+  - `business_address`
+  - `business_barangay`
+  - `business_city`
+  - `business_province`
+  - `business_age_months`
+  - `is_registered`
+  - `registration_type`
+  - `registration_number`
+  - `estimated_monthly_income`
+  - `income_range`
+  - `estimated_monthly_expenses`
+  - `number_of_employees`
+- All fields are optional, but if `business_type` is `other`, `business_type_other` is required.
+- Use `business_age_months` for the update payload. The endpoint does not accept `years_in_operation` in the PUT body.
+- Example Insomnia body:
+```json
+{
+  "business_name": "Gabo Sari-Sari Store",
+  "business_type": "sari_sari_store",
+  "business_description": "Small neighborhood convenience store",
+  "business_address": "123 Maharlika St.",
+  "business_barangay": "San Isidro",
+  "business_city": "Cainta",
+  "business_province": "Rizal",
+  "business_age_months": 24,
+  "is_registered": true,
+  "registration_type": "DTI",
+  "registration_number": "DTI-123456",
+  "estimated_monthly_income": 45000,
+  "income_range": "30000_50000",
+  "estimated_monthly_expenses": 28000,
+  "number_of_employees": 2
+}
+```
 
 5. `GET /alternative-data/`
 - Returns alternative credit data (creates default record if none exists).
