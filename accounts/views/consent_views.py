@@ -4,12 +4,14 @@ from rest_framework.permissions import IsAuthenticated
 from datetime import datetime, timezone
 
 from accounts.authentication import CustomJWTAuthentication
+from accounts.utils.access_control import AccessControlMixin
 from accounts.services.consent_service import ConsentService
 from accounts.serializers.consent_serializers import (
     ConsentCreateSerializer,
     ConsentUpdateSerializer,
 )
 from accounts.utils.response_helpers import success_response, error_response
+from accounts.models import Consent, Customer
 import logging
 
 logger = logging.getLogger("consent")
@@ -293,6 +295,77 @@ class ConsentView(APIView):
             logger.error(f"Error updating consent: {str(e)}")
             return error_response(
                 message="Failed to update consent",
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+
+class ConsentAuditView(AccessControlMixin, APIView):
+    """Admin report of customers with and without AI consent."""
+
+    authentication_classes = [CustomJWTAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        try:
+            has_permission, result = self.require_admin(request)
+            if not has_permission:
+                return result
+
+            customers = Customer.find({}, sort=[("created_at", -1)])
+            consents = Consent.find({})
+            consent_by_user = {
+                str(consent.user_id): consent
+                for consent in consents
+                if consent and consent.user_id is not None
+            }
+
+            ai_consent_true = 0
+            ai_consent_false = 0
+            rows = []
+
+            for customer in customers:
+                consent = consent_by_user.get(str(customer._id))
+                has_record = consent is not None
+                ai_consent = bool(consent.ai_consent) if consent else False
+                data_consent = bool(consent.data_consent) if consent else False
+
+                if ai_consent:
+                    ai_consent_true += 1
+                else:
+                    ai_consent_false += 1
+
+                rows.append(
+                    {
+                        "customer_id": customer.id,
+                        "full_name": customer.full_name,
+                        "email": customer.email,
+                        "verified": customer.verified,
+                        "has_consent_record": has_record,
+                        "data_consent": data_consent,
+                        "ai_consent": ai_consent,
+                        "consent_date": _to_iso(consent.consent_date) if consent else None,
+                        "updated_at": _to_iso(consent.updated_at) if consent else None,
+                    }
+                )
+
+            return success_response(
+                data={
+                    "summary": {
+                        "total_customers": len(customers),
+                        "ai_consent_true": ai_consent_true,
+                        "ai_consent_false": ai_consent_false,
+                        "missing_consent_records": sum(
+                            1 for item in rows if not item["has_consent_record"]
+                        ),
+                    },
+                    "customers": rows,
+                },
+                message="Consent audit retrieved successfully",
+            )
+        except Exception as e:
+            logger.error(f"Error retrieving consent audit: {str(e)}")
+            return error_response(
+                message="Failed to retrieve consent audit",
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 

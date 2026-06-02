@@ -9,6 +9,7 @@ from accounts.views import (
     ResetPasswordView,
     ChangePasswordView,
     ConsentView,
+    ConsentAuditView,
 )
 from accounts.views.auth_views import (
     LoginView,
@@ -68,6 +69,7 @@ urlpatterns = [
     path("2fa/status/", Get2FAStatusView.as_view(), name="2fa-status"),
     # Consent Management
     path("consent/", ConsentView.as_view(), name="consent"),
+    path("consent/audit/", ConsentAuditView.as_view(), name="consent-audit"),
     path("language/", UpdateLanguageView.as_view(), name="update-language"),
     # Loan Officer Authentication
     path(

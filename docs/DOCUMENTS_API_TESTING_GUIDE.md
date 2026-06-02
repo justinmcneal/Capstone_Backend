@@ -86,15 +86,21 @@ Content-Type: application/json
 - Response: `document_id`, `status`, `reupload_requested`
 - Side effects: marks document `needs_review`, records `reupload_reason`, notifies customer by email
 
+9. `GET /api/accounts/consent/audit/`
+- Auth: admin only
+- Response:
+  - `summary`: totals for customers, `ai_consent_true`, `ai_consent_false`, and `missing_consent_records`
+  - `customers`: list of customers with `customer_id`, `full_name`, `email`, `verified`, `has_consent_record`, `data_consent`, `ai_consent`, `consent_date`, and `updated_at`
+
 ## Validation & Security Notes
 - Upload scanner checks file signatures and rejects executable or mismatched content.
 - PDF uploads are scanned for active content patterns (javascript/openaction/launch, etc.).
 - Image uploads are verified with PIL for corruption.
 - Storage backends may differ: presigned uploads are only available for S3-like backends.
- - AI analysis runs only when BOTH:
-   - the global setting `DOCUMENT_UPLOAD_AI_ANALYSIS` is enabled (config), and
-   - the uploading customer has explicitly given `ai_consent` (see `/api/accounts/consent/`).
-   If either is false, AI analysis is skipped and no `ai_analysis` will be stored on the document.
+- AI analysis runs only when BOTH:
+  - the global setting `DOCUMENT_UPLOAD_AI_ANALYSIS` is enabled (config), and
+  - the uploading customer has explicitly given `ai_consent` (see `/api/accounts/consent/`).
+  If either is false, AI analysis is skipped and no `ai_analysis` will be stored on the document.
 
 ## Smoke Test Sequence
 1. Authenticate as a customer and set `Authorization` header.
