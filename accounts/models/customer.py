@@ -114,6 +114,7 @@ class Customer:
             "two_factor_enabled": self.two_factor_enabled,
             "two_factor_secret": self.two_factor_secret,
             "backup_codes": self.backup_codes,
+            "notification_preferences": self.notification_preferences,
         }
         if self._id:
             data["_id"] = self._id
