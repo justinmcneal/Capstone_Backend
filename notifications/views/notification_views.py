@@ -224,7 +224,7 @@ class NotificationMarkReadView(AccessControlMixin, APIView):
             )
         
         # Mark as read
-            collection.update_one(
+        collection.update_one(
             {'_id': doc['_id']},
             {'$set': {'status': 'read', 'read_at': datetime.now(timezone.utc)}}
         )
