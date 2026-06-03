@@ -164,6 +164,62 @@ class TestSyncApproval:
         mock_approve.assert_called_once()
         mock_tx.mark_confirmed.assert_called_once()
 
+    @patch("loans.blockchain.sync._sync_application_impl")
+    @patch("loans.blockchain.client.call_view")
+    @patch("loans.blockchain.services.approval_service.approve_loan_onchain")
+    @patch("loans.blockchain.services.review_service.assign_officer_onchain")
+    @patch("loans.blockchain.client.send_transaction")
+    @patch("loans.blockchain.client.get_contract")
+    @patch("loans.blockchain.client.get_account")
+    @patch("loans.blockchain.models.BlockchainTransaction.create_pending")
+    @patch("loans.models.application.LoanApplication.find_by_id")
+    def test_impl_rebuilds_missing_onchain_application(
+        self,
+        mock_find,
+        mock_pending,
+        mock_get_account,
+        mock_get_contract,
+        mock_send_tx,
+        mock_assign,
+        mock_approve,
+        mock_call_view,
+        mock_sync_application,
+        blockchain_settings,
+    ):
+        from loans.blockchain.sync import _sync_approval_impl
+
+        mock_app = MagicMock()
+        mock_app.approved_amount = 50000
+        mock_app.requested_amount = 75000
+        mock_app.officer_notes = "Good application"
+        mock_find.return_value = mock_app
+
+        mock_tx = MagicMock()
+        mock_pending.return_value = mock_tx
+        mock_get_account.return_value = MagicMock(address="0x1234567890")
+        mock_get_contract.return_value = MagicMock()
+        mock_send_tx.return_value = {"tx_hash": "0xcore", "gas_used": 1, "block_number": 1}
+        mock_approve.return_value = {"tx_hash": "0xccc", "gas_used": 90000, "block_number": 3}
+
+        exists_calls = {"count": 0}
+
+        def call_view_side_effect(contract, method_name, *args):
+            if method_name == "exists":
+                exists_calls["count"] += 1
+                return exists_calls["count"] > 1
+            if method_name == "getApplication":
+                return (None, None, None, 75000)
+            return None
+
+        mock_call_view.side_effect = call_view_side_effect
+
+        _sync_approval_impl("loan123")
+
+        mock_sync_application.assert_called_once_with("loan123")
+        mock_assign.assert_called_once()
+        mock_approve.assert_called_once()
+        mock_tx.mark_confirmed.assert_called_once()
+
 
 # ---------------------------------------------------------------------------
 # sync_rejection
