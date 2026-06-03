@@ -59,6 +59,45 @@ def _update_application_tx(loan_id, action, tx_hash):
         logger.warning("Failed to store tx_hash for %s.%s: %s", loan_id, action, exc)
 
 
+def _ensure_application_synced_for_approval(loan_id):
+    from loans.blockchain.client import get_contract, call_view
+    from web3 import Web3
+
+    loan_id_bytes = Web3.keccak(text=str(loan_id))
+    contract = get_contract("loanApplication")
+
+    try:
+        exists = bool(call_view(contract, "exists", loan_id_bytes))
+    except Exception as exc:
+        logger.warning(
+            "sync_approval: could not verify on-chain application for loan=%s: %s",
+            loan_id,
+            exc,
+        )
+        exists = False
+
+    if exists:
+        return
+
+    logger.info(
+        "sync_approval: on-chain application missing for loan=%s, rebuilding mirror first",
+        loan_id,
+    )
+    _sync_application_impl(loan_id)
+
+    try:
+        exists = bool(call_view(contract, "exists", loan_id_bytes))
+    except Exception as exc:
+        raise RuntimeError(
+            f"Failed to verify rebuilt on-chain application for loan {loan_id}: {exc}"
+        ) from exc
+
+    if not exists:
+        raise RuntimeError(
+            f"Failed to rebuild on-chain application mirror for loan {loan_id}"
+        )
+
+
 # ---------------------------------------------------------------------------
 # Public API — called from views
 # ---------------------------------------------------------------------------
@@ -263,6 +302,9 @@ def _sync_approval_impl(loan_id):
         acct = get_account()
         approved_amount = int(app.approved_amount or app.requested_amount)
         notes_str = str(app.officer_notes or "approved")
+
+        # Rebuild the on-chain application mirror first if it is missing.
+        _ensure_application_synced_for_approval(loan_id)
 
         # Read the on-chain requestedAmount to ensure approved_amount does not
         # exceed it — the smart contract enforces approvedAmount <= requestedAmount
