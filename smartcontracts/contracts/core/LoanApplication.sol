@@ -66,7 +66,11 @@ contract LoanApplication is
     }
 
     modifier onlyBorrowerOf(bytes32 loanId) {
-        if (applications[loanId].borrower != msg.sender) {
+        if (
+            applications[loanId].borrower != msg.sender &&
+            !hasRole(ADMIN_ROLE, msg.sender) &&
+            !hasRole(SYSTEM_ROLE, msg.sender)
+        ) {
             revert UnauthorizedBorrower(loanId, msg.sender);
         }
         _;
@@ -80,7 +84,11 @@ contract LoanApplication is
     }
 
     modifier onlyBorrower() {
-        if (!accessControl.isBorrower(msg.sender) && !hasRole(SYSTEM_ROLE, msg.sender)) {
+        if (
+            !accessControl.isBorrower(msg.sender) &&
+            !hasRole(SYSTEM_ROLE, msg.sender) &&
+            !hasRole(ADMIN_ROLE, msg.sender)
+        ) {
             revert NotBorrower(msg.sender);
         }
         _;

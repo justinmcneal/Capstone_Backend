@@ -106,7 +106,11 @@ contract DisbursementMethod is
     
     modifier onlyBorrower(bytes32 loanId) {
         ILoanApplication.Application memory app = loanApplication.getApplication(loanId);
-        if (msg.sender != app.borrower) {
+        if (
+            msg.sender != app.borrower &&
+            !hasRole(ADMIN_ROLE, msg.sender) &&
+            !hasRole(SYSTEM_ROLE, msg.sender)
+        ) {
             revert NotBorrower(msg.sender, app.borrower);
         }
         _;
@@ -259,8 +263,8 @@ contract DisbursementMethod is
         whenNotPaused
         returns (bool success) 
     {
-        // Only SYSTEM_ROLE (DisbursementExecution contract) can lock
-        if (!hasRole(SYSTEM_ROLE, msg.sender)) {
+        // Only SYSTEM_ROLE or ADMIN_ROLE can lock
+        if (!hasRole(SYSTEM_ROLE, msg.sender) && !hasRole(ADMIN_ROLE, msg.sender)) {
             revert NotBorrower(msg.sender, address(0));
         }
 

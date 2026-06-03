@@ -914,6 +914,18 @@ class OfficerReviewView(LoanOfficerRequiredMixin, APIView):
         )
 
         if data["action"] == "approve":
+            # Validate approved_amount does not exceed requested_amount
+            # (smart contracts enforce this and will revert otherwise)
+            if data["approved_amount"] > float(app.requested_amount):
+                return error_response(
+                    message=(
+                        f"Approved amount (₱{data['approved_amount']:,.2f}) cannot exceed "
+                        f"requested amount (₱{float(app.requested_amount):,.2f})"
+                    ),
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                )
+
+
             app.approve(
                 officer_id=officer_id,
                 approved_amount=data["approved_amount"],

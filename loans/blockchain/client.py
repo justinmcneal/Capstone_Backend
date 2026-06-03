@@ -183,18 +183,33 @@ def send_transaction(contract, method_name, *args):
     except Exception:
         gas = settings.BLOCKCHAIN_GAS_LIMIT
 
-    # Use configured gas price (allows control over costs in dev/test environments)
-    gas_price = Web3.to_wei(settings.BLOCKCHAIN_GAS_PRICE_GWEI, "gwei")
+    # Use configured gas price as fallback
+    gas_price_fallback = Web3.to_wei(settings.BLOCKCHAIN_GAS_PRICE_GWEI, "gwei")
 
-    tx = fn.build_transaction(
-        {
-            "from": account.address,
-            "nonce": w3.eth.get_transaction_count(account.address),
-            "gas": gas,
-            "gasPrice": gas_price,
-            "chainId": settings.BLOCKCHAIN_CHAIN_ID,
-        }
-    )
+    try:
+        latest_block = w3.eth.get_block("latest")
+        base_fee = latest_block.get("baseFeePerGas")
+    except Exception:
+        base_fee = None
+
+    tx_params = {
+        "from": account.address,
+        "nonce": w3.eth.get_transaction_count(account.address),
+        "gas": gas,
+        "chainId": settings.BLOCKCHAIN_CHAIN_ID,
+    }
+
+    if base_fee is not None and base_fee > 0:
+        max_priority_fee = Web3.to_wei(2, "gwei")
+        max_fee = (base_fee * 2) + max_priority_fee
+        if max_fee < gas_price_fallback:
+            max_fee = gas_price_fallback
+        tx_params["maxFeePerGas"] = max_fee
+        tx_params["maxPriorityFeePerGas"] = max_priority_fee
+    else:
+        tx_params["gasPrice"] = gas_price_fallback
+
+    tx = fn.build_transaction(tx_params)
 
     signed = account.sign_transaction(tx)
     tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
@@ -218,7 +233,7 @@ def send_transaction(contract, method_name, *args):
         )
 
     # Get effective gas price from receipt (EIP-1559) or use the gas price we set
-    effective_gas_price = receipt.get("effectiveGasPrice", gas_price)
+    effective_gas_price = receipt.get("effectiveGasPrice", gas_price_fallback)
 
     logger.info(
         "Transaction OK: %s.%s() tx=0x%s gas=%d",
@@ -272,7 +287,16 @@ def send_eth_transfer(to_address, amount_wei):
     w3 = get_web3()
     account = get_account()
 
-    gas_price = w3.eth.gas_price
+    try:
+        gas_price_fallback = w3.eth.gas_price
+    except Exception:
+        gas_price_fallback = Web3.to_wei(20, "gwei")
+
+    try:
+        latest_block = w3.eth.get_block("latest")
+        base_fee = latest_block.get("baseFeePerGas")
+    except Exception:
+        base_fee = None
 
     tx = {
         "from": account.address,
@@ -280,9 +304,16 @@ def send_eth_transfer(to_address, amount_wei):
         "value": int(amount_wei),
         "nonce": w3.eth.get_transaction_count(account.address),
         "gas": 21000,  # Standard ETH transfer gas
-        "gasPrice": gas_price,
         "chainId": settings.BLOCKCHAIN_CHAIN_ID,
     }
+
+    if base_fee is not None and base_fee > 0:
+        max_priority_fee = Web3.to_wei(2, "gwei")
+        max_fee = (base_fee * 2) + max_priority_fee
+        tx["maxFeePerGas"] = max_fee
+        tx["maxPriorityFeePerGas"] = max_priority_fee
+    else:
+        tx["gasPrice"] = gas_price_fallback
 
     signed = account.sign_transaction(tx)
     tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
@@ -304,7 +335,7 @@ def send_eth_transfer(to_address, amount_wei):
         )
 
     # Get effective gas price from receipt (EIP-1559) or use the gas price we set
-    effective_gas_price = receipt.get("effectiveGasPrice", gas_price)
+    effective_gas_price = receipt.get("effectiveGasPrice", gas_price_fallback)
 
     logger.info(
         "ETH transfer OK: tx=%s amount=%s wei to=%s",
