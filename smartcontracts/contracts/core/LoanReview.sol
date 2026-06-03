@@ -159,8 +159,8 @@ contract LoanReview is
             revert InvalidApplicationStatus(loanId);
         }
 
-        // Validate officer is active
-        if (!accessControl.isActiveOfficer(officer)) {
+        // Validate officer is active (admin can bypass)
+        if (!accessControl.isActiveOfficer(officer) && !hasRole(ADMIN_ROLE, msg.sender)) {
             revert OfficerNotActive(officer);
         }
 
@@ -216,8 +216,8 @@ contract LoanReview is
             revert SameOfficer(loanId, newOfficer);
         }
 
-        // Validate new officer is active
-        if (!accessControl.isActiveOfficer(newOfficer)) {
+        // Validate new officer is active (admin can bypass)
+        if (!accessControl.isActiveOfficer(newOfficer) && !hasRole(ADMIN_ROLE, msg.sender)) {
             revert OfficerNotActive(newOfficer);
         }
 

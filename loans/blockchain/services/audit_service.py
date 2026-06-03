@@ -181,7 +181,7 @@ def get_audit_trail(resource_id):
 
     entries = []
     for entry in raw_entries:
-        raw_action = entry[3]
+        raw_action = entry[5]
         if isinstance(raw_action, int):
             action_int = raw_action
         elif isinstance(raw_action, bytes):
@@ -204,10 +204,10 @@ def get_audit_trail(resource_id):
                     action_int, f"Unknown({action_int})"
                 ),
                 "previous_state_hash": (
-                    entry[4].hex() if isinstance(entry[4], bytes) else entry[4]
+                    entry[3].hex() if isinstance(entry[3], bytes) else entry[3]
                 ),
                 "new_state_hash": (
-                    entry[5].hex() if isinstance(entry[5], bytes) else entry[5]
+                    entry[4].hex() if isinstance(entry[4], bytes) else entry[4]
                 ),
                 "actor": entry[6],
                 "timestamp": entry[7],
@@ -238,7 +238,7 @@ def get_audit_entry(entry_id):
 
     entry = call_view(contract, "getEntry", entry_id_bytes)
 
-    raw_action = entry[3]
+    raw_action = entry[5]
     if isinstance(raw_action, int):
         action_int = raw_action
     elif isinstance(raw_action, bytes):
@@ -252,9 +252,9 @@ def get_audit_entry(entry_id):
         "action": action_int,
         "action_label": AUDIT_ACTION_LABELS.get(action_int, f"Unknown({action_int})"),
         "previous_state_hash": (
-            entry[4].hex() if isinstance(entry[4], bytes) else entry[4]
+            entry[3].hex() if isinstance(entry[3], bytes) else entry[3]
         ),
-        "new_state_hash": entry[5].hex() if isinstance(entry[5], bytes) else entry[5],
+        "new_state_hash": entry[4].hex() if isinstance(entry[4], bytes) else entry[4],
         "actor": entry[6],
         "timestamp": entry[7],
         "block_number": entry[8],

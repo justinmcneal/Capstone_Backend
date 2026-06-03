@@ -244,7 +244,7 @@ def _sync_approval_impl(loan_id):
     from loans.blockchain.models import BlockchainTransaction
     from loans.blockchain.services.approval_service import approve_loan_onchain
     from loans.blockchain.services.review_service import assign_officer_onchain
-    from loans.blockchain.client import get_account, get_contract, send_transaction
+    from loans.blockchain.client import get_account, get_contract, send_transaction, call_view
     from loans.models.application import LoanApplication
     from web3 import Web3
 
@@ -261,26 +261,65 @@ def _sync_approval_impl(loan_id):
             raise ValueError(f"LoanApplication {loan_id} not found")
 
         acct = get_account()
-
-        # Step 1: Assign officer (moves loan to UnderReview status)
-        assign_officer_onchain(loan_id=loan_id, officer_address=acct.address)
-
-        # Step 2: Approve loan
         approved_amount = int(app.approved_amount or app.requested_amount)
         notes_str = str(app.officer_notes or "approved")
+
+        # Read the on-chain requestedAmount to ensure approved_amount does not
+        # exceed it — the smart contract enforces approvedAmount <= requestedAmount
+        # and will revert with AmountExceedsRequested if violated.
+        loan_id_bytes = Web3.keccak(text=str(loan_id))
+        la_contract = get_contract("loanApplication")
+        try:
+            onchain_app = call_view(la_contract, "getApplication", loan_id_bytes)
+            onchain_requested = int(onchain_app[3])  # requestedAmount is index 3
+            if approved_amount > onchain_requested:
+                logger.warning(
+                    "sync_approval: capping approved_amount from %d to on-chain "
+                    "requestedAmount %d for loan=%s",
+                    approved_amount, onchain_requested, loan_id,
+                )
+                approved_amount = onchain_requested
+        except Exception as e:
+            logger.warning(
+                "sync_approval: could not read on-chain requestedAmount for loan=%s: %s, "
+                "using DB requested_amount as fallback cap",
+                loan_id, e,
+            )
+            # Fallback: cap to DB requested_amount
+            db_requested = int(app.requested_amount)
+            if approved_amount > db_requested:
+                approved_amount = db_requested
+
+        logger.info(
+            "sync_approval STARTING: loan=%s wallet=%s approved_amount=%d notes=%s",
+            loan_id, acct.address, approved_amount, notes_str,
+        )
+
+        # Step 1: Assign officer on LoanReview (moves loan to UnderReview status)
+        logger.info("sync_approval step 1/4: LoanReview.assignOfficer ...")
+        assign_officer_onchain(loan_id=loan_id, officer_address=acct.address)
+        logger.info("sync_approval step 1/4: LoanReview.assignOfficer OK")
+
+        # Step 2: Approve loan on LoanApproval
+        logger.info("sync_approval step 2/4: LoanApproval.approveLoan ...")
         result = approve_loan_onchain(
             loan_id=loan_id,
             approved_amount=approved_amount,
             notes_hash=notes_str,
         )
+        logger.info("sync_approval step 2/4: LoanApproval.approveLoan OK")
 
         # Mirror in LoanCore: assignOfficer + approveLoan
-        loan_id_bytes = Web3.keccak(text=str(loan_id))
         notes_bytes = Web3.keccak(text=notes_str)
         lc = get_contract("loanCore")
+
+        logger.info("sync_approval step 3/4: LoanCore.assignOfficer ...")
         send_transaction(lc, "assignOfficer", loan_id_bytes, acct.address)
+        logger.info("sync_approval step 3/4: LoanCore.assignOfficer OK")
+
+        logger.info("sync_approval step 4/4: LoanCore.approveLoan ...")
         send_transaction(lc, "approveLoan", loan_id_bytes, approved_amount, notes_bytes)
-        logger.info("LoanCore assignOfficer+approveLoan OK: loan=%s", loan_id)
+        logger.info("sync_approval step 4/4: LoanCore.approveLoan OK")
 
         tx_record.mark_confirmed(
             tx_hash=result["tx_hash"],
