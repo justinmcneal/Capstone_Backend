@@ -488,17 +488,35 @@ class OfficerApplicationDetailView(LoanOfficerRequiredMixin, APIView):
             "customer_id": app.customer_id,
             "email": customer.email if customer else None,
             "personal_profile": {
+                # Account-level fields
                 "first_name": customer.first_name if customer else None,
                 "last_name": customer.last_name if customer else None,
+                # Profile fields — also exposed as phone_number for display
+                "mobile_number": personal.mobile_number
+                or (customer.phone if customer else None),
                 "phone_number": personal.mobile_number
                 or (customer.phone if customer else None),
+                "date_of_birth": (
+                    personal.date_of_birth.isoformat()
+                    if personal.date_of_birth
+                    else None
+                ),
+                "gender": personal.gender,
                 "civil_status": personal.civil_status,
+                "nationality": personal.nationality,
+                # Address
+                "address_line1": personal.address_line1,
+                "street_address": personal.address_line1,  # alias for display
+                "address_line2": personal.address_line2,
+                "barangay": personal.barangay,
                 "city_municipality": personal.city_municipality,
                 "province": personal.province,
-                "barangay": personal.barangay,
-                "street_address": personal.address_line1,
+                "zip_code": personal.zip_code,
+                # Emergency contact
                 "emergency_contact_name": personal.emergency_contact_name,
                 "emergency_contact_phone": personal.emergency_contact_phone,
+                "emergency_contact_relationship": personal.emergency_contact_relationship,
+                # Wallet & completion
                 "wallet_address": personal.wallet_address,
                 "profile_completed": personal.profile_completed,
                 "completion_percentage": personal.completion_percentage,
@@ -506,30 +524,69 @@ class OfficerApplicationDetailView(LoanOfficerRequiredMixin, APIView):
             "business_profile": {
                 "business_name": business.business_name,
                 "business_type": business.business_type,
+                "business_type_other": business.business_type_other,
+                "business_description": business.business_description,
+                # Address — flat fields for display
                 "business_address": business.business_address,
+                "business_barangay": business.business_barangay,
+                "business_city": business.business_city,
+                "business_province": business.business_province,
+                # Operations
                 "business_age_months": business.business_age_months,
                 "is_registered": business.is_registered,
-                "income_range": business.income_range,
+                "registration_type": business.registration_type,
+                "registration_number": business.registration_number,
+                # Financial
                 "estimated_monthly_income": (
                     float(business.estimated_monthly_income)
                     if business.estimated_monthly_income
                     else None
                 ),
+                "income_range": business.income_range,
+                "estimated_monthly_expenses": (
+                    float(business.estimated_monthly_expenses)
+                    if business.estimated_monthly_expenses
+                    else None
+                ),
                 "number_of_employees": business.number_of_employees,
-                "business_description": business.business_description,
             },
             "alternative_data": {
+                # Education & Employment
                 "education_level": alternative.education_level,
                 "employment_status": alternative.employment_status,
+                "years_of_experience": alternative.years_of_experience,
+                # Housing
                 "housing_status": alternative.housing_status,
-                "years_at_residence": alternative.years_at_current_address,
+                "years_at_current_address": alternative.years_at_current_address,
+                "years_at_residence": alternative.years_at_current_address,  # legacy alias
+                "monthly_rent": alternative.monthly_rent,
+                # Dependents
+                "number_of_dependents": alternative.number_of_dependents,
+                "household_income": alternative.household_income,
+                # Existing credit
+                "has_existing_loans": alternative.has_existing_loans,
+                "existing_loan_amount": alternative.existing_loan_amount,
+                "existing_loan_source": alternative.existing_loan_source,
+                "loan_payment_history": alternative.loan_payment_history,
+                # Digital footprint
                 "has_bank_account": alternative.has_bank_account,
+                "bank_account_duration": alternative.bank_account_duration,
                 "has_ewallet": alternative.has_ewallet,
                 "ewallet_usage": alternative.ewallet_usage,
-                "has_existing_loans": alternative.has_existing_loans,
+                # Utility
+                "pays_utilities": alternative.pays_utilities,
                 "utility_payment_history": alternative.utility_payment_history,
+                # Social capital
+                "is_coop_member": alternative.is_coop_member,
+                "community_involvement": alternative.community_involvement,
+                # Risk score
                 "risk_score": alternative.risk_score,
                 "risk_category": alternative.risk_category,
+                "score_calculated_at": (
+                    alternative.score_calculated_at.isoformat()
+                    if alternative.score_calculated_at
+                    else None
+                ),
             },
         }
 
@@ -545,11 +602,15 @@ class OfficerApplicationDetailView(LoanOfficerRequiredMixin, APIView):
                 "filename": doc.original_filename,
                 "file_url": storage.get_url(doc.file_path),
                 "file_size": doc.file_size,
+                "file_size_display": doc.file_size_display,
+                "mime_type": doc.mime_type,
                 "status": doc.status,
                 "verified": doc.verified,
+                "verified_by": str(doc.verified_by) if doc.verified_by else None,
                 "verified_at": doc.verified_at.isoformat() if doc.verified_at else None,
+                "rejection_reason": doc.rejection_reason or None,
                 "reupload_requested": doc.reupload_requested,
-                "reupload_reason": doc.reupload_reason,
+                "reupload_reason": doc.reupload_reason or None,
                 "ai_analysis": doc.ai_analysis,
                 "uploaded_at": doc.uploaded_at.isoformat() if doc.uploaded_at else None,
             }
