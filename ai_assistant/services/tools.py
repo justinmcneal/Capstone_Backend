@@ -44,7 +44,7 @@ def _get_user_cache_key(customer_id: str, tool_name: str) -> str:
     return f"ai_tool:{tool_name}:{customer_id}"
 
 
-def invalidate_user_tool_cache(customer_id: str, tool_names: list = None):
+def invalidate_user_tool_cache(customer_id: str, tool_names: list | None = None):
     """
     Invalidate cached tool results for a user.
     Called when user data changes (e.g., after document upload).
