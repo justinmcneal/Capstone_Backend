@@ -168,6 +168,7 @@ class OfficerApplicationListView(LoanOfficerRequiredMixin, APIView):
             "approved",
             "rejected",
             "disbursed",
+            "cancelled",
             "all",
         }
         if status_filter not in valid_statuses:
