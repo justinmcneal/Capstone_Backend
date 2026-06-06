@@ -16,6 +16,12 @@ import logging
 from datetime import datetime
 from django.core.cache import cache
 from django.conf import settings
+from ai_assistant.services.context_builder import (
+    ALTERNATIVE_DATA_REQUIRED_FIELDS,
+    BUSINESS_PROFILE_REQUIRED_FIELDS,
+    PERSONAL_PROFILE_REQUIRED_FIELDS,
+)
+from loans.services.qualification import resolve_required_document_types, document_type_label
 
 logger = logging.getLogger('ai_assistant')
 
@@ -198,7 +204,7 @@ def execute_tool(tool_name, tool_args, customer_id):
 
 def _get_profile_status(customer_id, **kwargs):
     """Get profile status with short-term caching."""
-    from profiles.models.profile_models import CustomerProfile, BusinessProfile
+    from profiles.models.profile_models import CustomerProfile, BusinessProfile, AlternativeData
 
     # Check cache first
     cache_key = _get_user_cache_key(customer_id, 'profile_status')
@@ -206,25 +212,14 @@ def _get_profile_status(customer_id, **kwargs):
     if cached is not None:
         return cached
 
-    result = {"profile": None, "business": None}
+    result = {"profile": None, "business": None, "alternative_data": None}
 
     profile = CustomerProfile.find_by_customer(customer_id)
     if profile:
-        missing = []
-        if not getattr(profile, 'date_of_birth', None):
-            missing.append('date of birth')
-        if not getattr(profile, 'gender', None):
-            missing.append('gender')
-        if not getattr(profile, 'civil_status', None):
-            missing.append('civil status')
-        if not getattr(profile, 'mobile_number', None):
-            missing.append('mobile number')
-        if not getattr(profile, 'address_line1', None):
-            missing.append('address')
-        if not getattr(profile, 'emergency_contact_name', None):
-            missing.append('emergency contact name')
-        if not getattr(profile, 'emergency_contact_phone', None):
-            missing.append('emergency contact phone')
+        missing = [
+            label for field, label in PERSONAL_PROFILE_REQUIRED_FIELDS
+            if not getattr(profile, field, None)
+        ]
 
         result["profile"] = {
             "completion_percentage": getattr(profile, 'completion_percentage', 0),
@@ -234,12 +229,34 @@ def _get_profile_status(customer_id, **kwargs):
 
     business = BusinessProfile.find_by_customer(customer_id)
     if business:
+        missing = [
+            label for field, label in BUSINESS_PROFILE_REQUIRED_FIELDS
+            if not getattr(business, field, None)
+        ]
         result["business"] = {
             "business_name": getattr(business, 'business_name', None),
             "business_type": getattr(business, 'business_type', None),
             "business_age_months": getattr(business, 'business_age_months', None),
+            "income_range": getattr(business, 'income_range', None),
             "estimated_monthly_income": getattr(business, 'estimated_monthly_income', None),
             "is_registered": getattr(business, 'is_registered', False),
+            "is_complete": len(missing) == 0,
+            "missing_fields": missing,
+        }
+
+    alternative = AlternativeData.find_by_customer(customer_id)
+    if alternative:
+        missing = [
+            label for field, label in ALTERNATIVE_DATA_REQUIRED_FIELDS
+            if not getattr(alternative, field, None)
+        ]
+        result["alternative_data"] = {
+            "education_level": getattr(alternative, 'education_level', None),
+            "housing_status": getattr(alternative, 'housing_status', None),
+            "risk_score": getattr(alternative, 'risk_score', None),
+            "risk_category": getattr(alternative, 'risk_category', None),
+            "is_complete": len(missing) == 0,
+            "missing_fields": missing,
         }
 
     # Cache for short period
@@ -272,7 +289,7 @@ def _get_document_status(customer_id, **kwargs):
         })
 
     approved = sum(1 for d in doc_list if d['status'] == 'approved')
-    pending = sum(1 for d in doc_list if d['status'] == 'pending')
+    pending = sum(1 for d in doc_list if d['status'] in ('pending', 'needs_review'))
     rejected = sum(1 for d in doc_list if d['status'] == 'rejected')
 
     result = {
@@ -471,7 +488,7 @@ def _get_loan_products(customer_id, **kwargs):
 
 def _get_application_readiness(customer_id, **kwargs):
     """Check profile, business, and document completeness for loan application readiness."""
-    from profiles.models.profile_models import CustomerProfile, BusinessProfile
+    from profiles.models.profile_models import CustomerProfile, BusinessProfile, AlternativeData
     from documents.models.document import Document
 
     blockers = []
@@ -484,52 +501,66 @@ def _get_application_readiness(customer_id, **kwargs):
         if pct >= 100:
             completed.append("Personal profile is complete")
         else:
-            missing = []
-            if not getattr(profile, 'date_of_birth', None):
-                missing.append('date of birth')
-            if not getattr(profile, 'gender', None):
-                missing.append('gender')
-            if not getattr(profile, 'civil_status', None):
-                missing.append('civil status')
-            if not getattr(profile, 'mobile_number', None):
-                missing.append('mobile number')
-            if not getattr(profile, 'address_line1', None):
-                missing.append('address')
-            if not getattr(profile, 'emergency_contact_name', None):
-                missing.append('emergency contact name')
-            if not getattr(profile, 'emergency_contact_phone', None):
-                missing.append('emergency contact phone')
+            missing = [
+                label for field, label in PERSONAL_PROFILE_REQUIRED_FIELDS
+                if not getattr(profile, field, None)
+            ]
             blockers.append(f"Profile is {pct}% complete — missing: {', '.join(missing)}")
     else:
         blockers.append("Personal profile has not been created yet")
 
     # Business check
     business = BusinessProfile.find_by_customer(customer_id)
-    if business and getattr(business, 'business_name', None):
-        completed.append(f"Business profile set up ({business.business_name})")
+    if business:
+        missing = [
+            label for field, label in BUSINESS_PROFILE_REQUIRED_FIELDS
+            if not getattr(business, field, None)
+        ]
+        if missing:
+            blockers.append(f"Business profile is incomplete — missing: {', '.join(missing)}")
+        else:
+            name = getattr(business, 'business_name', None) or 'business profile'
+            completed.append(f"Business profile is complete ({name})")
     else:
         blockers.append("Business profile has not been set up yet")
 
+    # Alternative data check
+    alternative = AlternativeData.find_by_customer(customer_id)
+    if alternative:
+        missing = [
+            label for field, label in ALTERNATIVE_DATA_REQUIRED_FIELDS
+            if not getattr(alternative, field, None)
+        ]
+        if missing:
+            blockers.append(f"Alternative data is incomplete — missing: {', '.join(missing)}")
+        else:
+            completed.append("Alternative data is complete")
+            risk_category = getattr(alternative, 'risk_category', None)
+            if risk_category:
+                completed.append(f"Risk category calculated: {risk_category}")
+    else:
+        blockers.append("Alternative data has not been set up yet")
+
     # Document check
     docs = Document.find_by_customer(customer_id)
-    required_types = ['government_id', 'proof_of_income', 'business_permit']
+    required_types = resolve_required_document_types(requirements_scope='baseline')
     if docs:
         uploaded_types = [getattr(d, 'document_type', '') for d in docs]
         approved_types = [getattr(d, 'document_type', '') for d in docs if getattr(d, 'status', '') == 'approved']
         pending_types = [getattr(d, 'document_type', '') for d in docs if getattr(d, 'status', '') == 'pending']
         rejected_types = [getattr(d, 'document_type', '') for d in docs if getattr(d, 'status', '') == 'rejected']
 
-        missing_docs = [t.replace('_', ' ').title() for t in required_types if t not in uploaded_types]
+        missing_docs = [document_type_label(t) for t in required_types if t not in uploaded_types]
         if missing_docs:
             blockers.append(f"Missing documents: {', '.join(missing_docs)}")
         if rejected_types:
-            blockers.append(f"Rejected documents need re-upload: {', '.join(t.replace('_', ' ').title() for t in rejected_types)}")
+            blockers.append(f"Rejected documents need re-upload: {', '.join(document_type_label(t) for t in rejected_types)}")
         if pending_types:
             completed.append(f"{len(pending_types)} document(s) pending verification")
         if approved_types:
             completed.append(f"{len(approved_types)} document(s) approved")
     else:
-        blockers.append(f"No documents uploaded — required: {', '.join(t.replace('_', ' ').title() for t in required_types)}")
+        blockers.append(f"No documents uploaded — required: {', '.join(document_type_label(t) for t in required_types)}")
 
     ready = len(blockers) == 0
     return {

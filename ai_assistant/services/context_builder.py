@@ -40,6 +40,26 @@ MAX_APPLICATIONS = 3
 MAX_PAYMENTS = 3
 MAX_INSTALLMENTS = 6
 
+PERSONAL_PROFILE_REQUIRED_FIELDS = [
+    ('date_of_birth', 'date of birth'),
+    ('gender', 'gender'),
+    ('civil_status', 'civil status'),
+    ('address_line1', 'address'),
+    ('barangay', 'barangay'),
+    ('city_municipality', 'city / municipality'),
+    ('province', 'province'),
+]
+
+BUSINESS_PROFILE_REQUIRED_FIELDS = [
+    ('business_type', 'business type'),
+    ('income_range', 'income range'),
+]
+
+ALTERNATIVE_DATA_REQUIRED_FIELDS = [
+    ('education_level', 'education level'),
+    ('housing_status', 'housing status'),
+]
+
 
 # =============================================================================
 # HELPER FUNCTIONS
@@ -83,8 +103,7 @@ def summarize_status(status: str) -> str:
         'approved': 'Approved ✓',
         'rejected': 'Rejected',
         'disbursed': 'Active (disbursed)',
-        'completed': 'Completed ✓',
-        'defaulted': 'Defaulted ⚠',
+        'cancelled': 'Cancelled',
         'pending': 'Pending',
         'paid': 'Paid ✓',
         'partial': 'Partially Paid',
@@ -106,16 +125,21 @@ def build_profile_summary(customer_id: str) -> dict:
     Returns dict with:
         - completion_pct: Profile completion percentage
         - missing_fields: List of missing required fields
-        - has_business: Whether business profile exists
+        - has_business: Whether business profile has started
         - business_summary: One-line business summary
     """
-    from profiles.models.profile_models import CustomerProfile, BusinessProfile
+    from profiles.models.profile_models import CustomerProfile, BusinessProfile, AlternativeData
     
     result = {
         'completion_pct': 0,
         'missing_fields': [],
         'has_business': False,
+        'business_complete': False,
+        'missing_business_fields': [],
         'business_summary': None,
+        'alternative_complete': False,
+        'missing_alternative_fields': [],
+        'risk_category': None,
     }
     
     # Personal profile
@@ -123,26 +147,28 @@ def build_profile_summary(customer_id: str) -> dict:
     if profile:
         result['completion_pct'] = getattr(profile, 'completion_percentage', 0) or 0
         
-        # Check for missing required fields
-        required_checks = [
-            ('date_of_birth', 'date of birth'),
-            ('mobile_number', 'mobile number'),
-            ('address_line1', 'address'),
-            ('emergency_contact_name', 'emergency contact'),
-        ]
-        for field, label in required_checks:
+        for field, label in PERSONAL_PROFILE_REQUIRED_FIELDS:
             if not getattr(profile, field, None):
                 result['missing_fields'].append(label)
     
     # Business profile
     business = BusinessProfile.find_by_customer(customer_id)
-    if business and getattr(business, 'business_name', None):
+    if business and any(getattr(business, field, None) for field, _ in BUSINESS_PROFILE_REQUIRED_FIELDS):
         result['has_business'] = True
+        result['business_complete'] = all(
+            getattr(business, field, None) for field, _ in BUSINESS_PROFILE_REQUIRED_FIELDS
+        )
+        for field, label in BUSINESS_PROFILE_REQUIRED_FIELDS:
+            if not getattr(business, field, None):
+                result['missing_business_fields'].append(label)
+
+        name = getattr(business, 'business_name', None) or 'Business profile'
         btype = getattr(business, 'business_type', 'business')
         age = getattr(business, 'business_age_months', 0)
         income = getattr(business, 'estimated_monthly_income', 0)
+        income_range = getattr(business, 'income_range', None)
         
-        parts = [business.business_name]
+        parts = [name]
         if btype:
             parts.append(f"({btype})")
         if age:
@@ -154,8 +180,20 @@ def build_profile_summary(customer_id: str) -> dict:
                 parts.append(f"{months} months old")
         if income:
             parts.append(f"income {format_currency(income)}/mo")
+        elif income_range:
+            parts.append(f"income range {income_range}")
         
         result['business_summary'] = ' '.join(parts)
+
+    alternative = AlternativeData.find_by_customer(customer_id)
+    if alternative:
+        result['alternative_complete'] = all(
+            getattr(alternative, field, None) for field, _ in ALTERNATIVE_DATA_REQUIRED_FIELDS
+        )
+        for field, label in ALTERNATIVE_DATA_REQUIRED_FIELDS:
+            if not getattr(alternative, field, None):
+                result['missing_alternative_fields'].append(label)
+        result['risk_category'] = getattr(alternative, 'risk_category', None)
     
     return result
 
@@ -191,9 +229,9 @@ def build_documents_summary(customer_id: str) -> dict:
         dtype = getattr(doc, 'document_type', 'unknown')
         dstatus = getattr(doc, 'status', 'unknown')
         
-        if dstatus == 'verified':
+        if dstatus == 'approved':
             result['verified'] += 1
-        elif dstatus in ('pending', 'pending_review'):
+        elif dstatus in ('pending', 'needs_review'):
             result['pending'] += 1
         elif dstatus == 'rejected':
             result['rejected'] += 1
@@ -331,8 +369,20 @@ def build_user_context(
             
             if profile['has_business']:
                 lines.append(f"Business: {profile['business_summary']}")
+                if profile['missing_business_fields']:
+                    lines.append(f"  Missing business info: {', '.join(profile['missing_business_fields'])}")
             else:
                 lines.append("Business: Not set up")
+
+            if profile['alternative_complete']:
+                alt_line = "Alternative Data: Complete"
+                if profile['risk_category']:
+                    alt_line += f" | Risk category: {profile['risk_category']}"
+                lines.append(alt_line)
+            elif profile['missing_alternative_fields']:
+                lines.append(f"Alternative Data: Missing {', '.join(profile['missing_alternative_fields'])}")
+            else:
+                lines.append("Alternative Data: Not set up")
         
         # Documents Summary
         if include_documents:

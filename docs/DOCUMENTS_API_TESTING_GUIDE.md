@@ -83,10 +83,10 @@ Content-Type: application/json
 - Auth: loan_officer or admin
 - Request body (JSON):
   - `reason` (required string, max 1000 chars)
-- Response: `document_id`, `status`, `reupload_requested`
-- Side effects: marks document `needs_review`, records `reupload_reason`, notifies customer by email
+- Response: `document_id`, `status: needs_review`, `reupload_requested`
+- Side effects: records `reupload_reason`, notifies customer by email, and flags the document for another review
 
-9. `GET /api/accounts/consent/audit/`
+9. `GET /api/auth/consent/audit/`
 - Auth: admin only
 - Response:
   - `summary`: totals for customers, `ai_consent_true`, `ai_consent_false`, and `missing_consent_records`
