@@ -14,6 +14,8 @@ NOTIFICATION_TYPES = [
     'loan_submitted',
     'loan_approved',
     'loan_rejected',
+    'loan_disbursed',
+    'payment_received',
     'document_flagged',
     'document_pending_review',
     'missing_documents_requested',

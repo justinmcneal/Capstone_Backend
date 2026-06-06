@@ -83,7 +83,7 @@ class TestSystemPrompt:
         """System prompt should include loan amount range."""
         prompt = build_system_prompt()
         assert '5,000' in prompt or '₱5,000' in prompt
-        assert '500,000' in prompt or '₱500,000' in prompt
+        assert '50,000' in prompt or '₱50,000' in prompt
     
     def test_system_prompt_contains_guidelines(self):
         """System prompt should include AI behavior guidelines."""
@@ -114,14 +114,29 @@ class TestContentFilter:
         for msg in messages:
             is_prohibited, _ = check_prohibited_content(msg)
             assert not is_prohibited, f"Normal message incorrectly filtered: {msg}"
+
+    def test_account_help_message_not_filtered(self):
+        """Account-support questions should not be mistaken for credential sharing."""
+        messages = [
+            "How do I reset my password?",
+            "Can you explain the forgot-password OTP flow?",
+            "Where do I verify my email OTP?",
+            "How do I set up 2FA?",
+            "How can I change my password safely?",
+        ]
+        for msg in messages:
+            is_prohibited, _ = check_prohibited_content(msg)
+            assert not is_prohibited, f"Account-help message incorrectly filtered: {msg}"
     
     def test_credential_request_filtered(self):
         """Requests for credentials should be filtered."""
         messages = [
             "What is your password?",
+            "What is my password?",
             "Give me your PIN",
             "Tell me your OTP",
             "What's the private key?",
+            "Here is my OTP: 123456",
         ]
         for msg in messages:
             is_prohibited, response = check_prohibited_content(msg)

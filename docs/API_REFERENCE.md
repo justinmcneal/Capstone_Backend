@@ -18,9 +18,9 @@ Counts below are based on backend route definitions in `config/urls.py` and modu
 | [Documents](#documents) | 6 | 7 | ✅ Mixed |
 | [Loans](#loans) | 28 | 31 | ✅ Mixed |
 | [AI Assistant](#ai-assistant) | 7 | 8 | ✅ Customer |
-| [Analytics](#analytics) | 6 | 6 | ✅ Mixed |
+| [Analytics](#analytics) | 7 | 7 | ✅ Mixed |
 | [Notifications](#notifications) | 4 | 4 | ✅ Mixed |
-| **Total** | **84** | **101** | |
+| **Total** | **85** | **102** | |
 
 ---
 
@@ -226,6 +226,7 @@ Content-Type: application/json
 | `GET` | `/api/analytics/audit-logs/users/` | List users present in audit logs |
 | `GET` | `/api/analytics/audit-logs/<str:log_id>/` | Get audit log detail |
 | `GET` | `/api/analytics/officer/` | Officer dashboard metrics |
+| `GET` | `/api/analytics/officer/audit-logs/` | Officer-scoped audit logs |
 | `GET` | `/api/analytics/customer/` | Customer dashboard metrics |
 
 ---

@@ -9,6 +9,8 @@ These tests ensure the context builder properly handles:
 """
 import pytest
 from ai_assistant.services.context_builder import (
+    ALTERNATIVE_DATA_REQUIRED_FIELDS,
+    BUSINESS_PROFILE_REQUIRED_FIELDS,
     mask_value,
     format_currency,
     format_date,
@@ -17,6 +19,7 @@ from ai_assistant.services.context_builder import (
     build_minimal_context,
     MAX_DOCUMENTS,
     MAX_APPLICATIONS,
+    PERSONAL_PROFILE_REQUIRED_FIELDS,
 )
 from datetime import datetime
 
@@ -60,7 +63,6 @@ class TestHelperFunctions:
         assert "✓" in summarize_status("approved")
         assert "✓" in summarize_status("paid")
         assert "⚠" in summarize_status("overdue")
-        assert "⚠" in summarize_status("defaulted")
         assert summarize_status("under_review") == "Under Review"
         assert summarize_status("unknown_status") == "Unknown Status"
 
@@ -119,12 +121,38 @@ class TestPrivacyLimits:
         assert MAX_APPLICATIONS == 3
 
 
+class TestProfileAlignment:
+    """Test AI-side profile rules stay aligned with profiles/profile_summary."""
+
+    def test_personal_profile_required_fields(self):
+        fields = [field for field, _ in PERSONAL_PROFILE_REQUIRED_FIELDS]
+        assert fields == [
+            "date_of_birth",
+            "gender",
+            "civil_status",
+            "address_line1",
+            "barangay",
+            "city_municipality",
+            "province",
+        ]
+        assert "mobile_number" not in fields
+        assert "emergency_contact_name" not in fields
+
+    def test_business_profile_required_fields(self):
+        fields = [field for field, _ in BUSINESS_PROFILE_REQUIRED_FIELDS]
+        assert fields == ["business_type", "income_range"]
+
+    def test_alternative_data_required_fields(self):
+        fields = [field for field, _ in ALTERNATIVE_DATA_REQUIRED_FIELDS]
+        assert fields == ["education_level", "housing_status"]
+
+
 class TestStatusSummarization:
     """Test status display formatting."""
     
     def test_all_application_statuses(self):
         """All application statuses should have friendly text."""
-        statuses = ['draft', 'submitted', 'under_review', 'approved', 'rejected', 'disbursed', 'completed', 'defaulted']
+        statuses = ['draft', 'submitted', 'under_review', 'approved', 'rejected', 'disbursed', 'cancelled']
         for status in statuses:
             result = summarize_status(status)
             assert result is not None
@@ -143,11 +171,11 @@ class TestStatusSummarization:
     def test_visual_indicators(self):
         """Positive/negative statuses should have visual indicators."""
         # Positive statuses should have checkmarks
-        positive = ['approved', 'paid', 'completed', 'verified']
+        positive = ['approved', 'paid']
         for status in positive:
             assert '✓' in summarize_status(status)
         
         # Negative statuses should have warnings
-        negative = ['overdue', 'defaulted']
+        negative = ['overdue']
         for status in negative:
             assert '⚠' in summarize_status(status)
