@@ -341,6 +341,7 @@ RateLimitConfig:
     'get_application_readiness': 3,  # expensive - multiple DB queries
     'get_repayment_schedule': 2,     # medium - DB queries
     'get_payment_history': 2,        # medium - can be large
+    'get_notification_status': 1,  # normal - single DB query
     'others': 1                      # normal cost
   }
 ```

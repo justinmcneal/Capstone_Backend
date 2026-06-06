@@ -296,6 +296,7 @@ def build_loans_summary(customer_id: str) -> dict:
                 total_inst = len(installments)
                 paid_inst = sum(1 for i in installments if i.get('status') == 'paid')
                 overdue_inst = sum(1 for i in installments if i.get('status') == 'overdue')
+                penalized_inst = sum(1 for i in installments if i.get('penalty_status') == 'applied')
                 remaining = schedule.get_remaining_balance()
                 
                 result['total_outstanding'] += remaining
@@ -306,6 +307,8 @@ def build_loans_summary(customer_id: str) -> dict:
                 
                 if overdue_inst > 0:
                     app_summary['overdue'] = overdue_inst
+                if penalized_inst > 0:
+                    app_summary['penalized'] = penalized_inst
                 
                 # Track next payment
                 next_pay = schedule.get_next_payment()
@@ -317,7 +320,14 @@ def build_loans_summary(customer_id: str) -> dict:
                             'amount': format_currency(next_pay.get('total_amount', 0)),
                             'due_date': format_date(due_date),
                             'days_until': days_until(due_date),
+                            'penalty_status': next_pay.get('penalty_status'),
                         }
+        
+        # Show blockchain status for disbursed loans with ETH disbursement
+        if app_status == 'disbursed':
+            disbursed_amount = getattr(app, 'disbursed_amount', None)
+            if disbursed_amount:
+                app_summary['disbursed_amount'] = format_currency(disbursed_amount)
         
         result['applications'].append(app_summary)
     
@@ -512,7 +522,8 @@ def get_context_for_intent(message: str, customer_id: str) -> str:
     message_lower = message.lower()
     
     # Full context for overview questions
-    overview_keywords = ['overview', 'summary', 'status', 'everything', 'all']
+    overview_keywords = ['overview', 'summary', 'status', 'everything', 'all',
+                         'dashboard', 'stats', 'analytics', 'how am i doing']
     if any(kw in message_lower for kw in overview_keywords):
         return build_user_context(customer_id, summarize=True)
     
