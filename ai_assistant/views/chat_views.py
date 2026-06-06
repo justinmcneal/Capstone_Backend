@@ -752,6 +752,7 @@ class EducationView(AccessControlMixin, APIView):
                 'Each installment has a due date, principal portion, and interest portion',
                 'Installment statuses: Pending, Paid, Partial, or Overdue',
                 'Partial payments are supported — pay what you can',
+                'Penalties may be applied for late payments; contact support if you need help',
                 'View your schedule in the app: Track → select your loan → Schedule tab',
                 'View payment history: Track → select your loan → Payments tab'
             ]

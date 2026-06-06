@@ -12,6 +12,9 @@ VERSION HISTORY:
 - v1.2 (2026-06-06): Loan alignment pass (product ranges, blockchain wording, FAQ answers, readiness document labels)
 - v1.3 (2026-06-06): Account-help filter alignment; allow password reset/OTP/2FA guidance while blocking credential collection
 - v1.4 (2026-06-06): Profile alignment pass (personal completion fields, business months/income range, alternative data readiness)
+- v1.5 (2026-06-06): Loan alignment update - penalty fields in repayment tools
+- v1.6 (2026-06-06): Analytics alignment - customer dashboard tool, dashboard navigation, AI session awareness
+- v1.7 (2026-06-06): Notifications tool - get unread count and recent notifications
 
 USAGE:
 - Import KNOWLEDGE_BASE dict for structured access
@@ -22,7 +25,7 @@ USAGE:
 import re
 
 # Knowledge base version - increment when making significant changes
-KNOWLEDGE_VERSION = "1.4"
+KNOWLEDGE_VERSION = "1.7"
 
 # =============================================================================
 # PLATFORM INFORMATION
@@ -136,6 +139,36 @@ PROFILES_INFO = {
 }
 
 # =============================================================================
+# ANALYTICS & DASHBOARDS - Aligned with analytics/ module (/api/analytics/)
+# =============================================================================
+
+ANALYTICS_INFO = {
+    "base_url": "/api/analytics",
+    "customer_dashboard": {
+        "endpoint": "GET /api/analytics/customer/",
+        "description": "Personal dashboard showing application counts, document stats, profile completion, and AI session count",
+        "app_location": "Dashboard tab (home screen)",
+        "ai_tool": "get_customer_dashboard provides the same data via chat",
+    },
+    "admin_dashboard": {
+        "endpoint": "GET /api/analytics/admin/",
+        "description": "System-wide statistics for admins (user counts, loan stats, product performance, recent activity)",
+        "access": "Admin role with view_analytics permission",
+    },
+    "officer_dashboard": {
+        "endpoint": "GET /api/analytics/officer/",
+        "description": "Loan officer review activity, queue stats, and approval rate",
+        "access": "Loan officer or admin role",
+    },
+    "audit_logs": {
+        "description": "All important system actions are recorded in audit logs for transparency and accountability",
+        "admin_endpoint": "GET /api/analytics/audit-logs/",
+        "officer_endpoint": "GET /api/analytics/officer/audit-logs/",
+        "note": "Customers do not have direct access to audit logs; they can track their own activity through the dashboard",
+    },
+}
+
+# =============================================================================
 # LOAN PRODUCTS - Canonical ranges and defaults
 # =============================================================================
 
@@ -216,8 +249,23 @@ LOAN_PROCESS_STEPS = [
 ]
 
 # =============================================================================
-# PAYMENT METHODS
+# REPAYMENT
 # =============================================================================
+
+REPAYMENT_INFO = {
+    "schedule": "Created after disbursement with equal monthly installments",
+    "statuses": {
+        "pending": "Not yet due or not yet paid",
+        "paid": "Fully paid",
+        "partial": "Partially paid (some amount remaining)",
+        "overdue": "Past due date and not fully paid",
+    },
+    "penalties": {
+        "applied": "Extra amount added for late payment; officer action required",
+        "waived": "Penalty removed after review; contact support for hardship",
+    },
+    "notes": "Partial payments are supported. Penalties and waivers are recorded in the installment details.",
+}
 
 PAYMENT_METHODS = {
     "automatic": {
@@ -270,6 +318,27 @@ APPLICATION_STATUSES = {
 }
 
 # =============================================================================
+# NOTIFICATIONS INFO
+# =============================================================================
+
+NOTIFICATIONS_INFO = {
+    "endpoint": "/api/notifications/",
+    "features": {
+        "unread_badge": "Bell icon shows unread count; refreshes in real-time",
+        "notification_types": [
+            "loan_submitted", "loan_approved", "loan_rejected", "loan_disbursed",
+            "payment_received", "missing_documents_requested", "document_verified",
+            "document_flagged", "document_pending_review", "new_application", "welcome"
+        ],
+        "actions": ["view notifications", "mark as read", "mark all read"],
+    },
+    "delivery": {
+        "email": "Emails are sent when email is configured; status: pending, sent, or failed",
+        "in_app": "All notifications appear in the bell icon inbox regardless of email status",
+    },
+}
+
+# =============================================================================
 # INSTALLMENT STATUSES
 # =============================================================================
 
@@ -297,6 +366,8 @@ APP_NAVIGATION = {
     "manage_consent": "Settings → Consent (or POST /api/auth/consent/)",
     "change_language": "Settings → Language (or PATCH /api/auth/language/)",
     "enable_ai_chat": "Grant ai_consent via POST /api/auth/consent/ before using AI assistant",
+    "view_dashboard": "Dashboard tab (home screen) — shows application counts, document stats, profile completion",
+    "view_activity": "Dashboard tab — AI session count and overall account summary",
 }
 
 # =============================================================================
@@ -406,15 +477,24 @@ AUTOMATIC (recorded instantly): {auto_methods}
 MANUAL (officer records): {manual_methods}
 
 === REPAYMENT ===
-- Equal monthly installments with due dates
-- Statuses: pending, paid, partial, overdue
-- Partial payments supported
-- View in app: Track → select loan → Schedule/Payments
+ - Equal monthly installments with due dates
+ - Statuses: pending, paid, partial, overdue
+ - Partial payments supported
+ - Penalties may be applied for late payments (status: applied) or waived after review (status: waived)
+ - View in app: Track → select loan → Schedule/Payments
 
 === APP NAVIGATION ===
 - Apply: Dashboard → "Apply" | Track status: "Track" → "Applications"
 - Make payment: Track → Repayment → "Make Payment"
 - Documents: Apply → "Documents" | Profile: Menu → "Profile"
+- Dashboard: Home screen — shows your application counts, document stats, profile completion, and AI session count
+
+=== ANALYTICS & DASHBOARDS ===
+- Customers have a personal dashboard (Dashboard tab) with application counts, document stats, profile completion, and AI chat session count
+- Loan officers have their own dashboard showing review stats, pending queue, and approval rate
+- Admins see system-wide analytics (user counts, loan stats, product performance, recent activity, audit logs)
+- Audit logs record all important actions for transparency; customers see their own activity via the dashboard
+- Use get_customer_dashboard tool when the user asks for a summary, overview, stats, or dashboard of their account
 
 === GUIDELINES ===
 - Never give specific financial advice or guarantee approval
@@ -452,10 +532,13 @@ KNOWLEDGE_BASE = {
     "document_types": DOCUMENT_TYPES,
     "application_statuses": APPLICATION_STATUSES,
     "installment_statuses": INSTALLMENT_STATUSES,
+    "repayment": REPAYMENT_INFO,
+    "notifications": NOTIFICATIONS_INFO,
     "app_navigation": APP_NAVIGATION,
     "prohibited_topics": PROHIBITED_TOPICS,
     "redirect_responses": REDIRECT_RESPONSES,
     "response_guidelines": RESPONSE_GUIDELINES,
+    "analytics": ANALYTICS_INFO,
 }
 
 
