@@ -302,3 +302,82 @@ class NotificationUnreadCountView(AccessControlMixin, APIView):
             data={'unread_count': unread_count},
             message="Unread count retrieved"
         )
+
+class NotificationDeleteView(AccessControlMixin, APIView):
+    """
+    Delete a single notification.
+    
+    DELETE /api/notifications/{id}/
+    """
+    authentication_classes = [CustomJWTAuthentication]
+    permission_classes = [IsAuthenticated]
+    
+    def delete(self, request, notification_id):
+        has_permission, result = self.require_roles(
+            request,
+            {'customer', 'loan_officer', 'admin', 'super_admin'},
+        )
+        if not has_permission:
+            return result
+
+        db = get_db()
+        collection = db[Notification.collection_name]
+        
+        try:
+            owner_query = _build_notification_owner_query(request.user)
+            find_query = {'_id': ObjectId(notification_id)}
+            if '$or' in owner_query:
+                find_query['$or'] = owner_query['$or']
+            else:
+                find_query.update(owner_query)
+
+            result = collection.delete_one(find_query)
+        except Exception:
+            return error_response(
+                message="Invalid notification ID",
+                status_code=http_status.HTTP_400_BAD_REQUEST
+            )
+        
+        if result.deleted_count == 0:
+            return error_response(
+                message="Notification not found",
+                status_code=http_status.HTTP_404_NOT_FOUND
+            )
+        
+        logger.info(f"Notification {notification_id} deleted")
+        
+        return success_response(
+            data={'notification_id': notification_id, 'status': 'deleted'},
+            message="Notification deleted successfully"
+        )
+
+
+class NotificationClearAllView(AccessControlMixin, APIView):
+    """
+    Delete all notifications for the current user.
+    
+    DELETE /api/notifications/clear-all/
+    """
+    authentication_classes = [CustomJWTAuthentication]
+    permission_classes = [IsAuthenticated]
+    
+    def delete(self, request):
+        has_permission, result = self.require_roles(
+            request,
+            {'customer', 'loan_officer', 'admin', 'super_admin'},
+        )
+        if not has_permission:
+            return result
+
+        db = get_db()
+        collection = db[Notification.collection_name]
+
+        delete_query = _build_notification_owner_query(request.user)
+        result = collection.delete_many(delete_query)
+        
+        logger.info(f"Deleted {result.deleted_count} notifications")
+        
+        return success_response(
+            data={'deleted_count': result.deleted_count},
+            message=f"{result.deleted_count} notifications deleted"
+        )

@@ -185,6 +185,7 @@ class EmailSender:
             recipient_name=customer_name,
             notification_type='loan_submitted',
             subject='Loan Application Received',
+            message=f"Your loan application for {product_name} in the amount of {amount} has been received.",
             related_type='loan',
             related_id=loan_id
         )
@@ -218,6 +219,7 @@ class EmailSender:
             recipient_name=customer_name,
             notification_type='loan_approved',
             subject='Loan Approved!',
+            message=f"Congratulations! Your loan has been approved for {approved_amount}.",
             related_type='loan',
             related_id=loan_id
         )
@@ -250,6 +252,7 @@ class EmailSender:
             recipient_name=customer_name,
             notification_type='loan_rejected',
             subject='Loan Application Update',
+            message=f"Your loan application was unsuccessful. Reason: {reason}",
             related_type='loan',
             related_id=loan_id
         )
@@ -283,6 +286,7 @@ class EmailSender:
             recipient_name=customer_name,
             notification_type='document_flagged',
             subject='Document Needs Attention',
+            message=f"There are issues with your {document_type} document.",
             related_type='document',
             related_id=document_id,
         )
@@ -316,6 +320,7 @@ class EmailSender:
             recipient_name=customer_name,
             notification_type='document_verified',
             subject='Document Approved',
+            message=f"Your {document_type} document has been successfully verified.",
             related_type='document',
             related_id=document_id,
         )
@@ -352,6 +357,7 @@ class EmailSender:
             recipient_name=reviewer_name,
             notification_type='document_pending_review',
             subject='New Document Pending Review',
+            message=f"A new {document_type} document for {customer_name} requires your review.",
             related_type='document',
             related_id=document_id,
         )
@@ -386,6 +392,7 @@ class EmailSender:
             recipient_name=customer_name,
             notification_type='missing_documents_requested',
             subject='Additional Documents Needed',
+            message="We need some additional documents from you to process your loan application.",
             related_type='loan',
             related_id=loan_id
         )
@@ -420,6 +427,7 @@ class EmailSender:
             recipient_name=officer_name,
             notification_type='new_application',
             subject='New Loan Application',
+            message=f"A new loan application from {customer_name} for {amount} has been assigned to you.",
             related_type='loan',
             related_id=loan_id,
             user_type='loan_officer'
@@ -456,6 +464,7 @@ class EmailSender:
             recipient_name=customer_name,
             notification_type='loan_disbursed',
             subject='Loan Disbursed!',
+            message=f"Your loan of {amount} has been successfully disbursed.",
             related_type='loan',
             related_id=loan_id
         )
@@ -492,6 +501,7 @@ class EmailSender:
             recipient_name=customer_name,
             notification_type='payment_received',
             subject='Payment Received',
+            message=f"We have received your payment of {amount} for installment {installment}.",
             related_type='loan',
             related_id=loan_id
         )
