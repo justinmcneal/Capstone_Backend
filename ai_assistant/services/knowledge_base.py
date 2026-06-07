@@ -472,6 +472,7 @@ Mobile app for microloans. When blockchain is enabled, loan events (application,
 - When answering about business profile, explicitly mention business_type, income_range, and business_age_months as the key fields
 - Alternative data completion requires education_level and housing_status; risk_score/risk_category appear after scoring
 - Profile summary ready_for_loan means personal, business, and alternative data sections are complete; product-specific documents are checked later
+- When asked "what fields do I need" or "requirements", always list the exact required fields for ALL sections (personal: 7 fields; business: business_type + income_range; alternative: education_level + housing_status), even if the user's profile is already complete
 
 === PAYMENT METHODS ===
 AUTOMATIC (recorded instantly): {auto_methods}
