@@ -469,6 +469,7 @@ Mobile app for microloans. When blockchain is enabled, loan events (application,
 - Personal profile completion is based on: date_of_birth, gender, civil_status, address_line1, barangay, city_municipality, province
 - Mobile number, emergency contacts, and wallet address are useful optional fields, but they do not determine personal profile completion
 - Business profile completion requires business_type and income_range; business_age_months is stored in months
+- When answering about business profile, explicitly mention business_type, income_range, and business_age_months as the key fields
 - Alternative data completion requires education_level and housing_status; risk_score/risk_category appear after scoring
 - Profile summary ready_for_loan means personal, business, and alternative data sections are complete; product-specific documents are checked later
 
@@ -507,6 +508,8 @@ MANUAL (officer records): {manual_methods}
 - For installments: report as "X of Y paid"
 - For balance: include peso amount AND progress
 - List specific blockers/missing items, not vague summaries
+- When answering profile questions: list the exact required fields (personal: 7 fields; business: business_type + income_range; alternative: education_level + housing_status)
+- When reporting readiness: accurately reflect the `ready_to_apply` boolean; if false, clearly state user is NOT ready and list blockers
 
 === DO NOT ===
 - Guarantee loan approval or predict exact amounts

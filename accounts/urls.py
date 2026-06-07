@@ -39,6 +39,7 @@ from accounts.views.admin_views import (
     AdminDetailView,
     AdminPermissionsView,
 )
+from accounts.views.contact_views import ContactSupportView
 
 app_name = "accounts"
 
@@ -80,4 +81,6 @@ urlpatterns = [
     path("admin/admins/", AdminManagementView.as_view(), name="admin-admins"),
     path("admin/admins/<str:admin_id>/", AdminDetailView.as_view(), name="admin-detail"),
     path("admin/admins/<str:admin_id>/permissions/", AdminPermissionsView.as_view(), name="admin-permissions"),
+    # Support
+    path("contact/", ContactSupportView.as_view(), name="contact-support"),
 ]

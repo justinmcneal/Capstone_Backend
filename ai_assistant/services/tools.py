@@ -314,6 +314,7 @@ def _get_document_status(customer_id, **kwargs):
     for doc in docs:
         doc_list.append({
             "type": getattr(doc, 'document_type', 'unknown'),
+            "type_label": document_type_label(getattr(doc, 'document_type', 'unknown')),
             "status": getattr(doc, 'status', 'unknown'),
             "verified": getattr(doc, 'verified', False),
         })
@@ -589,7 +590,7 @@ def _get_application_readiness(customer_id, **kwargs):
     if docs:
         uploaded_types = [getattr(d, 'document_type', '') for d in docs]
         approved_types = [getattr(d, 'document_type', '') for d in docs if getattr(d, 'status', '') == 'approved']
-        pending_types = [getattr(d, 'document_type', '') for d in docs if getattr(d, 'status', '') == 'pending']
+        pending_types = [getattr(d, 'document_type', '') for d in docs if getattr(d, 'status', '') in ('pending', 'needs_review')]
         rejected_types = [getattr(d, 'document_type', '') for d in docs if getattr(d, 'status', '') == 'rejected']
 
         missing_docs = [document_type_label(t) for t in required_types if t not in uploaded_types]
@@ -662,7 +663,7 @@ def _get_customer_dashboard(customer_id, **kwargs):
             {"customer_id": str(customer_id), "verified": True}
         ),
         "pending": db["documents"].count_documents(
-            {"customer_id": str(customer_id), "status": "pending"}
+             {"customer_id": str(customer_id), "status": {"$in": ["pending", "needs_review"]}}
         ),
     }
 
