@@ -595,7 +595,8 @@ def _get_application_readiness(customer_id, **kwargs):
 
         missing_docs = [document_type_label(t) for t in required_types if t not in uploaded_types]
         if missing_docs:
-            blockers.append(f"Missing documents (upload required): {', '.join(missing_docs)}")
+            baseline_msg = "At a minimum, a valid ID is required." if 'valid_id' in missing_docs else ""
+            blockers.append(f"Missing documents (upload required): {', '.join(missing_docs)}. {baseline_msg}")
         if rejected_types:
             blockers.append(f"Rejected documents need re-upload: {', '.join(document_type_label(t) for t in rejected_types)}")
         if pending_types:
