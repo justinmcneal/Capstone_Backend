@@ -28,6 +28,7 @@ from accounts.views.two_factor_views import (
 from accounts.views.loan_officer_views import (
     LoanOfficerLoginView,
     LoanOfficerLogoutView,
+    LoanOfficerProfileView,
 )
 from accounts.views.admin_views import (
     AdminLoginView,
@@ -38,6 +39,7 @@ from accounts.views.admin_views import (
     AdminManagementView,
     AdminDetailView,
     AdminPermissionsView,
+    AdminProfileView,
 )
 from accounts.views.contact_views import ContactSupportView
 
@@ -71,9 +73,11 @@ urlpatterns = [
     # Loan Officer Authentication
     path("loan-officer/login/", LoanOfficerLoginView.as_view(), name="loan-officer-login"),
     path("loan-officer/logout/", LoanOfficerLogoutView.as_view(), name="loan-officer-logout"),
+    path("loan-officer/me/", LoanOfficerProfileView.as_view(), name="loan-officer-me"),
     # Admin Authentication
     path("admin/login/", AdminLoginView.as_view(), name="admin-login"),
     path("admin/logout/", AdminLogoutView.as_view(), name="admin-logout"),
+    path("admin/me/", AdminProfileView.as_view(), name="admin-me"),
     # Admin - Loan Officer Management
     path("admin/loan-officers/", LoanOfficerManagementView.as_view(), name="admin-loan-officers"),
     path("admin/loan-officers/<str:officer_id>/", LoanOfficerDetailView.as_view(), name="admin-loan-officer-detail"),

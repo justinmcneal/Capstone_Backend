@@ -162,7 +162,7 @@ class Verify2FAView(APIView):
                 )
 
             # Decode temp token to get user ID and role
-            token = RefreshToken(temp_token)
+            token = RefreshToken(temp_token)  # type: ignore
             is_temp_token = bool(token.get("is_2fa_temp") or token.get("temp_2fa"))
             if not is_temp_token:
                 return APIResponseHelper.error_response(
@@ -260,10 +260,13 @@ class Verify2FAView(APIView):
                     "id": user.id,
                     "username": user.username,
                     "email": user.email,
-                    "full_name": user.full_name,
+                    "first_name": getattr(user, "first_name", ""),
+                    "last_name": getattr(user, "last_name", ""),
+                    "full_name": getattr(user, "full_name", ""),
                     "role": "admin",
                     "permissions": user.permissions if not user.super_admin else ["*"],
                     "super_admin": user.super_admin,
+                    "last_login_attempt": user.last_login_attempt.isoformat() if getattr(user, "last_login_attempt", None) else None,
                 }
             else:
                 # Loan Officer tokens
@@ -277,10 +280,14 @@ class Verify2FAView(APIView):
                 user_data = {
                     "id": user.id,
                     "email": user.email,
-                    "full_name": user.full_name,
+                    "first_name": getattr(user, "first_name", ""),
+                    "last_name": getattr(user, "last_name", ""),
+                    "full_name": getattr(user, "full_name", ""),
+                    "phone": getattr(user, "phone", ""),
                     "department": user.department,
                     "employee_id": user.employee_id,
                     "role": "loan_officer",
+                    "last_login_attempt": user.last_login_attempt.isoformat() if getattr(user, "last_login_attempt", None) else None,
                 }
 
             if initial_admin_setup:
