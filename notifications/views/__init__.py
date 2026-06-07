@@ -6,6 +6,8 @@ from notifications.views.notification_views import (
     NotificationMarkReadView,
     NotificationMarkAllReadView,
     NotificationUnreadCountView,
+    NotificationDeleteView,
+    NotificationClearAllView,
 )
 
 __all__ = [
@@ -13,4 +15,6 @@ __all__ = [
     'NotificationMarkReadView',
     'NotificationMarkAllReadView',
     'NotificationUnreadCountView',
+    'NotificationDeleteView',
+    'NotificationClearAllView',
 ]
