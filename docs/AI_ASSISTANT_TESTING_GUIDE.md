@@ -41,7 +41,7 @@ Restart the server after `.env` changes.
 | `docs/ACCOUNTS_TESTING_GUIDE.md` | Auth, consent, language, 2FA (AI depends on consent + language) |
 | `docs/NOTIFICATIONS_TESTING_GUIDE.md` | Notification inbox behavior triggered by loan/document workflows |
 | `docs/ANALYTICS_TESTING_GUIDE.md` | Analytics dashboards; customer dashboard data the AI `get_customer_dashboard` tool mirrors |
-| `ai_assistant/services/knowledge_base.py` | Single source of truth for AI knowledge (v1.6 — includes analytics/dashboard alignment) |
+| `ai_assistant/services/knowledge_base.py` | Single source of truth for AI knowledge (v1.7 — includes analytics/dashboard alignment) |
 
 ---
 
@@ -499,7 +499,7 @@ When the LLM calls tools, these are the data shapes returned internally:
 - `alternative_data.education_level`, `alternative_data.housing_status`, `alternative_data.risk_score`, `alternative_data.risk_category`, `alternative_data.is_complete`, `alternative_data.missing_fields[]`
 
 ### `get_document_status`
-- `documents[].type`, `documents[].status`, `documents[].verified`
+- `documents[].type`, `documents[].type_label`, `documents[].status`, `documents[].verified`
 - `summary` (string)
 
 ### `get_loan_status`
