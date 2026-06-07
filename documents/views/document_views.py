@@ -288,9 +288,14 @@ class DocumentUploadView(AccessControlMixin, APIView):
                 document.ai_analysis = ai_analysis
 
                 # Auto-flag for review when image quality/type validation fails.
-                if (not ai_analysis.get("is_valid", True)) or ai_analysis.get(
-                    "quality_score", 1
-                ) < 0.5:
+                quality_score = ai_analysis.get("quality_score")
+
+                try:
+                    quality_score = float(quality_score) if quality_score is not None else 1.0
+                except (TypeError, ValueError):
+                    quality_score = 0.0
+
+                if (not ai_analysis.get("is_valid", True)) or quality_score < 0.5:
                     document.status = "needs_review"
 
             document.save()
@@ -539,10 +544,21 @@ class DocumentListView(AccessControlMixin, APIView):
 
             storage = get_storage_backend()
 
+            # Cache to avoid multiple DB lookups for the same customer
+            customer_cache = {}
+            def _get_customer_name(cid):
+                if not cid: return "Unknown"
+                cid_str = str(cid)
+                if cid_str not in customer_cache:
+                    customer = get_customer_by_identifier(cid_str)
+                    customer_cache[cid_str] = get_display_name(customer, fallback="Unknown")
+                return customer_cache[cid_str]
+
             docs_data = [
                 {
                     "id": doc.id,
                     "customer_id": serialize_value(doc.customer_id),
+                    "customer_name": _get_customer_name(doc.customer_id),
                     "document_type": doc.document_type,
                     "filename": doc.original_filename,
                     "original_filename": doc.original_filename,
@@ -653,10 +669,14 @@ class DocumentDetailView(AccessControlMixin, APIView):
 
             storage = get_storage_backend()
 
+            customer = get_customer_by_identifier(document.customer_id)
+            customer_name = get_display_name(customer, fallback="Unknown")
+
             return success_response(
                 data={
                     "id": document.id,
                     "customer_id": serialize_value(document.customer_id),
+                    "customer_name": customer_name,
                     "document_type": document.document_type,
                     "original_filename": document.original_filename,
                     "file_size": document.file_size,

@@ -222,10 +222,14 @@ class LoanOfficerLoginView(APIView):
                     "user": {
                         "id": officer.id,
                         "email": officer.email,
+                        "first_name": officer.first_name,
+                        "last_name": officer.last_name,
                         "full_name": officer.full_name,
+                        "phone": officer.phone,
                         "department": officer.department,
                         "employee_id": officer.employee_id,
                         "role": "loan_officer",
+                        "last_login_attempt": officer.last_login_attempt.isoformat() if officer.last_login_attempt else None,
                     },
                     "must_change_password": officer.must_change_password,
                 },
@@ -304,3 +308,106 @@ class LoanOfficerLogoutView(APIView):
             response = success_response(message="Logged out successfully")
             clear_auth_cookies(response)
             return response
+
+
+class LoanOfficerProfileView(APIView):
+    """
+    Get or update the authenticated Loan Officer's profile.
+    
+    GET /api/auth/loan-officer/me/
+    PUT /api/auth/loan-officer/me/
+    """
+    from rest_framework.permissions import IsAuthenticated
+    from accounts.authentication import CustomJWTAuthentication
+    
+    authentication_classes = [CustomJWTAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        from accounts.utils.user_detection import get_authenticated_user
+        try:
+            user, user_type = get_authenticated_user(request)
+            if not user or user_type != "loan_officer":
+                return error_response(message="Unauthorized", status_code=status.HTTP_401_UNAUTHORIZED)
+            
+            return success_response(data={
+                "id": user.id,
+                "email": user.email,
+                "first_name": user.first_name,
+                "last_name": user.last_name,
+                "full_name": user.full_name,
+                "phone": user.phone,
+                "department": user.department,
+                "employee_id": user.employee_id,
+                "role": "loan_officer",
+                "last_login_attempt": user.last_login_attempt.isoformat() if user.last_login_attempt else None,
+            })
+        except Exception as e:
+            logger.error(f"Get Loan Officer Profile error: {str(e)}")
+            return error_response(message="Failed to retrieve profile", status_code=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    def put(self, request):
+        from accounts.utils.user_detection import get_authenticated_user
+        from accounts.utils.validation_utils import validate_person_name, validate_phone_number
+        from accounts.utils.validation_utils import sanitize_text
+        
+        try:
+            user, user_type = get_authenticated_user(request)
+            if not user or user_type != "loan_officer":
+                return error_response(message="Unauthorized", status_code=status.HTTP_401_UNAUTHORIZED)
+                
+            data = request.data
+            changes = False
+            
+            if "first_name" in data:
+                is_valid, error_msg, normalized_name = validate_person_name(data["first_name"], "First name", 50)
+                if not is_valid:
+                    return error_response(message=error_msg, errors={"first_name": error_msg}, status_code=status.HTTP_400_BAD_REQUEST)
+                user.first_name = normalized_name
+                changes = True
+                
+            if "last_name" in data:
+                is_valid, error_msg, normalized_name = validate_person_name(data["last_name"], "Last name", 50)
+                if not is_valid:
+                    return error_response(message=error_msg, errors={"last_name": error_msg}, status_code=status.HTTP_400_BAD_REQUEST)
+                user.last_name = normalized_name
+                changes = True
+                
+            if "phone" in data:
+                phone_raw = data["phone"]
+                if phone_raw is not None and not isinstance(phone_raw, str):
+                    return error_response(message="phone must be a string", errors={"phone": "phone must be a string"}, status_code=status.HTTP_400_BAD_REQUEST)
+                is_valid, phone_error, normalized_phone = validate_phone_number(phone_raw, field_name="Phone", required=False, min_digits=11, max_digits=11)
+                if not is_valid:
+                    return error_response(message=phone_error, errors={"phone": phone_error}, status_code=status.HTTP_400_BAD_REQUEST)
+                user.phone = normalized_phone
+                changes = True
+
+            if changes:
+                user.save()
+                AuditLog.log_action(
+                    action="profile_updated",
+                    user_id=user.id,
+                    user_type="loan_officer",
+                    user_email=user.email,
+                    description=f"Loan officer {user.email} updated their profile",
+                    ip_address=request.META.get("REMOTE_ADDR", ""),
+                )
+                
+            return success_response(data={
+                "id": user.id,
+                "email": user.email,
+                "first_name": user.first_name,
+                "last_name": user.last_name,
+                "full_name": user.full_name,
+                "phone": user.phone,
+                "department": user.department,
+                "employee_id": user.employee_id,
+                "role": "loan_officer",
+                "last_login_attempt": user.last_login_attempt.isoformat() if user.last_login_attempt else None,
+            }, message="Profile updated successfully")
+            
+        except Exception as e:
+            logger.error(f"Update Loan Officer Profile error: {str(e)}")
+            return error_response(message="Failed to update profile", status_code=status.HTTP_500_INTERNAL_SERVER_ERROR)
+

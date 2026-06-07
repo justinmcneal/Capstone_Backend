@@ -1480,3 +1480,94 @@ class AdminPermissionsView(SuperAdminRequiredMixin, APIView):
                 message="Failed to update permissions",
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
+
+
+class AdminProfileView(APIView):
+    """
+    Get or update the authenticated Admin's profile.
+    
+    GET /api/auth/admin/me/
+    PUT /api/auth/admin/me/
+    """
+    from rest_framework.permissions import IsAuthenticated
+    from accounts.authentication import CustomJWTAuthentication
+    
+    authentication_classes = [CustomJWTAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        from accounts.utils.user_detection import get_authenticated_user
+        try:
+            user, user_type = get_authenticated_user(request)
+            if not user or user_type != "admin":
+                return error_response(message="Unauthorized", status_code=status.HTTP_401_UNAUTHORIZED)
+            
+            return success_response(data={
+                "id": user.id,
+                "username": user.username,
+                "email": user.email,
+                "first_name": user.first_name,
+                "last_name": user.last_name,
+                "full_name": user.full_name,
+                "role": "admin",
+                "permissions": user.permissions if not user.super_admin else ["*"],
+                "super_admin": user.super_admin,
+                "last_login_attempt": user.last_login_attempt.isoformat() if getattr(user, "last_login_attempt", None) else None,
+            })
+        except Exception as e:
+            logger.error(f"Get Admin Profile error: {str(e)}")
+            return error_response(message="Failed to retrieve profile", status_code=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    def put(self, request):
+        from accounts.utils.user_detection import get_authenticated_user
+        from accounts.utils.validation_utils import validate_person_name
+        
+        try:
+            user, user_type = get_authenticated_user(request)
+            if not user or user_type != "admin":
+                return error_response(message="Unauthorized", status_code=status.HTTP_401_UNAUTHORIZED)
+                
+            data = request.data
+            changes = False
+            
+            if "first_name" in data:
+                is_valid, error_msg, normalized_name = validate_person_name(data["first_name"], "First name", 50)
+                if not is_valid:
+                    return error_response(message=error_msg, errors={"first_name": error_msg}, status_code=status.HTTP_400_BAD_REQUEST)
+                user.first_name = normalized_name
+                changes = True
+                
+            if "last_name" in data:
+                is_valid, error_msg, normalized_name = validate_person_name(data["last_name"], "Last name", 50)
+                if not is_valid:
+                    return error_response(message=error_msg, errors={"last_name": error_msg}, status_code=status.HTTP_400_BAD_REQUEST)
+                user.last_name = normalized_name
+                changes = True
+                
+            if changes:
+                user.save()
+                AuditLog.log_action(
+                    action="profile_updated",
+                    user_id=user.id,
+                    user_type="super_admin" if getattr(user, "super_admin", False) else "admin",
+                    user_email=user.email,
+                    description=f"Admin {user.email} updated their profile",
+                    ip_address=request.META.get("REMOTE_ADDR", ""),
+                )
+                
+            return success_response(data={
+                "id": user.id,
+                "username": user.username,
+                "email": user.email,
+                "first_name": user.first_name,
+                "last_name": user.last_name,
+                "full_name": user.full_name,
+                "role": "admin",
+                "permissions": user.permissions if not user.super_admin else ["*"],
+                "super_admin": user.super_admin,
+                "last_login_attempt": user.last_login_attempt.isoformat() if getattr(user, "last_login_attempt", None) else None,
+            }, message="Profile updated successfully")
+            
+        except Exception as e:
+            logger.error(f"Update Admin Profile error: {str(e)}")
+            return error_response(message="Failed to update profile", status_code=status.HTTP_500_INTERNAL_SERVER_ERROR)
