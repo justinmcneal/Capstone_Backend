@@ -595,11 +595,11 @@ def _get_application_readiness(customer_id, **kwargs):
 
         missing_docs = [document_type_label(t) for t in required_types if t not in uploaded_types]
         if missing_docs:
-            blockers.append(f"Missing documents: {', '.join(missing_docs)}")
+            blockers.append(f"Missing documents (upload required): {', '.join(missing_docs)}")
         if rejected_types:
             blockers.append(f"Rejected documents need re-upload: {', '.join(document_type_label(t) for t in rejected_types)}")
         if pending_types:
-            completed.append(f"{len(pending_types)} document(s) pending verification")
+            completed.append(f"{len(pending_types)} document(s) pending verification - please wait for verification")
         if approved_types:
             completed.append(f"{len(approved_types)} document(s) approved")
     else:
