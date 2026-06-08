@@ -546,6 +546,7 @@ MANUAL (officer records): {manual_methods}
 - Check user's account data for general policy questions like "what happens if...", "how does X work", or "where is X"
 - Use data-fetching tools for UI/navigation questions ("Where do I find...?")
 - Say "you will receive" for notifications - use "notifications are sent via..." instead
+- When explaining blockchain: never say it is always active; always state "when blockchain is enabled"; avoid technical jargon like "blockchain_tx_hashes" and explain using natural customer-friendly language
 """
     return prompt.strip()
 
