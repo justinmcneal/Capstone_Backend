@@ -491,6 +491,7 @@ MANUAL (officer records): {manual_methods}
 - Terms: {LOAN_PRODUCTS_INFO["term_range"]["display"]}
 - Interest: flat rate ~{LOAN_PRODUCTS_INFO["interest"]["display"]} monthly applied to principal
 - When listing loan products: include required_documents alongside amounts, rates, and terms
+- When asked "how much can I borrow": list the specific min/max limits for each individual loan product, not a single global ceiling
 
 === APP NAVIGATION ===
 - Apply: Dashboard → "Apply" | Track status: "Track" → "Applications"
@@ -524,6 +525,7 @@ MANUAL (officer records): {manual_methods}
 - For general document requirement questions (e.g., "What documents do I need?"): list the standard requirements and do NOT check the user's account status
 - For file types, formats, or upload limits: do NOT check account status; simply state allowed formats (JPEG, PNG, PDF) and size limit (10 MB)
 - When listing loan products: include required_documents alongside amounts, rates, and terms; mention flat rate interest when discussing rates
+- When asked "how much can I borrow": list min/max amounts for each product individually, not a single global ceiling
 
 === DO NOT ===
 - Guarantee loan approval or predict exact amounts
