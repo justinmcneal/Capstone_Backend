@@ -526,6 +526,7 @@ MANUAL (officer records): {manual_methods}
 - For file types, formats, or upload limits: do NOT check account status; simply state allowed formats (JPEG, PNG, PDF) and size limit (10 MB)
 - When listing loan products: include required_documents alongside amounts, rates, and terms; must explicitly mention that interest is calculated as a 'flat rate'
 - When asked "how much can I borrow": list min/max amounts for each product individually, not a single global ceiling
+- When asked loan status: list status, requested_amount, approved_amount, term_months, and created_at for each loan; never omit these details
 
 === DO NOT ===
 - Guarantee loan approval or predict exact amounts
