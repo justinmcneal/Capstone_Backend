@@ -930,6 +930,17 @@ class RepaymentScheduleView(CustomerRoleRequiredMixin, APIView):
             penalty_waived_at = inst.get("penalty_waived_at")
             if hasattr(penalty_waived_at, "isoformat"):
                 penalty_waived_at = penalty_waived_at.isoformat()
+            
+            # Calculate actual amount due including penalties
+            base_total_amount = inst["total_amount"]
+            penalty_amount = inst.get("penalty_amount", 0)
+            penalty_status = inst.get("penalty_status")
+            
+            # Include penalty in total if applied and not waived
+            actual_total_amount = base_total_amount
+            if penalty_status == "applied" and penalty_amount > 0:
+                actual_total_amount = base_total_amount + penalty_amount
+            
             installments.append(
                 {
                     "number": inst["number"],
@@ -938,7 +949,8 @@ class RepaymentScheduleView(CustomerRoleRequiredMixin, APIView):
                     ),
                     "principal": inst["principal"],
                     "interest": inst["interest"],
-                    "total_amount": inst["total_amount"],
+                    "total_amount": actual_total_amount,  # Include penalty in total
+                    "base_amount": base_total_amount,  # Original amount without penalty
                     "status": inst["status"],
                     "paid_amount": inst.get("paid_amount", 0),
                     "penalty_status": inst.get("penalty_status"),
@@ -1131,6 +1143,11 @@ class PaymentHistoryView(CustomerRoleRequiredMixin, APIView):
             )
 
         remaining = installment["total_amount"] - installment.get("paid_amount", 0)
+        
+        # Include penalty in remaining amount if applied
+        if installment.get("penalty_status") == "applied":
+            remaining += installment.get("penalty_amount", 0)
+        
         if amount - remaining > 0.01:
             return error_response(
                 message=f"Amount exceeds remaining balance of ₱{remaining:.2f}",
@@ -1582,6 +1599,10 @@ class WalletPaymentView(CustomerRoleRequiredMixin, APIView):
             expected_php = installment["total_amount"] - installment.get(
                 "paid_amount", 0
             )
+            
+            # Include penalty in expected amount if applied
+            if installment.get("penalty_status") == "applied":
+                expected_php += installment.get("penalty_amount", 0)
 
             # Minimum payment threshold to prevent dust payments
             MIN_PAYMENT_PHP = 100.0
