@@ -1404,6 +1404,11 @@ class RecordPaymentView(LoanOfficerRequiredMixin, APIView):
 
         # VALIDATION 3: Prevent overpayment (allow 1 cent tolerance for float noise)
         remaining = installment["total_amount"] - installment.get("paid_amount", 0)
+        
+        # Include penalty in remaining amount if applied
+        if installment.get("penalty_status") == "applied":
+            remaining += installment.get("penalty_amount", 0)
+        
         if amount - remaining > 0.01:
             return error_response(
                 message=f"Amount exceeds remaining balance of ₱{remaining:.2f}",
@@ -1641,6 +1646,13 @@ class ActiveLoansView(LoanOfficerRequiredMixin, APIView):
 
             # Get next payment due
             next_payment = schedule.get_next_payment()
+            
+            # Calculate next due amount including penalty if applied
+            next_due_amount = None
+            if next_payment:
+                next_due_amount = next_payment["total_amount"]
+                if next_payment.get("penalty_status") == "applied":
+                    next_due_amount += next_payment.get("penalty_amount", 0)
 
             loans_data.append(
                 {
@@ -1663,9 +1675,7 @@ class ActiveLoansView(LoanOfficerRequiredMixin, APIView):
                         if next_payment and next_payment.get("due_date")
                         else None
                     ),
-                    "next_due_amount": (
-                        next_payment["total_amount"] if next_payment else None
-                    ),
+                    "next_due_amount": next_due_amount,
                 }
             )
 
@@ -1769,13 +1779,24 @@ class OfficerScheduleView(LoanOfficerRequiredMixin, APIView):
             if hasattr(penalty_waived_at, "isoformat"):
                 penalty_waived_at = penalty_waived_at.isoformat()
 
+            # Calculate actual amount due including penalties
+            base_total_amount = inst["total_amount"]
+            penalty_amount = inst.get("penalty_amount", 0)
+            penalty_status = inst.get("penalty_status")
+            
+            # Include penalty in total if applied and not waived
+            actual_total_amount = base_total_amount
+            if penalty_status == "applied" and penalty_amount > 0:
+                actual_total_amount = base_total_amount + penalty_amount
+
             installments.append(
                 {
                     "number": inst["number"],
                     "due_date": due_date.isoformat() if due_date else None,
                     "principal": inst["principal"],
                     "interest": inst["interest"],
-                    "total_amount": inst["total_amount"],
+                    "total_amount": actual_total_amount,  # Include penalty in total
+                    "base_amount": base_total_amount,  # Original amount without penalty
                     "status": inst_status,
                     "paid_amount": inst.get("paid_amount", 0),
                     "penalty_status": inst.get("penalty_status"),
