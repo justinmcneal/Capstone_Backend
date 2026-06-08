@@ -1553,19 +1553,48 @@ class ActiveLoansView(LoanOfficerRequiredMixin, APIView):
             # Search by name, phone, or email using Customer.find()
             import re
 
-            regex = re.compile(f".*{re.escape(search)}.*", re.IGNORECASE)
-            customers = Customer.find(
-                {
-                    "$or": [
-                        {"first_name": regex},
-                        {"last_name": regex},
-                        {"phone": regex},
-                        {"email": regex},
-                    ]
-                }
-            )[
-                :20
-            ]  # Limit to 20 results
+            # Split search query by spaces to handle multi-word searches
+            search_words = search.strip().split()
+            
+            if len(search_words) > 1:
+                # Multi-word search: match records where ALL words are found in the full name
+                # Build conditions for each word to match against first_name OR last_name
+                word_conditions = []
+                for word in search_words:
+                    word_regex = re.compile(f".*{re.escape(word)}.*", re.IGNORECASE)
+                    word_conditions.append({
+                        "$or": [
+                            {"first_name": word_regex},
+                            {"last_name": word_regex},
+                        ]
+                    })
+                
+                # Also include phone and email search with the full original query
+                full_regex = re.compile(f".*{re.escape(search)}.*", re.IGNORECASE)
+                customers = Customer.find(
+                    {
+                        "$or": [
+                            {"$and": word_conditions},  # All words match in first_name or last_name
+                            {"phone": full_regex},
+                            {"email": full_regex},
+                        ]
+                    }
+                )[:20]  # Limit to 20 results
+            else:
+                # Single word search: use original logic
+                regex = re.compile(f".*{re.escape(search)}.*", re.IGNORECASE)
+                customers = Customer.find(
+                    {
+                        "$or": [
+                            {"first_name": regex},
+                            {"last_name": regex},
+                            {"phone": regex},
+                            {"email": regex},
+                        ]
+                    }
+                )[
+                    :20
+                ]  # Limit to 20 results
 
             # Exact customer ID lookup (MongoDB ObjectId string)
             if ObjectId.is_valid(search):
