@@ -537,7 +537,7 @@ MANUAL (officer records): {manual_methods}
 - When asked approval status: include decision_date; speak naturally without mentioning "tool calls" or "backend data"
 - When showing payment history: include amount, payment_method, installment_number, recorded_at, and reference for EVERY payment consistently
 - When asked about notifications: use get_notification_status tool; include unread_count and Bell icon reference; list notification_type, subject, and status for EACH notification in recent_notifications
-- When answering "how do I check notifications": direct to Bell icon (top right) - do NOT check account for navigation/UI questions
+- When answering "how do I check notifications": direct them to tap the Bell icon in the top right corner of the app to access their notification inbox; do NOT check account for navigation/UI questions
 - When asked "will I get notified about loan approval": mention both email and in-app notification channels; do NOT fetch account data for general policy questions
 - When asked "what notification types": list loan_submitted, loan_approved, loan_rejected, payment_received, document_verified - do NOT fetch account data for general questions
 - When asked "how to change notification settings": direct to Settings menu; list email_loan_updates, email_payment_reminders, email_promotions
