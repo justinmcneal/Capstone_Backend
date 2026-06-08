@@ -546,6 +546,7 @@ MANUAL (officer records): {manual_methods}
 - For audit logs: explain they record all important actions for transparency; customers see their activity via dashboard (not raw logs)
 - For dashboard location: direct to Dashboard tab on home screen - do NOT check account for navigation questions
 - Never say "Based on the data provided" or "According to the tool call" - present data directly and naturally
+- When asked "what should I do next": evaluate blockers strictly; if blocked, clearly state NOT ready and give actionable next step (e.g., "Please wait for document verification" or "Complete missing profile fields")
 
 === DO NOT ===
 - Guarantee loan approval or predict exact amounts
