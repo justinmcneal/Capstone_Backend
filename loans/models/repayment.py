@@ -168,10 +168,18 @@ class RepaymentSchedule:
         return sum(1 for inst in self.installments if inst["status"] == "paid")
 
     def get_remaining_balance(self):
-        """Calculate remaining balance"""
+        """Calculate remaining balance including unpaid penalties"""
         paid = sum(inst.get("paid_amount", 0) for inst in self.installments)
+        
+        # Include unpaid penalties in the remaining balance
+        unpaid_penalties = sum(
+            inst.get("penalty_amount", 0) 
+            for inst in self.installments 
+            if inst.get("penalty_status") == "applied" and inst.get("status") != "paid"
+        )
+        
         # Never return negative values even if historical overpayments exist.
-        return max(self.total_amount - paid, 0)
+        return max(self.total_amount + unpaid_penalties - paid, 0)
 
     def get_installment(self, installment_number):
         """Get a specific installment by number"""
@@ -186,11 +194,19 @@ class RepaymentSchedule:
         return inst and inst.get("status") == "paid"
 
     def get_installment_remaining(self, installment_number):
-        """Get remaining amount for a specific installment"""
+        """Get remaining amount for a specific installment including penalties"""
         inst = self.get_installment(installment_number)
         if not inst:
             return None
-        return inst["total_amount"] - inst.get("paid_amount", 0)
+        
+        base_remaining = inst["total_amount"] - inst.get("paid_amount", 0)
+        
+        # Add penalty if applied and not waived
+        penalty_amount = 0
+        if inst.get("penalty_status") == "applied":
+            penalty_amount = inst.get("penalty_amount", 0)
+        
+        return base_remaining + penalty_amount
 
     def count_unpaid_before(self, installment_number):
         """Count unpaid installments before the given number"""
