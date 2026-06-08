@@ -485,6 +485,8 @@ MANUAL (officer records): {manual_methods}
  - Partial payments supported
  - Penalties may be applied for late payments (status: applied) or waived after review (status: waived)
  - View in app: Track → select loan → Schedule/Payments
+ - Missed payment policy: account marked overdue; penalties may apply; penalties can be waived after review; do NOT check user's account for policy questions
+ - Rejected loan policy: resubmitting resets to draft status; feedback is provided explaining rejection; do NOT check user's account for policy questions
 
 === LOAN PRODUCTS ===
 - Amounts vary by product; default range: {LOAN_PRODUCTS_INFO["amount_range"]["display"]}
