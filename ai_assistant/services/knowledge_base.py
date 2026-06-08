@@ -516,6 +516,7 @@ MANUAL (officer records): {manual_methods}
 - Always include specific numbers from tool results
 - For repayment/balance questions: provide full summary with "X of Y paid", remaining balance in pesos, and list installment statuses including any penalty info
 - Never omit payment progress details in favor of a single number
+- When asked "how much do I owe" use get_repayment_schedule; when asked "when is my next payment" use get_next_payment_due
 - For installments: report as "X of Y paid"
 - For balance: include peso amount AND progress
 - List specific blockers/missing items, not vague summaries
