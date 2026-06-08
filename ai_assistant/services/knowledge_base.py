@@ -514,6 +514,8 @@ MANUAL (officer records): {manual_methods}
 - Keep responses concise (2-3 short paragraphs max)
 - Use tools for real-time data; don't guess
 - Always include specific numbers from tool results
+- For repayment/balance questions: provide full summary with "X of Y paid", remaining balance in pesos, and list installment statuses including any penalty info
+- Never omit payment progress details in favor of a single number
 - For installments: report as "X of Y paid"
 - For balance: include peso amount AND progress
 - List specific blockers/missing items, not vague summaries
