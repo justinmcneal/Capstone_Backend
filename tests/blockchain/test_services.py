@@ -164,6 +164,22 @@ class TestApprovalService:
         # Verify amount is passed as int
         assert call_args[3] == 45000
 
+    @patch("loans.blockchain.services.approval_service.send_transaction", return_value=TX_RESULT)
+    @patch("loans.blockchain.services.approval_service.get_contract")
+    def test_reject_loan_onchain(self, mock_gc, mock_tx, blockchain_settings):
+        from loans.blockchain.services.approval_service import reject_loan_onchain
+
+        mock_gc.return_value = MagicMock()
+        result = reject_loan_onchain(
+            loan_id="loan789",
+            rejection_reason_hash="missing_docs",
+            notes_hash="needs more verification",
+        )
+
+        assert result["status"] == 1
+        call_args = mock_tx.call_args[0]
+        assert call_args[1] == "rejectLoan"
+
 
 # ============================================================================
 # DisbursementService
@@ -449,3 +465,43 @@ class TestAuditService:
         assert len(AUDIT_ACTION_LABELS) == 12
         assert AUDIT_ACTION_LABELS[0] == "LoanCreated"
         assert AUDIT_ACTION_LABELS[11] == "SystemConfigChanged"
+
+
+class TestAuditServiceLogging:
+    @patch("loans.blockchain.client.send_transaction", return_value=TX_RESULT)
+    @patch("loans.blockchain.services.audit_service.get_contract")
+    def test_log_penalty_onchain(self, mock_gc, mock_tx, blockchain_settings):
+        from loans.blockchain.services.audit_service import log_penalty_onchain
+
+        mock_gc.return_value = MagicMock()
+        result = log_penalty_onchain(
+            loan_id="loan123",
+            installment_number=2,
+            amount=150.0,
+            reason="late",
+            waived=False,
+        )
+
+        assert result["tx_hash"] == TX_RESULT["tx_hash"]
+        call_args = mock_tx.call_args[0]
+        assert call_args[1] == "log"
+
+    @patch("loans.blockchain.client.send_transaction", return_value=TX_RESULT)
+    @patch("loans.blockchain.services.audit_service.get_contract")
+    def test_log_consent_onchain(self, mock_gc, mock_tx, blockchain_settings):
+        from loans.blockchain.services.audit_service import log_consent_onchain
+
+        mock_gc.return_value = MagicMock()
+        result = log_consent_onchain(
+            user_id="user_1",
+            user_type="customer",
+            data_consent=True,
+            ai_consent=False,
+            consent_version="1.0",
+            consent_timestamp="2026-05-26T00:00:00Z",
+            previous_state={"data_consent": False, "ai_consent": False, "consent_version": "0.9"},
+        )
+
+        assert result["tx_hash"] == TX_RESULT["tx_hash"]
+        call_args = mock_tx.call_args[0]
+        assert call_args[1] == "log"

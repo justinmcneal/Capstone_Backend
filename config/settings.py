@@ -53,12 +53,16 @@ ALLOWED_HOSTS = [
 # Application definition
 
 INSTALLED_APPS = [
+    'daphne',
+    'django.contrib.admin',
     'django.contrib.auth',
     'django.contrib.contenttypes',
+    'django.contrib.sessions',
+    'django.contrib.messages',
     'django.contrib.staticfiles',
     'rest_framework',
-    # 'rest_framework_simplejwt.token_blacklist',  # Removed - using custom MongoDB blacklist
     'corsheaders',
+    'channels',
     'accounts',
     'profiles',
     'documents',
@@ -102,6 +106,22 @@ TEMPLATES = [
 ]
 
 WSGI_APPLICATION = 'config.wsgi.application'
+
+# ASGI Application
+ASGI_APPLICATION = "config.asgi.application"
+
+# WebSocket settings
+WEBSOCKET_ENABLED = env_bool("WEBSOCKET_ENABLED", True)
+
+# Channel Layers Configuration
+CHANNEL_LAYERS = {
+    "default": {
+        "BACKEND": "channels_redis.core.RedisChannelLayer",
+        "CONFIG": {
+            "hosts": [(os.environ.get('REDIS_HOST', 'localhost'), 6379)],
+        },
+    },
+}
 
 # Database - MongoDB only (via PyMongo)
 # Dummy database config required by Django

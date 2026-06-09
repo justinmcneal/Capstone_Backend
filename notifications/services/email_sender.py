@@ -6,6 +6,7 @@ from django.core.mail import EmailMultiAlternatives
 from django.template.loader import render_to_string
 from django.conf import settings
 from notifications.models.notification import Notification
+from notifications.services.notification_creator import create_and_broadcast_notification
 
 logger = logging.getLogger('notifications')
 
@@ -74,16 +75,18 @@ class EmailSender:
         customer_id=None,
     ):
         """Send loan submission confirmation"""
-        notification = Notification(
+        notification = create_and_broadcast_notification(
             user_id=str(customer_id) if customer_id else None,
-            recipient_email=customer_email,
-            recipient_name=customer_name,
+            user_type='customer',
             notification_type='loan_submitted',
             subject='Loan Application Received',
+            message=f"Your loan application for {product_name} in the amount of {amount} has been received.",
+            recipient_email=customer_email,
+            recipient_name=customer_name,
             related_type='loan',
-            related_id=loan_id
+            related_id=loan_id,
+            channel='in_app'
         )
-        notification.save()
         
         return self.send(
             to_email=customer_email,
@@ -107,16 +110,18 @@ class EmailSender:
         customer_id=None,
     ):
         """Send loan approval notification"""
-        notification = Notification(
+        notification = create_and_broadcast_notification(
             user_id=str(customer_id) if customer_id else None,
-            recipient_email=customer_email,
-            recipient_name=customer_name,
+            user_type='customer',
             notification_type='loan_approved',
             subject='Loan Approved!',
+            message=f"Congratulations! Your loan has been approved for {approved_amount}.",
+            recipient_email=customer_email,
+            recipient_name=customer_name,
             related_type='loan',
-            related_id=loan_id
+            related_id=loan_id,
+            channel='in_app'
         )
-        notification.save()
         
         return self.send(
             to_email=customer_email,
@@ -139,16 +144,18 @@ class EmailSender:
         customer_id=None,
     ):
         """Send loan rejection notification"""
-        notification = Notification(
+        notification = create_and_broadcast_notification(
             user_id=str(customer_id) if customer_id else None,
-            recipient_email=customer_email,
-            recipient_name=customer_name,
+            user_type='customer',
             notification_type='loan_rejected',
             subject='Loan Application Update',
+            message=f"Your loan application was unsuccessful. Reason: {reason}",
+            recipient_email=customer_email,
+            recipient_name=customer_name,
             related_type='loan',
-            related_id=loan_id
+            related_id=loan_id,
+            channel='in_app'
         )
-        notification.save()
         
         return self.send(
             to_email=customer_email,
@@ -172,16 +179,18 @@ class EmailSender:
         customer_id=None,
     ):
         """Send document quality issue notification"""
-        notification = Notification(
+        notification = create_and_broadcast_notification(
             user_id=str(customer_id) if customer_id else None,
-            recipient_email=customer_email,
-            recipient_name=customer_name,
+            user_type='customer',
             notification_type='document_flagged',
             subject='Document Needs Attention',
+            message=f"There are issues with your {document_type} document.",
+            recipient_email=customer_email,
+            recipient_name=customer_name,
             related_type='document',
             related_id=document_id,
+            channel='in_app'
         )
-        notification.save()
         
         return self.send(
             to_email=customer_email,
@@ -205,16 +214,18 @@ class EmailSender:
         notes='',
     ):
         """Send document approval notification to customer."""
-        notification = Notification(
+        notification = create_and_broadcast_notification(
             user_id=str(customer_id) if customer_id else None,
-            recipient_email=customer_email,
-            recipient_name=customer_name,
+            user_type='customer',
             notification_type='document_verified',
             subject='Document Approved',
+            message=f"Your {document_type} document has been successfully verified.",
+            recipient_email=customer_email,
+            recipient_name=customer_name,
             related_type='document',
             related_id=document_id,
+            channel='in_app'
         )
-        notification.save()
 
         return self.send(
             to_email=customer_email,
@@ -240,17 +251,18 @@ class EmailSender:
         reviewer_user_type='loan_officer',
     ):
         """Notify reviewers that a new document needs review."""
-        notification = Notification(
+        notification = create_and_broadcast_notification(
             user_id=str(reviewer_user_id) if reviewer_user_id else None,
             user_type=reviewer_user_type,
-            recipient_email=reviewer_email,
-            recipient_name=reviewer_name,
             notification_type='document_pending_review',
             subject='New Document Pending Review',
+            message=f"A new {document_type} document for {customer_name} requires your review.",
+            recipient_email=reviewer_email,
+            recipient_name=reviewer_name,
             related_type='document',
             related_id=document_id,
+            channel='in_app'
         )
-        notification.save()
 
         return self.send(
             to_email=reviewer_email,
@@ -275,16 +287,18 @@ class EmailSender:
         customer_id=None,
     ):
         """Send missing documents request notification"""
-        notification = Notification(
+        notification = create_and_broadcast_notification(
             user_id=str(customer_id) if customer_id else None,
-            recipient_email=customer_email,
-            recipient_name=customer_name,
+            user_type='customer',
             notification_type='missing_documents_requested',
             subject='Additional Documents Needed',
+            message="We need some additional documents from you to process your loan application.",
+            recipient_email=customer_email,
+            recipient_name=customer_name,
             related_type='loan',
-            related_id=loan_id
+            related_id=loan_id,
+            channel='in_app'
         )
-        notification.save()
         
         return self.send(
             to_email=customer_email,
@@ -309,17 +323,18 @@ class EmailSender:
         officer_user_id=None,
     ):
         """Send new application alert to loan officer"""
-        notification = Notification(
+        notification = create_and_broadcast_notification(
             user_id=str(officer_user_id) if officer_user_id else None,
-            recipient_email=officer_email,
-            recipient_name=officer_name,
+            user_type='loan_officer',
             notification_type='new_application',
             subject='New Loan Application',
+            message=f"A new loan application from {customer_name} for {amount} has been assigned to you.",
+            recipient_email=officer_email,
+            recipient_name=officer_name,
             related_type='loan',
             related_id=loan_id,
-            user_type='loan_officer'
+            channel='in_app'
         )
-        notification.save()
         
         return self.send(
             to_email=officer_email,
@@ -345,16 +360,18 @@ class EmailSender:
         customer_id=None,
     ):
         """Send loan disbursement notification"""
-        notification = Notification(
+        notification = create_and_broadcast_notification(
             user_id=str(customer_id) if customer_id else None,
-            recipient_email=customer_email,
-            recipient_name=customer_name,
+            user_type='customer',
             notification_type='loan_disbursed',
             subject='Loan Disbursed!',
+            message=f"Your loan of {amount} has been successfully disbursed.",
+            recipient_email=customer_email,
+            recipient_name=customer_name,
             related_type='loan',
-            related_id=loan_id
+            related_id=loan_id,
+            channel='in_app'
         )
-        notification.save()
         
         return self.send(
             to_email=customer_email,
@@ -381,16 +398,18 @@ class EmailSender:
         customer_id=None,
     ):
         """Send payment received notification"""
-        notification = Notification(
+        notification = create_and_broadcast_notification(
             user_id=str(customer_id) if customer_id else None,
-            recipient_email=customer_email,
-            recipient_name=customer_name,
+            user_type='customer',
             notification_type='payment_received',
             subject='Payment Received',
+            message=f"We have received your payment of {amount} for installment {installment}.",
+            recipient_email=customer_email,
+            recipient_name=customer_name,
             related_type='loan',
-            related_id=loan_id
+            related_id=loan_id,
+            channel='in_app'
         )
-        notification.save()
         
         return self.send(
             to_email=customer_email,

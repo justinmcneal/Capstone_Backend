@@ -9,6 +9,8 @@ from notifications.views import (
     NotificationMarkReadView,
     NotificationMarkAllReadView,
     NotificationUnreadCountView,
+    NotificationDeleteView,
+    NotificationClearAllView,
 )
 
 app_name = 'notifications'
@@ -25,4 +27,10 @@ urlpatterns = [
     
     # Mark single notification as read
     path('<str:notification_id>/read/', NotificationMarkReadView.as_view(), name='notification-mark-read'),
+    
+    # Delete all notifications
+    path('clear-all/', NotificationClearAllView.as_view(), name='notification-clear-all'),
+
+    # Delete single notification
+    path('<str:notification_id>/', NotificationDeleteView.as_view(), name='notification-delete'),
 ]

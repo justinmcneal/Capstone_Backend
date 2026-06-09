@@ -35,6 +35,9 @@ MongoDB (off-chain data)                    Blockchain (on-chain immutable recor
 
 ---
 
+**Implementation notes:** The backend now wires the main on-chain flows: application submit/assign/approve/reject, disbursement, schedule creation, payment recording, penalty apply/waive, consent recording, and overdue marking. The officer review rejection path was previously missing blockchain sync and has been added; penalties and consent actions call the audit sync; overdue marking is triggered by the scheduled `check_overdue_installments_task`.
+
+
 ### 1. ACCOUNTS MODULE — User Registration
 
 | Backend Action | Smart Contract | Function | Who Calls | Event Emitted |
@@ -77,8 +80,8 @@ MongoDB (off-chain data)                    Blockchain (on-chain immutable recor
 - `0` → Bank Transfer
 - `1` → Cash
 - `2` → GCash
-- `3` → Maya
-- `4` → Other
+ - `2` → GCash
+ - `3` → Other
 
 **Duplicate prevention:** A `referenceHash` mapping prevents the same external transaction reference from being recorded twice.
 
@@ -90,7 +93,7 @@ MongoDB (off-chain data)                    Blockchain (on-chain immutable recor
 |---|---|---|---|---|---|
 | Create repayment schedule | After disbursement | `Repayment` | `createSchedule(loanId, principal, interestBps, termMonths, startDate)` | System | `ScheduleCreated` |
 | Record a payment | `POST /api/loans/payment/` | `Repayment` | `recordPayment(loanId, installmentNumber, amount, method, referenceHash)` | Loan Officer / System | `PaymentRecorded` |
-| Installment marked overdue | Celery scheduled task | `Repayment` | `markOverdue(loanId, installmentNumber)` | System | `InstallmentOverdue` |
+| Installment marked overdue | `check_overdue_installments_task` (Celery) | `Repayment` | `markOverdue(loanId, installmentNumber)` | System | `InstallmentOverdue` |
 | Loan fully repaid | Auto-triggered on last payment | `Repayment` | *(auto-emitted when `totalPaid >= totalAmount`)* | — | `LoanFullyRepaid` |
 
 **Installment Statuses (on-chain):** `Pending → Partial → Paid` or `Pending → Overdue`
@@ -99,8 +102,18 @@ MongoDB (off-chain data)                    Blockchain (on-chain immutable recor
 - `0` → Cash
 - `1` → Bank Transfer
 - `2` → GCash
-- `3` → Maya
-- `4` → Other
+ - `2` → GCash
+ - `3` → Other
+
+---
+
+### 4b. PENALTY + CONSENT — AuditRegistry Logging
+
+| Backend Action | Backend Endpoint | Smart Contract | Function | Who Calls | Event Emitted |
+|---|---|---|---|---|---|
+| Apply penalty | `POST /api/loans/officer/applications/<id>/penalties/apply/` | `AuditRegistry` | `log(...)` | Loan Officer | `PenaltyApplied` |
+| Waive penalty | `POST /api/loans/officer/applications/<id>/penalties/waive/` | `AuditRegistry` | `log(...)` | Loan Officer | `PenaltyWaived` |
+| Record consent | `POST/PUT /api/auth/consent/` | `AuditRegistry` | `log(...)` | System | `ConsentRecorded` |
 
 ---
 
@@ -117,6 +130,8 @@ Every state-changing transaction above automatically writes an entry to `AuditRe
 | `LoanRejected` | `LoanCore.rejectLoan()` |
 | `LoanDisbursed` | `Disbursement.completeDisbursement()` |
 | `PaymentRecorded` | `Repayment.recordPayment()` |
+| `PenaltyApplied` | Backend → `AuditRegistry.log()` |
+| `PenaltyWaived` | Backend → `AuditRegistry.log()` |
 | `DocumentVerified` | Backend → `AuditRegistry.log()` |
 | `ConsentRecorded` | Backend → `AuditRegistry.log()` |
 | `SystemConfigChanged` | Admin → `AuditRegistry.log()` |

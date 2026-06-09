@@ -1,38 +1,44 @@
 """
 AI Qualification Service - Uses Groq LLM to analyze customer eligibility.
 """
+
 import json
 import logging
 import re
+from django.conf import settings
 from ai_assistant.services import get_llm_service
 from accounts.models import Consent
 from accounts.utils.validation_utils import sanitize_multiline_text, sanitize_text
 from profiles.models import CustomerProfile, BusinessProfile, AlternativeData
 from documents.models import Document, DOCUMENT_TYPES
 
-logger = logging.getLogger('loans')
+logger = logging.getLogger("loans")
 
-BASELINE_REQUIRED_DOCUMENTS = ['valid_id']
+
+def _ai_qualification_enabled():
+    return getattr(settings, "LOANS_AI_QUALIFICATION_ENABLED", True)
+
+BASELINE_REQUIRED_DOCUMENTS = ["valid_id"]
 DOCUMENT_TYPE_ALIASES = {
-    'proof_of_income': 'income_proof',
-    'business_registration': 'business_permit',
+    "proof_of_income": "income_proof",
+    "business_registration": "business_permit",
 }
 DOCUMENT_TYPE_LABELS = {
-    'valid_id': 'Valid Government ID',
-    'selfie_with_id': 'Selfie with ID',
-    'proof_of_address': 'Proof of Address',
-    'business_permit': 'Business Permit',
-    'business_photo': 'Business Photo',
-    'income_proof': 'Proof of Income',
-    'other': 'Other',
+    "valid_id": "Valid Government ID",
+    "selfie_with_id": "Selfie with ID",
+    "proof_of_address": "Proof of Address",
+    "business_permit": "Business Permit",
+    "business_photo": "Business Photo",
+    "income_proof": "Proof of Income",
+    "other": "Other",
 }
 
 
 def _normalize_scope(requirements_scope):
     """Normalize scope to supported values."""
-    normalized = str(requirements_scope or 'product').strip().lower()
-    if normalized not in {'baseline', 'product'}:
-        return 'product'
+    normalized = str(requirements_scope or "product").strip().lower()
+    if normalized not in {"baseline", "product"}:
+        return "product"
     return normalized
 
 
@@ -51,10 +57,10 @@ def canonicalize_document_type(document_type):
 def document_type_label(document_type):
     """Return display label used by requirements messages."""
     canonical = canonicalize_document_type(document_type) or str(document_type)
-    return DOCUMENT_TYPE_LABELS.get(canonical, canonical.replace('_', ' '))
+    return DOCUMENT_TYPE_LABELS.get(canonical, canonical.replace("_", " "))
 
 
-def resolve_required_document_types(product=None, requirements_scope='product'):
+def resolve_required_document_types(product=None, requirements_scope="product"):
     """
     Resolve required documents with normalization and sane fallback.
     - baseline scope: always baseline required docs
@@ -64,10 +70,10 @@ def resolve_required_document_types(product=None, requirements_scope='product'):
     """
     scope = _normalize_scope(requirements_scope)
     explicit_product_docs = False
-    if scope == 'baseline':
+    if scope == "baseline":
         source = BASELINE_REQUIRED_DOCUMENTS
     else:
-        product_required_documents = getattr(product, 'required_documents', None)
+        product_required_documents = getattr(product, "required_documents", None)
         explicit_product_docs = product_required_documents is not None
         source = (
             product_required_documents
@@ -82,7 +88,7 @@ def resolve_required_document_types(product=None, requirements_scope='product'):
             resolved.append(canonical)
 
     if not resolved:
-        if scope == 'baseline' or not explicit_product_docs:
+        if scope == "baseline" or not explicit_product_docs:
             resolved = list(BASELINE_REQUIRED_DOCUMENTS)
         else:
             # Explicit empty product config means no required documents.
@@ -144,16 +150,16 @@ IMPORTANT RULES:
 """
 
 QUALIFICATION_REQUIRED_FIELDS = {
-    'eligible',
-    'eligibility_score',
-    'risk_category',
-    'recommended_amount',
-    'reasoning',
-    'strengths',
-    'concerns',
-    'missing_requirements',
+    "eligible",
+    "eligibility_score",
+    "risk_category",
+    "recommended_amount",
+    "reasoning",
+    "strengths",
+    "concerns",
+    "missing_requirements",
 }
-QUALIFICATION_RISK_LEVELS = {'low', 'medium', 'high'}
+QUALIFICATION_RISK_LEVELS = {"low", "medium", "high"}
 
 
 def get_customer_data(customer_id):
@@ -162,33 +168,37 @@ def get_customer_data(customer_id):
     personal = CustomerProfile.find_by_customer(customer_id)
     business = BusinessProfile.find_by_customer(customer_id)
     alternative = AlternativeData.find_by_customer(customer_id)
-    
+
     # Get documents
     documents = Document.find_by_customer(customer_id)
-    
+
     # Debug logging
     if business:
-        logger.info(f"[QUALIFICATION DATA] Customer {customer_id} - business_age_months: {business.business_age_months}, is_registered: {business.is_registered}, income: {business.estimated_monthly_income}")
+        logger.info(
+            f"[QUALIFICATION DATA] Customer {customer_id} - business_age_months: {business.business_age_months}, is_registered: {business.is_registered}, income: {business.estimated_monthly_income}"
+        )
     else:
-        logger.warning(f"[QUALIFICATION DATA] Customer {customer_id} - no business profile found")
-    
+        logger.warning(
+            f"[QUALIFICATION DATA] Customer {customer_id} - no business profile found"
+        )
+
     return {
-        'personal': personal,
-        'business': business,
-        'alternative': alternative,
-        'documents': documents
+        "personal": personal,
+        "business": business,
+        "alternative": alternative,
+        "documents": documents,
     }
 
 
 def has_ai_consent(customer_id):
     """Check if customer granted AI consent."""
-    consent = Consent.find_by_user(customer_id, 'customer')
+    consent = Consent.find_by_user(customer_id, "customer")
     return bool(consent and consent.ai_consent)
 
 
 def _extract_first_json_object(text):
     """Extract the first JSON object from model output."""
-    raw = str(text or '').strip()
+    raw = str(text or "").strip()
     if not raw:
         return None
 
@@ -201,7 +211,9 @@ def _extract_first_json_object(text):
         pass
 
     # Common path: response wrapped in a markdown json code fence.
-    fenced_match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", raw, flags=re.IGNORECASE | re.DOTALL)
+    fenced_match = re.search(
+        r"```(?:json)?\s*(\{.*?\})\s*```", raw, flags=re.IGNORECASE | re.DOTALL
+    )
     if fenced_match:
         try:
             candidate = json.loads(fenced_match.group(1))
@@ -213,7 +225,7 @@ def _extract_first_json_object(text):
     # Fallback: scan for first decodable JSON object.
     decoder = json.JSONDecoder()
     for index, char in enumerate(raw):
-        if char != '{':
+        if char != "{":
             continue
         try:
             candidate, _ = decoder.raw_decode(raw[index:])
@@ -232,9 +244,9 @@ def _coerce_bool(value, field_name):
         return value != 0
     if isinstance(value, str):
         normalized = value.strip().lower()
-        if normalized in {'true', '1', 'yes'}:
+        if normalized in {"true", "1", "yes"}:
             return True
-        if normalized in {'false', '0', 'no'}:
+        if normalized in {"false", "0", "no"}:
             return False
     raise ValueError(f"{field_name} must be boolean")
 
@@ -262,18 +274,18 @@ def _normalize_string_list(value, field_name):
 
 def _derive_risk_category(score):
     if score >= 75:
-        return 'low'
+        return "low"
     if score >= 50:
-        return 'medium'
-    return 'high'
+        return "medium"
+    return "high"
 
 
 def _normalize_recommended_amount(raw_amount, eligible, product, requested_amount):
     if not eligible:
         return 0.0
 
-    requested = max(0.0, _coerce_number(requested_amount, 'requested_amount'))
-    model_amount = max(0.0, _coerce_number(raw_amount, 'recommended_amount'))
+    requested = max(0.0, _coerce_number(requested_amount, "requested_amount"))
+    model_amount = max(0.0, _coerce_number(raw_amount, "recommended_amount"))
 
     lower_bound = float(product.min_amount or 0.0)
     upper_bound = min(float(product.max_amount or 0.0), requested)
@@ -284,39 +296,45 @@ def _normalize_recommended_amount(raw_amount, eligible, product, requested_amoun
     return round(bounded, 2)
 
 
-def _validate_and_normalize_ai_qualification(payload, product, requested_amount, required_doc_types, scope):
+def _validate_and_normalize_ai_qualification(
+    payload, product, requested_amount, required_doc_types, scope
+):
     """Strict schema validation + deterministic normalization for AI output."""
     if not isinstance(payload, dict):
         raise ValueError("Qualification response must be a JSON object")
 
-    missing_fields = [field for field in QUALIFICATION_REQUIRED_FIELDS if field not in payload]
+    missing_fields = [
+        field for field in QUALIFICATION_REQUIRED_FIELDS if field not in payload
+    ]
     if missing_fields:
-        raise ValueError(f"Missing required fields: {', '.join(sorted(missing_fields))}")
+        raise ValueError(
+            f"Missing required fields: {', '.join(sorted(missing_fields))}"
+        )
 
-    eligible = _coerce_bool(payload.get('eligible'), 'eligible')
-    score = _coerce_number(payload.get('eligibility_score'), 'eligibility_score')
+    eligible = _coerce_bool(payload.get("eligible"), "eligible")
+    score = _coerce_number(payload.get("eligibility_score"), "eligibility_score")
     score = round(max(0.0, min(100.0, score)), 2)
 
-    risk_category = str(payload.get('risk_category', '')).strip().lower()
+    risk_category = str(payload.get("risk_category", "")).strip().lower()
     if risk_category not in QUALIFICATION_RISK_LEVELS:
         risk_category = _derive_risk_category(score)
 
     recommended_amount = _normalize_recommended_amount(
-        payload.get('recommended_amount'),
+        payload.get("recommended_amount"),
         eligible,
         product,
         requested_amount,
     )
 
-    reasoning = sanitize_multiline_text(payload.get('reasoning', ''))
+    reasoning = sanitize_multiline_text(payload.get("reasoning", ""))
     if not reasoning:
         raise ValueError("reasoning must be a non-empty string")
 
-    strengths = _normalize_string_list(payload.get('strengths'), 'strengths')
-    concerns = _normalize_string_list(payload.get('concerns'), 'concerns')
+    strengths = _normalize_string_list(payload.get("strengths"), "strengths")
+    concerns = _normalize_string_list(payload.get("concerns"), "concerns")
     missing_requirements = _normalize_string_list(
-        payload.get('missing_requirements'),
-        'missing_requirements',
+        payload.get("missing_requirements"),
+        "missing_requirements",
     )
 
     can_apply = eligible and len(missing_requirements) == 0
@@ -324,28 +342,28 @@ def _validate_and_normalize_ai_qualification(payload, product, requested_amount,
         recommended_amount = 0.0
 
     return {
-        'eligible': eligible,
-        'eligibility_score': score,
-        'risk_category': risk_category,
-        'recommended_amount': recommended_amount,
-        'reasoning': reasoning,
-        'strengths': strengths,
-        'concerns': concerns,
-        'missing_requirements': missing_requirements,
-        'can_apply': can_apply,
-        'ai_used': True,
-        'required_documents_resolved': required_doc_types,
-        'requirements_scope': scope,
+        "eligible": eligible,
+        "eligibility_score": score,
+        "risk_category": risk_category,
+        "recommended_amount": recommended_amount,
+        "reasoning": reasoning,
+        "strengths": strengths,
+        "concerns": concerns,
+        "missing_requirements": missing_requirements,
+        "can_apply": can_apply,
+        "ai_used": True,
+        "required_documents_resolved": required_doc_types,
+        "requirements_scope": scope,
     }
 
 
 def format_profile_for_ai(data):
     """Format customer data for AI prompt"""
-    personal = data.get('personal')
-    business = data.get('business')
-    alternative = data.get('alternative')
-    docs = data.get('documents', [])
-    
+    personal = data.get("personal")
+    business = data.get("business")
+    alternative = data.get("alternative")
+    docs = data.get("documents", [])
+
     profile_str = "None provided"
     if personal:
         profile_str = f"""
@@ -353,12 +371,14 @@ def format_profile_for_ai(data):
 - Address: {personal.city_municipality or 'Not provided'}, {personal.province or ''}
 - Emergency Contact: {'Provided' if personal.emergency_contact_name else 'Not provided'}
 """
-    
+
     business_str = "None provided"
     if business:
         months = business.business_age_months or 0
         years = months / 12 if months else 0
-        logger.info(f"[AI QUALIFICATION] Business Age - months: {months}, years: {years:.1f}, raw value: {business.business_age_months}")
+        logger.info(
+            f"[AI QUALIFICATION] Business Age - months: {months}, years: {years:.1f}, raw value: {business.business_age_months}"
+        )
         business_str = f"""
 - Business Name: {business.business_name or 'Not provided'}
 - Business Type: {business.business_type or 'Not provided'}
@@ -367,7 +387,7 @@ def format_profile_for_ai(data):
 - Monthly Income Range: {business.income_range or 'Not provided'}
 - Estimated Monthly Income: ₱{business.estimated_monthly_income or 0:,.2f}
 """
-    
+
     alt_str = "None provided"
     if alternative:
         alt_str = f"""
@@ -379,39 +399,49 @@ def format_profile_for_ai(data):
 - Existing Loans: {'Yes' if alternative.has_existing_loans else 'No'}
 - Utility Payment: {alternative.utility_payment_history or 'Not tracked'}
 """
-    
+
     docs_str = "None uploaded"
     if docs:
         doc_list = [f"- {d.document_type}: {d.status}" for d in docs]
         docs_str = "\n".join(doc_list)
-    
+
     return profile_str, business_str, alt_str, docs_str
 
 
-def _build_requirement_status(data, product, required_doc_types, require_approved_documents):
+def _build_requirement_status(
+    data, product, required_doc_types, require_approved_documents
+):
     """
     Pre-compute authoritative requirement status lines for the AI prompt.
     These act as ground truth so the AI cannot hallucinate different thresholds.
     """
     lines = []
-    business = data.get('business')
-    docs = data.get('documents', [])
+    business = data.get("business")
+    docs = data.get("documents", [])
 
     # Business age check
     biz_months = (business.business_age_months or 0) if business else 0
     min_months = product.min_business_months
     if biz_months >= min_months:
-        lines.append(f"- Business operation: MEETS requirement ({biz_months} months >= {min_months} months minimum)")
+        lines.append(
+            f"- Business operation: MEETS requirement ({biz_months} months >= {min_months} months minimum)"
+        )
     else:
-        lines.append(f"- Business operation: DOES NOT MEET requirement ({biz_months} months < {min_months} months minimum)")
+        lines.append(
+            f"- Business operation: DOES NOT MEET requirement ({biz_months} months < {min_months} months minimum)"
+        )
 
     # Income check
     income = (business.estimated_monthly_income or 0) if business else 0
     min_income = product.min_monthly_income
     if income >= min_income:
-        lines.append(f"- Monthly income: MEETS requirement (₱{income:,.2f} >= ₱{min_income:,.2f} minimum)")
+        lines.append(
+            f"- Monthly income: MEETS requirement (₱{income:,.2f} >= ₱{min_income:,.2f} minimum)"
+        )
     else:
-        lines.append(f"- Monthly income: DOES NOT MEET requirement (₱{income:,.2f} < ₱{min_income:,.2f} minimum)")
+        lines.append(
+            f"- Monthly income: DOES NOT MEET requirement (₱{income:,.2f} < ₱{min_income:,.2f} minimum)"
+        )
 
     # Document check
     if require_approved_documents and required_doc_types:
@@ -431,11 +461,11 @@ def _build_requirement_status(data, product, required_doc_types, require_approve
 
 
 _BUSINESS_AGE_PATTERNS = re.compile(
-    r'business\s+(age|operation|history|experience|months)'
-    r'|insufficient.*business'
-    r'|limited.*business.*histor'
-    r'|minimum.*\d+\s*months?\s*(of\s+)?business'
-    r'|business.*less\s+than',
+    r"business\s+(age|operation|history|experience|months)"
+    r"|insufficient.*business"
+    r"|limited.*business.*histor"
+    r"|minimum.*\d+\s*months?\s*(of\s+)?business"
+    r"|business.*less\s+than",
     re.IGNORECASE,
 )
 
@@ -456,9 +486,11 @@ def _strip_false_business_age_failures(result, business, product):
 
     # Customer meets the requirement — strip any erroneous AI flags.
     changed = False
-    for key in ('concerns', 'missing_requirements'):
+    for key in ("concerns", "missing_requirements"):
         original = result.get(key, [])
-        filtered = [item for item in original if not _BUSINESS_AGE_PATTERNS.search(item)]
+        filtered = [
+            item for item in original if not _BUSINESS_AGE_PATTERNS.search(item)
+        ]
         if len(filtered) != len(original):
             result[key] = filtered
             changed = True
@@ -469,10 +501,16 @@ def _strip_false_business_age_failures(result, business, product):
 
     # If we removed all missing_requirements but AI said not eligible,
     # re-evaluate eligibility based on remaining missing_requirements.
-    if changed and not result.get('eligible') and len(result.get('missing_requirements', [])) == 0:
-        result['eligible'] = True
-        result['can_apply'] = True
-        logger.info("[AI VALIDATION] Overriding eligibility to True after stripping false failures")
+    if (
+        changed
+        and not result.get("eligible")
+        and len(result.get("missing_requirements", [])) == 0
+    ):
+        result["eligible"] = True
+        result["can_apply"] = True
+        logger.info(
+            "[AI VALIDATION] Overriding eligibility to True after stripping false failures"
+        )
 
     return result
 
@@ -483,38 +521,55 @@ def qualify_customer(
     requested_amount,
     term_months,
     purpose,
-    requirements_scope='product',
+    requirements_scope="product",
     require_approved_documents=True,
 ):
     """
     Use AI to assess customer loan eligibility.
-    
+
     Returns dict with eligibility info.
     """
     scope = _normalize_scope(requirements_scope)
     required_doc_types = resolve_required_document_types(product, scope)
 
-    # Get customer data
-    data = get_customer_data(customer_id)
-    
-    # Format for AI
-    profile_str, business_str, alt_str, docs_str = format_profile_for_ai(data)
-
-    # Never send profile data to external AI if consent is not granted.
-    if not has_ai_consent(customer_id):
-        logger.info(f"AI consent not granted for customer {customer_id}; using rule-based qualification")
+    if not _ai_qualification_enabled():
+        logger.info("AI qualification disabled; using rule-based assessment")
+        data = get_customer_data(customer_id)
         return rule_based_qualification(
             data,
             product,
             requested_amount,
             requirements_scope=scope,
             require_approved_documents=require_approved_documents,
-            reason='Rule-based assessment (AI consent not granted)',
+            reason="Rule-based assessment (AI disabled)",
         )
-    
+
+    # Get customer data
+    data = get_customer_data(customer_id)
+
+    # Format for AI
+    profile_str, business_str, alt_str, docs_str = format_profile_for_ai(data)
+
+    # Never send profile data to external AI if consent is not granted.
+    if not has_ai_consent(customer_id):
+        logger.info(
+            f"AI consent not granted for customer {customer_id}; using rule-based qualification"
+        )
+        return rule_based_qualification(
+            data,
+            product,
+            requested_amount,
+            requirements_scope=scope,
+            require_approved_documents=require_approved_documents,
+            reason="Rule-based assessment (AI consent not granted)",
+        )
+
     # Build pre-computed requirement status so the AI has authoritative ground truth
     requirement_status = _build_requirement_status(
-        data, product, required_doc_types, require_approved_documents,
+        data,
+        product,
+        required_doc_types,
+        require_approved_documents,
     )
 
     # Build prompt
@@ -526,20 +581,20 @@ def qualify_customer(
         product_name=product.name,
         requested_amount=requested_amount,
         term_months=term_months,
-        purpose=purpose or 'Not specified',
+        purpose=purpose or "Not specified",
         min_income=product.min_monthly_income,
         min_months=product.min_business_months,
         required_docs=(
-            ', '.join(document_type_label(doc) for doc in required_doc_types)
+            ", ".join(document_type_label(doc) for doc in required_doc_types)
             if require_approved_documents
-            else 'Not required at pre-qualification stage (enforced during loan application)'
+            else "Not required at pre-qualification stage (enforced during loan application)"
         ),
         requirement_status=requirement_status,
     )
-    
+
     # Get AI response
-    llm = get_llm_service(use_case='qualification')
-    
+    llm = get_llm_service(use_case="qualification")
+
     if not llm.is_available():
         # Fallback to rule-based if AI unavailable
         return rule_based_qualification(
@@ -548,19 +603,19 @@ def qualify_customer(
             requested_amount,
             requirements_scope=scope,
             require_approved_documents=require_approved_documents,
-            reason='Rule-based assessment (AI unavailable)',
+            reason="Rule-based assessment (AI unavailable)",
         )
-        
+
     result = llm.chat(
         message=prompt,
-        language='en',
+        language="en",
         system_prompt=QUALIFICATION_SYSTEM_PROMPT,
         temperature=0.1,
         max_tokens=600,
         top_p=0.9,
     )
-    
-    if not result['success']:
+
+    if not result["success"]:
         logger.error(f"AI qualification failed: {result.get('error')}")
         return rule_based_qualification(
             data,
@@ -568,10 +623,10 @@ def qualify_customer(
             requested_amount,
             requirements_scope=scope,
             require_approved_documents=require_approved_documents,
-            reason='Rule-based assessment (AI request failed)',
+            reason="Rule-based assessment (AI request failed)",
         )
-    
-    payload = _extract_first_json_object(result.get('response'))
+
+    payload = _extract_first_json_object(result.get("response"))
     if payload is None:
         logger.error("AI qualification response did not contain a valid JSON object")
         return rule_based_qualification(
@@ -580,7 +635,7 @@ def qualify_customer(
             requested_amount,
             requirements_scope=scope,
             require_approved_documents=require_approved_documents,
-            reason='Rule-based assessment (AI response parsing failed)',
+            reason="Rule-based assessment (AI response parsing failed)",
         )
 
     try:
@@ -592,7 +647,7 @@ def qualify_customer(
             scope=scope,
         )
         # Post-AI guard: strip false business-age failures the AI may hallucinate
-        business = data.get('business')
+        business = data.get("business")
         ai_result = _strip_false_business_age_failures(ai_result, business, product)
         return ai_result
     except ValueError as e:
@@ -604,7 +659,7 @@ def qualify_customer(
         requested_amount,
         requirements_scope=scope,
         require_approved_documents=require_approved_documents,
-        reason='Rule-based assessment (AI response parsing failed)',
+        reason="Rule-based assessment (AI response parsing failed)",
     )
 
 
@@ -612,9 +667,9 @@ def rule_based_qualification(
     data,
     product,
     requested_amount,
-    requirements_scope='product',
+    requirements_scope="product",
     require_approved_documents=True,
-    reason='Rule-based assessment (AI unavailable)',
+    reason="Rule-based assessment (AI unavailable)",
 ):
     """
     Fallback rule-based qualification when AI is unavailable.
@@ -624,37 +679,47 @@ def rule_based_qualification(
     concerns = []
     strengths = []
     missing = []
-    
-    business = data.get('business')
-    alternative = data.get('alternative')
-    docs = data.get('documents', [])
-    
+
+    business = data.get("business")
+    alternative = data.get("alternative")
+    docs = data.get("documents", [])
+
     # Check business profile
     if business:
         # business_age_months is stored in months (canonical unit)
-        logger.info(f"[RULE-BASED QUALIFICATION] Checking business age - months: {business.business_age_months}, required: {product.min_business_months}")
-        if business.business_age_months and business.business_age_months >= product.min_business_months:
+        logger.info(
+            f"[RULE-BASED QUALIFICATION] Checking business age - months: {business.business_age_months}, required: {product.min_business_months}"
+        )
+        if (
+            business.business_age_months
+            and business.business_age_months >= product.min_business_months
+        ):
             score += 15
             strengths.append("Sufficient business experience")
         else:
             score -= 10
             concerns.append("Limited business history")
-            logger.warning(f"[RULE-BASED QUALIFICATION] Insufficient business age: {business.business_age_months} < {product.min_business_months}")
-        
-        if business.estimated_monthly_income and business.estimated_monthly_income >= product.min_monthly_income:
+            logger.warning(
+                f"[RULE-BASED QUALIFICATION] Insufficient business age: {business.business_age_months} < {product.min_business_months}"
+            )
+
+        if (
+            business.estimated_monthly_income
+            and business.estimated_monthly_income >= product.min_monthly_income
+        ):
             score += 15
             strengths.append("Meets income requirement")
         else:
             score -= 10
             concerns.append("Income below requirement")
-        
+
         if business.is_registered:
             score += 10
             strengths.append("Business is registered")
     else:
         score -= 20
         missing.append("Business profile not complete")
-    
+
     # Check documents
     doc_types = set()
     for doc in docs:
@@ -670,7 +735,7 @@ def rule_based_qualification(
                 missing.append(f"Missing: {label}")
             else:
                 score += 5
-    
+
     # Check alternative data
     if alternative:
         if alternative.has_bank_account:
@@ -679,22 +744,22 @@ def rule_based_qualification(
         if alternative.has_ewallet:
             score += 3
             strengths.append("Uses digital payments")
-        if alternative.utility_payment_history == 'on_time':
+        if alternative.utility_payment_history == "on_time":
             score += 5
             strengths.append("Good payment history")
-    
+
     # Determine eligibility
     score = max(0, min(100, score))
     eligible = score >= 50 and len(missing) == 0
-    
+
     # Risk category
     if score >= 75:
-        risk = 'low'
+        risk = "low"
     elif score >= 50:
-        risk = 'medium'
+        risk = "medium"
     else:
-        risk = 'high'
-    
+        risk = "high"
+
     # Recommended amount
     if eligible:
         # Recommend based on income (3x monthly income or requested, whichever is lower)
@@ -703,32 +768,32 @@ def rule_based_qualification(
         recommended = max(product.min_amount, max_recommend)
     else:
         recommended = 0
-    
+
     return {
-        'eligible': eligible,
-        'eligibility_score': score,
-        'risk_category': risk,
-        'recommended_amount': recommended,
-        'reasoning': reason,
-        'strengths': strengths,
-        'concerns': concerns,
-        'missing_requirements': missing,
-        'can_apply': eligible,
-        'ai_used': False,
-        'required_documents_resolved': required_doc_types,
-        'requirements_scope': scope,
+        "eligible": eligible,
+        "eligibility_score": score,
+        "risk_category": risk,
+        "recommended_amount": recommended,
+        "reasoning": reason,
+        "strengths": strengths,
+        "concerns": concerns,
+        "missing_requirements": missing,
+        "can_apply": eligible,
+        "ai_used": False,
+        "required_documents_resolved": required_doc_types,
+        "requirements_scope": scope,
     }
 
 
 def check_basic_eligibility(
     customer_id,
     product,
-    requirements_scope='product',
+    requirements_scope="product",
     require_approved_documents=True,
 ):
     """
     Quick check for basic eligibility before full qualification.
-    
+
     Requirements:
     1. Personal profile must exist
     2. Business profile must exist
@@ -738,33 +803,33 @@ def check_basic_eligibility(
     scope = _normalize_scope(requirements_scope)
     data = get_customer_data(customer_id)
     missing = []
-    
+
     # Check all 3 profiles exist
-    personal = data.get('personal')
-    business = data.get('business')
-    alternative = data.get('alternative')
-    
+    personal = data.get("personal")
+    business = data.get("business")
+    alternative = data.get("alternative")
+
     if not personal:
-        missing.append('Personal profile required')
+        missing.append("Personal profile required")
     elif not personal.profile_completed:
-        missing.append('Personal profile incomplete')
-        
+        missing.append("Personal profile incomplete")
+
     if not business:
-        missing.append('Business profile required')
+        missing.append("Business profile required")
     elif not (business.business_type and business.income_range):
-        missing.append('Business profile incomplete (type and income required)')
-    
+        missing.append("Business profile incomplete (type and income required)")
+
     # Alternative data is required
     if not alternative:
-        missing.append('Alternative data required')
+        missing.append("Alternative data required")
     elif not (alternative.education_level and alternative.housing_status):
-        missing.append('Alternative data incomplete (education and housing required)')
-    
+        missing.append("Alternative data incomplete (education and housing required)")
+
     required_doc_types = resolve_required_document_types(product, scope)
 
     if require_approved_documents:
         # Check required documents - must be APPROVED, not just uploaded
-        documents = data.get('documents', [])
+        documents = data.get("documents", [])
 
         latest_documents_by_type = {}
         for doc in documents:
@@ -780,24 +845,24 @@ def check_basic_eligibility(
             doc_found = latest_documents_by_type.get(req_doc)
 
             if not doc_found:
-                missing.append(f'Document required: {label}')
-            elif doc_found.status != 'approved':
+                missing.append(f"Document required: {label}")
+            elif doc_found.status != "approved":
                 # Document exists but not approved
                 if doc_found.reupload_requested:
-                    missing.append(f'Document re-upload requested: {label}')
-                elif doc_found.status in ['pending', 'needs_review']:
-                    missing.append(f'Document pending verification: {label}')
-                elif doc_found.status == 'rejected':
-                    missing.append(f'Document rejected, please re-upload: {label}')
+                    missing.append(f"Document re-upload requested: {label}")
+                elif doc_found.status in ["pending", "needs_review"]:
+                    missing.append(f"Document pending verification: {label}")
+                elif doc_found.status == "rejected":
+                    missing.append(f"Document rejected, please re-upload: {label}")
                 else:
-                    missing.append(f'Document not yet approved: {label}')
-    
+                    missing.append(f"Document not yet approved: {label}")
+
     return {
-        'can_apply': len(missing) == 0,
-        'missing_requirements': missing,
-        'required_documents_resolved': required_doc_types,
-        'requirements_scope': scope,
-        'required_documents_labels': {
+        "can_apply": len(missing) == 0,
+        "missing_requirements": missing,
+        "required_documents_resolved": required_doc_types,
+        "requirements_scope": scope,
+        "required_documents_labels": {
             doc: document_type_label(doc) for doc in required_doc_types
         },
     }

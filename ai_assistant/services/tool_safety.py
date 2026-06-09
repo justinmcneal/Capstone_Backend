@@ -45,6 +45,7 @@ class RateLimitConfig:
         'get_payment_history': 2,  # Can be large
         'get_loan_products': 1,  # Cached
         'get_application_readiness': 3,  # Multiple DB queries
+        'get_notification_status': 1,  # Single DB query
     })
     
     # Cooldown after hitting limit (seconds)
@@ -162,6 +163,7 @@ class ToolParameterValidator:
         },
         'get_loan_products': {},
         'get_application_readiness': {},
+        'get_notification_status': {},
     }
     
     @classmethod

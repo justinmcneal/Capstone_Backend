@@ -3,28 +3,32 @@ from .password_serializers import (
     ForgotPasswordSerializer,
     VerifyResetOTPSerializer,
     ResetPasswordSerializer,
-    ChangePasswordSerializer
+    ChangePasswordSerializer,
 )
-from .base_serializers import PasswordValidationMixin, OTPValidationMixin, PasswordConfirmationMixin
+from .base_serializers import (
+    PasswordValidationMixin,
+    OTPValidationMixin,
+    PasswordConfirmationMixin,
+)
 from .consent_serializers import (
     ConsentSerializer,
     ConsentCreateSerializer,
     ConsentUpdateSerializer,
-    ConsentResponseSerializer
+    ConsentResponseSerializer,
 )
 
 __all__ = [
-    'SignUpSerializer', 
-    'LoginSerializer',
-    'ForgotPasswordSerializer',
-    'VerifyResetOTPSerializer',
-    'ResetPasswordSerializer',
-    'ChangePasswordSerializer',
-    'PasswordValidationMixin',
-    'OTPValidationMixin',
-    'PasswordConfirmationMixin',
-    'ConsentSerializer',
-    'ConsentCreateSerializer',
-    'ConsentUpdateSerializer',
-    'ConsentResponseSerializer'
+    "SignUpSerializer",
+    "LoginSerializer",
+    "ForgotPasswordSerializer",
+    "VerifyResetOTPSerializer",
+    "ResetPasswordSerializer",
+    "ChangePasswordSerializer",
+    "PasswordValidationMixin",
+    "OTPValidationMixin",
+    "PasswordConfirmationMixin",
+    "ConsentSerializer",
+    "ConsentCreateSerializer",
+    "ConsentUpdateSerializer",
+    "ConsentResponseSerializer",
 ]

@@ -3,5 +3,5 @@ from .document import (
     DOCUMENT_TYPES,
     DOCUMENT_STATUSES,
     ALLOWED_MIME_TYPES,
-    MAX_FILE_SIZE
+    MAX_FILE_SIZE,
 )

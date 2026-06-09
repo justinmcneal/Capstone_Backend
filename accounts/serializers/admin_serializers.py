@@ -5,51 +5,37 @@ from accounts.utils.validation_utils import validate_person_name
 
 class AdminCreateSerializer(serializers.Serializer):
     """Serializer for creating a new admin"""
+
     username = serializers.CharField(
-        max_length=50,
-        required=True,
-        help_text="Unique username for the admin"
+        max_length=50, required=True, help_text="Unique username for the admin"
     )
-    email = serializers.EmailField(
-        required=True,
-        help_text="Admin email address"
-    )
-    first_name = serializers.CharField(
-        max_length=50,
-        required=True,
-        allow_blank=False
-    )
-    last_name = serializers.CharField(
-        max_length=50,
-        required=True,
-        allow_blank=False
-    )
+    email = serializers.EmailField(required=True, help_text="Admin email address")
+    first_name = serializers.CharField(max_length=50, required=True, allow_blank=False)
+    last_name = serializers.CharField(max_length=50, required=True, allow_blank=False)
     super_admin = serializers.BooleanField(
-        required=False,
-        default=False,
-        help_text="If true, grants all permissions"
+        required=False, default=False, help_text="If true, grants all permissions"
     )
     permissions = serializers.ListField(
         child=serializers.CharField(),
         required=False,
         default=[],
-        help_text="List of permission strings"
+        help_text="List of permission strings",
     )
-    
+
     def validate_username(self, value):
         """Validate username format"""
         value = value.strip()
         if len(value) < 3:
             raise serializers.ValidationError("Username must be at least 3 characters")
-        if not value.replace('_', '').replace('-', '').isalnum():
-            raise serializers.ValidationError("Username can only contain letters, numbers, underscores, and hyphens")
+        if not value.replace("_", "").replace("-", "").isalnum():
+            raise serializers.ValidationError(
+                "Username can only contain letters, numbers, underscores, and hyphens"
+            )
         return value
 
     def validate_first_name(self, value):
         is_valid, error_msg, normalized = validate_person_name(
-            value,
-            field_name="First name",
-            max_length=50
+            value, field_name="First name", max_length=50
         )
         if not is_valid:
             raise serializers.ValidationError(error_msg)
@@ -57,14 +43,12 @@ class AdminCreateSerializer(serializers.Serializer):
 
     def validate_last_name(self, value):
         is_valid, error_msg, normalized = validate_person_name(
-            value,
-            field_name="Last name",
-            max_length=50
+            value, field_name="Last name", max_length=50
         )
         if not is_valid:
             raise serializers.ValidationError(error_msg)
         return normalized
-    
+
     def validate_permissions(self, value):
         """Validate that all permissions are valid"""
         invalid = [p for p in value if p not in ADMIN_PERMISSIONS]
@@ -78,15 +62,14 @@ class AdminCreateSerializer(serializers.Serializer):
 
 class AdminUpdateSerializer(serializers.Serializer):
     """Serializer for updating admin details"""
+
     first_name = serializers.CharField(max_length=50, required=False, allow_blank=False)
     last_name = serializers.CharField(max_length=50, required=False, allow_blank=False)
     active = serializers.BooleanField(required=False)
 
     def validate_first_name(self, value):
         is_valid, error_msg, normalized = validate_person_name(
-            value,
-            field_name="First name",
-            max_length=50
+            value, field_name="First name", max_length=50
         )
         if not is_valid:
             raise serializers.ValidationError(error_msg)
@@ -94,14 +77,12 @@ class AdminUpdateSerializer(serializers.Serializer):
 
     def validate_last_name(self, value):
         is_valid, error_msg, normalized = validate_person_name(
-            value,
-            field_name="Last name",
-            max_length=50
+            value, field_name="Last name", max_length=50
         )
         if not is_valid:
             raise serializers.ValidationError(error_msg)
         return normalized
-    
+
     def validate(self, data):
         if not data:
             raise serializers.ValidationError("At least one field must be provided")
@@ -110,16 +91,17 @@ class AdminUpdateSerializer(serializers.Serializer):
 
 class AdminPermissionsSerializer(serializers.Serializer):
     """Serializer for updating admin permissions"""
+
     permissions = serializers.ListField(
         child=serializers.CharField(),
         required=False,
-        help_text="List of permission strings. Pass empty list to clear permissions."
+        help_text="List of permission strings. Pass empty list to clear permissions.",
     )
     super_admin = serializers.BooleanField(
         required=False,
-        help_text="Set to true to grant all permissions, false to use specific permissions list"
+        help_text="Set to true to grant all permissions, false to use specific permissions list",
     )
-    
+
     def validate_permissions(self, value):
         """Validate that all permissions are valid"""
         invalid = [p for p in value if p not in ADMIN_PERMISSIONS]
@@ -129,9 +111,9 @@ class AdminPermissionsSerializer(serializers.Serializer):
                 f"Valid permissions are: {', '.join(ADMIN_PERMISSIONS)}"
             )
         return value
-    
+
     def validate(self, data):
-        if 'permissions' not in data and 'super_admin' not in data:
+        if "permissions" not in data and "super_admin" not in data:
             raise serializers.ValidationError(
                 "At least 'permissions' or 'super_admin' must be provided"
             )
@@ -140,6 +122,7 @@ class AdminPermissionsSerializer(serializers.Serializer):
 
 class AdminResponseSerializer(serializers.Serializer):
     """Serializer for admin response data"""
+
     id = serializers.CharField()
     username = serializers.CharField()
     email = serializers.EmailField()

@@ -3,11 +3,13 @@
 
 class BlockchainError(Exception):
     """Base exception for all blockchain-related errors."""
+
     pass
 
 
 class BlockchainConnectionError(BlockchainError):
     """Raised when unable to connect to the blockchain RPC provider."""
+
     pass
 
 
@@ -30,4 +32,5 @@ class ContractNotFoundError(BlockchainError):
 
 class BlockchainDisabledError(BlockchainError):
     """Raised when blockchain operations are called but BLOCKCHAIN_ENABLED is False."""
+
     pass

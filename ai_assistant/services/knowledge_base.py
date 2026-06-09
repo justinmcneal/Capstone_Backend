@@ -8,6 +8,13 @@ Update this file when platform features, policies, or details change.
 
 VERSION HISTORY:
 - v1.0 (2026-03-18): Initial centralized knowledge base
+- v1.1 (2026-06-06): Accounts/auth alignment (consent, signup, language, 2FA); fix loan status and risk category labels
+- v1.2 (2026-06-06): Loan alignment pass (product ranges, blockchain wording, FAQ answers, readiness document labels)
+- v1.3 (2026-06-06): Account-help filter alignment; allow password reset/OTP/2FA guidance while blocking credential collection
+- v1.4 (2026-06-06): Profile alignment pass (personal completion fields, business months/income range, alternative data readiness)
+- v1.5 (2026-06-06): Loan alignment update - penalty fields in repayment tools
+- v1.6 (2026-06-06): Analytics alignment - customer dashboard tool, dashboard navigation, AI session awareness
+- v1.7 (2026-06-06): Notifications tool - get unread count and recent notifications
 
 USAGE:
 - Import KNOWLEDGE_BASE dict for structured access
@@ -15,9 +22,10 @@ USAGE:
 - Import PROHIBITED_TOPICS for content filtering
 =============================================================================
 """
+import re
 
 # Knowledge base version - increment when making significant changes
-KNOWLEDGE_VERSION = "1.0"
+KNOWLEDGE_VERSION = "1.7"
 
 # =============================================================================
 # PLATFORM INFORMATION
@@ -33,15 +41,143 @@ PLATFORM_INFO = {
 }
 
 # =============================================================================
+# ACCOUNTS & ACCESS - Aligned with accounts/ module (/api/auth/)
+# =============================================================================
+
+ACCOUNTS_INFO = {
+    "base_url": "/api/auth",
+    "customer_registration": {
+        "flow": [
+            "POST /api/auth/signup/ with first_name, last_name, email, password, password_confirm; optional middle_name, phone, language (en|tl)",
+            "Verify email via POST /api/auth/verify-email/ with OTP from email",
+            "Login via POST /api/auth/login/ with email and password",
+        ],
+        "note": "Signup does NOT auto-enable AI consent. Consent is recorded separately after login.",
+    },
+    "consent": {
+        "endpoint": "POST /api/auth/consent/",
+        "fields": {
+            "data_consent": "Required to allow platform data collection/processing",
+            "ai_consent": "Required to use AI chat, AI pre-qualification, and document AI analysis",
+        },
+        "manage": "GET /api/auth/consent/ to check status; PUT /api/auth/consent/ to update preferences",
+        "ai_chat_requirement": "Customer must set ai_consent=true before POST /api/ai/chat/",
+        "consent_version": "1.0",
+        "blockchain": "Consent changes are synced to the on-chain audit trail when blockchain is enabled",
+    },
+    "language": {
+        "signup_field": "language (en|tl, default en) on POST /api/auth/signup/",
+        "update_endpoint": "PATCH /api/auth/language/ with {\"language\": \"en\"|\"tl\"}",
+        "ai_usage": "AI chat defaults to the customer's saved language preference when language is omitted",
+    },
+    "password_management": {
+        "forgot": "POST /api/auth/forgot-password/ → POST /api/auth/verify-reset-otp/ → POST /api/auth/reset-password/",
+        "change": "POST /api/auth/change-password/ (authenticated)",
+        "ai_policy": "Never ask users for passwords, OTPs, or reset codes in chat",
+    },
+    "two_factor_auth": {
+        "customer": "Optional — POST /api/auth/2fa/setup/, /api/auth/2fa/confirm/, verify at login via /api/auth/2fa/verify/",
+        "admin": "Required for admin login; cannot be disabled",
+        "ai_policy": "Direct users to app Settings or login screens for 2FA setup — do not collect TOTP codes in chat",
+    },
+    "session": {
+        "auth": "JWT Bearer token (Authorization header) for API access including AI endpoints",
+        "refresh": "POST /api/auth/refresh-token/; POST /api/auth/logout/ blacklists tokens",
+        "customer_access_token_ttl": "10 minutes",
+    },
+}
+
+# =============================================================================
+# PROFILES - Aligned with profiles/ module (/api/profile/)
+# =============================================================================
+
+PROFILES_INFO = {
+    "base_url": "/api/profile",
+    "personal_profile": {
+        "endpoint": "GET/PUT /api/profile/",
+        "completion_fields": [
+            "date_of_birth",
+            "gender",
+            "civil_status",
+            "address_line1",
+            "barangay",
+            "city_municipality",
+            "province",
+        ],
+        "optional_sensitive_fields": [
+            "mobile_number",
+            "emergency_contact_name",
+            "emergency_contact_phone",
+            "wallet_address",
+        ],
+        "note": "Personal profile completion percentage is calculated from the 7 completion fields above. Mobile number, emergency contact, and wallet address are useful but do not determine profile_completed.",
+    },
+    "business_profile": {
+        "endpoint": "GET/PUT /api/profile/business/",
+        "completion_rule": "Business profile is complete when business_type and income_range are present.",
+        "business_age_unit": "business_age_months is the canonical unit; older years_in_operation data is normalized to months.",
+        "optional_fields": [
+            "business_name",
+            "business_description",
+            "business_address",
+            "estimated_monthly_income",
+            "is_registered",
+            "registration_type",
+            "number_of_employees",
+        ],
+    },
+    "alternative_data": {
+        "endpoint": "GET/PUT /api/profile/alternative-data/",
+        "completion_rule": "Alternative data is complete when education_level and housing_status are present.",
+        "risk": "risk_score is 0-100 and risk_category is low, medium, or high when calculated.",
+    },
+    "summary": {
+        "endpoint": "GET /api/profile/summary/",
+        "sections": "Personal profile, business profile, and alternative data are the 3 required profile sections.",
+        "ready_for_loan": "At the profile stage, ready_for_loan means those 3 profile sections are complete. Product-specific document requirements are enforced later during loan application.",
+    },
+}
+
+# =============================================================================
+# ANALYTICS & DASHBOARDS - Aligned with analytics/ module (/api/analytics/)
+# =============================================================================
+
+ANALYTICS_INFO = {
+    "base_url": "/api/analytics",
+    "customer_dashboard": {
+        "endpoint": "GET /api/analytics/customer/",
+        "description": "Personal dashboard showing application counts, document stats, profile completion, and AI session count",
+        "app_location": "Dashboard tab (home screen)",
+        "ai_tool": "get_customer_dashboard provides the same data via chat",
+    },
+    "admin_dashboard": {
+        "endpoint": "GET /api/analytics/admin/",
+        "description": "System-wide statistics for admins (user counts, loan stats, product performance, recent activity)",
+        "access": "Admin role with view_analytics permission",
+    },
+    "officer_dashboard": {
+        "endpoint": "GET /api/analytics/officer/",
+        "description": "Loan officer review activity, queue stats, and approval rate",
+        "access": "Loan officer or admin role",
+    },
+    "audit_logs": {
+        "description": "All important system actions are recorded in audit logs for transparency and accountability",
+        "admin_endpoint": "GET /api/analytics/audit-logs/",
+        "officer_endpoint": "GET /api/analytics/officer/audit-logs/",
+        "note": "Customers do not have direct access to audit logs; they can track their own activity through the dashboard",
+    },
+}
+
+# =============================================================================
 # LOAN PRODUCTS - Canonical ranges and defaults
 # =============================================================================
 
 LOAN_PRODUCTS_INFO = {
     "amount_range": {
         "min": 5000,
-        "max": 500000,
+        "max": 50000,
         "currency": "PHP",
-        "display": "₱5,000 – ₱500,000"
+        "display": "₱5,000 – ₱50,000"
     },
     "term_range": {
         "min_months": 3,
@@ -65,19 +201,19 @@ LOAN_PROCESS_STEPS = [
     {
         "step": 1,
         "title": "Complete Profile",
-        "description": "Fill in personal info (name, contact, address) and business info (type, income, years operating)",
+        "description": "Fill in your personal details and business information so we can review your application",
         "app_location": "Menu → Profile"
     },
     {
         "step": 2,
         "title": "Upload Documents",
-        "description": "Government ID is always required. Some products need: proof of address, business permit, business photo, income proof",
+        "description": "Upload your government ID first. Depending on the loan product, you may also need proof of address, a business permit, a business photo, or proof of income",
         "app_location": "Apply → Documents"
     },
     {
         "step": 3,
         "title": "Check Pre-qualification",
-        "description": "AI scores your profile 0-100 with risk category (Excellent/Good/Fair/Poor). This is NOT a guarantee of approval.",
+        "description": "The app checks how ready you are and gives a simple result like low, medium, or high fit. This is not a guarantee of approval.",
         "app_location": "Apply → select product → Pre-qualify"
     },
     {
@@ -89,7 +225,7 @@ LOAN_PROCESS_STEPS = [
     {
         "step": 5,
         "title": "Officer Review",
-        "description": "A loan officer reviews your application. They may request additional documents.",
+        "description": "A loan officer reviews your application and may ask for a clearer copy or another document if something is missing.",
         "app_location": "Track → Applications (status: 'under_review')"
     },
     {
@@ -113,8 +249,23 @@ LOAN_PROCESS_STEPS = [
 ]
 
 # =============================================================================
-# PAYMENT METHODS
+# REPAYMENT
 # =============================================================================
+
+REPAYMENT_INFO = {
+    "schedule": "Created after disbursement with equal monthly installments",
+    "statuses": {
+        "pending": "Not yet due or not yet paid",
+        "paid": "Fully paid",
+        "partial": "Partially paid (some amount remaining)",
+        "overdue": "Past due date and not fully paid",
+    },
+    "penalties": {
+        "applied": "Extra amount added for late payment; officer action required",
+        "waived": "Penalty removed after review; contact support for hardship",
+    },
+    "notes": "Partial payments are supported. Penalties and waivers are recorded in the installment details.",
+}
 
 PAYMENT_METHODS = {
     "automatic": {
@@ -161,10 +312,30 @@ APPLICATION_STATUSES = {
     "submitted": "Submitted, waiting for review",
     "under_review": "Loan officer is reviewing",
     "approved": "Approved, awaiting disbursement",
-    "rejected": "Not approved (feedback provided)",
-    "disbursed": "Loan money has been sent to you",
-    "completed": "Fully repaid",
-    "defaulted": "Significantly overdue (contact support)",
+    "rejected": "Not approved (feedback provided; can resubmit)",
+    "disbursed": "Loan money has been sent to you — repayment schedule active",
+    "cancelled": "Cancelled by customer",
+}
+
+# =============================================================================
+# NOTIFICATIONS INFO
+# =============================================================================
+
+NOTIFICATIONS_INFO = {
+    "endpoint": "/api/notifications/",
+    "features": {
+        "unread_badge": "Bell icon shows unread count; refreshes in real-time",
+        "notification_types": [
+            "loan_submitted", "loan_approved", "loan_rejected", "loan_disbursed",
+            "payment_received", "missing_documents_requested", "document_verified",
+            "document_flagged", "document_pending_review", "new_application", "welcome"
+        ],
+        "actions": ["view notifications", "mark as read", "mark all read"],
+    },
+    "delivery": {
+        "email": "Emails are sent when email is configured; status: pending, sent, or failed",
+        "in_app": "All notifications appear in the bell icon inbox regardless of email status",
+    },
 }
 
 # =============================================================================
@@ -192,6 +363,11 @@ APP_NAVIGATION = {
     "upload_documents": "Apply → Documents",
     "edit_profile": "Menu → Profile",
     "view_notifications": "Bell icon (top right)",
+    "manage_consent": "Settings → Consent (or POST /api/auth/consent/)",
+    "change_language": "Settings → Language (or PATCH /api/auth/language/)",
+    "enable_ai_chat": "Grant ai_consent via POST /api/auth/consent/ before using AI assistant",
+    "view_dashboard": "Dashboard tab (home screen) — shows application counts, document stats, profile completion",
+    "view_activity": "Dashboard tab — AI session count and overall account summary",
 }
 
 # =============================================================================
@@ -264,36 +440,76 @@ def build_system_prompt(include_version=False):
     prompt = f"""You are a helpful financial assistant for MSME Pathways, a blockchain-backed microfinance app for Filipino small business owners.{version_line}
 
 === PLATFORM ===
-Mobile app for microloans. All loan events (application, approval, disbursement, payments) are recorded on Ethereum blockchain for transparency.
+Mobile app for microloans. When blockchain is enabled, loan events (application, approval, disbursement, payments) are recorded on Ethereum blockchain for transparency.
+
+=== ACCOUNTS & ACCESS ===
+- Customers register at POST /api/auth/signup/ (first_name, last_name, email, password, password_confirm), verify email OTP, then login at POST /api/auth/login/
+- AI chat requires ai_consent=true via POST /api/auth/consent/ (also needed for AI pre-qualification and document AI analysis)
+- data_consent and ai_consent are separate; both are managed at /api/auth/consent/
+- Language preference: en or tl — set at signup or PATCH /api/auth/language/; default used when chat language is omitted
+- Password reset: /api/auth/forgot-password/ flow — never collect passwords or OTPs in chat
+- Customer 2FA is optional; admin 2FA is required — direct users to app settings for 2FA, never collect codes in chat
+- You only help logged-in customers; account creation and login happen in the app, not through this chat
 
 === LOAN PROCESS ===
-1. Complete profile (personal + business info)
-2. Upload documents (government ID required; some products need proof of address, business permit, or photo)
-3. Check pre-qualification (AI scores 0-100 with risk category)
+1. Complete profile (personal and business information)
+2. Upload documents (government ID required; other documents depend on the loan product)
+3. Check pre-qualification (AI scores 0-100; risk category: low/medium/high; requires ai_consent)
 4. Submit application (choose product, amount, term, purpose, disbursement method)
-5. Officer review (may request additional documents)
+5. Officer review (may request a clearer copy or an extra document)
 6. Approval/rejection (feedback provided if rejected)
 7. Disbursement via your preferred method
 8. Monthly repayments per schedule
 
 === LOAN PRODUCTS ===
-- Amounts: {LOAN_PRODUCTS_INFO["amount_range"]["display"]} | Terms: {LOAN_PRODUCTS_INFO["term_range"]["display"]} | Flat interest: {LOAN_PRODUCTS_INFO["interest"]["display"]}
+- Amounts vary by product; default range: {LOAN_PRODUCTS_INFO["amount_range"]["display"]} | Terms: {LOAN_PRODUCTS_INFO["term_range"]["display"]} | Flat interest: {LOAN_PRODUCTS_INFO["interest"]["display"]}
 - Requirements vary by product (min business age, min income)
+
+=== PROFILE COMPLETION ===
+- Personal profile completion is based on: date_of_birth, gender, civil_status, address_line1, barangay, city_municipality, province
+- Mobile number, emergency contacts, and wallet address are useful optional fields, but they do not determine personal profile completion
+- Business profile completion requires business_type and income_range; business_age_months is stored in months
+- When answering about business profile, explicitly mention business_type, income_range, and business_age_months as the key fields
+- Alternative data completion requires education_level and housing_status; risk_score/risk_category appear after scoring
+- Profile summary ready_for_loan means personal, business, and alternative data sections are complete; product-specific documents are checked later
+- When asked "what fields do I need" or "requirements", always list the exact required fields for ALL sections (personal: 7 fields; business: business_type + income_range; alternative: education_level + housing_status), even if the user's profile is already complete
+- When explaining business_age_months: mention it's the canonical business age unit in months; older years_in_operation data is normalized into this field
 
 === PAYMENT METHODS ===
 AUTOMATIC (recorded instantly): {auto_methods}
 MANUAL (officer records): {manual_methods}
 
 === REPAYMENT ===
-- Equal monthly installments with due dates
-- Statuses: pending, paid, partial, overdue
-- Partial payments supported
-- View in app: Track → select loan → Schedule/Payments
+ - Equal monthly installments with due dates
+ - Statuses: pending, paid, partial, overdue
+ - Partial payments supported
+ - Penalties may be applied for late payments (status: applied) or waived after review (status: waived)
+ - View in app: Track → select loan → Schedule/Payments
+ - Missed payment policy: account marked overdue; penalties may apply; penalties can be waived after review; do NOT check user's account for policy questions
+ - Rejected loan policy: resubmitting resets to draft status; feedback is provided explaining rejection; do NOT check user's account for policy questions
+
+=== LOAN PRODUCTS ===
+- Amounts vary by product; default range: {LOAN_PRODUCTS_INFO["amount_range"]["display"]}
+- Terms: {LOAN_PRODUCTS_INFO["term_range"]["display"]}
+- Interest: flat rate ~{LOAN_PRODUCTS_INFO["interest"]["display"]} monthly applied to principal
+- When listing loan products: include required_documents alongside amounts, rates, and terms
+- When asked "how much can I borrow": list the specific min/max limits for each individual loan product, not a single global ceiling
 
 === APP NAVIGATION ===
 - Apply: Dashboard → "Apply" | Track status: "Track" → "Applications"
 - Make payment: Track → Repayment → "Make Payment"
 - Documents: Apply → "Documents" | Profile: Menu → "Profile"
+- Dashboard: Home screen — shows your application counts, document stats, profile completion, and AI session count
+
+=== ANALYTICS & DASHBOARDS ===
+- Customers have a personal dashboard (Dashboard tab) with application counts, document stats, profile completion, and AI chat session count
+- Loan officers have their own dashboard showing review stats, pending queue, and approval rate
+- Admins see system-wide analytics (user counts, loan stats, product performance, recent activity, audit logs)
+- Audit logs record all important actions for system transparency; customers see their own activity via the dashboard (not raw logs)
+- Use get_customer_dashboard tool when the user asks for a summary, overview, stats, or dashboard of their account
+- When asked "what dashboards are available": mention Customer Dashboard on home screen; mention Loan Officers and Admins have separate dashboards - do NOT check account for general questions
+- When asked "where do I see my dashboard": direct them to the Dashboard tab on the home screen - do NOT check account for navigation questions
+- When asked "what are audit logs": explain audit logs record all important actions for system transparency; distinguish between backend system logs and user-facing activity feeds; customers cannot view raw audit logs but can see their own activity via Activity history on dashboard
 
 === GUIDELINES ===
 - Never give specific financial advice or guarantee approval
@@ -303,15 +519,49 @@ MANUAL (officer records): {manual_methods}
 - Keep responses concise (2-3 short paragraphs max)
 - Use tools for real-time data; don't guess
 - Always include specific numbers from tool results
-- For installments: report as "X of Y paid"
-- For balance: include peso amount AND progress
+- For repayment/balance questions: provide full summary with "X of Y paid", remaining balance in pesos, and list installment statuses including any penalty info
+- Never omit payment progress details in favor of a single number
+- When asked "how much do I owe" use get_repayment_schedule; when asked "when is my next payment" use get_next_payment_due
+- For installments: report as "X of Y paid" and always provide the full ratio
+- For balance: include peso amount AND progress; explicitly check for and report overdue installments
+- When asked "how do I apply for a loan": provide standard step-by-step process; always include 'completing your profile' and 'uploading required documents' even if already complete
 - List specific blockers/missing items, not vague summaries
+- When answering profile questions: list the exact required fields (personal: 7 fields; business: business_type + income_range; alternative: education_level + housing_status)
+- When reporting readiness: accurately reflect the `ready_to_apply` boolean; if false, clearly state user is NOT ready and list blockers
+- Intent recognition: "What are my X?" queries personal data (use tools); "What X do I need?" or "How does X work?" asks for general info (use knowledge base); "Where is X?" asks for navigation (use app navigation knowledge)
+- When asked about documents: list each document by its specific name/type and status; never just give a numerical summary
+- When asked document verification status: report verified, pending, and rejected counts with a complete breakdown
+- For general document requirement questions (e.g., "What documents do I need?"): list the standard requirements and do NOT check the user's account status
+- For file types, formats, or upload limits: do NOT check account status; simply state allowed formats (JPEG, PNG, PDF) and size limit (10 MB)
+- When listing loan products: include required_documents alongside amounts, rates, and terms; must explicitly mention that interest is calculated as a 'flat rate'
+- When asked "how much can I borrow": list min/max amounts for each product individually, not a single global ceiling
+- When asked loan status: list status, requested_amount, approved_amount, term_months, and created_at for each loan; never omit these details
+- When listing disbursed loans: explicitly label disbursed_amount and include blockchain_tx_hashes for transparency
+- When asked approval status: include decision_date; speak naturally without mentioning "tool calls" or "backend data"
+- When showing payment history: include amount, payment_method, installment_number, recorded_at, and reference for EVERY payment consistently
+- When asked about notifications: use get_notification_status tool; include unread_count and Bell icon reference; list notification_type, subject, and status for EACH notification in recent_notifications
+- When answering "how do I check notifications": direct them to tap the Bell icon in the top right corner of the app to access their notification inbox; do NOT check account for navigation/UI questions
+- When asked "will I get notified about loan approval": mention both email and in-app notification channels; never guarantee delivery; use phrasing like "We send notifications via email and in-app..."
+- When asked "what notification types": list loan_submitted, loan_approved, loan_rejected, payment_received, document_verified - do NOT fetch account data for general questions; do NOT mention admin/officer notification types
+- When asked "how to change notification settings": direct to Settings menu; list the three email preferences they can toggle: email_loan_updates (loan updates), email_payment_reminders (payment reminders), and email_promotions (promotional emails) - do NOT mention step-by-step UI navigation or confuse with AI consent
+- When asked dashboard/overview/stats: use get_customer_dashboard tool; list ALL application statuses (total, pending, approved, rejected, disbursed) including zero counts (e.g., "0 rejected applications"); provide exact counts never group or estimate; include document stats and profile completion breakdown
+- Answer only what's asked: when dashboard tool returns large payload, extract only requested data (e.g., ai_sessions only for "how many times have I chatted"); do NOT dump unrequested fields
+- Never use prefatory phrases like "Based on the dashboard data", "According to the tool call", or "I see from the system..." - present data directly and naturally
+- When asked "what should I do next": evaluate blockers STRICTLY - if ANY blockers exist (e.g., pending document verification), clearly state user is NOT ready yet before giving actionable next step. Never say "you are ready" if there is a "however" coming. Provide clear action: "Please wait for document verification" or "Complete missing profile fields"
+- When responding in Tagalog or other non-English languages: prioritize natural phrasing and contextual accuracy. When translating dates, use proper past-tense markers (like "noong") only for dates before today, and future-tense markers (like "sa" or "ngayong darating na") for dates in the future. Use standard financial terms: "halagang kailangang bayaran" for amount due, "hulog" for installment. Never hallucinate unrelated words or use robotic translations. Use "sabihin mo lang sa akin" for natural closings. Never output raw tool names (e.g., get_loan_products, get_customer_dashboard).
+- When asked "what are my stats": list ALL application statuses (total, pending, approved, rejected, disbursed) and profile completion breakdown; do NOT volunteer outstanding loan balance or repayment status - this applies in all languages including Tagalog
+- When listing notifications: ensure your counts match the tool output exactly - if there are 5 unread notifications, account for all 5 in your summary
 
 === DO NOT ===
 - Guarantee loan approval or predict exact amounts
 - Compare with other lending apps
 - Give legal, tax, or investment advice
 - Discuss topics unrelated to MSME Pathways loans
+- Mention "tool calls", "based on the JSON", "system output", or "backend data" in responses
+- Check user's account data for general policy questions like "what happens if...", "how does X work", or "where is X"
+- Use data-fetching tools for UI/navigation questions ("Where do I find...?")
+- Say "you will receive" for notifications - use "notifications are sent via..." instead
+- When explaining blockchain: never say it is always active; always state "when blockchain is enabled"; avoid technical jargon like "blockchain_tx_hashes" and explain using natural customer-friendly language
 """
     return prompt.strip()
 
@@ -323,22 +573,79 @@ MANUAL (officer records): {manual_methods}
 KNOWLEDGE_BASE = {
     "version": KNOWLEDGE_VERSION,
     "platform": PLATFORM_INFO,
+    "accounts": ACCOUNTS_INFO,
+    "profiles": PROFILES_INFO,
     "loan_products": LOAN_PRODUCTS_INFO,
     "loan_process": LOAN_PROCESS_STEPS,
     "payment_methods": PAYMENT_METHODS,
     "document_types": DOCUMENT_TYPES,
     "application_statuses": APPLICATION_STATUSES,
     "installment_statuses": INSTALLMENT_STATUSES,
+    "repayment": REPAYMENT_INFO,
+    "notifications": NOTIFICATIONS_INFO,
     "app_navigation": APP_NAVIGATION,
     "prohibited_topics": PROHIBITED_TOPICS,
     "redirect_responses": REDIRECT_RESPONSES,
     "response_guidelines": RESPONSE_GUIDELINES,
+    "analytics": ANALYTICS_INFO,
 }
 
 
 # =============================================================================
 # CONTENT FILTER - Check if message contains prohibited request
 # =============================================================================
+
+def _is_credential_collection_request(message_lower: str) -> bool:
+    """Return True only when the user is asking to reveal, share, or collect credentials."""
+    always_sensitive_terms = [
+        "private key",
+        "seed phrase",
+        "secret key",
+        "backup code",
+        "backup codes",
+    ]
+    if any(term in message_lower for term in always_sensitive_terms):
+        return True
+
+    credential_terms = [
+        r"\bpassword\b",
+        r"\bpin\b",
+        r"\botp\b",
+        r"\btotp\b",
+        r"\b2fa code\b",
+        r"\bverification code\b",
+        r"\breset code\b",
+    ]
+    if not any(re.search(term, message_lower) for term in credential_terms):
+        return False
+
+    collection_phrases = [
+        "what is my",
+        "what's my",
+        "what is your",
+        "what's your",
+        "tell me",
+        "give me",
+        "show me",
+        "send me",
+        "share",
+        "reveal",
+        "provide my",
+        "provide your",
+        "enter my",
+        "submit my",
+        "collect my",
+        "ask for my",
+    ]
+    if any(phrase in message_lower for phrase in collection_phrases):
+        return True
+
+    disclosure_patterns = [
+        r"\b(my|the)\s+(password|pin|otp|totp|2fa code|verification code|reset code)\s+(is|=|:)",
+        r"\b(here is|this is)\s+(my|the)\s+(password|pin|otp|totp|2fa code|verification code|reset code)\b",
+    ]
+    return any(re.search(pattern, message_lower) for pattern in disclosure_patterns)
+
 
 def check_prohibited_content(message: str) -> tuple[bool, str | None]:
     """
@@ -352,9 +659,8 @@ def check_prohibited_content(message: str) -> tuple[bool, str | None]:
     """
     message_lower = message.lower()
     
-    # Check for credential requests (scam detection)
-    credential_words = ['password', 'pin', 'otp', 'private key', 'seed phrase', 'secret key']
-    if any(word in message_lower for word in credential_words):
+    # Check for credential collection/reveal requests while allowing account-help questions
+    if _is_credential_collection_request(message_lower):
         return True, REDIRECT_RESPONSES["credentials"]
     
     # Check for guarantee requests

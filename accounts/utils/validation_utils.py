@@ -2,7 +2,6 @@ import os
 import re
 from django.utils.html import strip_tags
 
-
 # Unicode-aware: allows letters with optional separators between words.
 _PERSON_NAME_PATTERN = re.compile(r"^[^\W\d_]+(?:[ .'-][^\W\d_]+)*$", re.UNICODE)
 _EMPLOYEE_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]*$")
@@ -124,7 +123,11 @@ def validate_person_name(value, field_name="Name", allow_blank=False, max_length
         return False, f"{field_name} is required", normalized
 
     if max_length is not None and len(normalized) > max_length:
-        return False, f"{field_name} must be at most {max_length} characters", normalized
+        return (
+            False,
+            f"{field_name} must be at most {max_length} characters",
+            normalized,
+        )
 
     if not _PERSON_NAME_PATTERN.fullmatch(normalized):
         return (
@@ -220,7 +223,7 @@ def validate_email(value, field_name="Email", required=True, max_length=254):
     """
     Validate email address format.
     Maximum length of 254 characters per RFC 5321.
-    
+
     Returns:
         tuple[bool, str|None, str]: (is_valid, error_message, normalized_email)
     """
@@ -249,4 +252,3 @@ def validate_email(value, field_name="Email", required=True, max_length=254):
         )
 
     return True, None, email_lower
-

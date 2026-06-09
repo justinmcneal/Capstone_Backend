@@ -293,6 +293,8 @@ class TestSyncScheduleToChain:
     @patch("loans.blockchain.models.BlockchainTransaction.create_pending")
     def test_success(self, mock_create_pending, mock_find, mock_create_sched, blockchain_settings, _mock_mongodb):
         # Insert schedule doc into mongomock
+        from datetime import datetime, timezone
+
         schedule_doc = {
             "loan_id": "loan_sched_1",
             "customer_id": "cust_1",
@@ -304,7 +306,7 @@ class TestSyncScheduleToChain:
             "total_interest": 5000,
             "installments": [],
             "start_date": datetime(2025, 1, 1),
-            "created_at": datetime.utcnow(),
+            "created_at": datetime.now(timezone.utc),
             "blockchain_schedule_tx": "",
         }
         _mock_mongodb["repayment_schedules"].insert_one(schedule_doc)
@@ -352,6 +354,8 @@ class TestSyncPaymentToChain:
 
         # Insert payment doc
         payment_id = ObjectId()
+        from datetime import datetime, timezone
+
         payment_doc = {
             "_id": payment_id,
             "loan_id": "loan_pay_1",
@@ -363,7 +367,7 @@ class TestSyncPaymentToChain:
             "reference": "PAY_REF_001",
             "notes": "",
             "recorded_by": "officer_1",
-            "recorded_at": datetime.utcnow(),
+            "recorded_at": datetime.now(timezone.utc),
             "blockchain_tx_hash": "",
         }
         _mock_mongodb["loan_payments"].insert_one(payment_doc)

@@ -266,8 +266,7 @@ enum DisbursementMethod {
     BankTransfer,  // 0
     Cash,          // 1
     GCash,         // 2
-    Maya,          // 3
-    Other          // 4
+    Other          // 3
 }
 ```
 
@@ -319,8 +318,7 @@ enum PaymentMethod {
     Cash,          // 0
     BankTransfer,  // 1
     GCash,         // 2
-    Maya,          // 3
-    Other          // 4
+    Other          // 3
 }
 
 enum InstallmentStatus {

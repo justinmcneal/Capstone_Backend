@@ -14,7 +14,7 @@ from accounts.utils.access_control import AccessControlMixin
 from accounts.utils.response_helpers import success_response, error_response
 from accounts.utils.throttles import ChatRateThrottle
 from accounts.utils.validation_utils import sanitize_text, sanitize_multiline_text
-from accounts.models import Consent
+from accounts.services.consent_service import ConsentService
 from ai_assistant.models import AIInteraction
 from ai_assistant.services import get_llm_service
 from ai_assistant.services.llm_service import SYSTEM_PROMPT, needs_user_context
@@ -64,13 +64,11 @@ class ConsentRequiredMixin(AccessControlMixin):
         user = request.user
         customer_id = user.customer_id
         
-        consent = Consent.find_by_user(customer_id, 'customer')
-        
-        if not consent or not consent.ai_consent:
+        if not ConsentService.check_ai_consent(customer_id, 'customer'):
             return False, error_response(
                 message="AI consent is required to use this feature",
+                code="CONSENT_REQUIRED",
                 errors={
-                    'code': 'CONSENT_REQUIRED',
                     'action_required': {
                         'endpoint': '/api/auth/consent/',
                         'method': 'POST',
@@ -80,7 +78,7 @@ class ConsentRequiredMixin(AccessControlMixin):
                 status_code=status.HTTP_403_FORBIDDEN
             )
         
-        return True, consent
+        return True, None
 
 
 class ChatView(ConsentRequiredMixin, APIView):
@@ -699,11 +697,11 @@ class EducationView(AccessControlMixin, APIView):
         },
         'loan_process': {
             'title': 'The Loan Process',
-            'content': 'Applying for a loan is simple with our AI-assisted process. Every step is tracked and recorded on the blockchain for transparency.',
+            'content': 'Applying for a loan is simple with our AI-assisted process. When blockchain is enabled, major loan events are recorded on the blockchain for transparency. AI features require ai_consent (POST /api/auth/consent/).',
             'key_points': [
-                'Step 1: Complete your profile (personal, business, and alternative credit data)',
+                'Step 1: Complete your profile (personal and business information)',
                 'Step 2: Upload required documents (valid ID is always required)',
-                'Step 3: Browse loan products and get AI pre-qualification',
+                'Step 3: Browse loan products and get AI pre-qualification (risk: low/medium/high; requires ai_consent)',
                 'Step 4: Submit your application with your preferred amount and term',
                 'Step 5: A loan officer reviews your application',
                 'Step 6: Get approved or receive feedback on what to improve',
@@ -754,13 +752,14 @@ class EducationView(AccessControlMixin, APIView):
                 'Each installment has a due date, principal portion, and interest portion',
                 'Installment statuses: Pending, Paid, Partial, or Overdue',
                 'Partial payments are supported — pay what you can',
+                'Penalties may be applied for late payments; contact support if you need help',
                 'View your schedule in the app: Track → select your loan → Schedule tab',
                 'View payment history: Track → select your loan → Payments tab'
             ]
         },
         'blockchain_basics': {
             'title': 'Blockchain Verification',
-            'content': 'MSME Pathways records all major loan events on the Ethereum blockchain, providing a transparent and tamper-proof record of your loan history.',
+            'content': 'When blockchain is enabled, MSME Pathways records major loan events on the Ethereum blockchain, providing a transparent and tamper-proof record of your loan history.',
             'key_points': [
                 'Every loan application, approval, disbursement, and payment is recorded on-chain',
                 'Blockchain records cannot be altered or deleted — ensuring transparency',
@@ -847,15 +846,15 @@ class FAQsView(AccessControlMixin, APIView):
     FAQS = [
         {
             'question': 'How much can I borrow?',
-            'answer': 'Loan amounts range from ₱5,000 to ₱500,000 depending on the loan product, your profile, and business needs.'
+            'answer': 'Loan amounts depend on the product. Check the loan product page for the exact minimum and maximum amount, since each product can have different limits.'
         },
         {
             'question': 'How long does approval take?',
-            'answer': 'Most applications are reviewed within 1-3 business days with our AI-assisted process.'
+            'answer': 'Review time depends on the completeness of your application and loan officer workload. The app will show you the current status while it is being reviewed.'
         },
         {
             'question': 'What if I get rejected?',
-            'answer': 'You can reapply after improving your profile or try a smaller loan amount. Our AI will explain what to improve.'
+            'answer': 'You can read the rejection feedback, improve the items that were missing, and resubmit the application once it is reset to draft.'
         },
         {
             'question': 'Do I need a business permit?',
@@ -863,7 +862,7 @@ class FAQsView(AccessControlMixin, APIView):
         },
         {
             'question': 'How do I make payments?',
-            'answer': 'There are 5 payment methods in two categories. Automatic (recorded instantly): GCash, Bank Transfer, and Wallet (ETH) — you pay directly and it\'s automatically recorded. Manual (recorded by your loan officer): Cash and Check — you pay at a partner location and the loan officer records it for you.'
+            'answer': 'If you are paying yourself, use GCash, bank transfer, or Wallet (ETH). Cash and check payments are recorded by a loan officer at the office or partner location.'
         },
         {
             'question': 'What happens if I miss a payment?',
@@ -871,11 +870,19 @@ class FAQsView(AccessControlMixin, APIView):
         },
         {
             'question': 'How do I check my loan status?',
-            'answer': 'Open the app and go to Track → Applications. You\'ll see the current status of all your loan applications (draft, submitted, under review, approved, rejected, or disbursed).'
+            'answer': 'Open the app and go to Track → Applications. You\'ll see the current status of all your loan applications (draft, submitted, under review, approved, rejected, disbursed, or cancelled).'
+        },
+        {
+            'question': 'How do I enable the AI assistant?',
+                'answer': 'After logging in, turn on AI access in your account consent settings. AI access is separate from general data consent, and signing up does not turn it on automatically.'
+        },
+        {
+            'question': 'How do I change the app language?',
+                'answer': 'You can choose English or Tagalog during signup, or change it later in your app settings. The AI assistant will use your saved language when you do not pick one in chat.'
         },
         {
             'question': 'What is blockchain verification?',
-            'answer': 'Every major event in your loan — application, approval, disbursement, and each payment — is permanently recorded on the Ethereum blockchain. This creates a transparent, tamper-proof audit trail that protects both you and the lender.'
+            'answer': 'When blockchain is enabled, major loan events such as application, approval, disbursement, and payments are recorded on the Ethereum blockchain. This creates a transparent, tamper-proof audit trail.'
         },
         {
             'question': 'How does the repayment schedule work?',
@@ -887,7 +894,7 @@ class FAQsView(AccessControlMixin, APIView):
         },
         {
             'question': 'What is the ETH Wallet payment method?',
-            'answer': 'Wallet (ETH) lets you make payments using an Ethereum cryptocurrency wallet. Payments via ETH wallet are automatically recorded in the system and verified on the blockchain. You can also receive your loan disbursement via ETH wallet.'
+            'answer': 'Wallet (ETH) lets you make payments using an Ethereum cryptocurrency wallet. Those payments are recorded in the system, and you can also choose it as a disbursement method if it is available for your application.'
         }
     ]
     

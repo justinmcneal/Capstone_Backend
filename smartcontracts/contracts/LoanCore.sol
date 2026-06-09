@@ -161,7 +161,11 @@ contract LoanCore is
     }
 
     modifier onlyBorrowerOf(bytes32 loanId) {
-        if (loans[loanId].borrower != msg.sender) {
+        if (
+            loans[loanId].borrower != msg.sender &&
+            !hasRole(ADMIN_ROLE, msg.sender) &&
+            !hasRole(SYSTEM_ROLE, msg.sender)
+        ) {
             revert UnauthorizedBorrower(loanId, msg.sender);
         }
         _;
@@ -258,7 +262,7 @@ contract LoanCore is
         
         // Verify borrower is registered
         require(
-            accessControl.isBorrower(msg.sender) || hasRole(SYSTEM_ROLE, msg.sender),
+            accessControl.isBorrower(msg.sender) || hasRole(SYSTEM_ROLE, msg.sender) || hasRole(ADMIN_ROLE, msg.sender),
             "LoanCore: caller not authorized"
         );
 
@@ -372,7 +376,7 @@ contract LoanCore is
             hasRole(ADMIN_ROLE, msg.sender) || hasRole(SYSTEM_ROLE, msg.sender),
             "LoanCore: not authorized to assign"
         );
-        require(accessControl.isActiveOfficer(officer), "LoanCore: invalid officer");
+        require(accessControl.isActiveOfficer(officer) || hasRole(ADMIN_ROLE, msg.sender), "LoanCore: invalid officer");
 
         Loan storage loan = loans[loanId];
         require(

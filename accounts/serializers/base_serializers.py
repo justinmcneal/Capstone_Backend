@@ -6,7 +6,7 @@ from accounts.utils.validation_utils import sanitize_text
 
 class PasswordValidationMixin:
     """Shared mixin for password validation across all serializers"""
-    
+
     def validate_password(self, value):
         try:
             validate_password(value)
@@ -18,30 +18,30 @@ class PasswordValidationMixin:
 class OTPValidationMixin:
     def validate_otp(self, value):
         if not value.isdigit():
-            raise serializers.ValidationError('OTP must be a 6-digit number')
+            raise serializers.ValidationError("OTP must be a 6-digit number")
         if len(value) != 6:
-            raise serializers.ValidationError('OTP must be exactly 6 digits')
+            raise serializers.ValidationError("OTP must be exactly 6 digits")
         return value
 
 
 class PasswordConfirmationMixin:
     def validate(self, attrs):
-        password_field = 'new_password' if 'new_password' in attrs else 'password'
-        confirm_field = 'confirm_password'
-        
+        password_field = "new_password" if "new_password" in attrs else "password"
+        confirm_field = "confirm_password"
+
         if password_field in attrs and confirm_field in attrs:
             if attrs.get(password_field) != attrs.get(confirm_field):
                 raise serializers.ValidationError(
-                    {confirm_field: 'Passwords do not match'}
+                    {confirm_field: "Passwords do not match"}
                 )
-        
-        if 'old_password' in attrs and 'new_password' in attrs:
-            if attrs.get('old_password') == attrs.get('new_password'):
+
+        if "old_password" in attrs and "new_password" in attrs:
+            if attrs.get("old_password") == attrs.get("new_password"):
                 raise serializers.ValidationError(
-                    {'new_password': 'New password must be different from old password'}
+                    {"new_password": "New password must be different from old password"}
                 )
-        
-        return super().validate(attrs) if hasattr(super(), 'validate') else attrs
+
+        return super().validate(attrs) if hasattr(super(), "validate") else attrs
 
 
 class InputSanitizationMixin:
@@ -53,12 +53,12 @@ class InputSanitizationMixin:
     """
 
     sanitize_excluded_fields = {
-        'password',
-        'password_confirm',
-        'new_password',
-        'confirm_password',
-        'old_password',
-        'otp',
+        "password",
+        "password_confirm",
+        "new_password",
+        "confirm_password",
+        "old_password",
+        "otp",
     }
 
     def to_internal_value(self, data):
@@ -78,7 +78,8 @@ class InputSanitizationMixin:
                 and isinstance(value, list)
             ):
                 attrs[field_name] = [
-                    sanitize_text(item) if isinstance(item, str) else item for item in value
+                    sanitize_text(item) if isinstance(item, str) else item
+                    for item in value
                 ]
 
         return attrs
