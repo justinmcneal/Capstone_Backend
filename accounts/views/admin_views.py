@@ -450,13 +450,33 @@ class LoanOfficerManagementView(AdminRequiredMixin, APIView):
 
             # Search filter - search in name, email, employee_id
             if search:
-                search_regex = re.compile(re.escape(search), re.IGNORECASE)
-                query["$or"] = [
-                    {"first_name": {"$regex": search_regex}},
-                    {"last_name": {"$regex": search_regex}},
-                    {"email": {"$regex": search_regex}},
-                    {"employee_id": {"$regex": search_regex}},
-                ]
+                # Split search into terms for multi-word search support
+                search_terms = search.strip().split()
+                
+                if len(search_terms) == 1:
+                    # Single term - search in all fields
+                    search_regex = re.compile(re.escape(search_terms[0]), re.IGNORECASE)
+                    query["$or"] = [
+                        {"first_name": {"$regex": search_regex}},
+                        {"last_name": {"$regex": search_regex}},
+                        {"email": {"$regex": search_regex}},
+                        {"employee_id": {"$regex": search_regex}},
+                    ]
+                else:
+                    # Multiple terms - search across combinations
+                    # Match if ALL terms appear in any combination of fields
+                    and_conditions = []
+                    for term in search_terms:
+                        term_regex = re.compile(re.escape(term), re.IGNORECASE)
+                        and_conditions.append({
+                            "$or": [
+                                {"first_name": {"$regex": term_regex}},
+                                {"last_name": {"$regex": term_regex}},
+                                {"email": {"$regex": term_regex}},
+                                {"employee_id": {"$regex": term_regex}},
+                            ]
+                        })
+                    query["$and"] = and_conditions
 
             # Get total count before pagination
             all_officers = list(LoanOfficer.find(query))
@@ -1047,13 +1067,33 @@ class AdminManagementView(SuperAdminRequiredMixin, APIView):
 
             # Search filter - search in username, name, email
             if search:
-                search_regex = re.compile(re.escape(search), re.IGNORECASE)
-                query["$or"] = [
-                    {"username": {"$regex": search_regex}},
-                    {"first_name": {"$regex": search_regex}},
-                    {"last_name": {"$regex": search_regex}},
-                    {"email": {"$regex": search_regex}},
-                ]
+                # Split search into terms for multi-word search support
+                search_terms = search.strip().split()
+                
+                if len(search_terms) == 1:
+                    # Single term - search in all fields
+                    search_regex = re.compile(re.escape(search_terms[0]), re.IGNORECASE)
+                    query["$or"] = [
+                        {"username": {"$regex": search_regex}},
+                        {"first_name": {"$regex": search_regex}},
+                        {"last_name": {"$regex": search_regex}},
+                        {"email": {"$regex": search_regex}},
+                    ]
+                else:
+                    # Multiple terms - search across combinations
+                    # Match if ALL terms appear in any combination of fields
+                    and_conditions = []
+                    for term in search_terms:
+                        term_regex = re.compile(re.escape(term), re.IGNORECASE)
+                        and_conditions.append({
+                            "$or": [
+                                {"username": {"$regex": term_regex}},
+                                {"first_name": {"$regex": term_regex}},
+                                {"last_name": {"$regex": term_regex}},
+                                {"email": {"$regex": term_regex}},
+                            ]
+                        })
+                    query["$and"] = and_conditions
 
             # Get all matching admins
             all_admins = list(Admin.find(query))
