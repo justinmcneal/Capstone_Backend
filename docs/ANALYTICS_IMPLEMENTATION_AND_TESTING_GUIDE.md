@@ -20,6 +20,7 @@ Content-Type: application/json
 | `GET /audit-logs/users/` | Admin | `view_logs` |
 | `GET /audit-logs/<log_id>/` | Admin | `view_logs` |
 | `GET /officer/` | Loan Officer, Admin | None |
+| `GET /officer/audit-logs/` | Loan Officer, Admin | None |
 | `GET /customer/` | Customer | None |
 
 ## Endpoint Reference

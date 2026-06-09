@@ -30,7 +30,14 @@ def _to_bytes32(value):
     return Web3.keccak(text=str(value))
 
 
-def create_schedule_onchain(loan_id, borrower_address, principal, interest_rate_bps, term_months, start_date=None):
+def create_schedule_onchain(
+    loan_id,
+    borrower_address,
+    principal,
+    interest_rate_bps,
+    term_months,
+    start_date=None,
+):
     """
     Create a repayment schedule on-chain.
 
@@ -63,12 +70,18 @@ def create_schedule_onchain(loan_id, borrower_address, principal, interest_rate_
         int(start_date),
     )
 
-    logger.info("createSchedule on-chain: loan=%s term=%d tx=%s",
-                loan_id, term_months, result["tx_hash"][:18])
+    logger.info(
+        "createSchedule on-chain: loan=%s term=%d tx=%s",
+        loan_id,
+        term_months,
+        result["tx_hash"][:18],
+    )
     return result
 
 
-def record_payment_onchain(loan_id, installment_number, amount, payment_method, reference_hash):
+def record_payment_onchain(
+    loan_id, installment_number, amount, payment_method, reference_hash
+):
     """
     Record a payment on-chain.
 
@@ -97,8 +110,13 @@ def record_payment_onchain(loan_id, installment_number, amount, payment_method, 
         ref_bytes,
     )
 
-    logger.info("recordPayment on-chain: loan=%s installment=%d amount=%d tx=%s",
-                loan_id, installment_number, amount, result["tx_hash"][:18])
+    logger.info(
+        "recordPayment on-chain: loan=%s installment=%d amount=%d tx=%s",
+        loan_id,
+        installment_number,
+        amount,
+        result["tx_hash"][:18],
+    )
     return result
 
 
@@ -123,8 +141,12 @@ def mark_overdue_onchain(loan_id, installment_number):
         int(installment_number),
     )
 
-    logger.info("markOverdue on-chain: loan=%s installment=%d tx=%s",
-                loan_id, installment_number, result["tx_hash"][:18])
+    logger.info(
+        "markOverdue on-chain: loan=%s installment=%d tx=%s",
+        loan_id,
+        installment_number,
+        result["tx_hash"][:18],
+    )
     return result
 
 

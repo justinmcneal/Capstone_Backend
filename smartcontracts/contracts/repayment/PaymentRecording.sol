@@ -122,7 +122,8 @@ contract PaymentRecording is
     modifier onlyPaymentAuthorized() {
         if (
             !hasRole(LOAN_OFFICER_ROLE, msg.sender) &&
-            !hasRole(SYSTEM_ROLE, msg.sender)
+            !hasRole(SYSTEM_ROLE, msg.sender) &&
+            !hasRole(ADMIN_ROLE, msg.sender)
         ) {
             revert NotAuthorized(msg.sender);
         }

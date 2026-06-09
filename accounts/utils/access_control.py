@@ -10,6 +10,7 @@ ABAC:
 - Resource ownership checks
 - Officer/admin scoping for loan application actions
 """
+
 from __future__ import annotations
 
 from typing import Iterable
@@ -214,11 +215,21 @@ class AccessControlMixin:
         if subject_id and owner and subject_id == owner:
             return True, request.user
 
-        status_code = status.HTTP_404_NOT_FOUND if conceal_existence else status.HTTP_403_FORBIDDEN
-        message = "Resource not found" if conceal_existence else "You do not own this resource"
+        status_code = (
+            status.HTTP_404_NOT_FOUND
+            if conceal_existence
+            else status.HTTP_403_FORBIDDEN
+        )
+        message = (
+            "Resource not found"
+            if conceal_existence
+            else "You do not own this resource"
+        )
         return False, error_response(message=message, status_code=status_code)
 
-    def require_application_scope(self, request, application, allow_unassigned=True, conceal_existence=True):
+    def require_application_scope(
+        self, request, application, allow_unassigned=True, conceal_existence=True
+    ):
         """
         ABAC check for application access:
         - Admins: full access
@@ -236,22 +247,40 @@ class AccessControlMixin:
         if role in {"admin", "super_admin"}:
             return True, actor_or_response
 
-        assigned_officer = str(getattr(application, "assigned_officer", "") or "").strip()
+        assigned_officer = str(
+            getattr(application, "assigned_officer", "") or ""
+        ).strip()
         subject_id = self._subject_id(request)
 
         if not assigned_officer:
             if allow_unassigned:
                 return True, actor_or_response
-            status_code = status.HTTP_404_NOT_FOUND if conceal_existence else status.HTTP_403_FORBIDDEN
+            status_code = (
+                status.HTTP_404_NOT_FOUND
+                if conceal_existence
+                else status.HTTP_403_FORBIDDEN
+            )
             return False, error_response(
-                message="Application not found" if conceal_existence else "Application is not assigned to you",
+                message=(
+                    "Application not found"
+                    if conceal_existence
+                    else "Application is not assigned to you"
+                ),
                 status_code=status_code,
             )
 
         if assigned_officer != subject_id:
-            status_code = status.HTTP_404_NOT_FOUND if conceal_existence else status.HTTP_403_FORBIDDEN
+            status_code = (
+                status.HTTP_404_NOT_FOUND
+                if conceal_existence
+                else status.HTTP_403_FORBIDDEN
+            )
             return False, error_response(
-                message="Application not found" if conceal_existence else "Application is assigned to another officer",
+                message=(
+                    "Application not found"
+                    if conceal_existence
+                    else "Application is assigned to another officer"
+                ),
                 status_code=status_code,
             )
 
@@ -293,7 +322,9 @@ class AccessControlMixin:
 
         # Always allow customers currently handled by this officer.
         customer_ids = set()
-        for row in applications.find({"assigned_officer": subject_id}, {"customer_id": 1}):
+        for row in applications.find(
+            {"assigned_officer": subject_id}, {"customer_id": 1}
+        ):
             customer_id = str(row.get("customer_id", "") or "").strip()
             if customer_id:
                 customer_ids.add(customer_id)

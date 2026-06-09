@@ -9,7 +9,6 @@ import logging
 from web3 import Web3
 
 from loans.blockchain.client import get_contract, send_transaction, call_view
-from loans.blockchain.exceptions import BlockchainDisabledError
 
 logger = logging.getLogger("blockchain")
 
@@ -21,7 +20,9 @@ def _to_bytes32(value):
     return Web3.keccak(text=str(value))
 
 
-def create_application_onchain(loan_id, borrower_addr, product_id, amount, term_months, interest_rate_bps):
+def create_application_onchain(
+    loan_id, borrower_addr, product_id, amount, term_months, interest_rate_bps
+):
     """
     Create a loan application on-chain.
 
@@ -50,11 +51,15 @@ def create_application_onchain(loan_id, borrower_addr, product_id, amount, term_
         int(interest_rate_bps),
     )
 
-    logger.info("createApplication on-chain: loan=%s tx=%s", loan_id, result["tx_hash"][:18])
+    logger.info(
+        "createApplication on-chain: loan=%s tx=%s", loan_id, result["tx_hash"][:18]
+    )
     return result
 
 
-def submit_application_onchain(loan_id, eligibility_score, risk_category, ai_recommendation_hash):
+def submit_application_onchain(
+    loan_id, eligibility_score, risk_category, ai_recommendation_hash
+):
     """
     Submit a loan application on-chain (transitions Draft → Submitted).
 
@@ -80,7 +85,9 @@ def submit_application_onchain(loan_id, eligibility_score, risk_category, ai_rec
         ai_hash_bytes,
     )
 
-    logger.info("submitApplication on-chain: loan=%s tx=%s", loan_id, result["tx_hash"][:18])
+    logger.info(
+        "submitApplication on-chain: loan=%s tx=%s", loan_id, result["tx_hash"][:18]
+    )
     return result
 
 

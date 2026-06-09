@@ -285,8 +285,7 @@ console.log("Status:", paid.status); // 1 = Paid
 | 0 | Cash |
 | 1 | BankTransfer |
 | 2 | GCash |
-| 3 | Maya |
-| 4 | Other |
+| 3 | Other |
 
 ---
 

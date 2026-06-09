@@ -205,7 +205,7 @@ class GroqService:
         messages.append({"role": "user", "content": message})
         
         # Send request to LLM API
-        timeout = 120 if self.provider == 'ollama' else 30
+        timeout = 120 if self.provider == 'ollama' else 180
         try:
             response = requests.post(
                 self.api_url,
@@ -408,7 +408,7 @@ class GroqService:
                     request_body["tools"] = tools
                     request_body["tool_choice"] = "auto"
 
-                timeout = 120 if self.provider == 'ollama' else 30
+                timeout = 120 if self.provider == 'ollama' else 180
                 response = requests.post(
                     self.api_url,
                     headers={
@@ -662,7 +662,7 @@ class GroqService:
                     request_body["tools"] = tools
                     request_body["tool_choice"] = "auto"
 
-                timeout = 120 if self.provider == 'ollama' else 30
+                timeout = 120 if self.provider == 'ollama' else 120
                 response = requests.post(
                     self.api_url,
                     headers={

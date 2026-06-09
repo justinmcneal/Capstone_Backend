@@ -1,7 +1,7 @@
 """
 AIInteraction Model for storing chat history.
 """
-from datetime import datetime
+from datetime import datetime, timezone
 import re
 
 from bson import ObjectId
@@ -38,8 +38,8 @@ class AIInteraction:
         self.tokens_used = kwargs.get('tokens_used')
         
         # Timestamps
-        self.timestamp = kwargs.get('timestamp', datetime.utcnow())
-        self.created_at = kwargs.get('created_at', datetime.utcnow())
+        self.timestamp = kwargs.get('timestamp', datetime.now(timezone.utc))
+        self.created_at = kwargs.get('created_at', datetime.now(timezone.utc))
     
     @property
     def id(self):

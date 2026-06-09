@@ -165,7 +165,7 @@ This document provides a comprehensive analysis of the current backend transacti
   - `loan_id`, `schedule_id`, `customer_id`
   - `installment_number`
   - `amount`
-  - `payment_method` (cash, bank_transfer, gcash, maya, other)
+  - `payment_method` (cash, bank_transfer, gcash, other)
   - `reference` (transaction reference)
   - `recorded_by` (officer ID)
   - `recorded_at` timestamp
@@ -464,38 +464,44 @@ smartcontracts/contracts/
 ### 6.2 Deliverables
 
 #### Deliverable 1: New Smart Contracts
-- [ ] `LoanApplication.sol` - Application creation and submission
-- [ ] `LoanReview.sol` - Officer assignment and review
-- [ ] `LoanApproval.sol` - Approval/rejection decisions
-- [ ] `DisbursementMethod.sol` - Method selection
-- [ ] `RepaymentSchedule.sol` - Schedule management
-- [ ] `PaymentRecording.sol` - Payment tracking
+- [x] `LoanApplication.sol` - Application creation and submission
+- [x] `LoanReview.sol` - Officer assignment and review
+- [x] `LoanApproval.sol` - Approval/rejection decisions
+- [x] `DisbursementMethod.sol` - Method selection
+- [x] `RepaymentSchedule.sol` - Schedule management
+- [x] `PaymentRecording.sol` - Payment tracking
 
 #### Deliverable 2: Refactored Contracts
-- [ ] Refactor `LoanCore.sol` → Split into Application, Review, Approval
-- [ ] Refactor `Disbursement.sol` → DisbursementExecution.sol
-- [ ] Refactor `Repayment.sol` → RepaymentSchedule.sol + PaymentRecording.sol
+- [x] Refactor `LoanCore.sol` → Split into Application, Review, Approval
+- [x] Refactor `Disbursement.sol` → DisbursementExecution.sol
+- [x] Refactor `Repayment.sol` → RepaymentSchedule.sol + PaymentRecording.sol
 
 #### Deliverable 3: Interface Contracts
-- [ ] `ILoanApplication.sol`
-- [ ] `ILoanReview.sol`
-- [ ] `ILoanApproval.sol`
-- [ ] `IDisbursementMethod.sol`
-- [ ] `IDisbursementExecution.sol`
-- [ ] `IRepaymentSchedule.sol`
-- [ ] `IPaymentRecording.sol`
+- [x] `ILoanApplication.sol`
+- [x] `ILoanReview.sol`
+- [x] `ILoanApproval.sol`
+- [x] `IDisbursementMethod.sol`
+- [x] `IDisbursementExecution.sol`
+- [x] `IRepaymentSchedule.sol`
+- [x] `IPaymentRecording.sol`
+- [x] `ILoanReview.sol`
+- [x] `ILoanApproval.sol`
+- [x] `IDisbursementMethod.sol`
+- [x] `IDisbursementExecution.sol`
+- [x] `IRepaymentSchedule.sol`
+- [x] `IPaymentRecording.sol`
 
 #### Deliverable 4: Testing Suite
-- [ ] Unit tests for each contract
-- [ ] Integration tests for contract interactions
-- [ ] Gas optimization tests
-- [ ] Security audit preparation
+- [x] Unit tests for each contract
+- [x] Integration tests for contract interactions
+- [x] Gas optimization tests
+- [x] Security audit preparation
 
 #### Deliverable 5: Documentation
-- [ ] Contract architecture diagrams
-- [ ] Function reference documentation
-- [ ] Deployment guide
-- [ ] Security considerations document
+- [x] Contract architecture diagrams
+- [x] Function reference documentation
+- [x] Deployment guide
+- [x] Security considerations document
 
 ### 6.3 Success Criteria
 
@@ -513,11 +519,15 @@ smartcontracts/contracts/
 ### 7.1 Integration Points
 
 #### Backend Integration
-- [ ] Update Django models to interact with new contracts
-- [ ] Create blockchain service layer
-- [ ] Implement transaction signing and submission
-- [ ] Add blockchain event listeners
-- [ ] Sync on-chain and off-chain data
+- [x] Update Django models to interact with new contracts
+- [x] Create blockchain service layer
+- [x] Implement transaction signing and submission
+- [x] Add blockchain event listeners
+- [x] Sync on-chain and off-chain data
+- [x] Create blockchain service layer
+- [x] Implement transaction signing and submission
+- [x] Add blockchain event listeners
+- [x] Sync on-chain and off-chain data
 
 #### Web Application Integration
 - [ ] Connect Web3 wallet (MetaMask, WalletConnect)

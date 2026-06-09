@@ -13,12 +13,12 @@ from loans.models import LoanProduct, LoanApplication
 from loans.serializers import LoanProductSerializer
 import logging
 
-logger = logging.getLogger('loans')
+logger = logging.getLogger("loans")
 
 
 def invalidate_loan_products_cache():
     """Invalidate all loan products related caches when products are modified."""
-    cache.delete('ai_tool_loan_products')
+    cache.delete("ai_tool_loan_products")
     logger.debug("Loan products cache invalidated")
 
 
@@ -26,29 +26,30 @@ def serialize_internal_note(note):
     if not note:
         return None
 
-    created_at = note.get('created_at')
-    if hasattr(created_at, 'isoformat'):
+    created_at = note.get("created_at")
+    if hasattr(created_at, "isoformat"):
         created_at = created_at.isoformat()
 
     return {
-        'content': note.get('content', ''),
-        'author_id': note.get('author_id'),
-        'author_role': note.get('author_role'),
-        'created_at': created_at,
+        "content": note.get("content", ""),
+        "author_id": note.get("author_id"),
+        "author_role": note.get("author_role"),
+        "created_at": created_at,
     }
 
 
 class AdminProductListView(AdminRequiredMixin, APIView):
     """
     Admin: List and create loan products.
-    
+
     GET /api/loans/admin/products/
     POST /api/loans/admin/products/
     """
+
     authentication_classes = [CustomJWTAuthentication]
     permission_classes = [IsAuthenticated]
-    required_permissions = ['manage_system']
-    
+    required_permissions = ["manage_system"]
+
     def get(self, request):
         """List all products including inactive"""
         import re
@@ -56,54 +57,58 @@ class AdminProductListView(AdminRequiredMixin, APIView):
         has_permission, result = self.check_admin_permission(request)
         if not has_permission:
             return result
-        
-        active_param = sanitize_text(request.query_params.get('active', 'all')).lower()
-        if active_param in {'true', '1', 'yes', 'on'}:
+
+        active_param = sanitize_text(request.query_params.get("active", "all")).lower()
+        if active_param in {"true", "1", "yes", "on"}:
             active_only = True
-        elif active_param in {'false', '0', 'no', 'off', 'all', ''}:
+        elif active_param in {"false", "0", "no", "off", "all", ""}:
             active_only = False
         else:
             return error_response(
                 message="Invalid active filter",
-                errors={'active': 'active must be true, false, or all'},
-                status_code=status.HTTP_400_BAD_REQUEST
+                errors={"active": "active must be true, false, or all"},
+                status_code=status.HTTP_400_BAD_REQUEST,
             )
-        search = sanitize_text(request.query_params.get('search', ''))
-        
+        search = sanitize_text(request.query_params.get("search", ""))
+
         products = LoanProduct.find(active_only=active_only)
-        
+
         # Filter by search term (name or code)
         if search:
             search_regex = re.compile(re.escape(search), re.IGNORECASE)
             products = [
-                p for p in products
+                p
+                for p in products
                 if search_regex.search(p.name) or search_regex.search(p.code)
             ]
-        
-        products_data = [{
-            'id': p.id,
-            'name': p.name,
-            'code': p.code,
-            'description': p.description,
-            'min_amount': p.min_amount,
-            'max_amount': p.max_amount,
-            'interest_rate': p.interest_rate,
-            'min_term_months': p.min_term_months,
-            'max_term_months': p.max_term_months,
-            'required_documents': p.required_documents,
-            'min_business_months': p.min_business_months,
-            'min_monthly_income': p.min_monthly_income,
-            'business_types': p.business_types,
-            'target_description': p.target_description,
-            'active': p.active,
-            'created_at': p.created_at.isoformat()
-        } for p in products]
-        
+
+        products_data = [
+            {
+                "id": p.id,
+                "name": p.name,
+                "code": p.code,
+                "description": p.description,
+                "min_amount": p.min_amount,
+                "max_amount": p.max_amount,
+                "interest_rate": p.interest_rate,
+                "min_term_months": p.min_term_months,
+                "max_term_months": p.max_term_months,
+                "required_documents": p.required_documents,
+                "min_business_months": p.min_business_months,
+                "min_monthly_income": p.min_monthly_income,
+                "business_types": p.business_types,
+                "target_description": p.target_description,
+                "active": p.active,
+                "created_at": p.created_at.isoformat(),
+            }
+            for p in products
+        ]
+
         return success_response(
-            data={'products': products_data, 'total': len(products_data)},
-            message="Products retrieved"
+            data={"products": products_data, "total": len(products_data)},
+            message="Products retrieved",
         )
-    
+
     def post(self, request):
         """Create a new loan product"""
         has_permission, result = self.check_admin_permission(request)
@@ -115,58 +120,58 @@ class AdminProductListView(AdminRequiredMixin, APIView):
             return error_response(
                 message="Invalid product data",
                 errors=serializer.errors,
-                status_code=status.HTTP_400_BAD_REQUEST
+                status_code=status.HTTP_400_BAD_REQUEST,
             )
-        
+
         data = serializer.validated_data
-        
+
         # Check code uniqueness
-        if LoanProduct.find_by_code(data['code']):
+        if LoanProduct.find_by_code(data["code"]):
             return error_response(
                 message="Product code already exists",
-                errors={'code': 'Product code already exists'},
-                status_code=status.HTTP_400_BAD_REQUEST
+                errors={"code": "Product code already exists"},
+                status_code=status.HTTP_400_BAD_REQUEST,
             )
-        
+
         # Check name uniqueness
-        existing_by_name = LoanProduct.find_one({'name': data['name'], 'active': True})
+        existing_by_name = LoanProduct.find_one({"name": data["name"], "active": True})
         if existing_by_name:
             return error_response(
                 message="Product name already exists",
-                errors={'name': 'Product name already exists'},
-                status_code=status.HTTP_400_BAD_REQUEST
+                errors={"name": "Product name already exists"},
+                status_code=status.HTTP_400_BAD_REQUEST,
             )
-        
-        product = LoanProduct(
-            created_by=request.user.customer_id,
-            **data
-        )
+
+        product = LoanProduct(created_by=request.user.customer_id, **data)
         product.save()
-        
+
         # Invalidate cache since products changed
         invalidate_loan_products_cache()
-        
-        logger.info(f"Loan product created: {product.code} by {request.user.customer_id}")
-        
+
+        logger.info(
+            f"Loan product created: {product.code} by {request.user.customer_id}"
+        )
+
         return success_response(
-            data={'id': product.id, 'code': product.code, 'name': product.name},
+            data={"id": product.id, "code": product.code, "name": product.name},
             message="Product created successfully",
-            status_code=status.HTTP_201_CREATED
+            status_code=status.HTTP_201_CREATED,
         )
 
 
 class AdminProductDetailView(AdminRequiredMixin, APIView):
     """
     Admin: Update or delete loan products.
-    
+
     GET /api/loans/admin/products/<id>/
     PUT /api/loans/admin/products/<id>/
     DELETE /api/loans/admin/products/<id>/
     """
+
     authentication_classes = [CustomJWTAuthentication]
     permission_classes = [IsAuthenticated]
-    required_permissions = ['manage_system']
-    
+    required_permissions = ["manage_system"]
+
     def get(self, request, product_id):
         has_permission, result = self.check_admin_permission(request)
         if not has_permission:
@@ -174,161 +179,191 @@ class AdminProductDetailView(AdminRequiredMixin, APIView):
 
         product = LoanProduct.find_by_id(product_id)
         if not product:
-            return error_response(message="Product not found", status_code=status.HTTP_404_NOT_FOUND)
-        
-        return success_response(data={
-            'id': product.id,
-            'name': product.name,
-            'code': product.code,
-            'description': product.description,
-            'min_amount': product.min_amount,
-            'max_amount': product.max_amount,
-            'interest_rate': product.interest_rate,
-            'min_term_months': product.min_term_months,
-            'max_term_months': product.max_term_months,
-            'required_documents': product.required_documents,
-            'min_business_months': product.min_business_months,
-            'min_monthly_income': product.min_monthly_income,
-            'business_types': product.business_types,
-            'target_description': product.target_description,
-            'active': product.active,
-            'created_at': product.created_at.isoformat()
-        })
-    
+            return error_response(
+                message="Product not found", status_code=status.HTTP_404_NOT_FOUND
+            )
+
+        return success_response(
+            data={
+                "id": product.id,
+                "name": product.name,
+                "code": product.code,
+                "description": product.description,
+                "min_amount": product.min_amount,
+                "max_amount": product.max_amount,
+                "interest_rate": product.interest_rate,
+                "min_term_months": product.min_term_months,
+                "max_term_months": product.max_term_months,
+                "required_documents": product.required_documents,
+                "min_business_months": product.min_business_months,
+                "min_monthly_income": product.min_monthly_income,
+                "business_types": product.business_types,
+                "target_description": product.target_description,
+                "active": product.active,
+                "created_at": product.created_at.isoformat(),
+            }
+        )
+
     def put(self, request, product_id):
         from loans.models.application import LoanApplication
 
         has_permission, result = self.check_admin_permission(request)
         if not has_permission:
             return result
-        
+
         product = LoanProduct.find_by_id(product_id)
         if not product:
-            return error_response(message="Product not found", status_code=status.HTTP_404_NOT_FOUND)
-        
+            return error_response(
+                message="Product not found", status_code=status.HTTP_404_NOT_FOUND
+            )
+
         # DEBUG: Log incoming request data
         logger.info(f"[PUT Product {product_id}] Request data: {request.data}")
-        
+
         # Check for active loans before allowing edits
         active_loans_count = LoanApplication.count_by_product(product_id)
         if active_loans_count > 0:
             return error_response(
                 message=f"Cannot edit product with {active_loans_count} active loan(s). Please deactivate the product instead.",
-                errors={'product': f'This product has {active_loans_count} active loan application(s)'},
-                status_code=status.HTTP_400_BAD_REQUEST
+                errors={
+                    "product": f"This product has {active_loans_count} active loan application(s)"
+                },
+                status_code=status.HTTP_400_BAD_REQUEST,
             )
-        
+
         # Use serializer for validation
         serializer = LoanProductSerializer(data=request.data, partial=True)
         if not serializer.is_valid():
-            logger.error(f"[PUT Product {product_id}] Serializer errors: {serializer.errors}")
+            logger.error(
+                f"[PUT Product {product_id}] Serializer errors: {serializer.errors}"
+            )
             return error_response(
                 message="Invalid product data",
                 errors=serializer.errors,
-                status_code=status.HTTP_400_BAD_REQUEST
+                status_code=status.HTTP_400_BAD_REQUEST,
             )
-        
+
         data = serializer.validated_data
         logger.info(f"[PUT Product {product_id}] Validated data: {data}")
-        
+
         # Check name uniqueness if name is being updated
-        if 'name' in data and data['name'] != product.name:
-            existing_by_name = LoanProduct.find_one({'name': data['name'], 'active': True})
+        if "name" in data and data["name"] != product.name:
+            existing_by_name = LoanProduct.find_one(
+                {"name": data["name"], "active": True}
+            )
             if existing_by_name and existing_by_name.id != product.id:
                 return error_response(
                     message="Product name already exists",
-                    errors={'name': 'Product name already exists'},
-                    status_code=status.HTTP_400_BAD_REQUEST
+                    errors={"name": "Product name already exists"},
+                    status_code=status.HTTP_400_BAD_REQUEST,
                 )
-        
+
         # DEBUG: Log values before update
-        logger.info(f"[PUT Product {product_id}] BEFORE update - min_business_months: {product.min_business_months}, business_types: {product.business_types}")
-        
+        logger.info(
+            f"[PUT Product {product_id}] BEFORE update - min_business_months: {product.min_business_months}, business_types: {product.business_types}"
+        )
+
         # Update allowed fields (includes business_types now - fixes PROD-009)
-        updatable = ['name', 'description', 'min_amount', 'max_amount', 'interest_rate',
-                     'min_term_months', 'max_term_months', 'required_documents',
-                     'min_business_months', 'min_monthly_income', 'business_types',
-                     'target_description', 'active']
-        
+        updatable = [
+            "name",
+            "description",
+            "min_amount",
+            "max_amount",
+            "interest_rate",
+            "min_term_months",
+            "max_term_months",
+            "required_documents",
+            "min_business_months",
+            "min_monthly_income",
+            "business_types",
+            "target_description",
+            "active",
+        ]
+
         updated_fields = []
         for field in updatable:
             if field in data:
                 old_value = getattr(product, field, None)
                 setattr(product, field, data[field])
                 updated_fields.append(f"{field}: {old_value} → {data[field]}")
-        
+
         logger.info(f"[PUT Product {product_id}] Updated fields: {updated_fields}")
-        
+
         # DEBUG: Log values after setattr but before save
-        logger.info(f"[PUT Product {product_id}] AFTER setattr - min_business_months: {product.min_business_months}, business_types: {product.business_types}")
-        
+        logger.info(
+            f"[PUT Product {product_id}] AFTER setattr - min_business_months: {product.min_business_months}, business_types: {product.business_types}"
+        )
+
         product.save()
-        
+
         # DEBUG: Verify what was actually saved to DB
         saved_product = LoanProduct.find_by_id(product_id)
-        logger.info(f"[PUT Product {product_id}] AFTER save (from DB) - min_business_months: {saved_product.min_business_months}, business_types: {saved_product.business_types}")
-        
+        logger.info(
+            f"[PUT Product {product_id}] AFTER save (from DB) - min_business_months: {saved_product.min_business_months}, business_types: {saved_product.business_types}"
+        )
+
         # Invalidate cache since products changed
         invalidate_loan_products_cache()
-        
+
         logger.info(f"Product updated: {product.code}")
-        
-        return success_response(data={'id': product.id}, message="Product updated")
-    
+
+        return success_response(data={"id": product.id}, message="Product updated")
+
     def delete(self, request, product_id):
         from loans.models.application import LoanApplication
 
         has_permission, result = self.check_admin_permission(request)
         if not has_permission:
             return result
-        
+
         product = LoanProduct.find_by_id(product_id)
         if not product:
-            return error_response(message="Product not found", status_code=status.HTTP_404_NOT_FOUND)
-        
+            return error_response(
+                message="Product not found", status_code=status.HTTP_404_NOT_FOUND
+            )
+
         # Check for active loans using this product
         active_loans_count = LoanApplication.count_by_product(product_id)
         if active_loans_count > 0:
             return error_response(
                 message=f"Cannot delete product with {active_loans_count} active loan(s)",
-                errors={'product': f'This product has {active_loans_count} active loan application(s)'},
-                status_code=status.HTTP_400_BAD_REQUEST
+                errors={
+                    "product": f"This product has {active_loans_count} active loan application(s)"
+                },
+                status_code=status.HTTP_400_BAD_REQUEST,
             )
-        
+
         try:
             product.delete()  # Soft delete
             logger.info(f"Product deactivated: {product.code}")
-            
+
             # Invalidate cache since products changed
             invalidate_loan_products_cache()
-            
+
             # Return updated product info for confirmation
             return success_response(
-                data={
-                    'id': product.id,
-                    'code': product.code,
-                    'active': product.active
-                },
-                message="Product deactivated successfully"
+                data={"id": product.id, "code": product.code, "active": product.active},
+                message="Product deactivated successfully",
             )
         except ValueError as e:
             logger.error(f"Failed to deactivate product {product_id}: {str(e)}")
             return error_response(
                 message="Failed to deactivate product",
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
 
 class AssignApplicationView(AdminRequiredMixin, APIView):
     """
     Admin: Manually assign application to officer.
-    
+
     POST /api/loans/admin/applications/<id>/assign/
     """
+
     authentication_classes = [CustomJWTAuthentication]
     permission_classes = [IsAuthenticated]
-    required_permissions = ['manage_loan_officers']
-    
+    required_permissions = ["manage_loan_officers"]
+
     def post(self, request, application_id):
         has_permission, result = self.check_admin_permission(request)
         if not has_permission:
@@ -337,58 +372,56 @@ class AssignApplicationView(AdminRequiredMixin, APIView):
         app = LoanApplication.find_by_id(application_id)
         if not app:
             return error_response(
-                message="Application not found",
-                status_code=status.HTTP_404_NOT_FOUND
+                message="Application not found", status_code=status.HTTP_404_NOT_FOUND
             )
-        
-        officer_id = sanitize_text(request.data.get('officer_id', ''))
+
+        officer_id = sanitize_text(request.data.get("officer_id", ""))
         if not officer_id:
             return error_response(
                 message="officer_id is required",
-                status_code=status.HTTP_400_BAD_REQUEST
+                status_code=status.HTTP_400_BAD_REQUEST,
             )
         if not ObjectId.is_valid(officer_id):
             return error_response(
                 message="Invalid officer_id format",
-                status_code=status.HTTP_400_BAD_REQUEST
+                status_code=status.HTTP_400_BAD_REQUEST,
             )
-        
+
         from loans.services import manual_assign_application
-        
+
         try:
             officer = manual_assign_application(app, officer_id)
             if not officer:
                 return error_response(
-                    message="Officer not found",
-                    status_code=status.HTTP_404_NOT_FOUND
+                    message="Officer not found", status_code=status.HTTP_404_NOT_FOUND
                 )
-            
+
             return success_response(
                 data={
-                    'application_id': app.id,
-                    'assigned_officer': officer.id,
-                    'officer_name': officer.full_name,
-                    'status': app.status
+                    "application_id": app.id,
+                    "assigned_officer": officer.id,
+                    "officer_name": officer.full_name,
+                    "status": app.status,
                 },
-                message="Application assigned successfully"
+                message="Application assigned successfully",
             )
         except ValueError as e:
             return error_response(
-                message=str(e),
-                status_code=status.HTTP_400_BAD_REQUEST
+                message=str(e), status_code=status.HTTP_400_BAD_REQUEST
             )
 
 
 class ReassignApplicationView(AdminRequiredMixin, APIView):
     """
     Admin: Reassign application to a different officer.
-    
+
     POST /api/loans/admin/applications/<id>/reassign/
     """
+
     authentication_classes = [CustomJWTAuthentication]
     permission_classes = [IsAuthenticated]
-    required_permissions = ['manage_loan_officers']
-    
+    required_permissions = ["manage_loan_officers"]
+
     def post(self, request, application_id):
         has_permission, result = self.check_admin_permission(request)
         if not has_permission:
@@ -397,52 +430,49 @@ class ReassignApplicationView(AdminRequiredMixin, APIView):
         app = LoanApplication.find_by_id(application_id)
         if not app:
             return error_response(
-                message="Application not found",
-                status_code=status.HTTP_404_NOT_FOUND
+                message="Application not found", status_code=status.HTTP_404_NOT_FOUND
             )
-        
-        new_officer_id = sanitize_text(request.data.get('officer_id', ''))
+
+        new_officer_id = sanitize_text(request.data.get("officer_id", ""))
         if not new_officer_id:
             return error_response(
                 message="officer_id is required",
-                status_code=status.HTTP_400_BAD_REQUEST
+                status_code=status.HTTP_400_BAD_REQUEST,
             )
         if not ObjectId.is_valid(new_officer_id):
             return error_response(
                 message="Invalid officer_id format",
-                status_code=status.HTTP_400_BAD_REQUEST
+                status_code=status.HTTP_400_BAD_REQUEST,
             )
-        
+
         from loans.services import reassign_application
-        
+
         try:
             new_officer = reassign_application(app, new_officer_id)
             if not new_officer:
                 return error_response(
-                    message="Officer not found",
-                    status_code=status.HTTP_404_NOT_FOUND
+                    message="Officer not found", status_code=status.HTTP_404_NOT_FOUND
                 )
-            
+
             return success_response(
                 data={
-                    'application_id': app.id,
-                    'assigned_officer': new_officer.id,
-                    'officer_name': new_officer.full_name,
-                    'status': app.status
+                    "application_id": app.id,
+                    "assigned_officer": new_officer.id,
+                    "officer_name": new_officer.full_name,
+                    "status": app.status,
                 },
-                message="Application reassigned successfully"
+                message="Application reassigned successfully",
             )
         except ValueError as e:
             return error_response(
-                message=str(e),
-                status_code=status.HTTP_400_BAD_REQUEST
+                message=str(e), status_code=status.HTTP_400_BAD_REQUEST
             )
 
 
 class OfficerWorkloadView(AdminRequiredMixin, APIView):
     """
     Admin: View officer workloads and pending applications.
-    
+
     GET /api/loans/admin/officers/workload/
     Query params:
         - search: Filter by officer name/email
@@ -455,185 +485,222 @@ class OfficerWorkloadView(AdminRequiredMixin, APIView):
         - assigned_page_size: Items per page for assigned apps (default 20)
         - assigned_search: Search term for assigned applications
     """
+
     authentication_classes = [CustomJWTAuthentication]
     permission_classes = [IsAuthenticated]
-    required_permissions = ['manage_loan_officers']
-    
+    required_permissions = ["manage_loan_officers"]
+
     def get(self, request):
         from loans.services import get_officers_workload
 
         has_permission, result = self.check_admin_permission(request)
         if not has_permission:
             return result
-        
+
         # Get query parameters for officers
-        search = sanitize_text(request.query_params.get('search', ''))
+        search = sanitize_text(request.query_params.get("search", ""))
         try:
-            page = int(request.query_params.get('page', 1))
-            page_size = int(request.query_params.get('page_size', 20))
+            page = int(request.query_params.get("page", 1))
+            page_size = int(request.query_params.get("page_size", 20))
         except (TypeError, ValueError):
             return error_response(
                 message="Invalid officer pagination parameters",
-                errors={'pagination': 'page and page_size must be integers'},
-                status_code=status.HTTP_400_BAD_REQUEST
+                errors={"pagination": "page and page_size must be integers"},
+                status_code=status.HTTP_400_BAD_REQUEST,
             )
         if page < 1 or page_size < 1 or page_size > 100:
             return error_response(
                 message="Invalid officer pagination parameters",
-                errors={'pagination': 'page must be >= 1 and page_size must be between 1 and 100'},
-                status_code=status.HTTP_400_BAD_REQUEST
+                errors={
+                    "pagination": "page must be >= 1 and page_size must be between 1 and 100"
+                },
+                status_code=status.HTTP_400_BAD_REQUEST,
             )
-        
+
         # Get query parameters for pending applications
-        pending_search = sanitize_text(request.query_params.get('pending_search', ''))
+        pending_search = sanitize_text(request.query_params.get("pending_search", ""))
         try:
-            pending_page = int(request.query_params.get('pending_page', 1))
-            pending_page_size = int(request.query_params.get('pending_page_size', 20))
+            pending_page = int(request.query_params.get("pending_page", 1))
+            pending_page_size = int(request.query_params.get("pending_page_size", 20))
         except (TypeError, ValueError):
             return error_response(
                 message="Invalid pending pagination parameters",
-                errors={'pending_pagination': 'pending_page and pending_page_size must be integers'},
-                status_code=status.HTTP_400_BAD_REQUEST
+                errors={
+                    "pending_pagination": "pending_page and pending_page_size must be integers"
+                },
+                status_code=status.HTTP_400_BAD_REQUEST,
             )
         if pending_page < 1 or pending_page_size < 1 or pending_page_size > 100:
             return error_response(
                 message="Invalid pending pagination parameters",
-                errors={'pending_pagination': 'pending_page must be >= 1 and pending_page_size must be between 1 and 100'},
-                status_code=status.HTTP_400_BAD_REQUEST
+                errors={
+                    "pending_pagination": "pending_page must be >= 1 and pending_page_size must be between 1 and 100"
+                },
+                status_code=status.HTTP_400_BAD_REQUEST,
             )
-        
+
         # Get query parameters for assigned applications
-        assigned_search = sanitize_text(request.query_params.get('assigned_search', ''))
+        assigned_search = sanitize_text(request.query_params.get("assigned_search", ""))
         try:
-            assigned_page = int(request.query_params.get('assigned_page', 1))
-            assigned_page_size = int(request.query_params.get('assigned_page_size', 20))
+            assigned_page = int(request.query_params.get("assigned_page", 1))
+            assigned_page_size = int(request.query_params.get("assigned_page_size", 20))
         except (TypeError, ValueError):
             return error_response(
                 message="Invalid assigned pagination parameters",
-                errors={'assigned_pagination': 'assigned_page and assigned_page_size must be integers'},
-                status_code=status.HTTP_400_BAD_REQUEST
+                errors={
+                    "assigned_pagination": "assigned_page and assigned_page_size must be integers"
+                },
+                status_code=status.HTTP_400_BAD_REQUEST,
             )
         if assigned_page < 1 or assigned_page_size < 1 or assigned_page_size > 100:
             return error_response(
                 message="Invalid assigned pagination parameters",
-                errors={'assigned_pagination': 'assigned_page must be >= 1 and assigned_page_size must be between 1 and 100'},
-                status_code=status.HTTP_400_BAD_REQUEST
+                errors={
+                    "assigned_pagination": "assigned_page must be >= 1 and assigned_page_size must be between 1 and 100"
+                },
+                status_code=status.HTTP_400_BAD_REQUEST,
             )
-        
+
         # Get paginated workload
         workload_data = get_officers_workload(
-            page=page,
-            page_size=page_size,
-            search=search if search else None
+            page=page, page_size=page_size, search=search if search else None
         )
-        
+
         # Get paginated pending applications
         pending_data = LoanApplication.find_pending_paginated(
             page=pending_page,
             page_size=pending_page_size,
-            search=pending_search if pending_search else None
+            search=pending_search if pending_search else None,
         )
-        
+
         # Get paginated assigned applications
         assigned_data = LoanApplication.find_assigned_paginated(
             page=assigned_page,
             page_size=assigned_page_size,
             search=assigned_search if assigned_search else None,
-            officer_id=None  # Get all assigned apps, not filtered by officer
+            officer_id=None,  # Get all assigned apps, not filtered by officer
         )
-        
+
         # Resolve customer names and officer names in bulk
         from accounts.models import Customer
         from accounts.models.loan_officer import LoanOfficer
 
-        all_apps = list(pending_data['applications']) + list(assigned_data['applications'])
+        all_apps = list(pending_data["applications"]) + list(
+            assigned_data["applications"]
+        )
         customer_ids = {app.customer_id for app in all_apps if app.customer_id}
         officer_ids = {app.assigned_officer for app in all_apps if app.assigned_officer}
 
         customer_names = {}
         for cid in customer_ids:
             try:
-                c = Customer.find_one({'_id': ObjectId(cid)})
+                c = Customer.find_one({"_id": ObjectId(cid)})
                 if c:
-                    customer_names[cid] = f"{c.first_name} {c.last_name}".strip() or 'Unknown'
+                    customer_names[cid] = (
+                        f"{c.first_name} {c.last_name}".strip() or "Unknown"
+                    )
             except Exception:
                 pass
 
         officer_names = {}
         for oid in officer_ids:
             try:
-                o = LoanOfficer.find_one({'_id': ObjectId(oid)})
+                o = LoanOfficer.find_one({"_id": ObjectId(oid)})
                 if o:
-                    officer_names[oid] = f"{o.first_name} {o.last_name}".strip() or 'Unknown'
+                    officer_names[oid] = (
+                        f"{o.first_name} {o.last_name}".strip() or "Unknown"
+                    )
             except Exception:
                 pass
 
         # Format pending applications for response
-        pending_apps = [{
-            'id': app.id,
-            'customer_id': app.customer_id,
-            'customer_name': customer_names.get(app.customer_id, 'Unknown'),
-            'requested_amount': app.requested_amount,
-            'term_months': app.term_months,
-            'status': app.status,
-            'eligibility_score': app.eligibility_score,
-            'risk_category': app.risk_category,
-            'assigned_officer': app.assigned_officer,
-            'assigned_officer_name': officer_names.get(app.assigned_officer, None) if app.assigned_officer else None,
-            'submitted_at': app.submitted_at.isoformat() if app.submitted_at else None,
-            'internal_notes_count': len(app.internal_notes or []),
-            'latest_internal_note': serialize_internal_note(
-                (app.internal_notes or [])[-1] if (app.internal_notes or []) else None
-            ),
-        } for app in pending_data['applications']]
-        
+        pending_apps = [
+            {
+                "id": app.id,
+                "customer_id": app.customer_id,
+                "customer_name": customer_names.get(app.customer_id, "Unknown"),
+                "requested_amount": app.requested_amount,
+                "term_months": app.term_months,
+                "status": app.status,
+                "eligibility_score": app.eligibility_score,
+                "risk_category": app.risk_category,
+                "assigned_officer": app.assigned_officer,
+                "assigned_officer_name": (
+                    officer_names.get(app.assigned_officer, None)
+                    if app.assigned_officer
+                    else None
+                ),
+                "submitted_at": (
+                    app.submitted_at.isoformat() if app.submitted_at else None
+                ),
+                "internal_notes_count": len(app.internal_notes or []),
+                "latest_internal_note": serialize_internal_note(
+                    (app.internal_notes or [])[-1]
+                    if (app.internal_notes or [])
+                    else None
+                ),
+            }
+            for app in pending_data["applications"]
+        ]
+
         # Format assigned applications for response
-        assigned_apps = [{
-            'id': app.id,
-            'customer_id': app.customer_id,
-            'customer_name': customer_names.get(app.customer_id, 'Unknown'),
-            'requested_amount': app.requested_amount,
-            'term_months': app.term_months,
-            'status': app.status,
-            'eligibility_score': app.eligibility_score,
-            'risk_category': app.risk_category,
-            'assigned_officer': app.assigned_officer,
-            'assigned_officer_name': officer_names.get(app.assigned_officer, None) if app.assigned_officer else None,
-            'submitted_at': app.submitted_at.isoformat() if app.submitted_at else None,
-            'internal_notes_count': len(app.internal_notes or []),
-            'latest_internal_note': serialize_internal_note(
-                (app.internal_notes or [])[-1] if (app.internal_notes or []) else None
-            ),
-        } for app in assigned_data['applications']]
-        
+        assigned_apps = [
+            {
+                "id": app.id,
+                "customer_id": app.customer_id,
+                "customer_name": customer_names.get(app.customer_id, "Unknown"),
+                "requested_amount": app.requested_amount,
+                "term_months": app.term_months,
+                "status": app.status,
+                "eligibility_score": app.eligibility_score,
+                "risk_category": app.risk_category,
+                "assigned_officer": app.assigned_officer,
+                "assigned_officer_name": (
+                    officer_names.get(app.assigned_officer, None)
+                    if app.assigned_officer
+                    else None
+                ),
+                "submitted_at": (
+                    app.submitted_at.isoformat() if app.submitted_at else None
+                ),
+                "internal_notes_count": len(app.internal_notes or []),
+                "latest_internal_note": serialize_internal_note(
+                    (app.internal_notes or [])[-1]
+                    if (app.internal_notes or [])
+                    else None
+                ),
+            }
+            for app in assigned_data["applications"]
+        ]
+
         return success_response(
             data={
-                'officers': workload_data['officers'],
-                'total': workload_data['total'],
-                'page': workload_data['page'],
-                'page_size': workload_data['page_size'],
-                'total_pages': workload_data['total_pages'],
-                'pending_applications': pending_apps,
-                'pending_count': pending_data['total'],
-                'pending_page': pending_data['page'],
-                'pending_page_size': pending_data['page_size'],
-                'pending_total_pages': pending_data['total_pages'],
-                'assigned_applications': assigned_apps,
-                'assigned_count': assigned_data['total'],
-                'assigned_page': assigned_data['page'],
-                'assigned_page_size': assigned_data['page_size'],
-                'assigned_total_pages': assigned_data['total_pages']
+                "officers": workload_data["officers"],
+                "total": workload_data["total"],
+                "page": workload_data["page"],
+                "page_size": workload_data["page_size"],
+                "total_pages": workload_data["total_pages"],
+                "pending_applications": pending_apps,
+                "pending_count": pending_data["total"],
+                "pending_page": pending_data["page"],
+                "pending_page_size": pending_data["page_size"],
+                "pending_total_pages": pending_data["total_pages"],
+                "assigned_applications": assigned_apps,
+                "assigned_count": assigned_data["total"],
+                "assigned_page": assigned_data["page"],
+                "assigned_page_size": assigned_data["page_size"],
+                "assigned_total_pages": assigned_data["total_pages"],
             },
-            message="Officer workload retrieved"
+            message="Officer workload retrieved",
         )
 
 
 class AdminBlockchainTransactionsView(AdminRequiredMixin, APIView):
     """
     Admin: List all blockchain transactions across the system.
-    
+
     GET /api/loans/admin/blockchain/transactions/
-    
+
     Query params:
         - action: filter by action (submit, approve, reject, disburse, schedule, payment)
         - status: filter by status (confirmed, pending, failed)
@@ -643,113 +710,134 @@ class AdminBlockchainTransactionsView(AdminRequiredMixin, APIView):
         - page: page number (default 1)
         - page_size: items per page (default 20, max 100)
     """
+
     authentication_classes = [CustomJWTAuthentication]
     permission_classes = [IsAuthenticated]
-    required_permissions = ['view_logs']
-    
+    required_permissions = ["view_logs"]
+
     def get(self, request):
         from django.conf import settings
-        from datetime import datetime
-        
+
         has_permission, result = self.check_admin_permission(request)
         if not has_permission:
             return result
-        
+
         # Get query params
-        action = sanitize_text(request.query_params.get('action', '')).lower()
-        tx_status = sanitize_text(request.query_params.get('status', '')).lower()
-        search = sanitize_text(request.query_params.get('search', ''))
-        start_date = sanitize_text(request.query_params.get('start_date', ''))
-        end_date = sanitize_text(request.query_params.get('end_date', ''))
-        
+        action = sanitize_text(request.query_params.get("action", "")).lower()
+        tx_status = sanitize_text(request.query_params.get("status", "")).lower()
+        search = sanitize_text(request.query_params.get("search", ""))
+        start_date = sanitize_text(request.query_params.get("start_date", ""))
+        end_date = sanitize_text(request.query_params.get("end_date", ""))
+
         try:
-            page = max(1, int(request.query_params.get('page', 1)))
-            page_size = min(100, max(1, int(request.query_params.get('page_size', 20))))
+            page = max(1, int(request.query_params.get("page", 1)))
+            page_size = min(100, max(1, int(request.query_params.get("page_size", 20))))
         except ValueError:
             page = 1
             page_size = 20
-        
+
         # Build MongoDB query
         query = {}
-        
-        if action and action in ['submit', 'approve', 'reject', 'disburse', 'schedule', 'payment']:
-            query['action'] = action
-        
-        if tx_status and tx_status in ['confirmed', 'pending', 'failed']:
-            query['status'] = tx_status
-        
+
+        if action and action in [
+            "submit",
+            "approve",
+            "reject",
+            "disburse",
+            "schedule",
+            "payment",
+        ]:
+            query["action"] = action
+
+        if tx_status and tx_status in ["confirmed", "pending", "failed"]:
+            query["status"] = tx_status
+
         if search:
-            query['$or'] = [
-                {'tx_hash': {'$regex': search, '$options': 'i'}},
-                {'loan_id': {'$regex': search, '$options': 'i'}},
+            query["$or"] = [
+                {"tx_hash": {"$regex": search, "$options": "i"}},
+                {"loan_id": {"$regex": search, "$options": "i"}},
             ]
-        
+
         if start_date:
             try:
-                start_dt = datetime.strptime(start_date, '%Y-%m-%d')
-                query.setdefault('created_at', {})['$gte'] = start_dt
+                start_dt = datetime.strptime(start_date, "%Y-%m-%d")
+                query.setdefault("created_at", {})["$gte"] = start_dt
             except ValueError:
                 pass
-        
+
         if end_date:
             try:
-                end_dt = datetime.strptime(end_date, '%Y-%m-%d').replace(hour=23, minute=59, second=59)
-                query.setdefault('created_at', {})['$lte'] = end_dt
+                end_dt = datetime.strptime(end_date, "%Y-%m-%d").replace(
+                    hour=23, minute=59, second=59
+                )
+                query.setdefault("created_at", {})["$lte"] = end_dt
             except ValueError:
                 pass
-        
+
         # Get collection
-        db = getattr(settings, 'MONGODB', None)
+        db = getattr(settings, "MONGODB", None)
         if db is None:
             return success_response(
                 data={
-                    'transactions': [],
-                    'total': 0,
-                    'page': page,
-                    'page_size': page_size,
-                    'total_pages': 0
+                    "transactions": [],
+                    "total": 0,
+                    "page": page,
+                    "page_size": page_size,
+                    "total_pages": 0,
                 },
-                message="Blockchain not configured"
+                message="Blockchain not configured",
             )
-        
-        collection = db['blockchain_transactions']
-        
+
+        collection = db["blockchain_transactions"]
+
         # Get total count
         total = collection.count_documents(query)
         total_pages = (total + page_size - 1) // page_size
-        
+
         # Get paginated results
         skip = (page - 1) * page_size
-        cursor = collection.find(query).sort('created_at', -1).skip(skip).limit(page_size)
-        
+        cursor = (
+            collection.find(query).sort("created_at", -1).skip(skip).limit(page_size)
+        )
+
         transactions = []
         for doc in cursor:
-            created_at = doc.get('created_at')
-            completed_at = doc.get('completed_at')
-            
-            transactions.append({
-                'id': str(doc.get('_id', '')),
-                'tx_hash': doc.get('tx_hash', ''),
-                'contract_name': doc.get('contract_name', ''),
-                'method': doc.get('method', ''),
-                'loan_id': doc.get('loan_id', ''),
-                'action': doc.get('action', ''),
-                'status': doc.get('status', ''),
-                'gas_used': doc.get('gas_used', 0),
-                'gas_price': doc.get('gas_price', 0),
-                'block_number': doc.get('block_number', 0),
-                'error': doc.get('error', ''),
-                'created_at': created_at.isoformat() if hasattr(created_at, 'isoformat') else created_at,
-                'completed_at': completed_at.isoformat() if hasattr(completed_at, 'isoformat') else completed_at,
-            })
-        
+            created_at = doc.get("created_at")
+            completed_at = doc.get("completed_at")
+
+            transactions.append(
+                {
+                    "id": str(doc.get("_id", "")),
+                    "tx_hash": doc.get("tx_hash", ""),
+                    "contract_name": doc.get("contract_name", ""),
+                    "method": doc.get("method", ""),
+                    "loan_id": doc.get("loan_id", ""),
+                    "action": doc.get("action", ""),
+                    "status": doc.get("status", ""),
+                    "gas_used": doc.get("gas_used", 0),
+                    "gas_price": doc.get("gas_price", 0),
+                    "block_number": doc.get("block_number", 0),
+                    "error": doc.get("error", ""),
+                    "created_at": (
+                        created_at.isoformat()
+                        if hasattr(created_at, "isoformat")
+                        else created_at
+                    ),
+                    "completed_at": (
+                        completed_at.isoformat()
+                        if hasattr(completed_at, "isoformat")
+                        else completed_at
+                    ),
+                }
+            )
+
         return success_response(
             data={
-                'transactions': transactions,
-                'total': total,
-                'page': page,
-                'page_size': page_size,
-                'total_pages': total_pages
+                "transactions": transactions,
+                "total": total,
+                "page": page,
+                "page_size": page_size,
+                "total_pages": total_pages,
             },
-            message="Blockchain transactions retrieved"
+            message="Blockchain transactions retrieved",
         )

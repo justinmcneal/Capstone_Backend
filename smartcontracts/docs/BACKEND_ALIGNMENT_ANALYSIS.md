@@ -53,8 +53,7 @@
 | `cash` | `Cash` | 0 |
 | `bank_transfer` | `BankTransfer` | 1 |
 | `gcash` | `GCash` | 2 |
-| `maya` | `Maya` | 3 |
-| `other` | `Other` | 4 |
+| `other` | `Other` | 3 |
 
 ---
 

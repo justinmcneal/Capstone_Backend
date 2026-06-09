@@ -1,0 +1,47 @@
+name: Railway Smoke Tests
+
+on:
+  workflow_dispatch:
+    inputs:
+      base_url:
+        description: "Staging or production Railway base URL"
+        required: true
+        type: string
+      run_notifications:
+        description: "Also hit notification endpoints"
+        required: false
+        default: false
+        type: boolean
+      keep_document:
+        description: "Do not delete the uploaded smoke document"
+        required: false
+        default: false
+        type: boolean
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run Railway smoke tests
+        env:
+          SMOKE_BASE_URL: ${{ inputs.base_url }}
+          SMOKE_ACCESS_TOKEN: ${{ secrets.SMOKE_ACCESS_TOKEN }}
+          SMOKE_EMAIL: ${{ secrets.SMOKE_EMAIL }}
+          SMOKE_PASSWORD: ${{ secrets.SMOKE_PASSWORD }}
+          SMOKE_RUN_NOTIFICATIONS: ${{ inputs.run_notifications && '1' || '0' }}
+          SMOKE_KEEP_DOCUMENT: ${{ inputs.keep_document && '1' || '0' }}
+          SMOKE_RUN_LOANS: "1"
+        run: |
+          python scripts/smoke_test_railway.py

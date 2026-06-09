@@ -42,8 +42,12 @@ def assign_officer_onchain(loan_id, officer_address):
         officer_addr,
     )
 
-    logger.info("assignOfficer on-chain: loan=%s officer=%s tx=%s",
-                loan_id, officer_addr[:10], result["tx_hash"][:18])
+    logger.info(
+        "assignOfficer on-chain: loan=%s officer=%s tx=%s",
+        loan_id,
+        officer_addr[:10],
+        result["tx_hash"][:18],
+    )
     return result
 
 

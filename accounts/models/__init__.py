@@ -17,11 +17,11 @@ from accounts.models.loan_officer import LoanOfficer
 from accounts.models.admin import Admin, ADMIN_PERMISSIONS
 
 __all__ = [
-    'Customer',
-    'BlacklistedToken',
-    'RefreshTokenEntry',
-    'Consent',
-    'LoanOfficer',
-    'Admin',
-    'ADMIN_PERMISSIONS',
+    "Customer",
+    "BlacklistedToken",
+    "RefreshTokenEntry",
+    "Consent",
+    "LoanOfficer",
+    "Admin",
+    "ADMIN_PERMISSIONS",
 ]

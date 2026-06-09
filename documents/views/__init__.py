@@ -4,5 +4,5 @@ from .document_views import (
     DocumentDetailView,
     DocumentVerifyView,
     DocumentTypesView,
-    RequestReuploadView
+    RequestReuploadView,
 )
