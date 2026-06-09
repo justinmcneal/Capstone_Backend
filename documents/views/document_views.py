@@ -337,33 +337,8 @@ class DocumentUploadView(AccessControlMixin, APIView):
                         f"Failed to notify reviewers for document {document.id}: {notify_error}"
                     )
 
-            response_data = {
-                "id": document.id,
-                "document_type": document.document_type,
-                "original_filename": document.original_filename,
-                "file_size": document.file_size,
-                "file_size_display": document.file_size_display,
-                "status": document.status,
-                "uploaded_at": document.uploaded_at.isoformat(),
-            }
-
-            # Include AI analysis in response
-            if ai_analysis and "error" not in ai_analysis:
-                response_data["ai_analysis"] = {
-                    "quality_score": ai_analysis.get("quality_score"),
-                    "is_valid": ai_analysis.get("is_valid", True),
-                    "quality_issues": ai_analysis.get("quality_issues", []),
-                    "analysis_mode": ai_analysis.get("analysis_mode", "quality_check"),
-                    "expected_type": ai_analysis.get("expected_type"),
-                    "predicted_type": ai_analysis.get("predicted_type"),
-                    "type_confidence": ai_analysis.get("type_confidence"),
-                    "type_matches_expected": ai_analysis.get("type_matches_expected"),
-                    "type_validation_passed": ai_analysis.get("type_validation_passed"),
-                    "type_confidence_threshold": ai_analysis.get(
-                        "type_confidence_threshold"
-                    ),
-                    "model_available": ai_analysis.get("model_available", False),
-                }
+            from documents.serializers import DocumentResponseSerializer
+            response_data = DocumentResponseSerializer(document).data
 
             return success_response(
                 data=response_data,
@@ -542,55 +517,9 @@ class DocumentListView(AccessControlMixin, APIView):
             end_idx = start_idx + page_size
             paginated_documents = documents[start_idx:end_idx]
 
-            storage = get_storage_backend()
-
-            # Cache to avoid multiple DB lookups for the same customer
-            customer_cache = {}
-            def _get_customer_name(cid):
-                if not cid: return "Unknown"
-                cid_str = str(cid)
-                if cid_str not in customer_cache:
-                    customer = get_customer_by_identifier(cid_str)
-                    customer_cache[cid_str] = get_display_name(customer, fallback="Unknown")
-                return customer_cache[cid_str]
-
+            from documents.serializers import DocumentResponseSerializer
             docs_data = [
-                {
-                    "id": doc.id,
-                    "customer_id": serialize_value(doc.customer_id),
-                    "customer_name": _get_customer_name(doc.customer_id),
-                    "document_type": doc.document_type,
-                    "filename": doc.original_filename,
-                    "original_filename": doc.original_filename,
-                    "file_size": doc.file_size,
-                    "file_size_display": doc.file_size_display,
-                    "mime_type": doc.mime_type,
-                    "status": doc.status,
-                    "verification_status": (
-                        "verified"
-                        if doc.verified
-                        else ("rejected" if doc.status == "rejected" else "unverified")
-                    ),
-                    "verified": doc.verified,
-                    "verified_by": serialize_value(doc.verified_by),
-                    "verified_at": (
-                        doc.verified_at.isoformat() if doc.verified_at else None
-                    ),
-                    "verification_notes": doc.notes,
-                    "ai_analysis": (
-                        serialize_value(doc.ai_analysis) if doc.ai_analysis else None
-                    ),
-                    "reupload_requested": doc.reupload_requested,
-                    "reupload_reason": doc.reupload_reason,
-                    "reupload_requested_by": (
-                        serialize_value(doc.reupload_requested_by)
-                        if doc.reupload_requested_by
-                        else None
-                    ),
-                    "file_url": storage.get_url(doc.file_path),
-                    "created_at": doc.uploaded_at.isoformat(),
-                    "uploaded_at": doc.uploaded_at.isoformat(),
-                }
+                DocumentResponseSerializer(doc).data
                 for doc in paginated_documents
             ]
 
@@ -667,39 +596,9 @@ class DocumentDetailView(AccessControlMixin, APIView):
                 if not has_scope:
                     return scope_result
 
-            storage = get_storage_backend()
-
-            customer = get_customer_by_identifier(document.customer_id)
-            customer_name = get_display_name(customer, fallback="Unknown")
-
+            from documents.serializers import DocumentResponseSerializer
             return success_response(
-                data={
-                    "id": document.id,
-                    "customer_id": serialize_value(document.customer_id),
-                    "customer_name": customer_name,
-                    "document_type": document.document_type,
-                    "original_filename": document.original_filename,
-                    "file_size": document.file_size,
-                    "file_size_display": document.file_size_display,
-                    "mime_type": document.mime_type,
-                    "status": document.status,
-                    "verified": document.verified,
-                    "verified_by": serialize_value(document.verified_by),
-                    "verified_at": (
-                        document.verified_at.isoformat()
-                        if document.verified_at
-                        else None
-                    ),
-                    "rejection_reason": document.rejection_reason,
-                    "description": document.description,
-                    "ai_analysis": (
-                        serialize_value(document.ai_analysis)
-                        if document.ai_analysis
-                        else None
-                    ),
-                    "file_url": storage.get_url(document.file_path),
-                    "uploaded_at": document.uploaded_at.isoformat(),
-                },
+                data=DocumentResponseSerializer(document).data,
                 message="Document retrieved successfully",
             )
 

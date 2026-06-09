@@ -129,7 +129,9 @@ class SignUpView(APIView):
             )
 
             response_data = {
-                "user": AuthService.serialize_customer_data(customer),
+                "user": AuthService.serialize_customer_data(
+                    customer, include_last_name=True
+                ),
                 "message": "Account created! Please check your email for verification OTP.",
             }
 
@@ -419,14 +421,16 @@ class VerifyOTP(APIView):
                 f"OTP verified successfully for {email} from IP {request.META.get('REMOTE_ADDR')}"
             )
 
-            response = {
-                "user": AuthService.serialize_customer_data(customer),
+            response_data = {
+                "user": AuthService.serialize_customer_data(
+                    customer, include_last_name=True
+                ),
                 "access": tokens["access"],
                 "refresh": tokens["refresh"],
             }
 
             response = APIResponseHelper.success_response(
-                data=response, message="Account verified successfully"
+                data=response_data, message="Account verified successfully"
             )
             set_auth_cookies(response, tokens["access"], tokens["refresh"])
             return response
