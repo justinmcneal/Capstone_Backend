@@ -1,173 +1,69 @@
-"""Email Sender Service - Sends email notifications.
-
-Improvements:
-- Type hints for clarity and mypy
-- Default ThreadPoolExecutor when `send_async=True` and no executor provided
-- Reuse SMTP connections via `get_connection()` for better throughput
-- Fail-fast template errors and clear logging
+"""
+Email Sender Service - Sends email notifications.
 """
 import logging
-from typing import Optional, Dict, Any
-from concurrent.futures import Executor, ThreadPoolExecutor
-from django.core.mail import EmailMultiAlternatives, get_connection
+from django.core.mail import EmailMultiAlternatives
 from django.template.loader import render_to_string
-from django.template import TemplateDoesNotExist
 from django.conf import settings
 from notifications.models.notification import Notification
+from notifications.services.notification_creator import create_and_broadcast_notification
 
-logger = logging.getLogger("notifications")
-
-# Prometheus metrics (optional, increments are safe when client not scraped)
-try:
-    from prometheus_client import Counter 
-
-    EMAIL_SEND_SUCCESS_COUNTER = Counter(
-        "notifications_email_send_success_total", "Total successful email sends"
-    )
-    EMAIL_SEND_FAILURE_COUNTER = Counter(
-        "notifications_email_send_failure_total", "Total failed email sends"
-    )
-except Exception:
-    EMAIL_SEND_SUCCESS_COUNTER = None
-    EMAIL_SEND_FAILURE_COUNTER = None
+logger = logging.getLogger('notifications')
 
 
 class EmailSender:
-    """Service for sending email notifications.
-
-    Parameters
-    - send_async: if True, send via a thread pool
-    - executor: optional Executor; if None and send_async True, a ThreadPoolExecutor is created
-    - use_celery: if True, enqueue send to Celery task
     """
-
-    def __init__(
-        self,
-        *,
-        send_async: bool = False,
-        executor: Optional[Executor] = None,
-        use_celery: bool = False,
-    ) -> None:
-        self.from_email = getattr(settings, "DEFAULT_FROM_EMAIL", "noreply@example.com")
-        self.send_async = send_async
-        # Lazy-create a ThreadPoolExecutor when needed
-        self.executor: Optional[Executor] = executor
-        self._owns_executor = False
-        if self.send_async and self.executor is None:
-            max_workers = getattr(settings, "EMAIL_SENDER_THREADPOOL_MAX_WORKERS", 4)
-            self.executor = ThreadPoolExecutor(max_workers=max_workers)
-            self._owns_executor = True
-        self.use_celery = use_celery
-
-    def _do_send(
-        self,
-        to_email: str,
-        subject: str,
-        template_name: str,
-        context: Dict[str, Any],
-        notification: Optional[Notification] = None,
-    ) -> bool:
-        """Internal synchronous send implementation.
-
-        Uses a shared SMTP connection via `get_connection()` and validates templates.
+    Service for sending email notifications.
+    """
+    
+    def __init__(self):
+        self.from_email = getattr(settings, 'DEFAULT_FROM_EMAIL', 'noreply@example.com')
+    
+    def send(self, to_email, subject, template_name, context, notification=None):
+        """
+        Send an email using a template.
+        
+        Args:
+            to_email: Recipient email
+            subject: Email subject
+            template_name: Name of template (without extension)
+            context: Context dict for template
+            notification: Optional Notification object to update status
+        
+        Returns:
+            bool: Success status
         """
         try:
-            # Validate templates (render_to_string will raise TemplateDoesNotExist if missing)
-            try:
-                html_content = render_to_string(f"email/{template_name}.html", context)
-                text_content = render_to_string(f"email/{template_name}.txt", context)
-            except TemplateDoesNotExist as e:
-                logger.error("Email template missing: %s", e)
-                if notification:
-                    notification.mark_failed(f"template missing: {e}")
-                return False
-
-            connection = get_connection()
-
+            # Render templates
+            html_content = render_to_string(f'email/{template_name}.html', context)
+            text_content = render_to_string(f'email/{template_name}.txt', context)
+            
+            # Create email
             email = EmailMultiAlternatives(
                 subject=subject,
                 body=text_content,
                 from_email=self.from_email,
-                to=[to_email],
-                connection=connection,
+                to=[to_email]
             )
-            email.attach_alternative(html_content, "text/html")
-
-            # Use connection to send (allows reuse/pooling under the hood)
+            email.attach_alternative(html_content, 'text/html')
+            
+            # Send
             email.send(fail_silently=False)
-
-            logger.info("Email sent: %s to %s", subject, to_email)
-            if EMAIL_SEND_SUCCESS_COUNTER is not None:
-                try:
-                    EMAIL_SEND_SUCCESS_COUNTER.inc()
-                except Exception:
-                    logger.exception("Failed to increment email success metric")
+            
+            logger.info(f"Email sent: {subject} to {to_email}")
+            
             if notification:
-                try:
-                    notification.mark_sent()
-                except Exception:
-                    logger.exception("Failed to mark notification sent")
+                notification.mark_sent()
+            
             return True
+            
         except Exception as e:
-            logger.exception("Email send failed")
-            if EMAIL_SEND_FAILURE_COUNTER is not None:
-                try:
-                    EMAIL_SEND_FAILURE_COUNTER.inc()
-                except Exception:
-                    logger.exception("Failed to increment email failure metric")
+            logger.error(f"Email send failed: {str(e)}")
+            
             if notification:
-                try:
-                    notification.mark_failed(str(e))
-                except Exception:
-                    logger.exception("Failed to mark notification failed")
+                notification.mark_failed(str(e))
+            
             return False
-
-    def send(
-        self,
-        to_email: str,
-        subject: str,
-        template_name: str,
-        context: Dict[str, Any],
-        notification: Optional[Notification] = None,
-    ) -> bool:
-        """Public send API. May queue sending if configured for async.
-
-        When `use_celery` is True, enqueues the Celery task and returns immediately.
-        """
-        # Celery integration: submit task to configured Celery task if requested
-        if self.use_celery:
-            try:
-                from notifications.services.email_tasks import send_email_task
-
-                notif_id = None
-                if notification and getattr(notification, "_id", None):
-                    notif_id = str(notification._id)
-                # Fire-and-forget
-                send_email_task.delay(to_email, subject, template_name, context, notif_id)
-                return True
-            except Exception as e:
-                logger.exception("Failed to enqueue Celery email task")
-                if notification:
-                    try:
-                        notification.mark_failed(str(e))
-                    except Exception:
-                        logger.exception("Failed to mark notification failed after enqueue error")
-                return False
-        if self.send_async and self.executor:
-            # Queue the task and return immediately (queued)
-            try:
-                self.executor.submit(self._do_send, to_email, subject, template_name, context, notification)
-                return True
-            except Exception as e:
-                logger.exception("Failed to queue email send")
-                if notification:
-                    try:
-                        notification.mark_failed(str(e))
-                    except Exception:
-                        logger.exception("Failed to mark notification failed after queue error")
-                return False
-        # Synchronous send
-        return self._do_send(to_email, subject, template_name, context, notification)
     
     def send_loan_submitted(
         self,
@@ -179,17 +75,18 @@ class EmailSender:
         customer_id=None,
     ):
         """Send loan submission confirmation"""
-        notification = Notification(
+        notification = create_and_broadcast_notification(
             user_id=str(customer_id) if customer_id else None,
-            recipient_email=customer_email,
-            recipient_name=customer_name,
+            user_type='customer',
             notification_type='loan_submitted',
             subject='Loan Application Received',
             message=f"Your loan application for {product_name} in the amount of {amount} has been received.",
+            recipient_email=customer_email,
+            recipient_name=customer_name,
             related_type='loan',
-            related_id=loan_id
+            related_id=loan_id,
+            channel='in_app'
         )
-        notification.save()
         
         return self.send(
             to_email=customer_email,
@@ -213,17 +110,18 @@ class EmailSender:
         customer_id=None,
     ):
         """Send loan approval notification"""
-        notification = Notification(
+        notification = create_and_broadcast_notification(
             user_id=str(customer_id) if customer_id else None,
-            recipient_email=customer_email,
-            recipient_name=customer_name,
+            user_type='customer',
             notification_type='loan_approved',
             subject='Loan Approved!',
             message=f"Congratulations! Your loan has been approved for {approved_amount}.",
+            recipient_email=customer_email,
+            recipient_name=customer_name,
             related_type='loan',
-            related_id=loan_id
+            related_id=loan_id,
+            channel='in_app'
         )
-        notification.save()
         
         return self.send(
             to_email=customer_email,
@@ -246,17 +144,18 @@ class EmailSender:
         customer_id=None,
     ):
         """Send loan rejection notification"""
-        notification = Notification(
+        notification = create_and_broadcast_notification(
             user_id=str(customer_id) if customer_id else None,
-            recipient_email=customer_email,
-            recipient_name=customer_name,
+            user_type='customer',
             notification_type='loan_rejected',
             subject='Loan Application Update',
             message=f"Your loan application was unsuccessful. Reason: {reason}",
+            recipient_email=customer_email,
+            recipient_name=customer_name,
             related_type='loan',
-            related_id=loan_id
+            related_id=loan_id,
+            channel='in_app'
         )
-        notification.save()
         
         return self.send(
             to_email=customer_email,
@@ -280,17 +179,18 @@ class EmailSender:
         customer_id=None,
     ):
         """Send document quality issue notification"""
-        notification = Notification(
+        notification = create_and_broadcast_notification(
             user_id=str(customer_id) if customer_id else None,
-            recipient_email=customer_email,
-            recipient_name=customer_name,
+            user_type='customer',
             notification_type='document_flagged',
             subject='Document Needs Attention',
             message=f"There are issues with your {document_type} document.",
+            recipient_email=customer_email,
+            recipient_name=customer_name,
             related_type='document',
             related_id=document_id,
+            channel='in_app'
         )
-        notification.save()
         
         return self.send(
             to_email=customer_email,
@@ -314,17 +214,18 @@ class EmailSender:
         notes='',
     ):
         """Send document approval notification to customer."""
-        notification = Notification(
+        notification = create_and_broadcast_notification(
             user_id=str(customer_id) if customer_id else None,
-            recipient_email=customer_email,
-            recipient_name=customer_name,
+            user_type='customer',
             notification_type='document_verified',
             subject='Document Approved',
             message=f"Your {document_type} document has been successfully verified.",
+            recipient_email=customer_email,
+            recipient_name=customer_name,
             related_type='document',
             related_id=document_id,
+            channel='in_app'
         )
-        notification.save()
 
         return self.send(
             to_email=customer_email,
@@ -350,18 +251,18 @@ class EmailSender:
         reviewer_user_type='loan_officer',
     ):
         """Notify reviewers that a new document needs review."""
-        notification = Notification(
+        notification = create_and_broadcast_notification(
             user_id=str(reviewer_user_id) if reviewer_user_id else None,
             user_type=reviewer_user_type,
-            recipient_email=reviewer_email,
-            recipient_name=reviewer_name,
             notification_type='document_pending_review',
             subject='New Document Pending Review',
             message=f"A new {document_type} document for {customer_name} requires your review.",
+            recipient_email=reviewer_email,
+            recipient_name=reviewer_name,
             related_type='document',
             related_id=document_id,
+            channel='in_app'
         )
-        notification.save()
 
         return self.send(
             to_email=reviewer_email,
@@ -386,17 +287,18 @@ class EmailSender:
         customer_id=None,
     ):
         """Send missing documents request notification"""
-        notification = Notification(
+        notification = create_and_broadcast_notification(
             user_id=str(customer_id) if customer_id else None,
-            recipient_email=customer_email,
-            recipient_name=customer_name,
+            user_type='customer',
             notification_type='missing_documents_requested',
             subject='Additional Documents Needed',
             message="We need some additional documents from you to process your loan application.",
+            recipient_email=customer_email,
+            recipient_name=customer_name,
             related_type='loan',
-            related_id=loan_id
+            related_id=loan_id,
+            channel='in_app'
         )
-        notification.save()
         
         return self.send(
             to_email=customer_email,
@@ -421,18 +323,18 @@ class EmailSender:
         officer_user_id=None,
     ):
         """Send new application alert to loan officer"""
-        notification = Notification(
+        notification = create_and_broadcast_notification(
             user_id=str(officer_user_id) if officer_user_id else None,
-            recipient_email=officer_email,
-            recipient_name=officer_name,
+            user_type='loan_officer',
             notification_type='new_application',
             subject='New Loan Application',
             message=f"A new loan application from {customer_name} for {amount} has been assigned to you.",
+            recipient_email=officer_email,
+            recipient_name=officer_name,
             related_type='loan',
             related_id=loan_id,
-            user_type='loan_officer'
+            channel='in_app'
         )
-        notification.save()
         
         return self.send(
             to_email=officer_email,
@@ -458,17 +360,18 @@ class EmailSender:
         customer_id=None,
     ):
         """Send loan disbursement notification"""
-        notification = Notification(
+        notification = create_and_broadcast_notification(
             user_id=str(customer_id) if customer_id else None,
-            recipient_email=customer_email,
-            recipient_name=customer_name,
+            user_type='customer',
             notification_type='loan_disbursed',
             subject='Loan Disbursed!',
             message=f"Your loan of {amount} has been successfully disbursed.",
+            recipient_email=customer_email,
+            recipient_name=customer_name,
             related_type='loan',
-            related_id=loan_id
+            related_id=loan_id,
+            channel='in_app'
         )
-        notification.save()
         
         return self.send(
             to_email=customer_email,
@@ -495,17 +398,18 @@ class EmailSender:
         customer_id=None,
     ):
         """Send payment received notification"""
-        notification = Notification(
+        notification = create_and_broadcast_notification(
             user_id=str(customer_id) if customer_id else None,
-            recipient_email=customer_email,
-            recipient_name=customer_name,
+            user_type='customer',
             notification_type='payment_received',
             subject='Payment Received',
             message=f"We have received your payment of {amount} for installment {installment}.",
+            recipient_email=customer_email,
+            recipient_name=customer_name,
             related_type='loan',
-            related_id=loan_id
+            related_id=loan_id,
+            channel='in_app'
         )
-        notification.save()
         
         return self.send(
             to_email=customer_email,
