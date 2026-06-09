@@ -20,9 +20,9 @@ class LoanOfficerLoginRateThrottle(AnonRateThrottle):
 
 
 class AdminLoginRateThrottle(AnonRateThrottle):
-    """IP-based throttling for admin login endpoint: 5 requests per hour"""
+    """IP-based throttling for admin login endpoint: 10 requests per hour"""
 
-    rate = "5/hour"
+    rate = "10/hour"
 
 
 class OTPVerificationRateThrottle(AnonRateThrottle):
@@ -38,9 +38,9 @@ class OTPResendRateThrottle(AnonRateThrottle):
 
 
 class TwoFactorRateThrottle(AnonRateThrottle):
-    """IP-based throttling for 2FA verification: 5 requests per hour"""
+    """IP-based throttling for 2FA verification: 10 requests per hour"""
 
-    rate = "5/hour"
+    rate = "10/hour"
 
 
 class PasswordResetRateThrottle(AnonRateThrottle):
