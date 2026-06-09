@@ -23,16 +23,50 @@ pip install -r requirements.txt
 cp .env.example .env
 # Edit .env with your values (see Configuration section)
 
-# 5. Initialize database indexes
+# 5. Start Redis (required for WebSocket channel layers)
+redis-server
+
+# 6. Initialize database indexes
 python init_db.py
 
-# 6. Run server
-python manage.py runserver 0.0.0.0:8000
+# 7. Run ASGI server with Daphne (supports WebSockets)
+daphne -b 0.0.0.0 -p 8000 config.asgi:application
+
+# Or use Django's development ASGI server:
+# python manage.py runserver 0.0.0.0:8000
 ```
 
 API available at: `http://localhost:8000/`
 
-### AI Chatbot — LLM Provider Setup
+WebSocket available at: `ws://localhost:8000/ws/notifications/`
+
+### WebSocket Configuration
+
+The notification system uses Django Channels with Redis for real-time WebSocket messaging.
+
+**Required environment variables:**
+
+```env
+# Redis connection for Channel Layers
+REDIS_HOST=localhost
+REDIS_PORT=6379
+
+# WebSocket toggle (can disable if needed)
+WEBSOCKET_ENABLED=True
+```
+
+**Frontend WebSocket connection:**
+
+```typescript
+const wsUrl = `ws://localhost:8000/ws/notifications/?token=${accessToken}`;
+const ws = new WebSocket(wsUrl);
+```
+
+**Note:** The backend uses JWT authentication via query parameter (`?token=...`) for WebSocket connections. The frontend automatically attaches the access token from localStorage.
+
+---
+
+## AI Chatbot — LLM Provider Setup
 
 The AI assistant supports two LLM providers. Switch between them via a single `.env` variable:
 
@@ -211,81 +245,37 @@ If frontend and backend share the same site, you can keep `AUTH_COOKIE_SAMESITE=
 
 ### 4. Deploy
 Railway auto-deploys from `Procfile`:
-```
-web: gunicorn config.wsgi:application --bind 0.0.0.0:$PORT
-```
-
----
-
-## API Endpoints
-
-| Module | Base URL | Endpoints |
-|--------|----------|-----------|
-| Health | `/api/health/` | 1 |
-| Auth | `/api/auth/` | 20 |
-| Profiles | `/api/profile/` | 5 |
-| Documents | `/api/documents/` | 6 |
-| Loans | `/api/loans/` | 16 |
-| AI Chat | `/api/ai/` | 7 |
-| Analytics | `/api/analytics/` | 4 |
-| **Total** | | **59** |
-
-See [API_REFERENCE.md](docs/API_REFERENCE.md) for full documentation.
-
----
-
-## Project Structure
 
 ```
-Capstone_Backend/
-├── accounts/          # Auth, 2FA, user management
-├── profiles/          # Customer, business, alternative data
-├── documents/         # Document upload, CNN analysis
-├── loans/             # Loan products, applications, payments
-├── ai_assistant/      # Groq LLM chatbot
-├── analytics/         # Dashboards, audit logs
-├── notifications/     # Email service
-├── config/            # Django settings, URLs
-├── docs/              # Documentation
-├── Procfile           # Railway deployment
-├── runtime.txt        # Python version
-└── requirements.txt   # Dependencies
+web: daphne -b 0.0.0.0 -p $PORT config.asgi:application
+worker: celery -A config worker --loglevel=info
+beat: celery -A config beat --loglevel=info
 ```
 
----
+**Note:** Production uses `daphne` (ASGI server) instead of `gunicorn` (WSGI) because the backend supports real-time WebSocket notifications via Django Channels.
 
-## Technologies
+### Production WebSocket Requirements
 
-| Category | Technology |
-|----------|------------|
-| Framework | Django 4.2 + REST Framework |
-| Database | MongoDB Atlas (PyMongo) |
-| AI/LLM | Groq (llama-3.1-8b-instant) |
-| CNN | PyTorch + MobileNetV2 |
-| Auth | JWT + 2FA (TOTP) |
-| Email | Gmail SMTP |
-| Production | Gunicorn + WhiteNoise |
+1. **Redis** must be available for the Channels layer backend
+2. Set `WEBSOCKET_ENABLED=True` in production environment variables
+3. Configure `REDIS_HOST` and `REDIS_PORT` to point to your Redis instance
+4. The frontend must connect via `wss://` (secure WebSocket) in production
+5. Ensure CORS/CSRF origins allow your production frontend domain
 
----
-
-## CNN Training (Optional)
-
-To enable AI document verification:
+### Local Development with WebSockets
 
 ```bash
-# 1. Add training images to documents/ml/training_data/
-#    - valid_id/ (50-100 images)
-#    - invalid/ (50-100 images)
-#    - etc.
+# Terminal 1: Start Redis
+redis-server
 
-# 2. Train the model
-python manage.py train_document_classifier --epochs 10
+# Terminal 2: Start Django ASGI server (supports HTTP + WebSocket)
+daphne -b 0.0.0.0 -p 8000 config.asgi:application
 
-# 3. Model auto-loads on server restart
+# OR use Daphne with hot reload for development:
+# daphne --reload -b 0.0.0.0 -p 8000 config.asgi:application
 ```
 
----
-
+```bash
 ## Useful Commands (Production)
 
 ```bash
