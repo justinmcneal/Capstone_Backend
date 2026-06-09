@@ -252,9 +252,14 @@ class RepaymentSchedule:
             if inst["number"] == installment_number:
                 new_paid_amount = inst.get("paid_amount", 0) + amount
 
+                # Calculate actual amount required including penalties
+                actual_total_amount = inst["total_amount"]
+                if inst.get("penalty_status") == "applied":
+                    actual_total_amount += inst.get("penalty_amount", 0)
+
                 # Update status based on payment
-                if new_paid_amount >= inst["total_amount"]:
-                    inst["paid_amount"] = inst["total_amount"]
+                if new_paid_amount >= actual_total_amount:
+                    inst["paid_amount"] = actual_total_amount
                     inst["status"] = "paid"
                     inst["paid_at"] = utcnow()
                 elif new_paid_amount > 0:
