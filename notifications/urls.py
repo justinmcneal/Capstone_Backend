@@ -11,6 +11,7 @@ from notifications.views import (
     NotificationUnreadCountView,
     NotificationDeleteView,
     NotificationClearAllView,
+    RegisterDeviceTokenView,
 )
 
 app_name = 'notifications'
@@ -33,4 +34,7 @@ urlpatterns = [
 
     # Delete single notification
     path('<str:notification_id>/', NotificationDeleteView.as_view(), name='notification-delete'),
+
+    # Register FCM token
+    path('register-token/', RegisterDeviceTokenView.as_view(), name='notification-register-token'),
 ]

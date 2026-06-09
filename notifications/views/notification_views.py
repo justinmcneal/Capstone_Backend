@@ -21,6 +21,7 @@ from accounts.utils.access_control import AccessControlMixin
 from accounts.utils.validation_utils import sanitize_text, parse_optional_bool
 from config.views import success_response, error_response
 from notifications.models.notification import Notification, get_db
+from notifications.models.device_token import DeviceToken
 
 logger = logging.getLogger('notifications')
 
@@ -380,4 +381,51 @@ class NotificationClearAllView(AccessControlMixin, APIView):
         return success_response(
             data={'deleted_count': result.deleted_count},
             message=f"{result.deleted_count} notifications deleted"
+        )
+
+
+class RegisterDeviceTokenView(AccessControlMixin, APIView):
+    """
+    Register FCM device token for push notifications.
+    
+    POST /api/notifications/register-token/
+    Body:
+        - token (str): The FCM device token
+        - platform (str): Platform (android/ios/web)
+    """
+    authentication_classes = [CustomJWTAuthentication]
+    permission_classes = [IsAuthenticated]
+    
+    def post(self, request):
+        has_permission, result = self.require_roles(
+            request,
+            {'customer', 'loan_officer', 'admin', 'super_admin'},
+        )
+        if not has_permission:
+            return result
+
+        token = request.data.get('token')
+        platform = request.data.get('platform', 'unknown')
+
+        if not token:
+            return error_response(
+                message="Missing required field: token",
+                status_code=http_status.HTTP_400_BAD_REQUEST
+            )
+
+        user_id = str(getattr(request.user, 'customer_id', '') or getattr(request.user, '_id', ''))
+        
+        device_token = DeviceToken(
+            user_id=user_id,
+            token=token,
+            platform=platform,
+            is_active=True
+        )
+        device_token.save()
+
+        logger.info(f"Registered device token for user {user_id} on {platform}")
+
+        return success_response(
+            data={'status': 'registered'},
+            message="Device token registered successfully"
         )
