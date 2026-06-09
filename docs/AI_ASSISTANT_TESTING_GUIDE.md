@@ -562,7 +562,10 @@ The AI has knowledge-base awareness of accounts but **no tool** to query account
 | # | Chat Prompt | Expected Content | Must Not |
 |---|-------------|-----------------|----------|
 | A1 | "How do I create an account?" | Mentions `POST /api/auth/signup/` with `first_name`, `last_name`, `email`, `password`, `password_confirm`; mentions email OTP verification step | Ask for credentials in chat | OK ✅
-| A2 | "What is AI consent?" | Explains `ai_consent` vs `data_consent`; mentions `POST /api/auth/consent/`; says signup does NOT auto-enable AI consent | Confuse data_consent with ai_consent | inaccurate response ❌
+| A2 | "What is AI consent?" | Explains `ai_consent` vs `data_consent`; mentions `POST /api/auth/consent/`; says signup does NOT auto-enable AI consent | Confuse data_consent with ai_consent | FAIL ❌ How to Fix
+To resolve this, you need to ensure the AI retrieves and includes the specific opt-in policy regarding account creation.
+Prompt Engineering / RAG Update: Ensure that the documentation the AI retrieves for "AI consent" explicitly contains the policy regarding signups. You can add a strict instruction to the system prompt: "When explaining AI consent, you must explicitly state that signing up for an account does NOT automatically enable AI consent, and that it requires a separate, explicit opt-in."
+
 | A3 | "How do I change my language?" | Mentions `PATCH /api/auth/language/` with `en` or `tl`; mentions language can be set at signup | Claim languages other than en/tl are supported | OK ✅
 | A4 | "I forgot my password" | Describes the 3-step flow: forgot-password → verify-reset-otp → reset-password; directs user to the app | Ask for the user's password or OTP | OK ✅
 | A5 | "How do I set up 2FA?" | Mentions optional for customers, required for admins; directs to app Settings; mentions setup/confirm/verify flow | Collect TOTP codes or backup codes in chat | unhelpful and refuses to help
@@ -589,20 +592,37 @@ The AI has both **knowledge base** entries and **tools** (`get_profile_status`, 
 
 | # | Chat Prompt | Expected Tool | Expected Content |
 |---|-------------|---------------|-----------------|
-| P1 | "What is my profile completion status?" | `get_profile_status` | Shows `completion_percentage`; lists missing fields from the 7 personal fields (date_of_birth, gender, civil_status, address_line1, barangay, city_municipality, province) | HALLUCINATED: It started talking about "education level" and "housing status" again, which are not part of the criteria. ❌
+| P1 | "What is my profile completion status?" | `get_profile_status` | Shows `completion_percentage`; lists missing fields from the 7 personal fields (date_of_birth, gender, civil_status, address_line1, barangay, city_municipality, province) | PASS ✅
 
-| P2 | "Is my business profile complete?" | `get_profile_status` | Shows business section; mentions `business_type` and `income_range` as required fields; shows `business_age_months` | CORRECTLY SHOWS BUSINESS BUT FAILED TO MENTION `income_range` , BUSINESS TYPE , BUSINESS AGE MONTHS ❌
-| P3 | "What is my alternative data status?" | `get_profile_status` | Shows alternative_data section; mentions `education_level` and `housing_status` as required; shows `risk_score`/`risk_category` if calculated | CORRECTLY IDENTIFIED ALT DATA STATUS BUT FAILS TO MENTION THOSE REQUIREMENTS ❌
-| P4 | "Am I ready to apply for a loan?" | `get_application_readiness` | Shows `ready_to_apply` boolean; lists specific blockers and completed items; checks profile + business + alternative data + documents | -> It correctly identified that document verification is the current blocker preventing the loan application. It contradicted itself (saying "You are ready to apply!" but immediately saying "However, we need to verify documents"). ❌
-| P5 | "What do I still need to fill in?" | `get_profile_status` or `get_application_readiness` | Lists specific missing fields, not vague summaries | It successfully pulled real user data from the tool BUT It gave a vague summary of what is missing ("loan product-specific documents") instead of listing the specific missing fields or document names ❌
+| P2 | "Is my business profile complete?" | `get_profile_status` | Shows business section; mentions `business_type` and `income_range` as required fields; shows `business_age_months` | FAIL ❌ How to Fix
+To fix this, you need to ensure the AI includes all specified data points when summarizing specific profile sections.
+Prompt Engineering: Update the system prompt or tool instructions with a strict directive: "When a user asks about their business profile, you must always explicitly state their business_age_months (e.g., 'Your business age is 12 months') in addition to listing the required fields like business_type and income_range."
+
+| P3 | "What is my alternative data status?" | `get_profile_status` | Shows alternative_data section; mentions `education_level` and `housing_status` as required; shows `risk_score`/`risk_category` if calculated | FAIL ❌ How to Fix
+To fix this, you need to instruct the AI to provide detailed summaries of profile sections rather than just stating whether they are complete or incomplete.
+Prompt Engineering: Update the system instructions for the get_profile_status tool. Add a strict directive: "When summarizing a user's alternative data section, you must explicitly mention their education_level and housing_status, and you must output their risk_score and risk_category if those values exist in the payload."
+Example Template in Prompt: Provide a formatting example to enforce this behavior:
+"Your alternative data section is complete. Your listed education level is [Level] and housing status is [Status]. Your current risk score is [Score] ([Category])."
+
+| P4 | "Am I ready to apply for a loan?" | `get_application_readiness` | Shows `ready_to_apply` boolean; lists specific blockers and completed items; checks profile + business + alternative data + documents | FAIL ❌ How to Fix
+To fix this, you need to enforce strict logical alignment with the payload booleans and enforce data specificity.
+Prompt Engineering (Logic Guardrail): Add a strict directive to your system prompt: "When checking application readiness, if the ready_to_apply boolean is false, you MUST explicitly state that the user is NOT ready yet. Do not say they are ready if there are pending blockers."
+Prompt Engineering (Specificity): Add an instruction: "If there are missing or pending requirements, you must list the exact names of the specific blockers (e.g., 'Pending Barangay Clearance'), not just the total count."
+
+| P5 | "What do I still need to fill in?" | `get_profile_status` or `get_application_readiness` | Lists specific missing fields, not vague summaries | PASS ✅
 
 #### Knowledge Tests (no tool expected)
 
 | # | Chat Prompt | Expected Content | Must Not |
 |---|-------------|-----------------|----------|
-| P6 | "What fields do I need for my profile?" | Lists the 7 personal completion fields; mentions business needs business_type + income_range; mentions alternative data needs education_level + housing_status | Include mobile_number or emergency contacts as required for completion | "Fix the Prompt (Intent Recognition): Instruct the model that if a user asks for requirements (e.g., "What fields do I need?"), it must list the exact required fields for all sections, even if the user's profile is already 100% complete." ❌
+| P6 | "What fields do I need for my profile?" | Lists the 7 personal completion fields; mentions business needs business_type + income_range; mentions alternative data needs education_level + housing_status | Include mobile_number or emergency contacts as required for completion | FAIL ❌ How to Fix
+To fix this, you need to ensure the AI differentiates between a user asking for their current status versus a user asking for the platform's general requirements.
+Prompt Engineering: Update your system instructions for profile-related questions with a strict directive: "When a user asks 'What fields do I need?' or asks about the requirements for a profile, you must list the exact required fields for ALL sections (Personal, Business, and Alternative Data), even if the user has already completed them."
+Explicit Field Mapping: Ensure the prompt or knowledge base explicitly ties "Business" to business_type and income_range, and "Alternative Data" to education_level and housing_status, so the model doesn't summarize them away.
+
 | P7 | "Where do I edit my profile?" | Mentions Menu → Profile in the app | Claim it can edit the profile via chat | PASS ✅
-| P8 | "What is business_age_months?" | Explains it's the canonical business age unit in months; older years_in_operation is normalized | Confuse months with years | partial pass Fix the Prompt/Knowledge Base: Instruct the model that when defining technical database fields (like business_age_months), it must always include the background context about why it exists (e.g., "Make sure to mention that older 'years_in_operation' data is normalized into this field"). ❌
+
+| P8 | "What is business_age_months?" | Explains it's the canonical business age unit in months; older years_in_operation is normalized | Confuse months with years | PASS ✅
 
 ---
 
@@ -614,16 +634,29 @@ The AI has the `get_document_status` tool and knowledge base entries about docum
 
 | # | Chat Prompt | Expected Tool | Expected Content |
 |---|-------------|---------------|-----------------|
-| D1 | "What documents have I uploaded?" | `get_document_status` | Lists documents with `type` and `status` (pending/approved/rejected); shows summary count |  Fix the Prompt: Instruct the model: "When asked about documents, never just provide a numerical summary. You must explicitly list each document by its specific name/type and its current status."
-| D2 | "Are my documents verified?" | `get_document_status` | Reports verified count vs pending vs rejected | Fix the Prompt: Instruct the model: "When asked about document verification status, you must provide a complete breakdown of all statuses (verified, pending, and rejected). Do not just give a single number and stop."
-| D3 | "What documents do I still need?" | `get_application_readiness` | Lists missing document types by label; mentions baseline requirements (at minimum valid ID) | Fix the Prompt: Instruct the model to treat "missing" and "pending" differently. Tell it: "If a document is pending, tell the user to wait, do not tell them to re-upload. Additionally, always explicitly state the baseline requirement (e.g., 'At a minimum, a valid ID is required')."
+| D1 | "What documents have I uploaded?" | `get_document_status` | Lists documents with `type` and `status` (pending/approved/rejected); shows summary count | FAIL ❌ How to Fix
+To fix this, you need to instruct the AI to process document arrays as individual line items rather than grouped summaries, and to reduce redundancy.
+Prompt Engineering (Itemization): Update the system instructions for the get_document_status tool. Add a strict directive: "When a user asks what documents they have uploaded, you must itemize the list. Explicitly state the type and status for every single document in the array (e.g., 'Proof of Billing - Pending') before providing the final summary count."
+Prompt Engineering (Redundancy Guardrail): Add a rule to prevent conversational looping: "Do not repeat the summary counts if you have already explained them in the itemized list."
+
+| D2 | "Are my documents verified?" | `get_document_status` | Reports verified count vs pending vs rejected | FAIL ❌ How to Fix
+To fix this, you need to ensure the AI explicitly covers all required status buckets and consolidates its terminology.
+Prompt Engineering (Completeness): Update the tool instructions: "When summarizing document statuses, you must explicitly provide the counts for ALL three categories: Approved/Verified, Pending, and Rejected (even if the count is zero)."
+Prompt Engineering (Terminology Alignment): Add a rule to standardize the vocabulary: "Treat 'verified' and 'approved' as the exact same status. Do not report them as separate numbers. Group them together."
+
+| D3 | "What documents do I still need?" | `get_application_readiness` | Lists missing document types by label; mentions baseline requirements (at minimum valid ID) | FAIL ❌ To resolve this, you need to firmly separate internal data structures from user-facing instructions.
+Prompt Engineering (Prevent Schema Leaks): Add a strict, global system constraint: "Never expose internal database fields, JSON keys, or schema requirements (like 'Type' or 'Status') to the user. Translate all missing requirements into natural, conversational language."
+Prompt Engineering (Actionable Lists): Update the instructions for when a user asks about missing documents: "List the exact names of the missing documents clearly (e.g., 'You still need to upload: 1. Valid ID, 2. Proof of Billing'). If documents are already uploaded but just pending, clarify that they only need to wait, not upload them again."
 
 #### Knowledge Tests (no tool expected)
 
 | # | Chat Prompt | Expected Content | Must Not |
 |---|-------------|-----------------|----------|
-| D4 | "What documents do I need for a loan?" | Mentions valid government ID is always required; lists common docs (selfie with ID, proof of address); notes business permit is NOT always required | Claim business permit is always mandatory | Fix the Prompt: Instruct the model: "For general document requirement questions, you must list the standard requirements (ID, selfie, proof of address) and explicitly clarify that business permits are not always required. Do not just summarize the user's current upload status." And remind it never to say "Based on the tool output." 
-| D5 | "What file types can I upload?" | Mentions JPEG, PNG, PDF; mentions 10 MB max size | Claim other formats are accepted | Fix the Prompt: Instruct the model: "When asked about file types, file formats, or upload limits, do not check the user's account status. Simply state the allowed formats (JPEG, PNG, PDF) and the size limit (10 MB)."
+| D4 | "What documents do I need for a loan?" | Mentions valid government ID is always required; lists common docs (selfie with ID, proof of address); notes business permit is NOT always required | Claim business permit is always mandatory | FAIL ❌ To resolve this, you need to fix the AI's intent recognition and ensure it has access to the standard policy information.
+Intent Routing / Prompt Engineering: Update your system instructions so the model knows the difference between general inquiries and account-specific inquiries. Add a rule: "If a user asks a general question about loan requirements (e.g., 'What documents do I need?'), provide the standard platform requirements. Do not list their specific uploaded documents unless they explicitly ask for their current status."
+Knowledge Base (RAG) / System Prompt Update: Ensure the baseline document requirements are hardcoded into the system prompt or easily retrievable. Example: "Standard requirements: Valid Government ID (mandatory), Selfie with ID, Proof of Address. Note: A Business Permit is NOT always required depending on the loan product."
+
+| D5 | "What file types can I upload?" | Mentions JPEG, PNG, PDF; mentions 10 MB max size | Claim other formats are accepted | PASS ✅
 | D6 | "Where do I upload documents?" | Mentions Apply → Documents in the app | Claim documents can be uploaded via chat | It successfully avoided the pitfall: it correctly told the user to go to the app and did not try to ask them to upload files in the chat. ✅ 
 | D7 | "What happens if my document is rejected?" | Mentions officer may request reupload; mentions customer gets a notification | Claim rejection is permanent | PASS ✅
 
@@ -638,43 +671,82 @@ It also has `get_notification_status` for notification-related queries (see Modu
 
 | # | Chat Prompt | Expected Tool | Expected Content |
 |---|-------------|---------------|-----------------|
-| L1 | "What loan products are available?" | `get_loan_products` | Lists products with `name`, `min_amount`, `max_amount`, `interest_rate_monthly`, `min_term_months`, `max_term_months`, `required_documents` | Fix the Prompt: Add a strict instruction: "When listing available loan products, you must always include the required documents for each product alongside the amounts, rates, and terms."
-| L2 | "How much can I borrow?" | `get_loan_products` | Shows product-specific amounts; does NOT hardcode a single ceiling | Must not guarantee a specific amount | Fix the Prompt: Instruct the model: "When asked how much a user can borrow, you must list the specific minimum and maximum borrowing limits next to each individual loan product, rather than just giving one massive overall range." 
-| L3 | "What are the interest rates?" | `get_loan_products` | Shows per-product rates; mentions flat rate (~1.5% monthly) | Partial pass Fix the Prompt: Add an instruction for the model: "Whenever discussing interest rates, you must explicitly mention that the interest is calculated as a 'flat rate'."
+| L1 | "What loan products are available?" | `get_loan_products` | Lists products with `name`, `min_amount`, `max_amount`, `interest_rate_monthly`, `min_term_months`, `max_term_months`, `required_documents` | PASS ✅
+| L2 | "How much can I borrow?" | `get_loan_products` | Shows product-specific amounts; does NOT hardcode a single ceiling | Must not guarantee a specific amount | PASS ✅
+
+| L3 | "What are the interest rates?" | `get_loan_products` | Shows per-product rates; mentions flat rate (~1.5% monthly) | FAIL ❌ How to Fix
+To fix this, you need to ensure the AI has access to the general interest rate policy and is instructed to include it alongside specific product data.
+Prompt Engineering / RAG Update: If the ~1.5% flat rate is a general company policy rather than a data point within the get_loan_products JSON, the AI won't know about it unless it's in the system prompt or retrieved from a knowledge base. You need to add a strict instruction: "When a user asks about interest rates, you must always mention our baseline flat rate (~1.5% monthly) in addition to listing any specific product rates."
+Data Consistency Check: Ensure that the ~1.5% flat rate doesn't contradict the tool's payload (where rates are 1.8% - 3%). If it is a base rate that gets adjusted per product, instruct the AI to explain that relationship clearly (e.g., "We offer a base flat rate of ~1.5% monthly, though specific products vary...").
 
 #### Tool-Based Tests — Loan Status
 
 | # | Chat Prompt | Expected Tool | Expected Content |
 |---|-------------|---------------|-----------------|
-| L4 | "What is the status of my loan?" | `get_loan_status` | Shows application `status`, `requested_amount`, `approved_amount`, `term_months`, `created_at` | fail Fix the Prompt: Instruct the model: "When summarizing loan status, you must strictly list out the status, requested_amount, approved_amount, term_months, and created_at date for every single loan. Do not omit these details in favor of a short summary."
-| L5 | "Do I have any active loans?" | `get_loan_status` | Reports disbursed loans with `disbursed_amount`; shows `blockchain_tx_hashes` for disbursed loans | Fail Fix the Prompt: Add a strict instruction: "When listing active or disbursed loans, you must always explicitly include the disbursed_amount (labeled clearly as the disbursed amount) and the associated blockchain_tx_hashes for transparency."
-| L6 | "Was my loan approved or rejected?" | `get_loan_status` | Shows status and `decision_date` | Fail Fix the Prompt: Instruct the model: "When a user asks about their loan approval status, you must always include the exact date the decision was made (decision_date)." Fix the Tone: Add a strict system rule forbidding the model from mentioning "tool calls," "system outputs," or "backend data." It should speak naturally, e.g., "Great news! All three of your loans were approved and disbursed on [Date]."
+| L4 | "What is the status of my loan?" | `get_loan_status` | Shows application `status`, `requested_amount`, `approved_amount`, `term_months`, `created_at` | fail ❌ How to Fix
+To resolve this, you need to fix the instruction leakage and enforce strict data point inclusion.
+Prompt Engineering (Prevent Leakage): Add a strict global constraint to your system prompt: "Never narrate your own reasoning process or echo your instructions back to the user. Do not use phrases like 'To answer the question...' or 'We need to evaluate...'. Just provide the final answer directly and conversationally."
+Prompt Engineering (Data Completeness): Update the get_loan_status instructions to strictly enforce the missing variables: "When summarizing a loan, you must explicitly state the application date (created_at), the term_months, and clearly distinguish between the requested_amount and the final approved_amount."
+Formatting Constraints: Add a rule to explicitly enforce the local currency formatting (e.g., "Always format currency in Philippine Pesos (₱).")
+
+| L5 | "Do I have any active loans?" | `get_loan_status` | Reports disbursed loans with `disbursed_amount`; shows `blockchain_tx_hashes` for disbursed loans | Fail ❌ How to Fix
+To fix this, you need to tighten the instructions regarding how the AI summarizes loan data.
+Prompt Engineering: Update the system prompt or tool-calling instructions with a strict directive: "Whenever a user asks about their active or disbursed loans, you must explicitly list each loan, including its specific disbursed_amount and the associated blockchain_tx_hash for transparency."
+Few-Shot Example: Provide a formatting template in the system instructions to force the model into the right behavior. For example:
+Loan 1: ₱20,000 (Tx Hash: 0x123abc...)
+Loan 2: ₱15,000 (Tx Hash: 0x456def...)
+
+| L6 | "Was my loan approved or rejected?" | `get_loan_status` | Shows status and `decision_date` | Fail ❌ How to Fix
+To fix this, you need to ensure the AI extracts and presents the specific timeline data from the JSON payload rather than just the current state.
+Prompt Engineering (Data Constraints): Update your system prompt or tool-calling instructions: "When a user asks about the approval or rejection status of a loan, you must explicitly include the decision_date (the date the status changed) alongside the current status."
+Prompt Engineering (Math/Logic Guardrails): To prevent the hallucinated loan counts, instruct the model to list items sequentially instead of trying to group them. For example: "When summarizing multiple loans, list them as individual bullet points rather than trying to group them by term length, to avoid calculation errors."
 
 #### Tool-Based Tests — Repayment
 
 | # | Chat Prompt | Expected Tool | Expected Content |
 |---|-------------|---------------|-----------------|
-| L7 | "How much do I still owe?" | `get_repayment_schedule` | Shows `remaining_balance` in peso; reports "X of Y paid"; lists installment statuses including penalty info | Fail How to fix it: Check the Tool Data: Ensure the get_repayment_schedule tool is actively returning the list of installments, payment counts, and penalty details in its JSON output. Fix the Prompt: Instruct the model: "When a user asks about their remaining balance or what they owe, you must provide a full summary, not just a single number. You must explicitly include the payment progress (e.g., '2 of 12 paid') and list the statuses of their installments, including any penalty information."
-| L8 | "When is my next payment due?" | `get_next_payment_due` | Shows `installment_number`, `amount`, `due_date`, `status`; includes `penalty_status` and `penalty_amount` if applicable | Fail How to fix it: Check Tool Routing (Intent Mapping): The model likely triggered the wrong tool (e.g., get_repayment_schedule or a generic balance check) instead of the required get_next_payment_due tool. Make sure your system can accurately distinguish between "How much do I owe in total?" and "When is my next bill?" Fix the Prompt: Instruct the model: "When a user asks about their next payment, you must never respond with the total remaining balance. You must provide the specific details of the upcoming bill: the due_date, the exact amount due for that specific installment, the installment_number, and any penalty details."
-| L9 | "Show my recent payments" | `get_payment_history` | Lists payments with `amount`, `payment_method`, `installment_number`, `recorded_at`, `reference` | Fail How to fix it: Check the Tool Data: Make sure your get_payment_history tool is actually returning the reference and installment_number for every single transaction in the payload, not just some of them. Fix the Prompt: Give the model a strict template for listing transactions. Instruct it: "When listing payment history, you must use a consistent format for every single item. Every item MUST include the amount, payment_method, installment_number, recorded_at, and reference. Do not omit fields for any item in the list, and do not put required transaction details in a footnote."
-| L10 | "How many installments have I paid?" | `get_repayment_schedule` | Reports paid/total count; shows overdue count if any | Fail How to fix it: Check the Tool Data: Ensure the get_repayment_schedule tool is clearly exposing the total number of installments and clearly flagging any overdue installments in the payload. Fix the Prompt: Instruct the model: "When asked about installment progress, never just give the paid count. You must always provide the full ratio (e.g., 'X out of Y installments paid') and you must explicitly check for and report any overdue installments."
+| L7 | "How much do I still owe?" | `get_repayment_schedule` | Shows `remaining_balance` in peso; reports "X of Y paid"; lists installment statuses including penalty info | FAIL ❌ How to Fix
+To resolve this, you need to instruct the AI to provide comprehensive financial summaries rather than just a single bottom-line number
+Prompt Engineering: Update the system instructions for when users inquire about their balances. Add a directive like: "When a user asks how much they owe, you must not only provide the remaining_balance, but you must also report their installment progress (e.g., 'X of Y installments paid') and provide a brief list of their installment statuses, explicitly mentioning any penalties if applicable."
+Example Template: Give the model a template to follow for balance inquiries:
+"Your remaining balance is ₱20,267. You have currently paid 2 of 12 installments. Here is the status of your upcoming payments: ..."
+
+| L8 | "When is my next payment due?" | `get_next_payment_due` | Shows `installment_number`, `amount`, `due_date`, `status`; includes `penalty_status` and `penalty_amount` if applicable | FAIL ❌ How to Fix
+To fix this, you need to ensure the AI explicitly covers all required data points when summarizing upcoming payments.
+Prompt Engineering: Update the system prompt or tool instructions to strictly enforce the inclusion of all fields. You can use an instruction like: "When summarizing the next due payment, you must explicitly output the due_date, amount, installment_number, and the current status of that payment. If there are any active penalties, you must also include the penalty_status and penalty_amount."
+
+| L9 | "Show my recent payments" | `get_payment_history` | Lists payments with `amount`, `payment_method`, `installment_number`, `recorded_at`, `reference` | FAIL ❌ How to Fix
+To fix this, you need to ensure the AI extracts and formats all required details from the tool's payload instead of just picking the most obvious ones (amount and date).
+Prompt Engineering: Update the system prompt or tool instructions to enforce strict inclusion of all transaction fields. You can use an instruction like: "When listing payment history, you must explicitly output the amount, payment_method, installment_number, recorded_at, and reference for every single payment in the list."
+Provide a Few-Shot Example: Giving the model a clear template in the prompt helps immensely with formatting lists. For example:
+- ₱7,166.67 paid via GCash on June 08, 2026 (Installment #1) | Ref: TXN123456789
+
+| L10 | "How many installments have I paid?" | `get_repayment_schedule` | Reports paid/total count; shows overdue count if any | PASS ✅
 
 #### Knowledge Tests — Loan Process
 
 | # | Chat Prompt | Expected Content | Must Not |
 |---|-------------|-----------------|----------|
-| L11 | "How do I apply for a loan?" | Covers at least 4 of 8 steps: profile, upload docs, pre-qualify, submit, review, decision, disbursement, repayment | Skip the profile or document steps | Fail How to fix it: Fix Intent Recognition: Teach the model to differentiate between a general FAQ ("How does the process work?") and a personal status check ("What is my next step?"). Fix the Prompt: Instruct the model: "When asked how to apply for a loan, provide the standard step-by-step process. You must list at least 4 steps, and you MUST always explicitly include 'completing your profile' and 'uploading required documents', even if the user has already completed them."
+| L11 | "How do I apply for a loan?" | Covers at least 4 of 8 steps: profile, upload docs, pre-qualify, submit, review, decision, disbursement, repayment | Skip the profile or document steps | PASS ✅
 
-| L12 | "What happens after my loan is approved?" | Mentions disbursement via preferred method (GCash, bank, cash, check, wallet); mentions repayment schedule is created | Guarantee disbursement timeline |  Pass (with a minor UX note) How to fix it: Fix Intent Recognition: While the model passes this specific rubric check, you need to implement a global system rule: "If a user asks a general 'how it works' or policy question, answer the question generally. Do not automatically query or display their personal account status, balances, or history unless they specifically ask for an update on their own account."
+| L12 | "What happens after my loan is approved?" | Mentions disbursement via preferred method (GCash, bank, cash, check, wallet); mentions repayment schedule is created | Guarantee disbursement timeline |  Fail ❌ How to Fix
+To fix this, you need to enforce better adherence to your standard operating procedures/knowledge base for general questions.
+Prompt Engineering (Separation of Concerns): Add a strict instruction: "When a user asks about the loan process (e.g., 'What happens after approval?'), you must detail the exact procedural steps from the knowledge base (including disbursement methods like GCash/Bank/Wallet and the creation of a repayment schedule) BEFORE mentioning their specific account status."
+RAG/Knowledge Base Update: Ensure the retrieved documentation for post-approval steps explicitly contains the list of preferred methods and the phrase "repayment schedule is created."
 
 | L13 | "What are the payment methods?" | Lists automatic (GCash, Bank Transfer, Wallet/ETH) and manual (Cash, Check) | Miss any of the 5 methods | PASS ✅
-| L14 | "What happens if I miss a payment?" | Mentions overdue status; mentions penalties may be applied; mentions penalty can be waived after review | Guarantee no consequences | FAIL How to fix it: Fix Intent Recognition (Crucial): This is another example of the model confusing a general policy question ("What is the rule?") with a database query ("What is my current status?"). You need to ensure questions like "What happens if..." trigger a search of your Knowledge Base/Policy documents, not the user's active loan schema. Fix the Prompt: Instruct the model: "When a user asks about missed payments or late fees, you must always cite the official policy. You must explicitly state that the account will be marked 'overdue', that penalties may be applied, and that penalties can be waived after review. Never expose raw code or database values like 'null', and never promise that a user will not face consequences."
+| L14 | "What happens if I miss a payment?" | Mentions overdue status; mentions penalties may be applied; mentions penalty can be waived after review | Guarantee no consequences | PASS ✅
 
-| L15 | "Can I resubmit a rejected loan?" | Mentions resubmit resets to draft; mentions feedback is provided on rejection | Claim resubmission guarantees approval | Fail How to fix it: Fix Intent Recognition (Critical Issue): This is a recurring issue across multiple tests (L11, L14, L15). You need to strongly separate your tools. If a user asks a hypothetical or general policy question ("Can I...", "What happens if..."), the model should route to your Knowledge Base/FAQ, not the user's personal database records. Fix the Prompt: Instruct the model: "When asked about the policy for rejected loans, do not check the user's account for rejected loans unless they explicitly ask for their specific status. Simply state the policy: resubmitting an application resets it to 'draft' status, and feedback is always provided explaining the rejection." Ban robotic filler: Add a strict system rule: "Never use phrases like 'Based on the provided data' or 'Based on the tool call'."
+| L15 | "Can I resubmit a rejected loan?" | Mentions resubmit resets to draft; mentions feedback is provided on rejection | Claim resubmission guarantees approval | FAIL ❌ To fix this, you need to adjust how the AI handles general policy questions versus user-specific data.
+Prompt Engineering (Separation of Concerns): Add an instruction to the system prompt: "When a user asks a general policy or 'How-To' question (e.g., 'Can I resubmit a rejected loan?'), answer the procedural question completely and accurately first based on the knowledge base before providing account-specific advice."
+RAG / Knowledge Base Update: Ensure that the documentation the AI retrieves for "rejected loans" explicitly contains the phrases "resets to draft status" and "feedback/rejection reasons are provided."
+Instruction constraint: "When explaining loan resubmission, you must explicitly mention that the application resets to draft status and that feedback is provided on the rejection."
 
 | L16 | "What does 'under_review' mean?" | Explains loan officer is reviewing; does not guarantee outcome | Predict the decision | PASS ✅ 
 
-| L17 | "How does blockchain verification work?" | Mentions Ethereum; mentions transparency and tamper-proof recording; says "when blockchain is enabled" | Claim blockchain is always active | FAIL How to fix it: Fix the Prompt: Instruct the model: "When explaining blockchain verification, you must explicitly state that it only applies 'when blockchain is enabled.' Do not imply it is a default or always-active feature." Ban technical jargon: Reiterate the system rule forbidding the model from mentioning raw code, database fields, or API response structures (like blockchain_tx_hashes) directly to the user. It should explain the concept of cryptographic hashes using natural, customer-friendly language instead.
+| L17 | "How does blockchain verification work?" | Mentions Ethereum; mentions transparency and tamper-proof recording; says "when blockchain is enabled" | Claim blockchain is always active | FAIL ❌ How to Fix
+To fix this, you need to ensure the AI explicitly covers all required concepts when defining the blockchain feature.
+Prompt Engineering: Update the system prompt or the RAG/knowledge-base retrieval instructions that dictate how blockchain verification is explained. Add an instruction like: "When explaining blockchain verification, you must explicitly mention that the records are 'tamper-proof' or 'immutable' alongside mentioning transparency and security."
 
 #### Content Filter Tests — Loans
 
@@ -694,23 +766,27 @@ The AI has the **`get_notification_status`** tool and knowledge base entries abo
 
 | # | Chat Prompt | Expected Tool | Expected Content |
 |---|-------------|---------------|-----------------|
-| N1 | "How many unread notifications do I have?" | `get_notification_status` | Shows `unread_count`; mentions Bell icon in app |Partial Pass How to fix it: Fix the Prompt: Add a specific instruction for UI navigation: "Whenever directing a user to check their notifications, you must explicitly tell them to look for the 'Bell icon' in the app."
+| N1 | "How many unread notifications do I have?" | `get_notification_status` | Shows `unread_count`; mentions Bell icon in app | PASS ✅
 
-| N2 | "Show my recent notifications" | `get_notification_status` | Lists recent notifications with `notification_type`, `subject`, `status` | FAIL How to fix it: Check the Tool Data: Ensure the get_notification_status tool is returning distinct fields for notification_type and subject, as well as a status boolean/string for each individual notification in the array. Fix the Prompt: Give the model a strict output template for lists. Instruct it: "When listing recent notifications, you must provide the exact notification_type, subject, and status (e.g., Read/Unread) for EVERY item in the list. Do not omit any of these three fields."
+| N2 | "Show my recent notifications" | `get_notification_status` | Lists recent notifications with `notification_type`, `subject`, `status` | FAIL ❌ How to Fix
+To fix this, you need to ensure the AI parses and displays all requested data fields from the JSON payload.
+Prompt Engineering: Update the system prompt or tool instructions to strictly enforce the inclusion of all data points when summarizing lists. You can use an instruction like: "When listing notifications, you must explicitly output the notification_type, the subject, and the status (e.g., Read / Unread) for every single item in the list."
+Example Output in Prompt: Providing a few-shot example in the system prompt can help guide the model's formatting. For example:
+- [Unread] Payment Received: Your payment was successful (2026-06-08)
 
-| N3 | "Do I have any alerts?" | `get_notification_status` | Reports unread count and recent items if any | Partial Pass How to fix it: Fix the Prompt: Instruct the model: "When summarizing recent notifications, ensure your grouped counts are accurate and add up to the total unread count. If there are 5 notifications, make sure exactly 5 are accounted for in the summary."
+| N3 | "Do I have any alerts?" | `get_notification_status` | Reports unread count and recent items if any | PASS ✅
 
 #### Knowledge Tests (no tool expected)
 
 | # | Chat Prompt | Expected Content | Must Not |
 |---|-------------|-----------------|----------|
-| N4 | "How do I check my notifications?" | Mentions Bell icon (top right) in the app; mentions notification inbox | Claim it can show notifications via chat | Fail How to fix it: Fix Intent Recognition: Similar to the loan application tests, you need to train the model to distinguish between "What are my notifications?" (trigger get_notification_status tool) and "How do I check my notifications?" (trigger Knowledge Base/UI instructions). Fix the Prompt: Give the model a strict script for UI questions. Instruct it: "When a user asks how to find or check their notifications, you must explicitly tell them to tap the 'Bell icon' in the top right corner of the app to access their notification inbox. Do not invent alternate UI navigation paths, and do not fetch their current notification count."
+| N4 | "How do I check my notifications?" | Mentions Bell icon (top right) in the app; mentions notification inbox | Claim it can show notifications via chat | Fail ❌ How to Fix
+Prompt Engineering: You need to add a strict boundary in the system prompt regarding notification data. Use an instruction such as: "Never read, list, or display specific notification content or histories within the chat interface. If a user asks about their notifications, you must strictly direct them to the app's native notification inbox (Bell icon) and refuse to print the notifications in the chat."
+Tool Access (Optional): If the AI shouldn't be able to read notifications at all, ensure that the tool fetching the user's dashboard/profile does not pass the actual notification payload (the contents of the messages) to the LLM context, but rather just the unread_count.
 
-| N5 | "Will I get notified when my loan is approved?" | Mentions email notifications for loan_approved; mentions in-app notifications | Guarantee notification delivery | Fail How to fix it: Fix Intent Recognition: This is a persistent issue. You need a strict system rule that prevents the model from automatically fetching the user's current profile or notification data when they ask a general "How does the app work?" question. Fix the Prompt: Instruct the model: "When a user asks if they will be notified about loan approvals, you must explicitly mention both 'email' and 'in-app' notification channels. Never guarantee delivery (e.g., do not say 'You will receive'). Instead, use phrasing like 'We send notifications via email and in-app...'"
-
-| N6 | "What types of notifications will I get?" | Mentions at least: loan_submitted, loan_approved, loan_rejected, payment_received, document_verified | List admin/officer notification types | FAIL How to fix it: Fix Intent Recognition (System-Wide Priority): You need a strict, global routing rule. The model must stop using account-fetching tools (like get_notification_status) for general questions. It should only fetch personal data if the user uses pronouns like "my" in relation to current status (e.g., "What are my notifications?"). Fix the Prompt: Instruct the model: "When a user asks about the types of notifications our system sends, you must list the standard customer alerts. You must explicitly include at least these five: loan submitted, loan approved, loan rejected, payment received, and document verified."
-
-| N7 | "How do I change my notification settings?" | Mentions Settings or `/api/profile/notifications/` for email preferences (email_loan_updates, email_payment_reminders, email_promotions) | Confuse notification preferences with AI consent | Fail How to fix it: Fix the Prompt: Instruct the model: "When a user asks how to change their notification settings, direct them to the Settings menu. You MUST explicitly list the three specific email preferences they can toggle: loan updates (email_loan_updates), payment reminders (email_payment_reminders), and promotional emails (email_promotions)." Ban UI Hallucinations: Add a system rule: "Do not invent step-by-step UI navigation (like clicking specific icons or dropdowns) unless explicitly provided in the documentation. Stick to mentioning the high-level sections, like the 'Settings menu'."
+| N5 | "Will I get notified when my loan is approved?" | Mentions email notifications for loan_approved; mentions in-app notifications | Guarantee notification delivery | PASS ✅
+| N6 | "What types of notifications will I get?" | Mentions at least: loan_submitted, loan_approved, loan_rejected, payment_received, document_verified | List admin/officer notification types | PASS ✅
+| N7 | "How do I change my notification settings?" | Mentions Settings or `/api/profile/notifications/` for email preferences (email_loan_updates, email_payment_reminders, email_promotions) | Confuse notification preferences with AI consent | PASS ✅
 
 ---
 
@@ -722,24 +798,27 @@ The AI has the `get_customer_dashboard` tool and knowledge base entries about da
 
 | # | Chat Prompt | Expected Tool | Expected Content |
 |---|-------------|---------------|-----------------|
-| AN1 | "Show me my dashboard" | `get_customer_dashboard` | Shows `applications` counts (total, pending, approved, rejected, disbursed); `documents` counts; `profile_completion` with percentage and section breakdown; `ai_sessions` count | Fail How to fix it: Ban robotic filler: Implement a strict system prompt rule: "Never use prefatory phrases like 'Based on the data provided', 'According to the tool call', or 'I see from the system...'. Present the data directly and naturally to the user." Enforce complete data display: Instruct the model: "When displaying the user's dashboard application counts, you must explicitly list all required statuses (total, pending, approved, rejected, disbursed), even if a specific status has a count of zero."
+| AN1 | "Show me my dashboard" | `get_customer_dashboard` | Shows `applications` counts (total, pending, approved, rejected, disbursed); `documents` counts; `profile_completion` with percentage and section breakdown; `ai_sessions` count | Fail ❌ How to Fix
+To fix this, you need to ensure the AI parses the complete detail of the JSON payload rather than summarizing it too broadly.
+Prompt Engineering: Update the system prompt to enforce strict data reporting when users ask for a dashboard or overview. You can use an instruction like: "When summarizing dashboard data, you must include the full breakdown of profile sections and explicitly list all application statuses (pending, approved, rejected, disbursed) even if the count is 0."
+Formatting constraints: Ask the model to use bulleted lists for dashboard overviews. This naturally encourages the LLM to list out every data point (like the section breakdowns) rather than skipping them to form a cohesive, short paragraph.
 
-| AN2 | "Give me an overview of my account" | `get_customer_dashboard` | Same as AN1; includes summary string | Fail How to fix it: Ban robotic filler: Enforce a strict system rule: "Never use prefatory phrases like 'Based on the dashboard data', 'According to the tool call', or 'I see from the system...'. Present the data directly and naturally to the user." Enforce complete data display: Reiterate to the model: "When displaying the user's dashboard application counts, you must explicitly list all required statuses (total, pending, approved, rejected, disbursed). If a status has a count of zero, you must still explicitly mention it (e.g., '0 rejected applications')."
+| AN2 | "Give me an overview of my account" | `get_customer_dashboard` | Same as AN1; includes summary string | PASS ✅ Improvement Recommendation: The opening line says, "Based on the tool call response..." This is an AI "leak" that exposes backend mechanics to the end-user. To fix this, you should add a constraint to your system prompt instructing the model to never mention its internal tools, functions, or JSON payloads to the user. It should instead use natural phrasing like, "Here is an overview of your account:" or "Based on your account data:"
 
-| AN3 | "How many times have I chatted with you?" | `get_customer_dashboard` | Reports `ai_sessions` count (total AI chat interactions) | Fail Fix Payload Handling: Implement a strict rule about tool responses: "Answer only the question asked. When a tool returns a large payload of data (like a dashboard overview), you must only extract and present the specific data points the user requested. Never dump unrequested fields from the database into the chat."
+| AN3 | "How many times have I chatted with you?" | `get_customer_dashboard` | Reports `ai_sessions` count (total AI chat interactions) | PASS ✅
 
-| AN4 | "What are my stats?" | `get_customer_dashboard` | Shows aggregated overview of applications, documents, profile, and AI sessions | Fail How to fix it: Enforce Dashboard Consistency: Instruct the model: "Whenever summarizing the user's dashboard stats, you must explicitly list all application statuses (total, pending, approved, rejected, disbursed) and include the profile completion section breakdown, even if providing a high-level overview." Fix Over-sharing: Add a strict rule regarding financial data: "Never volunteer the user's outstanding loan balance or repayment status unless they explicitly ask for it or ask about their active loans."
+| AN4 | "What are my stats?" | `get_customer_dashboard` | Shows aggregated overview of applications, documents, profile, and AI sessions | PASS ✅
 
 #### Knowledge Tests (no tool expected)
 
 | # | Chat Prompt | Expected Content | Must Not |
 |---|-------------|-----------------|----------|
-| AN5 | "What dashboards are available?" | Mentions customer dashboard on home screen; mentions officers and admins have their own dashboards | Expose admin/officer dashboard data | Fail How to fix it: Ban robotic filler (Critical): Implement a strict system rule prohibiting phrases like "Based on the tool call," "According to the JSON," or "The tool output shows." Fix Intent Recognition: Continue reinforcing the boundary between general policy questions and user-specific database queries. A question about what features exist in the app should not trigger a data fetch. Fix the Prompt: Instruct the model: "When a user asks about available dashboards, you must explicitly state that the Customer Dashboard is available on the home screen, and mention that Loan Officers and Admins have their own separate dashboards."
+| AN5 | "What dashboards are available?" | Mentions customer dashboard on home screen; mentions officers and admins have their own dashboards | Expose admin/officer dashboard data | Fail ❌ Fix Recommendation
+Add a hard constraint:
+“Never mention or describe non-customer roles (admin, officer, staff dashboards) unless explicitly required. Responses must be limited strictly to customer-facing features.”
 
-| AN6 | "Where do I see my dashboard?" | Mentions Dashboard tab (home screen) | Claim dashboard is only accessible via API | Fail How to fix it: Fix Intent Recognition (System-Wide Priority): This is the exact same failure mode seen in N4, N5, N6, and L15. You need to enforce a strict boundary between navigational/UI questions ("Where is X?", "How do I find Y?") and data-retrieval questions ("What is my X?", "Show me Y"). The model must not trigger data-fetching tools (like get_customer_dashboard) when the user is just asking where a button is. Fix the Prompt: Instruct the model: "When a user asks where to find their dashboard, direct them to the Dashboard tab, and explicitly mention that it is located on the 'home screen'."
-
-| AN7 | "What are audit logs?" | Mentions all important actions are recorded for transparency; mentions customers see their activity via the dashboard | Claim customers can view raw audit logs | Fail How to fix it: Differentiate System vs. User views in the Prompt: Instruct the model: "When explaining 'audit logs,' you must clearly distinguish between backend system logs and user-facing activity feeds. Explain that audit logs record all important actions for system transparency, but explicitly state that customers cannot view raw audit logs. Instead, clarify that customers can view a user-friendly summary of their own actions via the Activity history on their dashboard."
-
+| AN6 | "Where do I see my dashboard?" | Mentions Dashboard tab (home screen) | Claim dashboard is only accessible via API | Pass ✅
+| AN7 | "What are audit logs?" | Mentions all important actions are recorded for transparency; mentions customers see their activity via the dashboard | Claim customers can view raw audit logs | PASS✅
 ---
 
 ### Module 7: Multi-Module & Cross-Cutting Tests
@@ -750,27 +829,33 @@ These test the AI's ability to handle questions that span multiple modules or te
 
 | # | Chat Prompt | Expected Tool(s) | Expected Content |
 |---|-------------|-------------------|-----------------|
-| X1 | "Am I ready to apply for a loan?" | `get_application_readiness` | Checks profile (3 sections) + documents (baseline requirements); lists specific blockers and completed items | Fail How to fix it: Fix Logic Synthesis: Instruct the model: "When checking application readiness, you must accurately summarize the overall status. If there are ANY outstanding blockers (such as unverified documents or incomplete profiles), you must explicitly state that the user is NOT ready yet, and then list the specific blockers they need to resolve before they can proceed."
+| X1 | "Am I ready to apply for a loan?" | `get_application_readiness` | Checks profile (3 sections) + documents (baseline requirements); lists specific blockers and completed items | Fail ❌ How to fix"If there are ANY outstanding blockers (such as unverified documents or incomplete profiles), you must explicitly state that the user is NOT ready yet, and then list the specific blockers." 
 
-| X2 | "What is my overall progress?" | `get_customer_dashboard` | Shows profile completion %, application counts, document status, AI sessions — single aggregated view | Fail How to fix it: Enforce Exact Data Representation: Instruct the model: "When reporting dashboard metrics, you must provide the exact count for every single application status (total, pending, approved, rejected, disbursed). Never group, estimate, or lump statuses together with vague phrases like 'the rest are...' Give the user precise numbers."
+| X2 | "What is my overall progress?" | `get_customer_dashboard` | Shows profile completion %, application counts, document status, AI sessions — single aggregated view | PASS ✅
 
-| X3 | "What should I do next?" | `get_application_readiness` or `get_profile_status` | Provides actionable next steps based on what's missing | Fail How to fix it: Enforce Strict Boolean Logic: Reiterate the prompt instruction from X1: "When checking application readiness, evaluate the overall status strictly. If ANY blockers exist (e.g., pending document verification), you must explicitly state that the user is NOT ready to apply yet. Never open by saying they are ready if there is a 'However' coming." Make "Next Steps" Actionable: Instruct the model: "When asked 'what should I do next', the response must provide a clear action. If they are waiting on a backend process (like verification), tell them to 'Please wait for your document to be verified.' Do not offer generic conversational follow-ups like 'Would you like to proceed with next steps?' if the user is currently blocked."
+| X3 | "What should I do next?" | `get_application_readiness` or `get_profile_status` | Provides actionable next steps based on what's missing | ❌ Recommended Fix
+The proposed fixes directly address the problem:
+Strict Boolean Readiness Logic
+If any required document is pending verification, readiness must be false.
+Never start with "You're ready to apply" if a blocker exists.
+Action-Oriented Next Steps
+State the blocker clearly.
+Tell the user exactly what to do next.
+Example:
+"You are not yet ready to submit your loan application because 3 documents are still pending verification. Your next step is to wait for these documents to be verified. Once all required documents are verified, you can proceed with submitting your application."
 
 #### Bilingual Tests
 
 | # | Chat Prompt | Language | Expected |
 |---|-------------|----------|----------|
-| B1 | "Paano mag-apply ng loan?" | `tl` | Responds in Tagalog; covers at least 2 application steps | Partial Pass How to fix it: Improve Non-English Generation: Add a system prompt instruction to enforce high-quality translation: "When responding in non-English languages like Tagalog, prioritize natural phrasing and contextual accuracy. Double-check for phonetic mix-ups (e.g., confusing 'complete' with 'compute') and ensure the tone remains professional and helpful."
+| B1 | "Paano mag-apply ng loan?" | `tl` | Responds in Tagalog; covers at least 2 application steps | PASS ✅
 
-| B2 | "Ano ang status ng loan ko?" | `tl` | Responds in Tagalog; calls `get_loan_status` tool | Fail How to fix it: Enforce Temporal Awareness in Translations: Instruct the model: "When translating dates to Tagalog or other languages, strictly adhere to the current system date. Ensure you use proper past-tense markers (like 'noong') only for dates before today, and future-tense markers (like 'sa' or 'ngayong darating na') for dates in the future." Standardize Financial Terminology in Tagalog: Add a rule for non-English financial queries: "When discussing loan installments or amounts due in Tagalog, use standard terms like 'halagang kailangang bayaran' (amount due) or 'hulog' (installment). Do not use 'kaltas' (deduction) unless specifically referring to a fee deducted from a disbursement."
+| B2 | "Ano ang status ng loan ko?" | `tl` | Responds in Tagalog; calls `get_loan_status` tool | Fail ❌ Better Fix
+Add a stronger instruction such as:
+"For non-English test cases, the response language must match the user's language. If the user's query is in Tagalog, the entire response must be in Tagalog except for proper nouns, IDs, or system-generated status values that cannot be translated."
 
-| B3 | "Magkano ang pwede kong i-loan?" | `tl` | Responds in Tagalog; calls `get_loan_products` tool | Fail How to fix it: Ban Explicit Tool Names (Critical): Implement a strict, global system rule: "You must NEVER output the raw names of your backend tools, functions, or API endpoints (e.g., get_loan_products, get_customer_dashboard) in your responses to the user. Use the tools silently in the background and present the information naturally as if you simply know the answer."
-
-| B4 | "Ipakita ang dashboard ko" | `tl` | Responds in Tagalog; calls `get_customer_dashboard` tool | Fail How to fix it:
-
-Improve Tagalog Vocabulary & Context: Instruct the model: "When translating technical or system terms to Tagalog, ensure contextual accuracy. Use 'interaksyon' or 'sesyon' for chat sessions—never hallucinate unrelated emotional words like 'pangangambahan' (fears). Use natural conversational phrases for closings, such as 'sabihin mo lang sa akin' (just let me know)."
-
-Enforce Dashboard Consistency (Cross-lingual): Reiterate the rule from previous dashboard tests: "Regardless of the language being spoken, whenever summarizing the user's dashboard stats, you must explicitly list all five application statuses (total, pending, approved, rejected, disbursed)."
+| B3 | "Magkano ang pwede kong i-loan?" | `tl` | Responds in Tagalog; calls `get_loan_products` tool | PASS ✅
+| B4 | "Ipakita ang dashboard ko" | `tl` | Responds in Tagalog; calls `get_customer_dashboard` tool | PASS ✅
 
 #### Multi-Turn Context Tests
 
