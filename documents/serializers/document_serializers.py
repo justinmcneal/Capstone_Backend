@@ -58,28 +58,63 @@ class DocumentResponseSerializer(serializers.Serializer):
     """Serializer for document response data"""
 
     id = serializers.CharField()
-    customer_id = serializers.CharField()
+    customer_id = serializers.SerializerMethodField()
+    customer_name = serializers.SerializerMethodField()
     document_type = serializers.CharField()
+    filename = serializers.CharField(source="original_filename")
     original_filename = serializers.CharField()
     file_size = serializers.IntegerField()
     file_size_display = serializers.CharField()
     mime_type = serializers.CharField()
     status = serializers.CharField()
+    verification_status = serializers.SerializerMethodField()
     verified = serializers.BooleanField()
-    verification = serializers.SerializerMethodField()
-    description = serializers.CharField()
+    verified_by = serializers.SerializerMethodField()
+    verified_at = serializers.DateTimeField(allow_null=True, required=False)
+    verification_notes = serializers.CharField(source="notes", allow_blank=True, allow_null=True)
+    rejection_reason = serializers.CharField(allow_blank=True, allow_null=True)
+    description = serializers.CharField(allow_blank=True, allow_null=True)
+    ai_analysis = serializers.SerializerMethodField()
+    reupload_requested = serializers.BooleanField()
+    reupload_reason = serializers.CharField(allow_blank=True, allow_null=True)
+    reupload_requested_by = serializers.SerializerMethodField()
+    file_url = serializers.SerializerMethodField()
+    created_at = serializers.DateTimeField(source="uploaded_at")
     uploaded_at = serializers.DateTimeField()
-    file_url = serializers.CharField()
 
-    def get_verification(self, obj):
+    def get_customer_id(self, obj):
+        from documents.views.document_views import serialize_value
+        return serialize_value(obj.customer_id)
+
+    def get_customer_name(self, obj):
+        from documents.views.document_views import get_customer_by_identifier, get_display_name
+        customer = get_customer_by_identifier(obj.customer_id)
+        return get_display_name(customer, fallback="Customer")
+
+    def get_verified_by(self, obj):
+        from documents.views.document_views import serialize_value
+        return serialize_value(obj.verified_by) if obj.verified_by else None
+
+    def get_reupload_requested_by(self, obj):
+        from documents.views.document_views import serialize_value
+        return serialize_value(obj.reupload_requested_by) if obj.reupload_requested_by else None
+
+    def get_ai_analysis(self, obj):
+        from documents.views.document_views import serialize_value
+        return serialize_value(obj.ai_analysis) if obj.ai_analysis else None
+
+    def get_file_url(self, obj):
+        from documents.storage import get_storage_backend
+        if getattr(obj, "file_path", None):
+            return get_storage_backend().get_url(obj.file_path)
+        return None
+
+    def get_verification_status(self, obj):
         if obj.verified:
-            return {
-                "verified": True,
-                "verified_at": obj.verified_at.isoformat() if obj.verified_at else None,
-            }
-        elif obj.status == "rejected":
-            return {"verified": False, "rejection_reason": obj.rejection_reason}
-        return {"verified": False, "status": obj.status}
+            return "verified"
+        if obj.status == "rejected":
+            return "rejected"
+        return "unverified"
 
 
 class DocumentVerifySerializer(InputSanitizationMixin, serializers.Serializer):
