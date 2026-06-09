@@ -1513,6 +1513,8 @@ class AdminProfileView(APIView):
                 "permissions": user.permissions if not user.super_admin else ["*"],
                 "super_admin": user.super_admin,
                 "last_login_attempt": user.last_login_attempt.isoformat() if getattr(user, "last_login_attempt", None) else None,
+                "failed_login_attempts": getattr(user, "failed_login_attempts", 0),
+                "login_attempt_count": getattr(user, "login_attempt_count", 0),
             })
         except Exception as e:
             logger.error(f"Get Admin Profile error: {str(e)}")
@@ -1566,6 +1568,8 @@ class AdminProfileView(APIView):
                 "permissions": user.permissions if not user.super_admin else ["*"],
                 "super_admin": user.super_admin,
                 "last_login_attempt": user.last_login_attempt.isoformat() if getattr(user, "last_login_attempt", None) else None,
+                "failed_login_attempts": getattr(user, "failed_login_attempts", 0),
+                "login_attempt_count": getattr(user, "login_attempt_count", 0),
             }, message="Profile updated successfully")
             
         except Exception as e:
