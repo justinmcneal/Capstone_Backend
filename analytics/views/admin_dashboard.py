@@ -76,8 +76,12 @@ class AdminDashboardView(AdminRequiredMixin, APIView):
             {"created_at": {"$gte": week_ago}}
         )
 
-        # Recent activity (last 10 audit logs)
-        recent_logs = AuditLog.find_recent(limit=10)
+        # Recent activity (last 10 audit logs, excluding standard noise)
+        recent_logs = AuditLog.find(
+            query={"action": {"$nin": ["user_login", "user_logout", "user_login_failed", "loan_submitted", "document_uploaded"]}},
+            sort=[("timestamp", -1)],
+            limit=10
+        )
         recent_activity = [
             {
                 "action": log.action,
