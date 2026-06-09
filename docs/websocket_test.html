@@ -1,0 +1,396 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebSocket Notification Test</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 50px auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #333;
+            margin-bottom: 30px;
+        }
+        .section {
+            margin-bottom: 30px;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+            color: #555;
+        }
+        input, textarea {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 14px;
+            box-sizing: border-box;
+        }
+        textarea {
+            min-height: 60px;
+            resize: vertical;
+        }
+        button {
+            background: #007bff;
+            color: white;
+            padding: 12px 24px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            margin-right: 10px;
+        }
+        button:hover {
+            background: #0056b3;
+        }
+        button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+        .status {
+            padding: 15px;
+            border-radius: 4px;
+            margin-top: 15px;
+            font-weight: bold;
+        }
+        .status.connected {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+        .status.disconnected {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+        .status.connecting {
+            background: #fff3cd;
+            color: #856404;
+            border: 1px solid #ffeaa7;
+        }
+        .log {
+            background: #f8f9fa;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            padding: 15px;
+            max-height: 400px;
+            overflow-y: auto;
+            font-family: 'Courier New', monospace;
+            font-size: 13px;
+            margin-top: 15px;
+        }
+        .log-entry {
+            margin-bottom: 8px;
+            padding: 5px;
+            border-left: 3px solid #007bff;
+            padding-left: 10px;
+        }
+        .log-entry.error {
+            border-left-color: #dc3545;
+            background: #fff5f5;
+        }
+        .log-entry.success {
+            border-left-color: #28a745;
+            background: #f0fff4;
+        }
+        .badge {
+            display: inline-block;
+            background: #dc3545;
+            color: white;
+            padding: 4px 10px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: bold;
+            margin-left: 10px;
+        }
+        .notification-item {
+            background: white;
+            border: 1px solid #e0e0e0;
+            border-radius: 4px;
+            padding: 15px;
+            margin-bottom: 10px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+        }
+        .notification-item h4 {
+            margin: 0 0 8px 0;
+            color: #333;
+        }
+        .notification-item p {
+            margin: 5px 0;
+            color: #666;
+            font-size: 14px;
+        }
+        .notification-item small {
+            color: #999;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔔 WebSocket Notification Test</h1>
+        
+        <!-- Connection Section -->
+        <div class="section">
+            <h3>1. Connect to WebSocket</h3>
+            <label for="wsUrl">WebSocket URL:</label>
+            <input type="text" id="wsUrl" value="ws://localhost:8000/ws/notifications/" placeholder="ws://localhost:8000/ws/notifications/">
+            
+            <label for="jwtToken" style="margin-top: 15px;">JWT Access Token:</label>
+            <textarea id="jwtToken" placeholder="Paste your JWT token here (get from login API)"></textarea>
+            
+            <div style="margin-top: 15px;">
+                <button id="connectBtn" onclick="connectWebSocket()">Connect</button>
+                <button id="disconnectBtn" onclick="disconnectWebSocket()" disabled>Disconnect</button>
+                <button onclick="sendPing()" id="pingBtn" disabled>Send Ping</button>
+                <button onclick="clearLog()">Clear Log</button>
+            </div>
+            
+            <div id="status" class="status disconnected">
+                ⚫ Disconnected <span id="unreadBadge" class="badge" style="display:none;">0</span>
+            </div>
+        </div>
+
+        <!-- Test Notification Section -->
+        <div class="section">
+            <h3>2. Create Test Notification (Manual)</h3>
+            <p style="color: #666; font-size: 14px;">Use Python shell or API to create a notification, it should appear below in real-time.</p>
+            <details>
+                <summary style="cursor: pointer; color: #007bff;">Show Python code to create test notification</summary>
+                <pre style="background: #f8f9fa; padding: 15px; border-radius: 4px; overflow-x: auto; margin-top: 10px;"><code>from notifications.services.notification_creator import create_and_broadcast_notification
+
+# Replace with your user_id
+create_and_broadcast_notification(
+    user_id="YOUR_USER_ID_HERE",
+    user_type="customer",
+    notification_type="test",
+    subject="Test Notification",
+    message="This is a real-time WebSocket test!",
+    channel="in_app"
+)</code></pre>
+            </details>
+        </div>
+
+        <!-- Notifications Display -->
+        <div class="section">
+            <h3>3. Real-Time Notifications</h3>
+            <div id="notificationsList"></div>
+        </div>
+
+        <!-- Log Section -->
+        <div class="section">
+            <h3>4. Connection Log</h3>
+            <div id="log" class="log">
+                <div class="log-entry">Waiting for connection...</div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let ws = null;
+        let reconnectAttempts = 0;
+        const maxReconnectAttempts = 5;
+
+        function log(message, type = 'info') {
+            const logDiv = document.getElementById('log');
+            const entry = document.createElement('div');
+            entry.className = `log-entry ${type}`;
+            const timestamp = new Date().toLocaleTimeString();
+            entry.textContent = `[${timestamp}] ${message}`;
+            logDiv.appendChild(entry);
+            logDiv.scrollTop = logDiv.scrollHeight;
+        }
+
+        function updateStatus(status, text) {
+            const statusDiv = document.getElementById('status');
+            statusDiv.className = `status ${status}`;
+            statusDiv.innerHTML = text;
+        }
+
+        function updateUnreadBadge(count) {
+            const badge = document.getElementById('unreadBadge');
+            if (badge) {
+                if (count > 0) {
+                    badge.textContent = count;
+                    badge.style.display = 'inline-block';
+                } else {
+                    badge.style.display = 'none';
+                }
+            }
+        }
+
+        function connectWebSocket() {
+            const wsUrl = document.getElementById('wsUrl').value.trim();
+            const token = document.getElementById('jwtToken').value.trim();
+
+            if (!token) {
+                alert('Please enter a JWT token');
+                return;
+            }
+
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                log('Already connected', 'error');
+                return;
+            }
+
+            log('Connecting to WebSocket...', 'info');
+            updateStatus('connecting', '🟡 Connecting...');
+
+            // Add token to URL
+            const fullUrl = `${wsUrl}${wsUrl.includes('?') ? '&' : '?'}token=${token}`;
+            
+            try {
+                ws = new WebSocket(fullUrl);
+
+                ws.onopen = () => {
+                    log('✓ Connected successfully!', 'success');
+                    updateStatus('connected', '🟢 Connected');
+                    reconnectAttempts = 0;
+                    
+                    document.getElementById('connectBtn').disabled = true;
+                    document.getElementById('disconnectBtn').disabled = false;
+                    document.getElementById('pingBtn').disabled = false;
+                };
+
+                ws.onmessage = (event) => {
+                    try {
+                        const data = JSON.parse(event.data);
+                        log(`Received: ${data.type}`, 'success');
+                        handleMessage(data);
+                    } catch (e) {
+                        log(`Parse error: ${e.message}`, 'error');
+                    }
+                };
+
+                ws.onerror = (error) => {
+                    log(`WebSocket error: ${error}`, 'error');
+                    console.error('WebSocket error:', error);
+                };
+
+                ws.onclose = (event) => {
+                    log(`Disconnected (code: ${event.code})`, 'error');
+                    updateStatus('disconnected', '⚫ Disconnected');
+                    
+                    document.getElementById('connectBtn').disabled = false;
+                    document.getElementById('disconnectBtn').disabled = true;
+                    document.getElementById('pingBtn').disabled = true;
+
+                    // Auto-reconnect logic
+                    if (event.code !== 1000 && reconnectAttempts < maxReconnectAttempts) {
+                        reconnectAttempts++;
+                        const delay = Math.min(1000 * Math.pow(2, reconnectAttempts), 30000);
+                        log(`Reconnecting in ${delay/1000}s... (attempt ${reconnectAttempts}/${maxReconnectAttempts})`, 'info');
+                        setTimeout(() => connectWebSocket(), delay);
+                    }
+                };
+
+            } catch (e) {
+                log(`Connection failed: ${e.message}`, 'error');
+                updateStatus('disconnected', '⚫ Connection Failed');
+            }
+        }
+
+        function disconnectWebSocket() {
+            if (ws) {
+                ws.close(1000);
+                ws = null;
+                log('Manually disconnected', 'info');
+            }
+        }
+
+        function sendPing() {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                const message = JSON.stringify({ action: 'ping' });
+                ws.send(message);
+                log('Sent: ping', 'info');
+            } else {
+                log('Cannot send: not connected', 'error');
+            }
+        }
+
+        function handleMessage(data) {
+            switch(data.type) {
+                case 'connection_established':
+                    log(`Initial unread count: ${data.data.unread_count}`, 'success');
+                    updateUnreadBadge(data.data.unread_count);
+                    updateStatus('connected', `🟢 Connected <span class="badge" id="unreadBadge">${data.data.unread_count}</span>`);
+                    break;
+
+                case 'notification':
+                    log(`New notification: ${data.data.subject}`, 'success');
+                    displayNotification(data.data);
+                    // Increment badge
+                    const currentBadge = document.getElementById('unreadBadge');
+                    if (currentBadge) {
+                        const currentCount = parseInt(currentBadge.textContent) || 0;
+                        updateUnreadBadge(currentCount + 1);
+                    }
+                    break;
+
+                case 'pong':
+                    log(`Pong received at ${data.timestamp}`, 'success');
+                    break;
+
+                case 'mark_read_response':
+                    log(`Mark read ${data.success ? 'success' : 'failed'}: ${data.notification_id}`, data.success ? 'success' : 'error');
+                    break;
+
+                case 'error':
+                    log(`Server error: ${data.message}`, 'error');
+                    break;
+
+                default:
+                    log(`Unknown message type: ${data.type}`, 'error');
+            }
+        }
+
+        function displayNotification(notification) {
+            const list = document.getElementById('notificationsList');
+            
+            const item = document.createElement('div');
+            item.className = 'notification-item';
+            item.innerHTML = `
+                <h4>${notification.subject}</h4>
+                <p>${notification.message}</p>
+                <small>
+                    Type: ${notification.notification_type} | 
+                    Channel: ${notification.channel} | 
+                    Created: ${new Date(notification.created_at).toLocaleString()}
+                </small>
+            `;
+            
+            // Add to top
+            list.insertBefore(item, list.firstChild);
+        }
+
+        function clearLog() {
+            document.getElementById('log').innerHTML = '<div class="log-entry">Log cleared.</div>';
+        }
+
+        // Auto-connect if token exists
+        window.addEventListener('load', () => {
+            const savedToken = localStorage.getItem('jwt_token');
+            if (savedToken) {
+                document.getElementById('jwtToken').value = savedToken;
+            }
+        });
+
+        // Save token to localStorage
+        document.getElementById('jwtToken').addEventListener('change', (e) => {
+            localStorage.setItem('jwt_token', e.target.value);
+        });
+    </script>
+</body>
+</html>
