@@ -285,55 +285,89 @@ class OfficerApplicationListView(LoanOfficerRequiredMixin, APIView):
         if risk_category:
             query["risk_category"] = risk_category
 
-        # Keyword search - need to handle customer name search
+        # Keyword search - need to handle customer name search with multi-word support
         customer_ids = []
+        product_ids = []
         if search_query:
-            # First, search for matching customers
-            regex = re.compile(f".*{re.escape(search_query)}.*", re.IGNORECASE)
-            customers = Customer.find(
-                {
-                    "$or": [
-                        {"first_name": regex},
-                        {"last_name": regex},
-                        {"phone": regex},
-                        {"email": regex},
-                    ]
-                }
-            )
-            customer_ids = [c.id for c in customers if c]
+            # Split search query into terms for multi-word search
+            search_terms = search_query.strip().split()
+            
+            if len(search_terms) == 1:
+                # Single term - simple regex search
+                regex = re.compile(f".*{re.escape(search_terms[0])}.*", re.IGNORECASE)
+                customers = Customer.find(
+                    {
+                        "$or": [
+                            {"first_name": regex},
+                            {"last_name": regex},
+                            {"phone": regex},
+                            {"email": regex},
+                        ]
+                    }
+                )
+                customer_ids = [c.id for c in customers if c]
+                
+                # Search products
+                products = LoanProduct.find({"name": regex})
+                product_ids = [p.id for p in products if p]
+            else:
+                # Multiple terms - match all terms across customer fields
+                customer_and_conditions = []
+                for term in search_terms:
+                    term_regex = re.compile(f".*{re.escape(term)}.*", re.IGNORECASE)
+                    customer_and_conditions.append({
+                        "$or": [
+                            {"first_name": term_regex},
+                            {"last_name": term_regex},
+                            {"phone": term_regex},
+                            {"email": term_regex},
+                        ]
+                    })
+                
+                customers = Customer.find({"$and": customer_and_conditions})
+                customer_ids = [c.id for c in customers if c]
+                
+                # For products with multi-word search, all terms must appear in product name
+                product_and_conditions = []
+                for term in search_terms:
+                    term_regex = re.compile(f".*{re.escape(term)}.*", re.IGNORECASE)
+                    product_and_conditions.append({"name": term_regex})
+                
+                products = LoanProduct.find({"$and": product_and_conditions})
+                product_ids = [p.id for p in products if p]
 
         # Get applications from database
         db = settings.MONGODB
         collection = db["loan_applications"]
 
-        # Build final query with customer search
+        # Build final query with customer and product search
         final_query = query.copy()
         if search_query:
-            search_conditions = [
-                (
+            search_conditions = []
+            
+            # Application ID search (only if query looks like an ID)
+            if len(search_query) >= 8:
+                search_conditions.append(
                     {"_id": {"$regex": re.escape(search_query), "$options": "i"}}
-                    if len(search_query) == 24
-                    else {}
-                ),
-            ]
+                )
+            
+            # Customer ID search
             if customer_ids:
                 search_conditions.append({"customer_id": {"$in": customer_ids}})
-
-            # Product name search happens after DB query
-            final_query = (
-                {
-                    "$and": [
-                        query,
-                        (
-                            {"$or": search_conditions}
-                            if search_conditions and any(search_conditions)
-                            else {}
-                        ),
-                    ]
-                }
-                if customer_ids
-                else query
-            )
+            
+            # Product ID search
+            if product_ids:
+                search_conditions.append({"product_id": {"$in": product_ids}})
+            
+            # If we have search conditions, apply them
+            if search_conditions:
+                if query:
+                    final_query = {"$and": [query, {"$or": search_conditions}]}
+                else:
+                    final_query = {"$or": search_conditions}
+            else:
+                # No matches found in customers or products, return empty result
+                final_query = {"_id": {"$exists": False}}
 
         # Sorting
         sort_field = sort_by
@@ -353,19 +387,13 @@ class OfficerApplicationListView(LoanOfficerRequiredMixin, APIView):
 
         applications = [LoanApplication.from_dict(doc) for doc in cursor]
 
-        # Build response with product names
+        # Build response with product names and customer names
         apps_data = []
         for app in applications:
             if not app:
                 continue
             product = LoanProduct.find_by_id(app.product_id)
             product_name = product.name if product else "Unknown"
-
-            # Secondary filter: product name search (if search query provided)
-            if search_query and search_query.lower() not in product_name.lower():
-                if not customer_ids or app.customer_id not in customer_ids:
-                    if search_query.lower() not in (app.id or "").lower():
-                        continue
 
             # Get customer name for display
             customer = None
