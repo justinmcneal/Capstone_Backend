@@ -845,54 +845,67 @@ class FAQsView(AccessControlMixin, APIView):
     # FAQs are static, define once
     FAQS = [
         {
+            'category': 'Loan Applications',
             'question': 'How much can I borrow?',
             'answer': 'Loan amounts depend on the product. Check the loan product page for the exact minimum and maximum amount, since each product can have different limits.'
         },
         {
+            'category': 'Loan Applications',
             'question': 'How long does approval take?',
             'answer': 'Review time depends on the completeness of your application and loan officer workload. The app will show you the current status while it is being reviewed.'
         },
         {
+            'category': 'Loan Applications',
             'question': 'What if I get rejected?',
             'answer': 'You can read the rejection feedback, improve the items that were missing, and resubmit the application once it is reset to draft.'
         },
         {
+            'category': 'Documents',
             'question': 'Do I need a business permit?',
             'answer': 'Not necessarily! We understand many MSMEs operate informally. A valid government ID is the main requirement.'
         },
         {
+            'category': 'Loan Payments',
             'question': 'How do I make payments?',
             'answer': 'If you are paying yourself, use GCash, bank transfer, or Wallet (ETH). Cash and check payments are recorded by a loan officer at the office or partner location.'
         },
         {
+            'category': 'Loan Payments',
             'question': 'What happens if I miss a payment?',
             'answer': 'Your installment will be marked as overdue. Contact us immediately — we offer flexible arrangements for genuine difficulties.'
         },
         {
+            'category': 'Loan Applications',
             'question': 'How do I check my loan status?',
             'answer': 'Open the app and go to Track → Applications. You\'ll see the current status of all your loan applications (draft, submitted, under review, approved, rejected, disbursed, or cancelled).'
         },
         {
+            'category': 'Account & Profile',
             'question': 'How do I enable the AI assistant?',
-                'answer': 'After logging in, turn on AI access in your account consent settings. AI access is separate from general data consent, and signing up does not turn it on automatically.'
+            'answer': 'After logging in, turn on AI access in your account consent settings. AI access is separate from general data consent, and signing up does not turn it on automatically.'
         },
         {
+            'category': 'Account & Profile',
             'question': 'How do I change the app language?',
-                'answer': 'You can choose English or Tagalog during signup, or change it later in your app settings. The AI assistant will use your saved language when you do not pick one in chat.'
+            'answer': 'You can choose English or Tagalog during signup, or change it later in your app settings. The AI assistant will use your saved language when you do not pick one in chat.'
         },
         {
+            'category': 'Getting Started',
             'question': 'What is blockchain verification?',
             'answer': 'When blockchain is enabled, major loan events such as application, approval, disbursement, and payments are recorded on the Ethereum blockchain. This creates a transparent, tamper-proof audit trail.'
         },
         {
+            'category': 'Loan Payments',
             'question': 'How does the repayment schedule work?',
             'answer': 'After your loan is disbursed, a repayment schedule is automatically created with equal monthly installments. Each installment includes a principal and interest portion. You can view it in the app under Track → select your loan → Schedule tab.'
         },
         {
+            'category': 'Loan Applications',
             'question': 'What happens after my loan is disbursed?',
             'answer': 'Once disbursed, your repayment schedule is automatically created. You\'ll need to make monthly payments according to the schedule. You can track your payments and remaining balance in the app under the Track section.'
         },
         {
+            'category': 'Loan Payments',
             'question': 'What is the ETH Wallet payment method?',
             'answer': 'Wallet (ETH) lets you make payments using an Ethereum cryptocurrency wallet. Those payments are recorded in the system, and you can also choose it as a disbursement method if it is available for your application.'
         }
