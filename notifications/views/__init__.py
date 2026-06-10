@@ -8,6 +8,7 @@ from notifications.views.notification_views import (
     NotificationUnreadCountView,
     NotificationDeleteView,
     NotificationClearAllView,
+    RegisterDeviceTokenView,
 )
 
 __all__ = [
@@ -17,4 +18,5 @@ __all__ = [
     'NotificationUnreadCountView',
     'NotificationDeleteView',
     'NotificationClearAllView',
+    'RegisterDeviceTokenView',
 ]
