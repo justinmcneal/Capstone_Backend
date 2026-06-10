@@ -79,6 +79,15 @@ class LoanOfficer:
         return str(self._id) if self._id else None
 
     @property
+    def pk(self):
+        """Primary key for Django compatibility"""
+        return self.id
+
+    def get_username(self):
+        """Username for Django compatibility"""
+        return self.email
+
+    @property
     def full_name(self):
         """Get full name"""
         return f"{self.first_name} {self.last_name}".strip()
@@ -138,7 +147,7 @@ class LoanOfficer:
 
         return verify_password(raw_password, self.password)
 
-    def save(self):
+    def save(self, *args, **kwargs):
         """Save loan officer to database"""
         db = get_db()
         collection = db[self.collection_name]

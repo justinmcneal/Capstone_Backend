@@ -76,6 +76,15 @@ class Customer:
         return str(self._id) if self._id else None
 
     @property
+    def pk(self):
+        """Primary key for Django compatibility"""
+        return self.id
+
+    def get_username(self):
+        """Username for Django compatibility"""
+        return self.email
+
+    @property
     def full_name(self):
         """Get full name combining first, middle (if exists), and last name"""
         parts = [self.first_name]
@@ -142,7 +151,7 @@ class Customer:
 
         return verify_password(raw_password, self.password)
 
-    def save(self):
+    def save(self, *args, **kwargs):
         """Save customer to database"""
         db = get_db()
         collection = db[self.collection_name]
