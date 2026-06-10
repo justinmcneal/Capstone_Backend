@@ -64,3 +64,5 @@ pytest-django>=4.5.0
 mongomock>=4.1.0
 prometheus-client>=0.16.0
 mypy>=1.10.0
+firebase-admin==6.2.0
+firebase-admin==7.4.0
