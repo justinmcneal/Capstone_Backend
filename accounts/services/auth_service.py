@@ -138,7 +138,7 @@ class AuthService:
 
         last_login_attempt = EmailUtils.to_aware_utc(customer.last_login_attempt)
         last_attempt = datetime.now(timezone.utc) - last_login_attempt
-        rate_limit_seconds = 30
+        rate_limit_seconds = 0
 
         if last_attempt.total_seconds() < rate_limit_seconds:
             seconds_remaining = rate_limit_seconds - int(last_attempt.total_seconds())

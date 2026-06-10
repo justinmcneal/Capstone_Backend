@@ -188,7 +188,7 @@ AXES_FAILURE_LIMIT = 5
 AXES_COOLOFF_TIME = 1  # 1 hour
 AXES_RESET_ON_SUCCESS = True
 AXES_LOCKOUT_PARAMETERS = ["ip_address", "username"]
-AXES_HANDLER = 'axes.handlers.cache.CacheHandler'
+AXES_HANDLER = 'axes.handlers.cache.AxesCacheHandler'
 
 
 # Internationalization
