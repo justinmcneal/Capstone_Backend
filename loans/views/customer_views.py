@@ -1776,6 +1776,8 @@ class SystemWalletInfoView(CustomerRoleRequiredMixin, APIView):
             account = get_account()
             w3 = get_web3()
         except Exception as exc:
+            import logging
+            logging.getLogger("blockchain").error(f"Blockchain connection failed: {exc}")
             return error_response(
                 message=f"Blockchain connection unavailable: {str(exc)}",
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
