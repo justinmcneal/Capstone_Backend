@@ -12,7 +12,7 @@ import requests
 
 logger = logging.getLogger("blockchain")
 
-CRYPTOCOMPARE_URL = "https://min-api.cryptocompare.com/data/price"
+COINGECKO_URL = "https://api.coingecko.com/api/v3/simple/price"
 
 _cache = {"rate": None, "source": None, "fetched_at": 0}
 _CACHE_TTL = 300  # 5 minutes
@@ -44,18 +44,18 @@ def get_eth_php_rate():
 
     try:
         resp = requests.get(
-            CRYPTOCOMPARE_URL,
-            params={"fsym": "ETH", "tsyms": "PHP"},
+            COINGECKO_URL,
+            params={"ids": "ethereum", "vs_currencies": "php"},
             timeout=10,
         )
         resp.raise_for_status()
         data = resp.json()
-        rate = float(data["PHP"])
-        _cache.update(rate=rate, source="cryptocompare", fetched_at=now)
-        logger.info("ETH/PHP rate fetched: %.2f (CryptoCompare)", rate)
+        rate = float(data["ethereum"]["php"])
+        _cache.update(rate=rate, source="coingecko", fetched_at=now)
+        logger.info("ETH/PHP rate fetched: %.2f (CoinGecko)", rate)
         return _cache.copy()
     except Exception as exc:
-        logger.error("CryptoCompare unavailable: %s", exc)
+        logger.error("CoinGecko unavailable: %s", exc)
         raise ExchangeRateUnavailableError(
             "ETH/PHP exchange rate is currently unavailable. "
             "Wallet transactions are disabled until the rate can be fetched."
