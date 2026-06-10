@@ -503,16 +503,36 @@ class DocumentListView(AccessControlMixin, APIView):
             if search:
                 search_regex = re.compile(re.escape(search), re.IGNORECASE)
                 customer_ids = []
-                first = search.strip().split()[0]
-                name_regex = re.compile(f".*{re.escape(first)}.*", re.IGNORECASE)
-                matched_customers = Customer.find(
-                    {
-                        "$or": [
-                            {"first_name": name_regex},
-                            {"last_name": name_regex},
-                        ]
-                    }
-                )
+                search_terms = search.strip().split()
+                if len(search_terms) == 1:
+                    name_regex = re.compile(
+                        f".*{re.escape(search_terms[0])}.*", re.IGNORECASE
+                    )
+                    matched_customers = Customer.find(
+                        {
+                            "$or": [
+                                {"first_name": name_regex},
+                                {"last_name": name_regex},
+                            ]
+                        }
+                    )
+                else:
+                    customer_and_conditions = []
+                    for term in search_terms:
+                        term_regex = re.compile(
+                            f".*{re.escape(term)}.*", re.IGNORECASE
+                        )
+                        customer_and_conditions.append(
+                            {
+                                "$or": [
+                                    {"first_name": term_regex},
+                                    {"last_name": term_regex},
+                                ]
+                            }
+                        )
+                    matched_customers = Customer.find(
+                        {"$and": customer_and_conditions}
+                    )
                 customer_ids = [c.id for c in matched_customers if c]
                 documents = [
                     doc

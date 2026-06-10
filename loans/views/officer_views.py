@@ -2446,11 +2446,32 @@ class PaymentSearchView(LoanOfficerRequiredMixin, APIView):
         # Keyword search - find customer IDs matching the search
         customer_ids = []
         if search_query:
-            # Search for customers
-            regex = re.compile(f".*{re.escape(search_query)}.*", re.IGNORECASE)
-            customers = Customer.find(
-                {"$or": [{"first_name": regex}, {"last_name": regex}, {"phone": regex}]}
-            )
+            search_terms = search_query.strip().split()
+            if len(search_terms) == 1:
+                regex = re.compile(f".*{re.escape(search_terms[0])}.*", re.IGNORECASE)
+                customers = Customer.find(
+                    {
+                        "$or": [
+                            {"first_name": regex},
+                            {"last_name": regex},
+                            {"phone": regex},
+                        ]
+                    }
+                )
+            else:
+                customer_and_conditions = []
+                for term in search_terms:
+                    term_regex = re.compile(f".*{re.escape(term)}.*", re.IGNORECASE)
+                    customer_and_conditions.append(
+                        {
+                            "$or": [
+                                {"first_name": term_regex},
+                                {"last_name": term_regex},
+                                {"phone": term_regex},
+                            ]
+                        }
+                    )
+                customers = Customer.find({"$and": customer_and_conditions})
             customer_ids = [c.id for c in customers if c]
 
             # Also search by reference
