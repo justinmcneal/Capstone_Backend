@@ -160,21 +160,6 @@ class ConsentView(APIView):
                 "can_access_ai": consent.can_access_ai,
             }
 
-            # Blockchain sync — consent record
-            try:
-                from loans.blockchain.sync import sync_consent
-
-                sync_consent(
-                    user_id=user_id,
-                    user_type=user_type,
-                    data_consent=consent.data_consent,
-                    ai_consent=consent.ai_consent,
-                    consent_version=consent.consent_version,
-                    consent_timestamp=consent.consent_date or consent.updated_at,
-                    previous_state=None,
-                )
-            except Exception as e:
-                logger.warning(f"Blockchain sync skipped for consent {user_id}: {e}")
 
             return success_response(
                 data=response_data,
@@ -268,23 +253,6 @@ class ConsentView(APIView):
                 "can_access_ai": consent.can_access_ai,
             }
 
-            # Blockchain sync — consent update
-            try:
-                from loans.blockchain.sync import sync_consent
-
-                sync_consent(
-                    user_id=user_id,
-                    user_type=user_type,
-                    data_consent=consent.data_consent,
-                    ai_consent=consent.ai_consent,
-                    consent_version=consent.consent_version,
-                    consent_timestamp=consent.updated_at,
-                    previous_state=previous_state,
-                )
-            except Exception as e:
-                logger.warning(
-                    f"Blockchain sync skipped for consent update {user_id}: {e}"
-                )
 
             return success_response(
                 data=response_data, message="Consent updated successfully"
