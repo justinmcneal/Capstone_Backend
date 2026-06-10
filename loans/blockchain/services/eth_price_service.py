@@ -46,6 +46,7 @@ def get_eth_php_rate():
         resp = requests.get(
             COINGECKO_URL,
             params={"ids": "ethereum", "vs_currencies": "php"},
+            headers={"User-Agent": "MSME-Pathways-Backend/1.0"},
             timeout=10,
         )
         resp.raise_for_status()
