@@ -1647,8 +1647,13 @@ class WalletPaymentView(CustomerRoleRequiredMixin, APIView):
                 status_code=status.HTTP_400_BAD_REQUEST,
             )
 
-        # Record the payment (accept full amount received, including overpayments)
-        payment_amount = php_received
+        # If payment is within ±2% tolerance of the expected amount,
+        # treat it as exactly the expected amount to prevent dust balances.
+        # Otherwise, record the exact amount received (e.g., for overpayments).
+        if lower_bound <= php_received <= upper_bound:
+            payment_amount = expected_php
+        else:
+            payment_amount = php_received
         unpaid_before = schedule.count_unpaid_before(installment_number)
         updated_installment = schedule.record_payment(
             installment_number, payment_amount
