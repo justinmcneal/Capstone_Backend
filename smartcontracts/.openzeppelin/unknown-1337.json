@@ -800,6 +800,56 @@
       "address": "0x813EAe1bA4A51041374DD147A21325AAF0231579",
       "txHash": "0xf3744d0edfa0092bbb95554a41e6004c8f3ae1c1affd6e3b8efbddd1bf1a8519",
       "kind": "uups"
+    },
+    {
+      "address": "0xA517578477559aCC59E049797234c2E6EfF2aBB0",
+      "txHash": "0xf05830f87967e25efabbbd2ed53fb046fc2e2405d0ba2e45161f3747d6a56c02",
+      "kind": "uups"
+    },
+    {
+      "address": "0x4dCBF01e76Ec823C6cfb20ECB59e3F6Cd4D6e743",
+      "txHash": "0xd93df56ae99802491a39d8c215436988420b7810ae3e86521b0342ef956bd1c4",
+      "kind": "uups"
+    },
+    {
+      "address": "0x5AC372E0A9CA9e6697f0098006Aa2d2A7d7e546F",
+      "txHash": "0x42ebfe5d7365038a8d3f8077b838b701d6ad275cdd607e77dc67248b1b6528af",
+      "kind": "uups"
+    },
+    {
+      "address": "0x4A827D995Bb335c8A7Bb60037A4524d2717D3B15",
+      "txHash": "0x1b096c4eb997f9517121398ff3527f03032853f7b0549e3e9418f3467b75aa5b",
+      "kind": "uups"
+    },
+    {
+      "address": "0xc222B74D96a8614bb2ACC801B7642B3D7078d2Da",
+      "txHash": "0x94a25762df4e6a714d48cad452d102766af7b66d0000f4484c71e48d09059168",
+      "kind": "uups"
+    },
+    {
+      "address": "0xECc1B0a84Fe9982FDE1D33508d6B559979017BCf",
+      "txHash": "0xf40447ddfb154efa2119b501bd8e92f1af6a381c7b4ed90c9851ce382cfa9beb",
+      "kind": "uups"
+    },
+    {
+      "address": "0xCd3A83a281a32bb773Dd9F172afD0C0ff9bD0Ab7",
+      "txHash": "0x9fff448340eeca2eedce9dced153d2ae4a83a0b51aa0987fb21353df09a70724",
+      "kind": "uups"
+    },
+    {
+      "address": "0xf1C581D807eE3F68f95A5b91cb83Dfa8B61837D2",
+      "txHash": "0x6826d1c15a323baa6a4d9cbbae8af77305d796411e64d147f8eb75c8b6571dc8",
+      "kind": "uups"
+    },
+    {
+      "address": "0xaDc30F61AB24505B3aD7f30c4a30620aBd985dD2",
+      "txHash": "0x98d3846a3c8367fc01e9d636d7cb31ad55fc42138f11377862a4bcff791c4c1b",
+      "kind": "uups"
+    },
+    {
+      "address": "0x449F7AAb1B71243556Ee10dC2834D760D897CA10",
+      "txHash": "0xe44e484ec1264725f8504d8320dd73a0c1f40f9fa494766cf830b5723f38df21",
+      "kind": "uups"
     }
   ],
   "impls": {
@@ -4039,8 +4089,8 @@
       }
     },
     "3a8116fffe645ea00cc64fdf6de7faec07ee6633cc4f71e119dde87cd69c4131": {
-      "address": "0xAc71ad786F3e39bf8CF3E126E3bC7D37c95B57a9",
-      "txHash": "0x1a429868879ceee4943d21c20b341f5cacf5b6fce26451138d7a9ab253813ab2",
+      "address": "0x94a547e230f211A080EA21eC9ED4A541ffb8D164",
+      "txHash": "0x66c312921d56d274f352adae8238cf3f3d3d47d0457db4724a7a05d242f63345",
       "layout": {
         "solcVersion": "0.8.22",
         "storage": [
@@ -4048,7 +4098,7 @@
             "label": "entries",
             "offset": 0,
             "slot": "0",
-            "type": "t_mapping(t_bytes32,t_struct(AuditEntry)11762_storage)",
+            "type": "t_mapping(t_bytes32,t_struct(AuditEntry)11844_storage)",
             "contract": "AuditRegistry",
             "src": "contracts/AuditRegistry.sol:34"
           },
@@ -4198,7 +4248,7 @@
             "label": "bytes32[]",
             "numberOfBytes": "32"
           },
-          "t_enum(AuditAction)11742": {
+          "t_enum(AuditAction)11824": {
             "label": "enum IAuditRegistry.AuditAction",
             "members": [
               "LoanCreated",
@@ -4228,11 +4278,11 @@
             "label": "mapping(bytes32 => bytes32)",
             "numberOfBytes": "32"
           },
-          "t_mapping(t_bytes32,t_struct(AuditEntry)11762_storage)": {
+          "t_mapping(t_bytes32,t_struct(AuditEntry)11844_storage)": {
             "label": "mapping(bytes32 => struct IAuditRegistry.AuditEntry)",
             "numberOfBytes": "32"
           },
-          "t_struct(AuditEntry)11762_storage": {
+          "t_struct(AuditEntry)11844_storage": {
             "label": "struct IAuditRegistry.AuditEntry",
             "members": [
               {
@@ -4267,7 +4317,7 @@
               },
               {
                 "label": "action",
-                "type": "t_enum(AuditAction)11742",
+                "type": "t_enum(AuditAction)11824",
                 "offset": 0,
                 "slot": "5"
               },
@@ -4350,8 +4400,8 @@
       }
     },
     "bf0a9e0ef468e528576b37c826ced3f5e3672b0335edd219a996566b92c80a88": {
-      "address": "0x6934ecB67dae29a2a223a5b647270A6F99D0C93A",
-      "txHash": "0x8b54f6c8aaa5a5122b135252823ec123ccea4bacc7d5f1173509e5c4ad872713",
+      "address": "0x4b7129b7B450269ee6db542A8D84054eb346847A",
+      "txHash": "0xdf315f43ee4831dc51e03453f2f922619e0b294a5e332d452d16be09c21aa6d0",
       "layout": {
         "solcVersion": "0.8.22",
         "storage": [
@@ -8388,8 +8438,8 @@
       }
     },
     "c8901a9a6ddb378de73f6aeaf30f276aeca3b1c23fbc777b6d49722613cc3ada": {
-      "address": "0xb30CB7F018F2fD36274717BA0EC197c28f8D89df",
-      "txHash": "0x849fdca4f1a2bbee6574d40b0558851b59bbf039112560b5e824a6bd51aa97f5",
+      "address": "0x5C2F6692701436dE08AE1e7a8789976f73cD4745",
+      "txHash": "0x8ba22383dc9f19cf71c9ad4cbb3d20cb3ecfd62df067fbdcbf49c7a8eec5b7be",
       "layout": {
         "solcVersion": "0.8.22",
         "storage": [
@@ -8397,7 +8447,7 @@
             "label": "accessControl",
             "offset": 0,
             "slot": "0",
-            "type": "t_contract(ILoanAccessControl)6363",
+            "type": "t_contract(ILoanAccessControl)11992",
             "contract": "LoanCore",
             "src": "contracts/LoanCore.sol:74"
           },
@@ -8405,7 +8455,7 @@
             "label": "auditRegistry",
             "offset": 0,
             "slot": "1",
-            "type": "t_contract(IAuditRegistry)6325",
+            "type": "t_contract(IAuditRegistry)11911",
             "contract": "LoanCore",
             "src": "contracts/LoanCore.sol:75"
           },
@@ -8437,7 +8487,7 @@
             "label": "loans",
             "offset": 0,
             "slot": "5",
-            "type": "t_mapping(t_bytes32,t_struct(Loan)2039_storage)",
+            "type": "t_mapping(t_bytes32,t_struct(Loan)4268_storage)",
             "contract": "LoanCore",
             "src": "contracts/LoanCore.sol:81"
           },
@@ -8595,15 +8645,15 @@
             "label": "bytes32[]",
             "numberOfBytes": "32"
           },
-          "t_contract(IAuditRegistry)6325": {
+          "t_contract(IAuditRegistry)11911": {
             "label": "contract IAuditRegistry",
             "numberOfBytes": "20"
           },
-          "t_contract(ILoanAccessControl)6363": {
+          "t_contract(ILoanAccessControl)11992": {
             "label": "contract ILoanAccessControl",
             "numberOfBytes": "20"
           },
-          "t_enum(LoanStatus)1990": {
+          "t_enum(LoanStatus)4219": {
             "label": "enum LoanCore.LoanStatus",
             "members": [
               "Draft",
@@ -8616,7 +8666,7 @@
             ],
             "numberOfBytes": "1"
           },
-          "t_enum(RiskCategory)1994": {
+          "t_enum(RiskCategory)4223": {
             "label": "enum LoanCore.RiskCategory",
             "members": [
               "Low",
@@ -8629,11 +8679,11 @@
             "label": "mapping(address => bytes32[])",
             "numberOfBytes": "32"
           },
-          "t_mapping(t_bytes32,t_struct(Loan)2039_storage)": {
+          "t_mapping(t_bytes32,t_struct(Loan)4268_storage)": {
             "label": "mapping(bytes32 => struct LoanCore.Loan)",
             "numberOfBytes": "32"
           },
-          "t_struct(Loan)2039_storage": {
+          "t_struct(Loan)4268_storage": {
             "label": "struct LoanCore.Loan",
             "members": [
               {
@@ -8686,13 +8736,13 @@
               },
               {
                 "label": "status",
-                "type": "t_enum(LoanStatus)1990",
+                "type": "t_enum(LoanStatus)4219",
                 "offset": 4,
                 "slot": "6"
               },
               {
                 "label": "riskCategory",
-                "type": "t_enum(RiskCategory)1994",
+                "type": "t_enum(RiskCategory)4223",
                 "offset": 5,
                 "slot": "6"
               },
@@ -9323,6 +9373,843 @@
               }
             ],
             "numberOfBytes": "128"
+          }
+        },
+        "namespaces": {
+          "erc7201:openzeppelin.storage.Pausable": [
+            {
+              "contract": "PausableUpgradeable",
+              "label": "_paused",
+              "type": "t_bool",
+              "src": "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol:21",
+              "offset": 0,
+              "slot": "0"
+            }
+          ],
+          "erc7201:openzeppelin.storage.ReentrancyGuard": [
+            {
+              "contract": "ReentrancyGuardUpgradeable",
+              "label": "_status",
+              "type": "t_uint256",
+              "src": "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol:40",
+              "offset": 0,
+              "slot": "0"
+            }
+          ],
+          "erc7201:openzeppelin.storage.AccessControl": [
+            {
+              "contract": "AccessControlUpgradeable",
+              "label": "_roles",
+              "type": "t_mapping(t_bytes32,t_struct(RoleData)25_storage)",
+              "src": "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol:61",
+              "offset": 0,
+              "slot": "0"
+            }
+          ],
+          "erc7201:openzeppelin.storage.Initializable": [
+            {
+              "contract": "Initializable",
+              "label": "_initialized",
+              "type": "t_uint64",
+              "src": "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol:69",
+              "offset": 0,
+              "slot": "0"
+            },
+            {
+              "contract": "Initializable",
+              "label": "_initializing",
+              "type": "t_bool",
+              "src": "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol:73",
+              "offset": 8,
+              "slot": "0"
+            }
+          ]
+        }
+      }
+    },
+    "55b4394f072f8e14d29ce6c4c6b9838f4e7bd29674072d02f43ddb09775f3933": {
+      "address": "0x3818BE578F7CFAC8E87192544eCc6Da8f7385C04",
+      "txHash": "0x8c067dfe02483e3331f76692ecc30b9b54813a46e5a206e1688108769fc772f4",
+      "layout": {
+        "solcVersion": "0.8.22",
+        "storage": [
+          {
+            "label": "loanCore",
+            "offset": 0,
+            "slot": "0",
+            "type": "t_contract(ILoanCore)12335",
+            "contract": "Disbursement",
+            "src": "contracts/Disbursement.sol:62"
+          },
+          {
+            "label": "auditRegistry",
+            "offset": 0,
+            "slot": "1",
+            "type": "t_contract(IAuditRegistry)11911",
+            "contract": "Disbursement",
+            "src": "contracts/Disbursement.sol:63"
+          },
+          {
+            "label": "disbursements",
+            "offset": 0,
+            "slot": "2",
+            "type": "t_mapping(t_bytes32,t_struct(DisbursementRecord)2875_storage)",
+            "contract": "Disbursement",
+            "src": "contracts/Disbursement.sol:66"
+          },
+          {
+            "label": "loanToDisbursement",
+            "offset": 0,
+            "slot": "3",
+            "type": "t_mapping(t_bytes32,t_bytes32)",
+            "contract": "Disbursement",
+            "src": "contracts/Disbursement.sol:67"
+          },
+          {
+            "label": "usedReferences",
+            "offset": 0,
+            "slot": "4",
+            "type": "t_mapping(t_bytes32,t_bool)",
+            "contract": "Disbursement",
+            "src": "contracts/Disbursement.sol:68"
+          },
+          {
+            "label": "totalDisbursements",
+            "offset": 0,
+            "slot": "5",
+            "type": "t_uint256",
+            "contract": "Disbursement",
+            "src": "contracts/Disbursement.sol:71"
+          },
+          {
+            "label": "totalDisbursedAmount",
+            "offset": 0,
+            "slot": "6",
+            "type": "t_uint256",
+            "contract": "Disbursement",
+            "src": "contracts/Disbursement.sol:72"
+          },
+          {
+            "label": "_disbursementNonce",
+            "offset": 0,
+            "slot": "7",
+            "type": "t_uint256",
+            "contract": "Disbursement",
+            "src": "contracts/Disbursement.sol:73"
+          }
+        ],
+        "types": {
+          "t_address": {
+            "label": "address",
+            "numberOfBytes": "20"
+          },
+          "t_bool": {
+            "label": "bool",
+            "numberOfBytes": "1"
+          },
+          "t_bytes32": {
+            "label": "bytes32",
+            "numberOfBytes": "32"
+          },
+          "t_mapping(t_address,t_bool)": {
+            "label": "mapping(address => bool)",
+            "numberOfBytes": "32"
+          },
+          "t_mapping(t_bytes32,t_struct(RoleData)25_storage)": {
+            "label": "mapping(bytes32 => struct AccessControlUpgradeable.RoleData)",
+            "numberOfBytes": "32"
+          },
+          "t_struct(AccessControlStorage)35_storage": {
+            "label": "struct AccessControlUpgradeable.AccessControlStorage",
+            "members": [
+              {
+                "label": "_roles",
+                "type": "t_mapping(t_bytes32,t_struct(RoleData)25_storage)",
+                "offset": 0,
+                "slot": "0"
+              }
+            ],
+            "numberOfBytes": "32"
+          },
+          "t_struct(InitializableStorage)161_storage": {
+            "label": "struct Initializable.InitializableStorage",
+            "members": [
+              {
+                "label": "_initialized",
+                "type": "t_uint64",
+                "offset": 0,
+                "slot": "0"
+              },
+              {
+                "label": "_initializing",
+                "type": "t_bool",
+                "offset": 8,
+                "slot": "0"
+              }
+            ],
+            "numberOfBytes": "32"
+          },
+          "t_struct(PausableStorage)328_storage": {
+            "label": "struct PausableUpgradeable.PausableStorage",
+            "members": [
+              {
+                "label": "_paused",
+                "type": "t_bool",
+                "offset": 0,
+                "slot": "0"
+              }
+            ],
+            "numberOfBytes": "32"
+          },
+          "t_struct(ReentrancyGuardStorage)405_storage": {
+            "label": "struct ReentrancyGuardUpgradeable.ReentrancyGuardStorage",
+            "members": [
+              {
+                "label": "_status",
+                "type": "t_uint256",
+                "offset": 0,
+                "slot": "0"
+              }
+            ],
+            "numberOfBytes": "32"
+          },
+          "t_struct(RoleData)25_storage": {
+            "label": "struct AccessControlUpgradeable.RoleData",
+            "members": [
+              {
+                "label": "hasRole",
+                "type": "t_mapping(t_address,t_bool)",
+                "offset": 0,
+                "slot": "0"
+              },
+              {
+                "label": "adminRole",
+                "type": "t_bytes32",
+                "offset": 0,
+                "slot": "1"
+              }
+            ],
+            "numberOfBytes": "64"
+          },
+          "t_uint256": {
+            "label": "uint256",
+            "numberOfBytes": "32"
+          },
+          "t_uint64": {
+            "label": "uint64",
+            "numberOfBytes": "8"
+          },
+          "t_contract(IAuditRegistry)11911": {
+            "label": "contract IAuditRegistry",
+            "numberOfBytes": "20"
+          },
+          "t_contract(ILoanCore)12335": {
+            "label": "contract ILoanCore",
+            "numberOfBytes": "20"
+          },
+          "t_enum(DisbursementMethod)2852": {
+            "label": "enum Disbursement.DisbursementMethod",
+            "members": [
+              "BankTransfer",
+              "Cash",
+              "GCash",
+              "Check",
+              "Wallet"
+            ],
+            "numberOfBytes": "1"
+          },
+          "t_enum(DisbursementStatus)2846": {
+            "label": "enum Disbursement.DisbursementStatus",
+            "members": [
+              "Pending",
+              "Processing",
+              "Completed"
+            ],
+            "numberOfBytes": "1"
+          },
+          "t_mapping(t_bytes32,t_bool)": {
+            "label": "mapping(bytes32 => bool)",
+            "numberOfBytes": "32"
+          },
+          "t_mapping(t_bytes32,t_bytes32)": {
+            "label": "mapping(bytes32 => bytes32)",
+            "numberOfBytes": "32"
+          },
+          "t_mapping(t_bytes32,t_struct(DisbursementRecord)2875_storage)": {
+            "label": "mapping(bytes32 => struct Disbursement.DisbursementRecord)",
+            "numberOfBytes": "32"
+          },
+          "t_struct(DisbursementRecord)2875_storage": {
+            "label": "struct Disbursement.DisbursementRecord",
+            "members": [
+              {
+                "label": "disbursementId",
+                "type": "t_bytes32",
+                "offset": 0,
+                "slot": "0"
+              },
+              {
+                "label": "loanId",
+                "type": "t_bytes32",
+                "offset": 0,
+                "slot": "1"
+              },
+              {
+                "label": "borrower",
+                "type": "t_address",
+                "offset": 0,
+                "slot": "2"
+              },
+              {
+                "label": "amount",
+                "type": "t_uint256",
+                "offset": 0,
+                "slot": "3"
+              },
+              {
+                "label": "method",
+                "type": "t_enum(DisbursementMethod)2852",
+                "offset": 0,
+                "slot": "4"
+              },
+              {
+                "label": "referenceHash",
+                "type": "t_bytes32",
+                "offset": 0,
+                "slot": "5"
+              },
+              {
+                "label": "status",
+                "type": "t_enum(DisbursementStatus)2846",
+                "offset": 0,
+                "slot": "6"
+              },
+              {
+                "label": "processedBy",
+                "type": "t_address",
+                "offset": 1,
+                "slot": "6"
+              },
+              {
+                "label": "initiatedAt",
+                "type": "t_uint256",
+                "offset": 0,
+                "slot": "7"
+              },
+              {
+                "label": "processedAt",
+                "type": "t_uint256",
+                "offset": 0,
+                "slot": "8"
+              }
+            ],
+            "numberOfBytes": "288"
+          }
+        },
+        "namespaces": {
+          "erc7201:openzeppelin.storage.Pausable": [
+            {
+              "contract": "PausableUpgradeable",
+              "label": "_paused",
+              "type": "t_bool",
+              "src": "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol:21",
+              "offset": 0,
+              "slot": "0"
+            }
+          ],
+          "erc7201:openzeppelin.storage.ReentrancyGuard": [
+            {
+              "contract": "ReentrancyGuardUpgradeable",
+              "label": "_status",
+              "type": "t_uint256",
+              "src": "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol:40",
+              "offset": 0,
+              "slot": "0"
+            }
+          ],
+          "erc7201:openzeppelin.storage.AccessControl": [
+            {
+              "contract": "AccessControlUpgradeable",
+              "label": "_roles",
+              "type": "t_mapping(t_bytes32,t_struct(RoleData)25_storage)",
+              "src": "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol:61",
+              "offset": 0,
+              "slot": "0"
+            }
+          ],
+          "erc7201:openzeppelin.storage.Initializable": [
+            {
+              "contract": "Initializable",
+              "label": "_initialized",
+              "type": "t_uint64",
+              "src": "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol:69",
+              "offset": 0,
+              "slot": "0"
+            },
+            {
+              "contract": "Initializable",
+              "label": "_initializing",
+              "type": "t_bool",
+              "src": "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol:73",
+              "offset": 8,
+              "slot": "0"
+            }
+          ]
+        }
+      }
+    },
+    "402737a4b55741b0d100d7f6e50abefd4ffdd992f18342f9288f887217f0dbe4": {
+      "address": "0x12868a4b866A9F8d5417dd2058F40e8dB9b86AFE",
+      "txHash": "0x2d503676516720e63b3a49b7acd7bbbd2c0055f93e6b259b25fc9bc535e33b69",
+      "layout": {
+        "solcVersion": "0.8.22",
+        "storage": [
+          {
+            "label": "loanCore",
+            "offset": 0,
+            "slot": "0",
+            "type": "t_contract(ILoanCore)12335",
+            "contract": "Repayment",
+            "src": "contracts/Repayment.sol:90"
+          },
+          {
+            "label": "auditRegistry",
+            "offset": 0,
+            "slot": "1",
+            "type": "t_contract(IAuditRegistry)11911",
+            "contract": "Repayment",
+            "src": "contracts/Repayment.sol:91"
+          },
+          {
+            "label": "schedules",
+            "offset": 0,
+            "slot": "2",
+            "type": "t_mapping(t_bytes32,t_struct(RepaymentSchedule)5837_storage)",
+            "contract": "Repayment",
+            "src": "contracts/Repayment.sol:94"
+          },
+          {
+            "label": "installments",
+            "offset": 0,
+            "slot": "3",
+            "type": "t_mapping(t_bytes32,t_mapping(t_uint16,t_struct(Installment)5855_storage))",
+            "contract": "Repayment",
+            "src": "contracts/Repayment.sol:95"
+          },
+          {
+            "label": "loanToSchedule",
+            "offset": 0,
+            "slot": "4",
+            "type": "t_mapping(t_bytes32,t_bytes32)",
+            "contract": "Repayment",
+            "src": "contracts/Repayment.sol:96"
+          },
+          {
+            "label": "payments",
+            "offset": 0,
+            "slot": "5",
+            "type": "t_mapping(t_bytes32,t_struct(Payment)5875_storage)",
+            "contract": "Repayment",
+            "src": "contracts/Repayment.sol:99"
+          },
+          {
+            "label": "loanPayments",
+            "offset": 0,
+            "slot": "6",
+            "type": "t_mapping(t_bytes32,t_array(t_bytes32)dyn_storage)",
+            "contract": "Repayment",
+            "src": "contracts/Repayment.sol:100"
+          },
+          {
+            "label": "usedPaymentReferences",
+            "offset": 0,
+            "slot": "7",
+            "type": "t_mapping(t_bytes32,t_bool)",
+            "contract": "Repayment",
+            "src": "contracts/Repayment.sol:101"
+          },
+          {
+            "label": "totalPaymentsRecorded",
+            "offset": 0,
+            "slot": "8",
+            "type": "t_uint256",
+            "contract": "Repayment",
+            "src": "contracts/Repayment.sol:104"
+          },
+          {
+            "label": "totalAmountCollected",
+            "offset": 0,
+            "slot": "9",
+            "type": "t_uint256",
+            "contract": "Repayment",
+            "src": "contracts/Repayment.sol:105"
+          },
+          {
+            "label": "_paymentNonce",
+            "offset": 0,
+            "slot": "10",
+            "type": "t_uint256",
+            "contract": "Repayment",
+            "src": "contracts/Repayment.sol:106"
+          }
+        ],
+        "types": {
+          "t_address": {
+            "label": "address",
+            "numberOfBytes": "20"
+          },
+          "t_bool": {
+            "label": "bool",
+            "numberOfBytes": "1"
+          },
+          "t_bytes32": {
+            "label": "bytes32",
+            "numberOfBytes": "32"
+          },
+          "t_mapping(t_address,t_bool)": {
+            "label": "mapping(address => bool)",
+            "numberOfBytes": "32"
+          },
+          "t_mapping(t_bytes32,t_struct(RoleData)25_storage)": {
+            "label": "mapping(bytes32 => struct AccessControlUpgradeable.RoleData)",
+            "numberOfBytes": "32"
+          },
+          "t_struct(AccessControlStorage)35_storage": {
+            "label": "struct AccessControlUpgradeable.AccessControlStorage",
+            "members": [
+              {
+                "label": "_roles",
+                "type": "t_mapping(t_bytes32,t_struct(RoleData)25_storage)",
+                "offset": 0,
+                "slot": "0"
+              }
+            ],
+            "numberOfBytes": "32"
+          },
+          "t_struct(InitializableStorage)161_storage": {
+            "label": "struct Initializable.InitializableStorage",
+            "members": [
+              {
+                "label": "_initialized",
+                "type": "t_uint64",
+                "offset": 0,
+                "slot": "0"
+              },
+              {
+                "label": "_initializing",
+                "type": "t_bool",
+                "offset": 8,
+                "slot": "0"
+              }
+            ],
+            "numberOfBytes": "32"
+          },
+          "t_struct(PausableStorage)328_storage": {
+            "label": "struct PausableUpgradeable.PausableStorage",
+            "members": [
+              {
+                "label": "_paused",
+                "type": "t_bool",
+                "offset": 0,
+                "slot": "0"
+              }
+            ],
+            "numberOfBytes": "32"
+          },
+          "t_struct(ReentrancyGuardStorage)405_storage": {
+            "label": "struct ReentrancyGuardUpgradeable.ReentrancyGuardStorage",
+            "members": [
+              {
+                "label": "_status",
+                "type": "t_uint256",
+                "offset": 0,
+                "slot": "0"
+              }
+            ],
+            "numberOfBytes": "32"
+          },
+          "t_struct(RoleData)25_storage": {
+            "label": "struct AccessControlUpgradeable.RoleData",
+            "members": [
+              {
+                "label": "hasRole",
+                "type": "t_mapping(t_address,t_bool)",
+                "offset": 0,
+                "slot": "0"
+              },
+              {
+                "label": "adminRole",
+                "type": "t_bytes32",
+                "offset": 0,
+                "slot": "1"
+              }
+            ],
+            "numberOfBytes": "64"
+          },
+          "t_uint256": {
+            "label": "uint256",
+            "numberOfBytes": "32"
+          },
+          "t_uint64": {
+            "label": "uint64",
+            "numberOfBytes": "8"
+          },
+          "t_array(t_bytes32)dyn_storage": {
+            "label": "bytes32[]",
+            "numberOfBytes": "32"
+          },
+          "t_contract(IAuditRegistry)11911": {
+            "label": "contract IAuditRegistry",
+            "numberOfBytes": "20"
+          },
+          "t_contract(ILoanCore)12335": {
+            "label": "contract ILoanCore",
+            "numberOfBytes": "20"
+          },
+          "t_enum(InstallmentStatus)5806": {
+            "label": "enum Repayment.InstallmentStatus",
+            "members": [
+              "Pending",
+              "Paid",
+              "Partial",
+              "Overdue"
+            ],
+            "numberOfBytes": "1"
+          },
+          "t_enum(PaymentMethod)5812": {
+            "label": "enum Repayment.PaymentMethod",
+            "members": [
+              "Cash",
+              "BankTransfer",
+              "GCash",
+              "Check",
+              "Wallet"
+            ],
+            "numberOfBytes": "1"
+          },
+          "t_mapping(t_bytes32,t_array(t_bytes32)dyn_storage)": {
+            "label": "mapping(bytes32 => bytes32[])",
+            "numberOfBytes": "32"
+          },
+          "t_mapping(t_bytes32,t_bool)": {
+            "label": "mapping(bytes32 => bool)",
+            "numberOfBytes": "32"
+          },
+          "t_mapping(t_bytes32,t_bytes32)": {
+            "label": "mapping(bytes32 => bytes32)",
+            "numberOfBytes": "32"
+          },
+          "t_mapping(t_bytes32,t_mapping(t_uint16,t_struct(Installment)5855_storage))": {
+            "label": "mapping(bytes32 => mapping(uint16 => struct Repayment.Installment))",
+            "numberOfBytes": "32"
+          },
+          "t_mapping(t_bytes32,t_struct(Payment)5875_storage)": {
+            "label": "mapping(bytes32 => struct Repayment.Payment)",
+            "numberOfBytes": "32"
+          },
+          "t_mapping(t_bytes32,t_struct(RepaymentSchedule)5837_storage)": {
+            "label": "mapping(bytes32 => struct Repayment.RepaymentSchedule)",
+            "numberOfBytes": "32"
+          },
+          "t_mapping(t_uint16,t_struct(Installment)5855_storage)": {
+            "label": "mapping(uint16 => struct Repayment.Installment)",
+            "numberOfBytes": "32"
+          },
+          "t_struct(Installment)5855_storage": {
+            "label": "struct Repayment.Installment",
+            "members": [
+              {
+                "label": "number",
+                "type": "t_uint16",
+                "offset": 0,
+                "slot": "0"
+              },
+              {
+                "label": "dueDate",
+                "type": "t_uint256",
+                "offset": 0,
+                "slot": "1"
+              },
+              {
+                "label": "principalAmount",
+                "type": "t_uint256",
+                "offset": 0,
+                "slot": "2"
+              },
+              {
+                "label": "interestAmount",
+                "type": "t_uint256",
+                "offset": 0,
+                "slot": "3"
+              },
+              {
+                "label": "totalAmount",
+                "type": "t_uint256",
+                "offset": 0,
+                "slot": "4"
+              },
+              {
+                "label": "paidAmount",
+                "type": "t_uint256",
+                "offset": 0,
+                "slot": "5"
+              },
+              {
+                "label": "status",
+                "type": "t_enum(InstallmentStatus)5806",
+                "offset": 0,
+                "slot": "6"
+              },
+              {
+                "label": "paidAt",
+                "type": "t_uint256",
+                "offset": 0,
+                "slot": "7"
+              }
+            ],
+            "numberOfBytes": "256"
+          },
+          "t_struct(Payment)5875_storage": {
+            "label": "struct Repayment.Payment",
+            "members": [
+              {
+                "label": "paymentId",
+                "type": "t_bytes32",
+                "offset": 0,
+                "slot": "0"
+              },
+              {
+                "label": "loanId",
+                "type": "t_bytes32",
+                "offset": 0,
+                "slot": "1"
+              },
+              {
+                "label": "scheduleId",
+                "type": "t_bytes32",
+                "offset": 0,
+                "slot": "2"
+              },
+              {
+                "label": "installmentNumber",
+                "type": "t_uint16",
+                "offset": 0,
+                "slot": "3"
+              },
+              {
+                "label": "amount",
+                "type": "t_uint256",
+                "offset": 0,
+                "slot": "4"
+              },
+              {
+                "label": "method",
+                "type": "t_enum(PaymentMethod)5812",
+                "offset": 0,
+                "slot": "5"
+              },
+              {
+                "label": "referenceHash",
+                "type": "t_bytes32",
+                "offset": 0,
+                "slot": "6"
+              },
+              {
+                "label": "recordedBy",
+                "type": "t_address",
+                "offset": 0,
+                "slot": "7"
+              },
+              {
+                "label": "recordedAt",
+                "type": "t_uint256",
+                "offset": 0,
+                "slot": "8"
+              }
+            ],
+            "numberOfBytes": "288"
+          },
+          "t_struct(RepaymentSchedule)5837_storage": {
+            "label": "struct Repayment.RepaymentSchedule",
+            "members": [
+              {
+                "label": "scheduleId",
+                "type": "t_bytes32",
+                "offset": 0,
+                "slot": "0"
+              },
+              {
+                "label": "loanId",
+                "type": "t_bytes32",
+                "offset": 0,
+                "slot": "1"
+              },
+              {
+                "label": "borrower",
+                "type": "t_address",
+                "offset": 0,
+                "slot": "2"
+              },
+              {
+                "label": "principal",
+                "type": "t_uint256",
+                "offset": 0,
+                "slot": "3"
+              },
+              {
+                "label": "interestRateBps",
+                "type": "t_uint16",
+                "offset": 0,
+                "slot": "4"
+              },
+              {
+                "label": "termMonths",
+                "type": "t_uint16",
+                "offset": 2,
+                "slot": "4"
+              },
+              {
+                "label": "monthlyPayment",
+                "type": "t_uint256",
+                "offset": 0,
+                "slot": "5"
+              },
+              {
+                "label": "totalAmount",
+                "type": "t_uint256",
+                "offset": 0,
+                "slot": "6"
+              },
+              {
+                "label": "totalInterest",
+                "type": "t_uint256",
+                "offset": 0,
+                "slot": "7"
+              },
+              {
+                "label": "totalPaid",
+                "type": "t_uint256",
+                "offset": 0,
+                "slot": "8"
+              },
+              {
+                "label": "startDate",
+                "type": "t_uint256",
+                "offset": 0,
+                "slot": "9"
+              },
+              {
+                "label": "createdAt",
+                "type": "t_uint256",
+                "offset": 0,
+                "slot": "10"
+              }
+            ],
+            "numberOfBytes": "352"
+          },
+          "t_uint16": {
+            "label": "uint16",
+            "numberOfBytes": "2"
           }
         },
         "namespaces": {
