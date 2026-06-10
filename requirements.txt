@@ -66,3 +66,5 @@ prometheus-client>=0.16.0
 mypy>=1.10.0
 firebase-admin==6.2.0
 firebase-admin==7.4.0
+
+django-axes==8.3.1

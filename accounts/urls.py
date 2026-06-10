@@ -10,6 +10,7 @@ from accounts.views import (
     ChangePasswordView,
     ConsentView,
     ConsentAuditView,
+    ConsentHistoryView,
 )
 from accounts.views.auth_views import (
     LoginView,
@@ -42,6 +43,7 @@ from accounts.views.admin_views import (
     AdminProfileView,
 )
 from accounts.views.contact_views import ContactSupportView
+from accounts.views.activity_views import ActiveSessionsView, LoginActivityView
 
 app_name = "accounts"
 
@@ -68,8 +70,12 @@ urlpatterns = [
     path("2fa/status/", Get2FAStatusView.as_view(), name="2fa-status"),
     # Consent Management
     path("consent/", ConsentView.as_view(), name="consent"),
+    path("consent/history/", ConsentHistoryView.as_view(), name="consent-history"),
     path("consent/audit/", ConsentAuditView.as_view(), name="consent-audit"),
     path("language/", UpdateLanguageView.as_view(), name="update-language"),
+    # Activity & Session Management
+    path("sessions/", ActiveSessionsView.as_view(), name="active-sessions"),
+    path("login-activity/", LoginActivityView.as_view(), name="login-activity"),
     # Loan Officer Authentication
     path("loan-officer/login/", LoanOfficerLoginView.as_view(), name="loan-officer-login"),
     path("loan-officer/logout/", LoanOfficerLogoutView.as_view(), name="loan-officer-logout"),

@@ -7,6 +7,7 @@ from django.middleware.csrf import get_token
 from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.exceptions import TokenError
 from bson import ObjectId
+from django.contrib.auth.signals import user_logged_in, user_login_failed
 from accounts.models import Admin, LoanOfficer
 from accounts.serializers import SignUpSerializer
 from accounts.services import AuthService
@@ -31,6 +32,7 @@ from accounts.utils.throttles import (
     OTPResendRateThrottle,
 )
 from analytics.models import AuditLog
+from accounts.models.activity import LoginActivity, ActiveSession
 import logging
 
 logger = logging.getLogger("authentication")
@@ -73,6 +75,28 @@ def _log_customer_login_failure(request, email, reason, user=None):
             email,
             str(log_error),
         )
+    
+    # Record LoginActivity for failure
+    try:
+        device_info = request.META.get("HTTP_USER_AGENT", "")
+        LoginActivity(
+            user_id=str(user.id) if user else None,
+            email=email,
+            role="customer",
+            status="FAILED",
+            ip_address=ip_address,
+            device_info=device_info,
+            failure_reason=reason,
+        ).save()
+    except Exception as e:
+        logger.error(f"Failed to save LoginActivity: {str(e)}")
+
+    # Dispatch signal for django-axes
+    user_login_failed.send(
+        sender=__name__,
+        credentials={'username': email},
+        request=request,
+    )
 
 
 class CSRFTokenView(APIView):
@@ -326,6 +350,40 @@ class LoginView(APIView):
                 user_email=customer.email,
                 description=f"User {customer.email} logged in successfully",
                 ip_address=request.META.get("REMOTE_ADDR", ""),
+            )
+
+            # Record LoginActivity for success
+            try:
+                ip_address = _get_client_ip(request)
+                device_info = request.META.get("HTTP_USER_AGENT", "")
+                LoginActivity(
+                    user_id=str(customer.id),
+                    email=customer.email,
+                    role="customer",
+                    status="SUCCESS",
+                    ip_address=ip_address,
+                    device_info=device_info,
+                ).save()
+            except Exception as e:
+                logger.error(f"Failed to save LoginActivity: {str(e)}")
+
+            # Create ActiveSession
+            try:
+                ActiveSession(
+                    user_id=str(customer.id),
+                    role="customer",
+                    session_token=tokens["refresh"],
+                    ip_address=ip_address,
+                    device_info=device_info,
+                ).save()
+            except Exception as e:
+                logger.error(f"Failed to save ActiveSession: {str(e)}")
+
+            # Dispatch signal for django-axes
+            user_logged_in.send(
+                sender=customer.__class__,
+                request=request,
+                user=customer,
             )
 
             response_data = {
@@ -635,6 +693,25 @@ class RefreshTokenView(APIView):
                 )
                 return APIResponseHelper.server_error_response("Token refresh failed")
 
+            # Manage ActiveSession during refresh
+            try:
+                ActiveSession.update_many(
+                    {"session_token": refresh_token},
+                    {"$set": {"is_active": False}}
+                )
+                
+                ip_address = _get_client_ip(request)
+                device_info = request.META.get("HTTP_USER_AGENT", "")
+                ActiveSession(
+                    user_id=str(customer_id),
+                    role=role,
+                    session_token=new_tokens["refresh"],
+                    ip_address=ip_address,
+                    device_info=device_info,
+                ).save()
+            except Exception as e:
+                logger.error(f"Failed to manage ActiveSession during refresh: {str(e)}")
+
             logger.info(
                 f"Token refreshed for user {user_email} ({role}) from IP {request.META.get('REMOTE_ADDR')}"
             )
@@ -711,6 +788,16 @@ class LogoutView(APIView):
                     description="User logged out",
                     ip_address=request.META.get("REMOTE_ADDR", ""),
                 )
+
+                # Deactivate ActiveSession
+                if refresh_token:
+                    try:
+                        ActiveSession.update_many(
+                            {"session_token": refresh_token},
+                            {"$set": {"is_active": False}}
+                        )
+                    except Exception as e:
+                        logger.error(f"Failed to deactivate ActiveSession: {str(e)}")
 
                 response = APIResponseHelper.success_response(
                     message="Logged out successfully"

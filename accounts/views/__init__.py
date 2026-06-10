@@ -13,7 +13,7 @@ from .password_views import (
     ResetPasswordView,
     ChangePasswordView,
 )
-from .consent_views import ConsentView, ConsentRequiredMixin, ConsentAuditView
+from .consent_views import ConsentView, ConsentRequiredMixin, ConsentAuditView, ConsentHistoryView
 
 __all__ = [
     "SignUpView",
