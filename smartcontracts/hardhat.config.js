@@ -11,6 +11,7 @@ const POLYGON_RPC_URL = process.env.POLYGON_RPC_URL || "https://polygon-mainnet.
 const MUMBAI_RPC_URL = process.env.MUMBAI_RPC_URL || "https://polygon-mumbai.g.alchemy.com/v2/your-api-key";
 const ETHERSCAN_API_KEY = process.env.ETHERSCAN_API_KEY || "";
 const POLYGONSCAN_API_KEY = process.env.POLYGONSCAN_API_KEY || "";
+const GANACHE_RPC_URL = process.env.GANACHE_RPC_URL || "http://127.0.0.1:7545";
 
 /** @type import('hardhat/config').HardhatUserConfig */
 module.exports = {
@@ -33,9 +34,9 @@ module.exports = {
       url: "http://127.0.0.1:8545",
       chainId: 31337
     },
-    // Ganache GUI (default port 7545)
+    // Ganache GUI
     ganache: {
-      url: "http://127.0.0.1:7545",
+      url: GANACHE_RPC_URL,
       chainId: 1337,
       accounts: [PRIVATE_KEY, PRIVATE_KEY_2],
       gas: 6721975,

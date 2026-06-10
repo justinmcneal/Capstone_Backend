@@ -94,7 +94,7 @@ async function main() {
   await loanCoreContract.setContracts(
     deployedContracts.disbursement,
     deployedContracts.repayment,
-    ethers.ZeroAddress  // No oracle contract
+    deployer.address  // Placeholder for oracle to avoid ZeroAddress revert
   );
   console.log("   LoanCore references configured");
 
