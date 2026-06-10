@@ -746,6 +746,9 @@ class AdminBlockchainTransactionsView(AdminRequiredMixin, APIView):
             "disburse",
             "schedule",
             "payment",
+            "penalty_applied",
+            "penalty_waived",
+            "consent",
         ]:
             query["action"] = action
 
@@ -818,6 +821,7 @@ class AdminBlockchainTransactionsView(AdminRequiredMixin, APIView):
                     "gas_price": doc.get("gas_price", 0),
                     "block_number": doc.get("block_number", 0),
                     "error": doc.get("error", ""),
+                    "details": doc.get("details", {}),
                     "created_at": (
                         created_at.isoformat()
                         if hasattr(created_at, "isoformat")
