@@ -499,14 +499,27 @@ class DocumentListView(AccessControlMixin, APIView):
                         doc for doc in documents if doc.status == status_filter
                     ]
 
-            # Filter by search term (filename or document type)
+            # Filter by search term (filename, document type, or customer name)
             if search:
                 search_regex = re.compile(re.escape(search), re.IGNORECASE)
+                customer_ids = []
+                first = search.strip().split()[0]
+                name_regex = re.compile(f".*{re.escape(first)}.*", re.IGNORECASE)
+                matched_customers = Customer.find(
+                    {
+                        "$or": [
+                            {"first_name": name_regex},
+                            {"last_name": name_regex},
+                        ]
+                    }
+                )
+                customer_ids = [c.id for c in matched_customers if c]
                 documents = [
                     doc
                     for doc in documents
                     if search_regex.search(doc.original_filename or "")
                     or search_regex.search(doc.document_type or "")
+                    or doc.customer_id in customer_ids
                 ]
 
             # Get total before pagination

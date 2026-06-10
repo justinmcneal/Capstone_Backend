@@ -20,6 +20,9 @@ import logging
 logger = logging.getLogger("analytics")
 
 
+from accounts.models import Customer
+
+
 class LoanOfficerRequiredMixin(AccessControlMixin):
     """Mixin to require loan officer role"""
 
@@ -224,16 +227,51 @@ class OfficerAuditLogsView(LoanOfficerRequiredMixin, APIView):
 
         if search:
             regex = {"$regex": re.escape(search), "$options": "i"}
-            and_filters.append(
-                {
-                    "$or": [
-                        {"description": regex},
-                        {"action": regex},
-                        {"resource_id": regex},
-                        {"resource_type": regex},
-                    ]
-                }
-            )
+            search_conditions = [
+                {"description": regex},
+                {"action": regex},
+                {"resource_id": regex},
+                {"resource_type": regex},
+            ]
+
+            customer_ids = []
+            search_terms = search.strip().split()
+            if len(search_terms) == 1:
+                name_regex = re.compile(
+                    f".*{re.escape(search_terms[0])}.*", re.IGNORECASE
+                )
+                matched_customers = Customer.find(
+                    {
+                        "$or": [
+                            {"first_name": name_regex},
+                            {"last_name": name_regex},
+                        ]
+                    }
+                )
+            else:
+                customer_and_conditions = []
+                for term in search_terms:
+                    term_regex = re.compile(
+                        f".*{re.escape(term)}.*", re.IGNORECASE
+                    )
+                    customer_and_conditions.append(
+                        {
+                            "$or": [
+                                {"first_name": term_regex},
+                                {"last_name": term_regex},
+                            ]
+                        }
+                    )
+                matched_customers = Customer.find(
+                    {"$and": customer_and_conditions}
+                )
+            customer_ids = [c.id for c in matched_customers if c]
+            if customer_ids:
+                search_conditions.append(
+                    {"details.customer_id": {"$in": customer_ids}}
+                )
+
+            and_filters.append({"$or": search_conditions})
 
         query = and_filters[0] if len(and_filters) == 1 else {"$and": and_filters}
 
