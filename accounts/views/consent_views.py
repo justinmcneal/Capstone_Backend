@@ -370,6 +370,37 @@ class ConsentAuditView(AccessControlMixin, APIView):
             )
 
 
+class ConsentHistoryView(APIView):
+    """
+    Get the consent history for the authenticated user from the blockchain transaction logs.
+    """
+    authentication_classes = [CustomJWTAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        try:
+            user = request.user
+            user_id = user.customer_id
+
+            from loans.blockchain.models import BlockchainTransaction
+            
+            # Fetch transactions where loan_id equals user_id and action is consent
+            transactions = BlockchainTransaction.find_by_loan(str(user_id))
+            history = [tx.to_dict() for tx in transactions if tx.action == "consent"]
+
+            return success_response(
+                data={"history": history},
+                message="Consent history retrieved successfully",
+            )
+        except Exception as e:
+            logger.error(f"Error retrieving consent history: {str(e)}")
+            return error_response(
+                message="Failed to retrieve consent history",
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+
+
 class ConsentRequiredMixin:
     """
     Mixin to require AI consent for views that use AI features.

@@ -15,6 +15,7 @@ from accounts.models.tokens import BlacklistedToken, RefreshTokenEntry
 from accounts.models.consent import Consent
 from accounts.models.loan_officer import LoanOfficer
 from accounts.models.admin import Admin, ADMIN_PERMISSIONS
+from accounts.models.activity import ActiveSession, LoginActivity
 
 __all__ = [
     "Customer",
@@ -24,4 +25,6 @@ __all__ = [
     "LoanOfficer",
     "Admin",
     "ADMIN_PERMISSIONS",
+    "ActiveSession",
+    "LoginActivity",
 ]
