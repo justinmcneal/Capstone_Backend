@@ -425,6 +425,38 @@ class EmailSender:
             notification=notification
         )
 
+    def send_wallet_address_required(
+        self,
+        customer_email,
+        customer_name,
+        loan_id,
+        customer_id=None,
+    ):
+        """Send wallet address required notification"""
+        notification = create_and_broadcast_notification(
+            user_id=str(customer_id) if customer_id else None,
+            user_type='customer',
+            notification_type='wallet_address_required',
+            subject='Action Required: Wallet Address Missing',
+            message="Your loan disbursement cannot proceed until you add an Ethereum wallet address to your profile. Please add it now.",
+            recipient_email=customer_email,
+            recipient_name=customer_name,
+            related_type='loan',
+            related_id=loan_id,
+            channel='in_app'
+        )
+        
+        return self.send(
+            to_email=customer_email,
+            subject='Action Required: Wallet Address Missing',
+            template_name='wallet_address_required',
+            context={
+                'name': customer_name,
+                'loan_id': loan_id,
+            },
+            notification=notification
+        )
+
 
 # Singleton
 _sender = None
