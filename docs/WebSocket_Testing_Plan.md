@@ -230,7 +230,7 @@ Status: OPEN
 
 **Actual Result:** _(fill during testing)_  
 **Status:** `PASS` / `FAIL` / `BLOCKED`  
-**Notes:** ___
+**Notes:** PASS
 
 ---
 
@@ -256,7 +256,7 @@ Status: OPEN
 
 **Actual Result:** _(fill during testing)_  
 **Status:** `PASS` / `FAIL` / `BLOCKED`  
-**Notes:** ___
+**Notes:** PASS
 
 ---
 
@@ -283,7 +283,7 @@ Reason: Authentication failed / Invalid token
 
 **Actual Result:** _(fill during testing)_  
 **Status:** `PASS` / `FAIL` / `BLOCKED`  
-**Notes:** ___
+**Notes:** PASS
 
 ---
 
@@ -308,7 +308,7 @@ Reason: Authentication failed / Invalid token
 
 **Actual Result:** _(fill during testing)_  
 **Status:** `PASS` / `FAIL` / `BLOCKED`  
-**Notes:** ___
+**Notes:** PASS
 
 ---
 
@@ -332,7 +332,7 @@ Reason: Authentication failed / Invalid token
 
 **Actual Result:** _(fill during testing)_  
 **Status:** `PASS` / `FAIL` / `BLOCKED`  
-**Notes:** ___
+**Notes:** PASS
 
 ---
 
@@ -382,7 +382,7 @@ Reason: Authentication failed / Invalid token
 
 **Actual Result:** _(fill during testing)_  
 **Status:** `PASS` / `FAIL` / `BLOCKED`  
-**Notes:** ___
+**Notes:** PASS
 
 ---
 
