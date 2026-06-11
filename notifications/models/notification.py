@@ -23,6 +23,7 @@ NOTIFICATION_TYPES = [
     'new_application',  # For loan officers
     'welcome',
     'password_reset',
+    'wallet_address_required',
 ]
 
 

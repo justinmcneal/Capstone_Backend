@@ -526,14 +526,32 @@ class LoanApplyView(CustomerRoleRequiredMixin, APIView):
                     f"Blockchain sync skipped for application {application.id}: {e}"
                 )
 
+            # Check for wallet preference without wallet address (soft warning, not a block)
+            wallet_warning = None
+            preferred_method = data.get("preferred_disbursement_method")
+            if preferred_method == "wallet":
+                from profiles.models import CustomerProfile
+
+                customer_profile = CustomerProfile.find_by_customer(customer_id)
+                if not customer_profile or not customer_profile.wallet_address:
+                    wallet_warning = (
+                        "You selected Wallet (ETH) as your preferred disbursement method "
+                        "but have not configured a wallet address. Please add your wallet "
+                        "address in Profile settings before your loan is disbursed."
+                    )
+
+            response_data = {
+                "application_id": application.id,
+                "status": application.status,
+                "eligibility_score": application.eligibility_score,
+                "recommended_amount": application.recommended_amount,
+                "message": "Your application has been submitted for review",
+            }
+            if wallet_warning:
+                response_data["warning"] = wallet_warning
+
             return success_response(
-                data={
-                    "application_id": application.id,
-                    "status": application.status,
-                    "eligibility_score": application.eligibility_score,
-                    "recommended_amount": application.recommended_amount,
-                    "message": "Your application has been submitted for review",
-                },
+                data=response_data,
                 message="Application submitted successfully",
                 status_code=status.HTTP_201_CREATED,
             )
@@ -1373,6 +1391,25 @@ class SetDisbursementMethodView(CustomerRoleRequiredMixin, APIView):
                 message="disbursement_method is required",
                 status_code=status.HTTP_400_BAD_REQUEST,
             )
+
+        # Wallet (ETH) requires the customer to have a wallet address configured
+        if disbursement_method == "wallet":
+            from profiles.models import CustomerProfile
+
+            customer_profile = CustomerProfile.find_by_customer(customer_id)
+            if not customer_profile or not customer_profile.wallet_address:
+                return error_response(
+                    message=(
+                        "Cannot select Wallet (ETH) as disbursement method without a "
+                        "wallet address. Please add your Ethereum wallet address in "
+                        "your profile settings first."
+                    ),
+                    errors={
+                        "wallet_address": "No Ethereum wallet address configured.",
+                        "disbursement_method": "wallet",
+                    },
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                )
 
         try:
             app.set_preferred_disbursement_method(disbursement_method)

@@ -1,0 +1,17 @@
+Hello {{ name }},
+
+Your loan disbursement cannot proceed because you have not configured an Ethereum wallet address on your profile.
+
+Loan Application ID: {{ loan_id }}
+
+Please update your personal profile with a valid wallet address as soon as possible.
+
+What to do next:
+1. Open the MSME Pathways App
+2. Go to Profile > Personal Information
+3. Enter your Wallet Address (e.g. 0x...)
+4. Save your profile
+
+Once you add your wallet address, our team will proceed with the disbursement of your loan.
+
+This is an automated message. Please do not reply directly to this email.

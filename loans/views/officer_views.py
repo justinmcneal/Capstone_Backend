@@ -659,12 +659,27 @@ class OfficerApplicationDetailView(LoanOfficerRequiredMixin, APIView):
             except Exception:
                 pass
 
-        # Build customer name
         customer_name = (
             f"{customer.first_name} {customer.last_name}".strip()
             if customer
             else "Unknown"
         )
+
+        # Get last wallet request time
+        from notifications.models.notification import Notification, get_db
+        db = get_db()
+        latest_req = db[Notification.collection_name].find_one(
+            {
+                "notification_type": "wallet_address_required",
+                "related_id": str(app.id)
+            },
+            sort=[("created_at", -1)]
+        )
+        if latest_req and "created_at" in latest_req:
+            app.last_wallet_request_at = latest_req["created_at"]
+            if app.last_wallet_request_at.tzinfo is None:
+                from datetime import timezone
+                app.last_wallet_request_at = app.last_wallet_request_at.replace(tzinfo=timezone.utc)
 
         return success_response(
             data={
@@ -723,6 +738,11 @@ class OfficerApplicationDetailView(LoanOfficerRequiredMixin, APIView):
                 "missing_documents_requested_at": (
                     app.missing_documents_requested_at.isoformat()
                     if app.missing_documents_requested_at
+                    else None
+                ),
+                "last_wallet_request_at": (
+                    app.last_wallet_request_at.isoformat()
+                    if hasattr(app, 'last_wallet_request_at') and app.last_wallet_request_at
                     else None
                 ),
                 # New: Complete customer data
@@ -1190,6 +1210,27 @@ class DisburseView(LoanOfficerRequiredMixin, APIView):
                 message="Invalid disbursement method",
                 status_code=status.HTTP_400_BAD_REQUEST,
             )
+
+        # Wallet (ETH) disbursement requires the customer to have a wallet address
+        if method == "wallet":
+            from profiles.models import CustomerProfile
+
+            customer_profile = CustomerProfile.find_by_customer(app.customer_id)
+            if not customer_profile or not customer_profile.wallet_address:
+                return error_response(
+                    message=(
+                        "Wallet (ETH) was selected as the preferred disbursement method, "
+                        "but no wallet address is configured for this customer. "
+                        "Please ask the customer to add a valid wallet address to their "
+                        "profile before proceeding with disbursement."
+                    ),
+                    errors={
+                        "wallet_address": "Customer has no Ethereum wallet address configured.",
+                        "disbursement_method": "wallet",
+                    },
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                )
+
         if not reference and external_reference:
             reference = external_reference
 
@@ -2743,3 +2784,83 @@ class ExchangeRateView(LoanOfficerRequiredMixin, APIView):
             },
             message="Exchange rate retrieved",
         )
+
+
+class OfficerRequestWalletAddressView(LoanOfficerRequiredMixin, APIView):
+    """
+    Loan Officer: Request the customer to add a wallet address via push notification.
+
+    POST /api/loans/officer/applications/<id>/request-wallet-address/
+    """
+
+    authentication_classes = [CustomJWTAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, application_id):
+        from bson import ObjectId
+        has_permission, result = self.check_officer_permission(request)
+        if not has_permission:
+            return result
+
+        if not ObjectId.is_valid(application_id):
+            return error_response(message="Invalid application ID", status_code=status.HTTP_400_BAD_REQUEST)
+
+        app = LoanApplication.find_by_id(application_id)
+        if not app:
+            return error_response(message="Application not found", status_code=status.HTTP_404_NOT_FOUND)
+
+        from profiles.models import CustomerProfile
+        personal = CustomerProfile.get_or_create(app.customer_id)
+        if personal and personal.wallet_address:
+            return error_response(message="Customer already has a wallet address.", status_code=status.HTTP_400_BAD_REQUEST)
+
+        from notifications.models.notification import Notification, get_db
+        from datetime import datetime, timezone, timedelta
+        
+        # Check cooldown
+        db = get_db()
+        latest_req = db[Notification.collection_name].find_one(
+            {
+                "notification_type": "wallet_address_required",
+                "related_id": str(app.id)
+            },
+            sort=[("created_at", -1)]
+        )
+        
+        if latest_req:
+            created_at = latest_req.get("created_at")
+            if created_at and created_at.tzinfo is None:
+                created_at = created_at.replace(tzinfo=timezone.utc)
+                
+            if created_at and (datetime.now(timezone.utc) - created_at) < timedelta(hours=24):
+                return error_response(message="A request was already sent within the last 24 hours.", status_code=status.HTTP_429_TOO_MANY_REQUESTS)
+
+        # Send notification
+        from accounts.models import Customer
+        from notifications.services.email_sender import get_email_sender
+
+        customer = Customer.find_one({"_id": ObjectId(app.customer_id)})
+        customer_name = f"{customer.first_name} {customer.last_name}" if customer else "Customer"
+        customer_email = customer.email if customer else ""
+
+        if customer_email:
+            get_email_sender().send_wallet_address_required(
+                customer_email=customer_email,
+                customer_name=customer_name,
+                loan_id=str(app.id),
+                customer_id=app.customer_id
+            )
+        else:
+            # Fallback if no email exists
+            from notifications.services.notification_creator import create_and_broadcast_notification
+            create_and_broadcast_notification(
+                user_id=app.customer_id,
+                user_type='customer',
+                notification_type='wallet_address_required',
+                subject="Action Required: Wallet Address Missing",
+                message="Your loan disbursement cannot proceed until you add an Ethereum wallet address to your profile. Please add it now.",
+                related_type='loan',
+                related_id=str(app.id)
+            )
+
+        return success_response(message="Wallet address request sent successfully.")
