@@ -462,8 +462,6 @@ def _sync_disbursement_impl(loan_id, include_schedule=True):
         if method_str == "wallet":
             _execute_eth_disbursement(loan_id, app)
 
-        set_method_onchain(loan_id=loan_id, method=method_str)
-
         amount = int(
             app.disbursed_amount or app.approved_amount or app.requested_amount
         )
@@ -472,6 +470,7 @@ def _sync_disbursement_impl(loan_id, include_schedule=True):
         result = complete_disbursement_onchain(
             loan_id=loan_id,
             amount=amount,
+            method=method_str,
             reference_hash=ref_str,
         )
 
@@ -579,11 +578,7 @@ def _sync_schedule_impl(loan_id):
         schedule = RepaymentSchedule.from_dict(schedule_doc)
         interest_bps = _monthly_rate_to_annual_bps(schedule.interest_rate)
 
-        borrower_addr = settings.BLOCKCHAIN_CONTRACT_ADDRESSES.get("accessControl", "")
-        if not borrower_addr:
-            from loans.blockchain.client import get_account
-
-            borrower_addr = get_account().address
+        # borrower_addr no longer needed for new contract
 
         start_timestamp = (
             int(schedule.start_date.timestamp())
@@ -593,7 +588,6 @@ def _sync_schedule_impl(loan_id):
 
         result = create_schedule_onchain(
             loan_id=loan_id,
-            borrower_address=borrower_addr,
             principal=int(schedule.principal),
             interest_rate_bps=interest_bps,
             term_months=int(schedule.term_months),
@@ -644,7 +638,6 @@ def _sync_payment_impl(loan_id, payment_id):
 
         result = record_payment_onchain(
             loan_id=loan_id,
-            installment_number=int(payment.installment_number),
             amount=int(payment.amount),
             payment_method=payment.payment_method or "other",
             reference_hash=ref_str,

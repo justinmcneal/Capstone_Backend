@@ -230,7 +230,6 @@ def sync_disbursement_to_chain(self, loan_id):
         method_str = (
             app.disbursement_method or app.preferred_disbursement_method or "other"
         )
-        set_method_onchain(loan_id=loan_id, method=method_str)
 
         # Step 2: Initiate + complete disbursement
         amount = int(
@@ -241,6 +240,7 @@ def sync_disbursement_to_chain(self, loan_id):
         result = complete_disbursement_onchain(
             loan_id=loan_id,
             amount=amount,
+            method=method_str,
             reference_hash=ref_str,
         )
 
@@ -316,12 +316,8 @@ def sync_schedule_to_chain(self, loan_id):
         # Convert monthly rate to annual BPS for the smart contract
         interest_bps = _monthly_rate_to_annual_bps(schedule.interest_rate)
 
-        # Borrower address — use the deployer/admin as proxy since we don't have real wallet addresses
-        borrower_addr = settings.BLOCKCHAIN_CONTRACT_ADDRESSES.get("accessControl", "")
-        if not borrower_addr:
-            from loans.blockchain.client import get_account
+        # borrower_addr no longer needed for new contract
 
-            borrower_addr = get_account().address
 
         start_timestamp = (
             int(schedule.start_date.timestamp())
@@ -331,7 +327,6 @@ def sync_schedule_to_chain(self, loan_id):
 
         result = create_schedule_onchain(
             loan_id=loan_id,
-            borrower_address=borrower_addr,
             principal=int(schedule.principal),
             interest_rate_bps=interest_bps,
             term_months=int(schedule.term_months),
@@ -410,7 +405,6 @@ def sync_payment_to_chain(self, loan_id, payment_id):
 
         result = record_payment_onchain(
             loan_id=loan_id,
-            installment_number=int(payment.installment_number),
             amount=int(payment.amount),
             payment_method=payment.payment_method or "other",
             reference_hash=ref_str,

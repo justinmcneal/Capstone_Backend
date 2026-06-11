@@ -63,4 +63,5 @@ def get_assigned_officer_onchain(loan_id):
     """
     contract = get_contract("loanReview")
     loan_id_bytes = _to_bytes32(loan_id)
-    return call_view(contract, "getAssignedOfficer", loan_id_bytes)
+    loan = call_view(contract, "getLoan", loan_id_bytes)
+    return loan[12] if loan else None

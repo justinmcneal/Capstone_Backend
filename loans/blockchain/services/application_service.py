@@ -43,7 +43,7 @@ def create_application_onchain(
 
     result = send_transaction(
         contract,
-        "createApplication",
+        "createLoan",
         loan_id_bytes,
         product_id_bytes,
         int(amount),
@@ -52,7 +52,7 @@ def create_application_onchain(
     )
 
     logger.info(
-        "createApplication on-chain: loan=%s tx=%s", loan_id, result["tx_hash"][:18]
+        "createLoan on-chain: loan=%s tx=%s", loan_id, result["tx_hash"][:18]
     )
     return result
 
@@ -78,7 +78,7 @@ def submit_application_onchain(
 
     result = send_transaction(
         contract,
-        "submitApplication",
+        "submitLoan",
         loan_id_bytes,
         int(eligibility_score),
         int(risk_category),
@@ -86,7 +86,7 @@ def submit_application_onchain(
     )
 
     logger.info(
-        "submitApplication on-chain: loan=%s tx=%s", loan_id, result["tx_hash"][:18]
+        "submitLoan on-chain: loan=%s tx=%s", loan_id, result["tx_hash"][:18]
     )
     return result
 
@@ -103,4 +103,4 @@ def get_application_onchain(loan_id):
     """
     contract = get_contract("loanApplication")
     loan_id_bytes = _to_bytes32(loan_id)
-    return call_view(contract, "getApplication", loan_id_bytes)
+    return call_view(contract, "getLoan", loan_id_bytes)

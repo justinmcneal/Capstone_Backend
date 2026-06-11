@@ -32,7 +32,6 @@ def _to_bytes32(value):
 
 def create_schedule_onchain(
     loan_id,
-    borrower_address,
     principal,
     interest_rate_bps,
     term_months,
@@ -43,7 +42,6 @@ def create_schedule_onchain(
 
     Args:
         loan_id: Loan identifier (string, hashed to bytes32)
-        borrower_address: Borrower's Ethereum address
         principal: Loan principal in smallest unit (int)
         interest_rate_bps: Interest rate in basis points (int, e.g. 1200 = 12%)
         term_months: Number of monthly installments (int)
@@ -54,16 +52,10 @@ def create_schedule_onchain(
     """
     contract = get_contract("repaymentSchedule")
     loan_id_bytes = _to_bytes32(loan_id)
-    borrower_addr = Web3.to_checksum_address(borrower_address)
-
-    if start_date is None:
-        start_date = int(time.time())
-
     result = send_transaction(
         contract,
         "createSchedule",
         loan_id_bytes,
-        borrower_addr,
         int(principal),
         int(interest_rate_bps),
         int(term_months),
@@ -80,14 +72,13 @@ def create_schedule_onchain(
 
 
 def record_payment_onchain(
-    loan_id, installment_number, amount, payment_method, reference_hash
+    loan_id, amount, payment_method, reference_hash
 ):
     """
     Record a payment on-chain.
 
     Args:
         loan_id: Loan identifier (string, hashed to bytes32)
-        installment_number: 1-based installment number (int)
         amount: Payment amount in smallest unit (int)
         payment_method: Payment method string ('cash', 'gcash', 'bank_transfer', 'check', 'wallet')
         reference_hash: Unique payment reference (string, hashed to bytes32)
@@ -104,16 +95,14 @@ def record_payment_onchain(
         contract,
         "recordPayment",
         loan_id_bytes,
-        int(installment_number),
         int(amount),
         method_enum,
         ref_bytes,
     )
 
     logger.info(
-        "recordPayment on-chain: loan=%s installment=%d amount=%d tx=%s",
+        "recordPayment on-chain: loan=%s amount=%d tx=%s",
         loan_id,
-        installment_number,
         amount,
         result["tx_hash"][:18],
     )

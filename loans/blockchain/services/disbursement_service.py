@@ -30,76 +30,45 @@ def _to_bytes32(value):
 
 
 def set_method_onchain(loan_id, method, details_hash=""):
-    """
-    Set the preferred disbursement method on-chain.
-
-    Args:
-        loan_id: Loan identifier (string, hashed to bytes32)
-        method: Disbursement method string ('cash', 'gcash', 'bank_transfer', 'check', 'wallet')
-        details_hash: Hash of account details (string, hashed to bytes32)
-
-    Returns:
-        dict with tx_hash, gas_used, block_number, status
-    """
-    contract = get_contract("disbursementMethod")
-    app_contract = get_contract("loanApplication")
-    loan_id_bytes = _to_bytes32(loan_id)
-    method_enum = DISBURSEMENT_METHOD_MAP.get(method, 4)  # Default to Other
-
-    # Fail fast with a clear message instead of opaque VM revert from modifier checks.
-    if not call_view(app_contract, "exists", loan_id_bytes):
-        raise ValueError(
-            f"Loan {loan_id} not found on-chain (LoanApplication.exists=false). "
-            "Run application/approval sync before disbursement."
-        )
-
-    result = send_transaction(
-        contract,
-        "setPreferredMethod",
-        loan_id_bytes,
-        method_enum,
-    )
-
-    logger.info(
-        "setPreferredMethod on-chain: loan=%s method=%s tx=%s",
-        loan_id,
-        method,
-        result["tx_hash"][:18],
-    )
-    return result
+    # No-op since method is now passed directly to initiateDisbursement
+    return {"tx_hash": "0x", "gas_used": 0, "block_number": 0, "status": 1}
 
 
-def initiate_disbursement_onchain(loan_id, amount):
+def initiate_disbursement_onchain(loan_id, amount, method="wallet"):
     """
     Initiate disbursement on-chain (creates a disbursement record).
 
     Args:
         loan_id: Loan identifier (string, hashed to bytes32)
         amount: Disbursement amount in smallest unit (int)
+        method: Disbursement method string
 
     Returns:
         dict with tx_hash, gas_used, block_number, status
     """
     contract = get_contract("disbursementExecution")
     loan_id_bytes = _to_bytes32(loan_id)
+    method_enum = DISBURSEMENT_METHOD_MAP.get(method, 4)
 
     result = send_transaction(
         contract,
         "initiateDisbursement",
         loan_id_bytes,
         int(amount),
+        method_enum,
     )
 
     logger.info(
-        "initiateDisbursement on-chain: loan=%s amount=%d tx=%s",
+        "initiateDisbursement on-chain: loan=%s amount=%d method=%s tx=%s",
         loan_id,
         amount,
+        method,
         result["tx_hash"][:18],
     )
     return result
 
 
-def complete_disbursement_onchain(loan_id, amount, reference_hash):
+def complete_disbursement_onchain(loan_id, amount, method, reference_hash):
     """
     Complete disbursement on-chain (transitions to Disbursed status).
 
@@ -109,6 +78,7 @@ def complete_disbursement_onchain(loan_id, amount, reference_hash):
     Args:
         loan_id: Loan identifier (string, hashed to bytes32)
         amount: Disbursement amount in smallest unit (int)
+        method: Disbursement method string
         reference_hash: Hash of the bank/payment reference (string, hashed to bytes32)
 
     Returns:
@@ -117,15 +87,9 @@ def complete_disbursement_onchain(loan_id, amount, reference_hash):
             complete_tx: tx result from completeDisbursement
     """
     contract_exec = get_contract("disbursementExecution")
-    app_contract = get_contract("loanApplication")
     loan_id_bytes = _to_bytes32(loan_id)
     ref_bytes = _to_bytes32(reference_hash)
-
-    if not call_view(app_contract, "exists", loan_id_bytes):
-        raise ValueError(
-            f"Loan {loan_id} not found on-chain (LoanApplication.exists=false). "
-            "Run application/approval sync before disbursement."
-        )
+    method_enum = DISBURSEMENT_METHOD_MAP.get(method, 4)
 
     # Step 1: Initiate
     initiate_result = send_transaction(
@@ -133,6 +97,7 @@ def complete_disbursement_onchain(loan_id, amount, reference_hash):
         "initiateDisbursement",
         loan_id_bytes,
         int(amount),
+        method_enum,
     )
 
     # Step 2: Get the disbursementId via getDisbursementByLoan

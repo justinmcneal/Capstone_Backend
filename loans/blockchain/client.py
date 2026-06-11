@@ -28,13 +28,13 @@ CONTRACT_NAME_MAP = {
     "auditRegistry": "AuditRegistry",
     "accessControl": "LoanAccessControl",
     "loanCore": "LoanCore",
-    "loanApplication": "LoanApplication",
-    "loanReview": "LoanReview",
-    "loanApproval": "LoanApproval",
-    "disbursementMethod": "DisbursementMethod",
-    "disbursementExecution": "DisbursementExecution",
-    "repaymentSchedule": "RepaymentSchedule",
-    "paymentRecording": "PaymentRecording",
+    "loanApplication": "LoanCore",
+    "loanReview": "LoanCore",
+    "loanApproval": "LoanCore",
+    "disbursementMethod": "Disbursement",
+    "disbursementExecution": "Disbursement",
+    "repaymentSchedule": "Repayment",
+    "paymentRecording": "Repayment",
 }
 
 
