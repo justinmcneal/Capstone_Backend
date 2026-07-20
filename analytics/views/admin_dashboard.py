@@ -38,12 +38,22 @@ class AdminDashboardView(AdminRequiredMixin, APIView):
 
         db = settings.MONGODB
 
+        now = datetime.now(timezone.utc)
+        week_ago = now - timedelta(days=7)
+        month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+
         # User counts - use correct collection names from models
         total_customers = db["customer"].count_documents(
             {}
         )  # Customer model uses 'customer'
         total_officers = db["loan_officers"].count_documents({})
         total_admins = db["admins"].count_documents({})
+        new_customers_this_week = db["customer"].count_documents(
+            {"created_at": {"$gte": week_ago}}
+        )
+        new_officers_this_month = db["loan_officers"].count_documents(
+            {"created_at": {"$gte": month_start}}
+        )
 
         # Loan stats - include ALL statuses for complete visibility
         loan_stats = {
@@ -71,7 +81,6 @@ class AdminDashboardView(AdminRequiredMixin, APIView):
         }
 
         # AI usage (last 7 days)
-        week_ago = datetime.now(timezone.utc) - timedelta(days=7)
         ai_sessions = db["ai_interactions"].count_documents(
             {"created_at": {"$gte": week_ago}}
         )
@@ -120,6 +129,8 @@ class AdminDashboardView(AdminRequiredMixin, APIView):
                     "loan_officers": total_officers,
                     "admins": total_admins,
                     "total": total_customers + total_officers + total_admins,
+                    "new_customers_this_week": new_customers_this_week,
+                    "new_loan_officers_this_month": new_officers_this_month,
                 },
                 "loans": loan_stats,
                 "documents": doc_stats,
