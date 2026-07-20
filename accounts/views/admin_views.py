@@ -196,11 +196,12 @@ class AdminLoginView(APIView):
                     status_code=status.HTTP_401_UNAUTHORIZED,
                 )
 
-            # Check lockout
-            if admin.locked_until and admin.locked_until > datetime.now(timezone.utc):
-                remaining = (
-                    admin.locked_until - datetime.now(timezone.utc)
-                ).seconds // 60
+            # PyMongo returns stored UTC datetimes without tzinfo by default.
+            # Normalize before comparing them with an aware UTC datetime.
+            locked_until = EmailUtils.to_aware_utc(admin.locked_until)
+            now = datetime.now(timezone.utc)
+            if locked_until and locked_until > now:
+                remaining = int((locked_until - now).total_seconds()) // 60
                 _log_admin_login_failure(
                     request,
                     username,

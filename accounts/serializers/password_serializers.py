@@ -8,11 +8,17 @@ from .base_serializers import (
 
 class ForgotPasswordSerializer(serializers.Serializer):
     email = serializers.EmailField()
+    role = serializers.ChoiceField(
+        choices=("customer", "loan_officer", "admin"), required=False
+    )
 
 
 class VerifyResetOTPSerializer(OTPValidationMixin, serializers.Serializer):
     email = serializers.EmailField()
     otp = serializers.CharField(max_length=6, min_length=6)
+    role = serializers.ChoiceField(
+        choices=("customer", "loan_officer", "admin"), required=False
+    )
 
 
 class ResetPasswordSerializer(
@@ -23,6 +29,9 @@ class ResetPasswordSerializer(
 ):
     email = serializers.EmailField()
     otp = serializers.CharField(max_length=6, min_length=6)
+    role = serializers.ChoiceField(
+        choices=("customer", "loan_officer", "admin"), required=False
+    )
     new_password = serializers.CharField(write_only=True)
     confirm_password = serializers.CharField(write_only=True)
 

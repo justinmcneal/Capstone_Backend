@@ -16,12 +16,19 @@ class PasswordService:
     RESET_LAST_ATTEMPT_FIELD = "password_reset_last_attempt"
 
     @staticmethod
-    def _find_user_by_email(email):
+    def _find_user_by_email(email, requested_user_type=None):
         """
         Search for a user across all models: Customer, LoanOfficer, and Admin.
         Returns (user, user_type) tuple, or (None, None) if not found.
         """
         email = email.lower().strip()
+
+        if requested_user_type == "customer":
+            return AuthService.get_customer_by_email(email), "customer"
+        if requested_user_type == "loan_officer":
+            return LoanOfficer.find_one({"email": email}), "loan_officer"
+        if requested_user_type == "admin":
+            return Admin.find_one({"email": email}), "admin"
 
         # Check Customer first
         customer = AuthService.get_customer_by_email(email)
@@ -41,8 +48,10 @@ class PasswordService:
         return None, None
 
     @staticmethod
-    def initiate_password_reset(email):
-        user, user_type = PasswordService._find_user_by_email(email)
+    def initiate_password_reset(email, requested_user_type=None):
+        user, user_type = PasswordService._find_user_by_email(
+            email, requested_user_type
+        )
         if not user:
             logger.info(f"Password reset requested for unknown email: {email}")
             return (True, PasswordService.GENERIC_RESET_INIT_MESSAGE)
@@ -106,8 +115,10 @@ class PasswordService:
         )
 
     @staticmethod
-    def verify_reset_otp(email, otp):
-        user, user_type = PasswordService._find_user_by_email(email)
+    def verify_reset_otp(email, otp, requested_user_type=None):
+        user, user_type = PasswordService._find_user_by_email(
+            email, requested_user_type
+        )
         if not user:
             return (False, PasswordService.GENERIC_RESET_VERIFY_ERROR)
 
@@ -135,8 +146,10 @@ class PasswordService:
         return (True, "OTP verified successfully")
 
     @staticmethod
-    def reset_password(email, otp, new_password):
-        user, user_type = PasswordService._find_user_by_email(email)
+    def reset_password(email, otp, new_password, requested_user_type=None):
+        user, user_type = PasswordService._find_user_by_email(
+            email, requested_user_type
+        )
         if not user:
             return (False, PasswordService.GENERIC_RESET_VERIFY_ERROR)
 
@@ -165,12 +178,19 @@ class PasswordService:
             return (False, "New password must be different from the old password")
 
         user.set_password(new_password)
-        OTPService.clear_otp(user, "password_reset_otp", "password_reset_otp_expires")
+
+        # A verified password reset proves control of the account's email and
+        # should allow the user to sign in with the new password immediately.
+        if hasattr(user, "failed_login_attempts"):
+            user.failed_login_attempts = 0
+        if hasattr(user, "locked_until"):
+            user.locked_until = None
 
         # Clear must_change_password flag for loan officers
         if user_type == "loan_officer" and hasattr(user, "must_change_password"):
             user.must_change_password = False
-            user.save()
+
+        OTPService.clear_otp(user, "password_reset_otp", "password_reset_otp_expires")
 
         logger.info(f"Password reset successful for {email} ({user_type})")
         return (True, "Password has been reset successfully")
