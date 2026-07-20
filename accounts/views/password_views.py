@@ -32,7 +32,8 @@ class ForgotPasswordView(APIView):
             return APIResponseHelper.validation_error_response(serializer.errors)
 
         email = serializer.validated_data["email"]
-        success, message = PasswordService.initiate_password_reset(email)
+        role = serializer.validated_data.get("role")
+        success, message = PasswordService.initiate_password_reset(email, role)
         if not success:
             logger.error(f"Password reset initiation failed for {email}: {message}")
             return APIResponseHelper.server_error_response(
@@ -57,7 +58,8 @@ class VerifyResetOTPView(APIView):
 
         email = serializer.validated_data["email"]
         otp = serializer.validated_data["otp"]
-        success, message = PasswordService.verify_reset_otp(email, otp)
+        role = serializer.validated_data.get("role")
+        success, message = PasswordService.verify_reset_otp(email, otp, role)
 
         if success:
             logger.info(
@@ -84,7 +86,10 @@ class ResetPasswordView(APIView):
         email = serializer.validated_data["email"]
         otp = serializer.validated_data["otp"]
         new_password = serializer.validated_data["new_password"]
-        success, message = PasswordService.reset_password(email, otp, new_password)
+        role = serializer.validated_data.get("role")
+        success, message = PasswordService.reset_password(
+            email, otp, new_password, role
+        )
 
         if success:
             logger.info(

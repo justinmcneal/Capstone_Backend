@@ -1,5 +1,6 @@
 from datetime import datetime, timedelta, timezone
 from accounts.models import Customer
+from accounts.utils.email_utils import EmailUtils
 import logging
 
 logger = logging.getLogger("authentication")
@@ -29,9 +30,10 @@ class LockoutService:
         if not customer.locked_until:
             return (False, 0)
 
+        locked_until = EmailUtils.to_aware_utc(customer.locked_until)
         now = datetime.now(timezone.utc)
-        if customer.locked_until > now:
-            seconds_remaining = int((customer.locked_until - now).total_seconds())
+        if locked_until > now:
+            seconds_remaining = int((locked_until - now).total_seconds())
             return (True, seconds_remaining)
 
         # Lock has expired, reset the lockout
