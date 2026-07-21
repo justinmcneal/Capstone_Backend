@@ -2204,6 +2204,97 @@ class OfficerPaymentHistoryView(LoanOfficerRequiredMixin, APIView):
         )
 
 
+class RecentPaymentsView(LoanOfficerRequiredMixin, APIView):
+    """
+    Loan Officer: Get the latest payments across accessible loans.
+
+    GET /api/loans/officer/payments/recent/?limit=5
+    """
+
+    authentication_classes = [CustomJWTAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        has_permission, result = self.check_officer_permission(request)
+        if not has_permission:
+            return result
+
+        try:
+            limit = int(request.query_params.get("limit", 5))
+        except (TypeError, ValueError):
+            return error_response(
+                message="Invalid limit parameter",
+                errors={"limit": "limit must be an integer"},
+                status_code=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if not 1 <= limit <= 50:
+            return error_response(
+                message="Invalid limit parameter",
+                errors={"limit": "limit must be between 1 and 50"},
+                status_code=status.HTTP_400_BAD_REQUEST,
+            )
+
+        user = request.user
+        query = {}
+        if getattr(user, "role", "") == "loan_officer":
+            officer_id = self._actor_id(user)
+            assigned_loan_ids = [
+                str(application["_id"])
+                for application in settings.MONGODB["loan_applications"].find(
+                    {"assigned_officer": officer_id}, {"_id": 1}
+                )
+            ]
+            if not assigned_loan_ids:
+                return success_response(
+                    data={"payments": []},
+                    message="Recent payments retrieved",
+                )
+            query["loan_id"] = {"$in": assigned_loan_ids}
+
+        from accounts.models import Customer
+        from loans.models import LoanPayment
+
+        payment_documents = (
+            settings.MONGODB["loan_payments"]
+            .find(query)
+            .sort("recorded_at", -1)
+            .limit(limit)
+        )
+        customer_cache = {}
+        payments_data = []
+
+        for document in payment_documents:
+            payment = LoanPayment.from_dict(document)
+            if not payment:
+                continue
+
+            customer_id = payment.customer_id
+            if customer_id not in customer_cache:
+                customer = None
+                if customer_id and ObjectId.is_valid(customer_id):
+                    customer = Customer.find_one({"_id": ObjectId(customer_id)})
+                customer_cache[customer_id] = customer
+
+            customer = customer_cache[customer_id]
+            payments_data.append(
+                {
+                    "id": payment.id,
+                    "customer_name": customer.full_name if customer else "Unknown",
+                    "reference": payment.reference,
+                    "amount": payment.amount,
+                    "recorded_at": (
+                        payment.recorded_at.isoformat() if payment.recorded_at else None
+                    ),
+                }
+            )
+
+        return success_response(
+            data={"payments": payments_data},
+            message="Recent payments retrieved",
+        )
+
+
 class PaymentSearchView(LoanOfficerRequiredMixin, APIView):
     """
     Loan Officer: Search and filter all payments with advanced options.
