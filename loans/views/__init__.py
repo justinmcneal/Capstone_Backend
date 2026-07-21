@@ -33,6 +33,7 @@ from .officer_views import (
     ActiveLoansView,
     OfficerScheduleView,
     OfficerPaymentHistoryView,
+    RecentPaymentsView,
     ApplyPenaltyView,
     WaivePenaltyView,
     PaymentSearchView,
