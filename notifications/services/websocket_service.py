@@ -2,17 +2,25 @@ import logging
 from channels.layers import get_channel_layer
 from asgiref.sync import async_to_sync
 from django.conf import settings
+from notifications.ownership import notification_group_name
 
 logger = logging.getLogger("notifications")
 
 
-def broadcast_notification_to_user(user_id, notification_data):
+def broadcast_notification_to_user(user_id, user_type, notification_data):
     if not settings.WEBSOCKET_ENABLED:
         return
 
     try:
         channel_layer = get_channel_layer()
-        user_group = f"notifications_{user_id}"
+        user_group = notification_group_name(user_id, user_type)
+        if not user_group:
+            logger.error(
+                "Cannot broadcast notification without a valid owner: %s/%s",
+                user_type,
+                user_id,
+            )
+            return
 
         async_to_sync(channel_layer.group_send)(
             user_group,

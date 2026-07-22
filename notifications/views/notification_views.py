@@ -22,42 +22,11 @@ from accounts.utils.validation_utils import sanitize_text, parse_optional_bool
 from config.views import success_response, error_response
 from notifications.models.notification import Notification, get_db
 from notifications.models.device_token import DeviceToken
+from notifications.ownership import (
+    build_notification_owner_query as _build_notification_owner_query,
+)
 
 logger = logging.getLogger('notifications')
-
-
-def _build_notification_owner_query(user):
-    """
-    Build a role-safe ownership query for notifications.
-
-    Legacy records may miss user_id but still include recipient_email/user_type.
-    """
-    user_id = str(getattr(user, 'customer_id', '') or '').strip()
-    user_email = str(getattr(user, 'email', '') or '').strip().lower()
-    user_role = str(getattr(user, 'role', 'customer') or 'customer').strip()
-
-    # Customers must be isolated strictly by immutable user_id.
-    # Using recipient_email allows recreated accounts (same email, new user_id)
-    # to see historical notifications that belong to a deleted account.
-    if user_role == 'customer':
-        if user_id:
-            return {'user_id': user_id}
-        return {'_id': None}
-
-    owner_conditions = []
-    if user_id:
-        owner_conditions.append({'user_id': user_id})
-    if user_email:
-        owner_conditions.append({
-            'recipient_email': user_email,
-            'user_type': user_role,
-        })
-
-    if not owner_conditions:
-        return {'_id': None}
-    if len(owner_conditions) == 1:
-        return owner_conditions[0]
-    return {'$or': owner_conditions}
 
 
 def _serialize_related_id(value):

@@ -25,6 +25,11 @@ been saved successfully.
 Automatic assignment has no admin recipient. The assigned officer receives an
 "assigned automatically" message.
 
+Superadmins receive a personal assignment notification only when that
+Superadmin is the authenticated `assigned_by` actor. Assignment events are not
+copied to other Superadmins; system-wide oversight belongs in the audit log,
+not the personal notification inbox.
+
 Notification types:
 
 - `application_assigned`

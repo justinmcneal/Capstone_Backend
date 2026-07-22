@@ -46,7 +46,7 @@ def create_and_broadcast_notification(
     logger.info(f"Created notification {notification.id} for user {user_id}")
 
     notification_data = serialize_notification_for_ws(notification)
-    broadcast_notification_to_user(user_id, notification_data)
+    broadcast_notification_to_user(user_id, user_type, notification_data)
 
     # 3. Send Push Notification via Firebase Cloud Messaging (FCM)
     _send_push_notification(user_id, subject, message, notification_data)
