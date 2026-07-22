@@ -5,6 +5,12 @@ from channels.db import database_sync_to_async
 from django.contrib.auth.models import AnonymousUser
 from datetime import datetime, timezone
 
+from notifications.ownership import (
+    build_notification_owner_query_from_values,
+    notification_group_name,
+    notification_owner_identity,
+)
+
 logger = logging.getLogger("notifications")
 
 
@@ -16,12 +22,11 @@ class NotificationConsumer(AsyncWebsocketConsumer):
             await self.close(code=4001)
             return
 
-        self.user_id = str(getattr(user, "customer_id", "") or getattr(user, "officer_id", ""))
-        if not self.user_id:
+        self.user_id, self.user_type = notification_owner_identity(user)
+        self.user_group = notification_group_name(self.user_id, self.user_type)
+        if not self.user_group:
             await self.close(code=4001)
             return
-
-        self.user_group = f"notifications_{self.user_id}"
 
         await self.channel_layer.group_add(
             self.user_group,
@@ -29,7 +34,11 @@ class NotificationConsumer(AsyncWebsocketConsumer):
         )
 
         await self.accept()
-        logger.info(f"WebSocket connected: user={self.user_id}")
+        logger.info(
+            "WebSocket connected: user_type=%s user=%s",
+            self.user_type,
+            self.user_id,
+        )
 
         unread_count = await self.get_unread_count(user)
         await self.send(text_data=json.dumps({
@@ -43,7 +52,12 @@ class NotificationConsumer(AsyncWebsocketConsumer):
                 self.user_group,
                 self.channel_name
             )
-            logger.info(f"WebSocket disconnected: user={self.user_id}, code={close_code}")
+            logger.info(
+                "WebSocket disconnected: user_type=%s user=%s code=%s",
+                self.user_type,
+                self.user_id,
+                close_code,
+            )
 
     async def receive(self, text_data):
         try:
@@ -95,8 +109,11 @@ class NotificationConsumer(AsyncWebsocketConsumer):
         try:
             db = get_db()
             collection = db[Notification.collection_name]
+            owner_query = build_notification_owner_query_from_values(
+                self.user_id, self.user_type
+            )
             result = collection.update_one(
-                {"_id": ObjectId(notification_id), "user_id": self.user_id},
+                {"_id": ObjectId(notification_id), **owner_query},
                 {"$set": {"status": "read", "read_at": datetime.now(timezone.utc)}}
             )
             return result.modified_count > 0

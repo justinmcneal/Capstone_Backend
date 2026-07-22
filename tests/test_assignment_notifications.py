@@ -27,7 +27,9 @@ def test_reassignment_creates_distinct_notifications(monkeypatch):
     monkeypatch.setattr(
         assignment_events,
         "broadcast_notification_to_user",
-        lambda user_id, payload: broadcasts.append((str(user_id), payload)),
+        lambda user_id, user_type, payload: broadcasts.append(
+            (str(user_id), user_type, payload)
+        ),
     )
 
     assignment_events.publish_assignment_notifications(
@@ -68,7 +70,7 @@ def test_reassignment_creates_distinct_notifications(monkeypatch):
         "officer-1"
     )
     assert len(broadcasts) == 3
-    assert all(payload["metadata"] for _, payload in broadcasts)
+    assert all(payload["metadata"] for _, _, payload in broadcasts)
 
 
 def test_initial_assignment_does_not_create_previous_assignee_notification(

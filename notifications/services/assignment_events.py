@@ -53,7 +53,9 @@ def _create_notification(
 
     try:
         broadcast_notification_to_user(
-            recipient["id"], serialize_notification_for_ws(notification)
+            recipient["id"],
+            recipient["user_type"],
+            serialize_notification_for_ws(notification),
         )
     except Exception:
         logger.exception(

@@ -89,11 +89,16 @@ Who sees which notifications depends on role:
 
 | Role | Ownership query |
 |------|-----------------|
-| `customer` | Strictly `user_id` = authenticated `customer_id` (email fallback **not** used — prevents cross-account leakage on recreated accounts) |
-| `loan_officer` | `user_id` = officer ID **OR** (`recipient_email` + `user_type` = `loan_officer`) |
-| `admin` / `super_admin` | `user_id` = admin ID **OR** (`recipient_email` + matching `user_type`) |
+| `customer` | `user_id` = authenticated `customer_id` **AND** `user_type` = `customer` |
+| `loan_officer` | `user_id` = officer ID **AND** `user_type` = `loan_officer` |
+| `admin` / `super_admin` | `user_id` = admin ID **AND** `user_type` = `admin` |
 
 Users can only mark read / list notifications they own. Accessing another user's notification ID returns `404 Not Found`.
+
+HTTP ownership checks and WebSocket groups are role-qualified. Users from
+separate account collections cannot share notifications even if their raw IDs
+are identical. The `super_admin` authentication role is normalized to the
+stored `admin` notification type.
 
 ---
 
