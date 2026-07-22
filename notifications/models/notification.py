@@ -21,6 +21,9 @@ NOTIFICATION_TYPES = [
     'missing_documents_requested',
     'document_verified',
     'new_application',  # For loan officers
+    'application_assigned',
+    'application_reassigned',
+    'application_unassigned',
     'welcome',
     'password_reset',
 ]
@@ -49,6 +52,7 @@ class Notification:
         # Related entity
         self.related_type = kwargs.get('related_type')  # loan/document
         self.related_id = kwargs.get('related_id')
+        self.metadata = kwargs.get('metadata', {})
         
         # Status
         self.channel = kwargs.get('channel', 'email')
@@ -74,6 +78,7 @@ class Notification:
             'message': self.message,
             'related_type': self.related_type,
             'related_id': self.related_id,
+            'metadata': self.metadata,
             'channel': self.channel,
             'status': self.status,
             'error_message': self.error_message,

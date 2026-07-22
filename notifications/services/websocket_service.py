@@ -35,6 +35,7 @@ def serialize_notification_for_ws(notification):
         "message": notification.message,
         "related_type": notification.related_type,
         "related_id": str(notification.related_id) if notification.related_id else None,
+        "metadata": getattr(notification, "metadata", {}),
         "channel": notification.channel,
         "status": notification.status,
         "is_read": notification.status == "read",

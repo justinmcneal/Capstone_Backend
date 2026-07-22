@@ -368,6 +368,7 @@ class AssignApplicationView(AdminRequiredMixin, APIView):
         has_permission, result = self.check_admin_permission(request)
         if not has_permission:
             return result
+        assigning_admin = result
 
         app = LoanApplication.find_by_id(application_id)
         if not app:
@@ -390,7 +391,9 @@ class AssignApplicationView(AdminRequiredMixin, APIView):
         from loans.services import manual_assign_application
 
         try:
-            officer = manual_assign_application(app, officer_id)
+            officer = manual_assign_application(
+                app, officer_id, assigned_by=assigning_admin
+            )
             if not officer:
                 return error_response(
                     message="Officer not found", status_code=status.HTTP_404_NOT_FOUND
@@ -426,6 +429,7 @@ class ReassignApplicationView(AdminRequiredMixin, APIView):
         has_permission, result = self.check_admin_permission(request)
         if not has_permission:
             return result
+        assigning_admin = result
 
         app = LoanApplication.find_by_id(application_id)
         if not app:
@@ -448,7 +452,9 @@ class ReassignApplicationView(AdminRequiredMixin, APIView):
         from loans.services import reassign_application
 
         try:
-            new_officer = reassign_application(app, new_officer_id)
+            new_officer = reassign_application(
+                app, new_officer_id, assigned_by=assigning_admin
+            )
             if not new_officer:
                 return error_response(
                     message="Officer not found", status_code=status.HTTP_404_NOT_FOUND

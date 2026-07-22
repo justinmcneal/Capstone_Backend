@@ -151,6 +151,7 @@ class NotificationListView(AccessControlMixin, APIView):
                 'message': notification.message,
                 'related_type': notification.related_type,
                 'related_id': _serialize_related_id(notification.related_id),
+                'metadata': notification.metadata,
                 'channel': notification.channel,
                 'status': notification.status,
                 'is_read': notification.status == 'read',

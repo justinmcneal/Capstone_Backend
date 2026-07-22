@@ -1,11 +1,77 @@
-"""
-Officer Assignment Service - Auto and manual assignment of loan applications.
-"""
+"""Auto and manual loan-application assignment services."""
 
-from accounts.models import LoanOfficer
 import logging
 
+from bson import ObjectId
+
+from accounts.models import Customer, LoanOfficer
+
 logger = logging.getLogger("loans")
+
+
+def _find_by_id(model, raw_id):
+    if not raw_id:
+        return None
+
+    if isinstance(raw_id, ObjectId):
+        account = model.find_one({"_id": raw_id})
+        return account or model.find_one({"_id": str(raw_id)})
+
+    text_id = str(raw_id)
+    if ObjectId.is_valid(text_id):
+        account = model.find_one({"_id": ObjectId(text_id)})
+        if account:
+            return account
+    return model.find_one({"_id": text_id})
+
+
+def _find_officer(officer_id):
+    if not officer_id:
+        return None
+    officer = _find_by_id(LoanOfficer, officer_id)
+    if officer:
+        return officer
+    return LoanOfficer.find_one({"employee_id": str(officer_id)})
+
+
+def _assignment_party(account, user_type=None):
+    if not account:
+        return None
+    return {
+        "id": account.id,
+        "user_type": user_type or getattr(account, "role", "loan_officer"),
+        "name": account.full_name or account.email,
+        "email": account.email,
+    }
+
+
+def _notify_assignment_change(
+    application, *, assigned_by, assigned_to=None, previous_assignee=None
+):
+    """Publish assignment notifications without affecting assignment success."""
+    try:
+        from notifications.services import publish_assignment_notifications
+
+        customer = _find_by_id(Customer, application.customer_id)
+        entity_name = (
+            f"{customer.full_name}'s loan application"
+            if customer and customer.full_name
+            else f"Loan application {application.id}"
+        )
+
+        publish_assignment_notifications(
+            entity_name=entity_name,
+            assigned_by=_assignment_party(assigned_by, "admin"),
+            assigned_to=_assignment_party(assigned_to),
+            previous_assignee=_assignment_party(previous_assignee),
+            related_type="loan",
+            related_id=application.id,
+        )
+    except Exception:
+        logger.exception(
+            "Failed to publish assignment notifications for application %s",
+            application.id,
+        )
 
 
 def auto_assign_application(application):
@@ -18,25 +84,23 @@ def auto_assign_application(application):
     officer = LoanOfficer.find_with_least_workload()
 
     if officer:
+        previous_officer = _find_officer(application.assigned_officer)
+        if previous_officer and previous_officer.id == officer.id:
+            return officer
+
         application.assign_officer(officer.id)
         logger.info(
-            f"Auto-assigned application {application.id} to officer {officer.id}"
+            "Auto-assigned application %s to officer %s",
+            application.id,
+            officer.id,
         )
 
-        # Send notification to officer
-        try:
-            from notifications.services import get_email_sender
-
-            sender = get_email_sender()
-            sender.send_new_application_alert(
-                officer_email=officer.email,
-                officer_name=officer.full_name,
-                customer_name="New Customer",  # Can be enhanced to get actual name
-                loan_id=application.id,
-                amount=application.requested_amount,
-            )
-        except Exception as e:
-            logger.warning(f"Failed to send assignment email: {e}")
+        _notify_assignment_change(
+            application,
+            assigned_by=None,
+            assigned_to=officer,
+            previous_assignee=previous_officer,
+        )
 
         return officer
 
@@ -44,19 +108,14 @@ def auto_assign_application(application):
     return None
 
 
-def manual_assign_application(application, officer_id):
+def manual_assign_application(application, officer_id, assigned_by=None):
     """
     Manually assign application to specific officer.
 
     Returns:
         LoanOfficer or None if officer not found
     """
-    from bson import ObjectId
-
-    try:
-        officer = LoanOfficer.find_one({"_id": ObjectId(officer_id)})
-    except:
-        officer = LoanOfficer.find_one({"employee_id": officer_id})
+    officer = _find_officer(officer_id)
 
     if not officer:
         return None
@@ -64,30 +123,28 @@ def manual_assign_application(application, officer_id):
     if not officer.active:
         raise ValueError("Cannot assign to inactive officer")
 
+    previous_officer = _find_officer(application.assigned_officer)
+    if previous_officer and previous_officer.id == officer.id:
+        return officer
+
     application.assign_officer(officer.id)
     logger.info(
-        f"Manually assigned application {application.id} to officer {officer.id}"
+        "Manually assigned application %s to officer %s",
+        application.id,
+        officer.id,
     )
 
-    # Send notification to officer
-    try:
-        from notifications.services import get_email_sender
-
-        sender = get_email_sender()
-        sender.send_new_application_alert(
-            officer_email=officer.email,
-            officer_name=officer.full_name,
-            customer_name="New Customer",
-            loan_id=application.id,
-            amount=application.requested_amount,
-        )
-    except Exception as e:
-        logger.warning(f"Failed to send assignment email: {e}")
+    _notify_assignment_change(
+        application,
+        assigned_by=assigned_by,
+        assigned_to=officer,
+        previous_assignee=previous_officer,
+    )
 
     return officer
 
 
-def reassign_application(application, new_officer_id):
+def reassign_application(application, new_officer_id, assigned_by=None):
     """
     Reassign application from current officer to a new officer.
 
@@ -101,24 +158,14 @@ def reassign_application(application, new_officer_id):
     Raises:
         ValueError: If application is not assigned or new officer is inactive
     """
-    from bson import ObjectId
-
     if not application.assigned_officer:
         raise ValueError("Application is not currently assigned to any officer")
 
     # Get the current officer for logging
-    try:
-        current_officer = LoanOfficer.find_one(
-            {"_id": ObjectId(application.assigned_officer)}
-        )
-    except:
-        current_officer = None
+    current_officer = _find_officer(application.assigned_officer)
 
     # Find and validate new officer
-    try:
-        new_officer = LoanOfficer.find_one({"_id": ObjectId(new_officer_id)})
-    except:
-        new_officer = LoanOfficer.find_one({"employee_id": new_officer_id})
+    new_officer = _find_officer(new_officer_id)
 
     if not new_officer:
         return None
@@ -126,28 +173,25 @@ def reassign_application(application, new_officer_id):
     if not new_officer.active:
         raise ValueError("Cannot reassign to inactive officer")
 
+    if current_officer and current_officer.id == new_officer.id:
+        return new_officer
+
     # Use the reassign method on the application
     application.reassign(new_officer.id)
 
     logger.info(
-        f"Reassigned application {application.id} from officer "
-        f"{current_officer.id if current_officer else 'Unknown'} to officer {new_officer.id}"
+        "Reassigned application %s from officer %s to officer %s",
+        application.id,
+        current_officer.id if current_officer else "Unknown",
+        new_officer.id,
     )
 
-    # Send notification to new officer
-    try:
-        from notifications.services import get_email_sender
-
-        sender = get_email_sender()
-        sender.send_new_application_alert(
-            officer_email=new_officer.email,
-            officer_name=new_officer.full_name,
-            customer_name="Customer",
-            loan_id=application.id,
-            amount=application.requested_amount,
-        )
-    except Exception as e:
-        logger.warning(f"Failed to send reassignment email: {e}")
+    _notify_assignment_change(
+        application,
+        assigned_by=assigned_by,
+        assigned_to=new_officer,
+        previous_assignee=current_officer,
+    )
 
     return new_officer
 

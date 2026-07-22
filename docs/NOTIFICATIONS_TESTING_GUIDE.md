@@ -48,6 +48,9 @@ Content-Type: application/json
 | `document_verified` | Customer | `document` |
 | `document_pending_review` | Loan officer / reviewer | `document` |
 | `new_application` | Loan officer | `loan` |
+| `application_assigned` | Admin / new loan officer | `loan` |
+| `application_reassigned` | Assigning admin | `loan` |
+| `application_unassigned` | Previous loan officer | `loan` |
 | `welcome` | Customer | — |
 | `password_reset` | User | — |
 
@@ -106,7 +109,7 @@ Notifications are created by `notifications/services/email_sender.py` when other
 | `loan_disbursed` | `POST /api/loans/officer/applications/<id>/disburse/` | Officer |
 | `payment_received` | `POST /api/loans/officer/payments/` | Officer |
 | `missing_documents_requested` | `POST /api/loans/officer/applications/<id>/request-missing-documents/` | Officer |
-| `new_application` | Auto/manual assign or reassign (`loans/services/assignment.py`) | System / Admin |
+| `application_assigned` / `application_reassigned` / `application_unassigned` | Auto/manual assign or reassign (`loans/services/assignment.py`) | System / Admin |
 | `document_pending_review` | `POST /api/documents/upload/` | Customer |
 | `document_verified` | `PUT /api/documents/<id>/verify/` (approve) | Officer |
 | `document_flagged` | `PUT /api/documents/<id>/verify/` (reject) or `POST /api/documents/<id>/request-reupload/` | Officer |
@@ -129,6 +132,7 @@ Full fields in `notifications` collection (not all exposed in list API):
 | `message` | string | Body text (often empty for email-channel records) |
 | `related_type` | string | `loan`, `document`, etc. |
 | `related_id` | string | Linked entity ID |
+| `metadata` | object | Optional structured event context (participants, entity, audience, and occurrence time) |
 | `channel` | string | `email` or `in_app` |
 | `status` | string | `pending`, `sent`, `failed`, `read` |
 | `error_message` | string | Set when `status` = `failed` |
@@ -168,6 +172,7 @@ List notifications for the authenticated user (newest first).
 | `notifications[].message` | string |
 | `notifications[].related_type` | string |
 | `notifications[].related_id` | string |
+| `notifications[].metadata` | object |
 | `notifications[].channel` | string |
 | `notifications[].status` | string |
 | `notifications[].is_read` | boolean | `true` when `status == 'read'` |
@@ -317,12 +322,12 @@ For inbox-only API testing without SMTP, records still appear in MongoDB with `s
 | 9 | Customer | `GET /api/notifications/unread-count/` | `unread_count` = 0 |
 | 10 | Customer | `POST /api/notifications/<other_user_id>/read/` | 404 Not Found |
 | 11 | Customer | `POST /api/notifications/not-an-objectid/read/` | 400 Bad Request |
-| 12 | Officer | `GET /api/notifications/` after assignment | Officer sees `new_application` if assigned |
+| 12 | Officer | `GET /api/notifications/` after assignment | Officer sees `application_assigned` if assigned |
 
 ### Officer Inbox Test
 
 1. Admin assigns loan to Officer A (`POST /api/loans/admin/applications/<id>/assign/`).
-2. Officer A: `GET /api/notifications/` → should include `new_application`.
+2. Officer A: `GET /api/notifications/` → should include `application_assigned`.
 3. Officer B: `GET /api/notifications/` → should NOT include Officer A's notification.
 
 ### Filter Combination Tests
