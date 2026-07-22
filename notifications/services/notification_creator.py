@@ -5,8 +5,13 @@ from notifications.services.websocket_service import (
     serialize_notification_for_ws
 )
 from notifications.models.device_token import DeviceToken
-import firebase_admin
-from firebase_admin import messaging, credentials
+
+try:
+    import firebase_admin
+    from firebase_admin import messaging
+except ImportError:  # Push delivery is optional for web-only deployments.
+    firebase_admin = None
+    messaging = None
 
 logger = logging.getLogger("notifications")
 
@@ -49,7 +54,7 @@ def create_and_broadcast_notification(
     return notification
 
 def _send_push_notification(user_id, title, body, data_payload):
-    if not user_id:
+    if not user_id or firebase_admin is None or messaging is None:
         return
         
     try:

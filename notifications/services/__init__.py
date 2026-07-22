@@ -6,5 +6,14 @@ from .websocket_service import (
 	broadcast_notification_to_user as broadcast_notification_to_user,
 	serialize_notification_for_ws as serialize_notification_for_ws,
 )
+from .assignment_events import (
+	publish_assignment_notifications as publish_assignment_notifications,
+)
 
-__all__ = ["EmailSender", "get_email_sender", "broadcast_notification_to_user", "serialize_notification_for_ws"]
+__all__ = [
+	"EmailSender",
+	"get_email_sender",
+	"broadcast_notification_to_user",
+	"serialize_notification_for_ws",
+	"publish_assignment_notifications",
+]

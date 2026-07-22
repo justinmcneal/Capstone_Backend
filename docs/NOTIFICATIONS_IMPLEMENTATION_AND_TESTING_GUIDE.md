@@ -34,7 +34,10 @@ Use app passwords for Gmail. Do not commit real credentials.
 | `document_pending_review` | Customer uploads document (reviewer notification) | `POST /api/documents/upload/` |
 | `document_verified` / `document_flagged` | Reviewer approves/rejects document | `PUT /api/documents/<document_id>/verify/` |
 | `document_flagged` | Reviewer requests re-upload | `POST /api/documents/<document_id>/request-reupload/` |
-| `new_application` | Admin assigns/reassigns application | `POST /api/loans/admin/applications/<application_id>/assign/` and `POST /api/loans/admin/applications/<application_id>/reassign/` |
+| `application_assigned` / `application_reassigned` / `application_unassigned` | Admin assigns or reassigns an application | `POST /api/loans/admin/applications/<application_id>/assign/` and `POST /api/loans/admin/applications/<application_id>/reassign/` |
+
+Assignment event payloads and extension guidance are documented in
+`docs/ASSIGNMENT_NOTIFICATIONS.md`.
 
 ## Notification Inbox API
 Base URL: `http://localhost:8000/api/notifications`
