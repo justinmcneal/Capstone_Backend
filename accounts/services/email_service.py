@@ -1,7 +1,10 @@
+from email.message import MIMEPart
+from pathlib import Path
+from typing import List, Optional
+
+from django.conf import settings
 from django.core.mail import EmailMultiAlternatives
 from django.template.loader import render_to_string
-from django.conf import settings
-from typing import List, Optional
 import logging
 
 logger = logging.getLogger(__name__)
@@ -26,6 +29,7 @@ class CentralizedEmailService:
         subject: str,
         message: str,
         html_message: Optional[str] = None,
+        inline_images: Optional[dict[str, Path]] = None,
     ) -> bool:
         """
         Send email with both plain text and HTML versions
@@ -59,6 +63,26 @@ class CentralizedEmailService:
             if html_message:
                 email.attach_alternative(html_message, "text/html")
 
+            for content_id, image_path in (inline_images or {}).items():
+                try:
+                    with image_path.open("rb") as image_file:
+                        image = MIMEPart()
+                        image.set_content(
+                            image_file.read(),
+                            maintype="image",
+                            subtype="png",
+                            disposition="inline",
+                            filename=image_path.name,
+                        )
+                    image.add_header("Content-ID", f"<{content_id}>")
+                    email.attach(image)
+                except Exception as image_error:
+                    logger.warning(
+                        "Failed to attach inline email image %s: %s",
+                        image_path,
+                        image_error,
+                    )
+
             email.send(fail_silently=False)
             logger.info(f"Email sent successfully to {to_emails}")
             return True
@@ -73,6 +97,17 @@ class CentralizedEmailService:
         self, to_emails: List[str], subject: str, template_name: str, context: dict
     ) -> bool:
         try:
+            context = {
+                **context,
+                "brand_logo_cid": "msme-pathways-logo",
+            }
+            logo_path = (
+                settings.BASE_DIR / "accounts" / "static" / "email" / "msmeLogo.png"
+            )
+            inline_images = {}
+            if logo_path.exists():
+                inline_images["msme-pathways-logo"] = logo_path
+
             # Render HTML template
             html_message = render_to_string(f"email/{template_name}.html", context)
 
@@ -87,6 +122,7 @@ class CentralizedEmailService:
                 subject=subject,
                 message=plain_message,
                 html_message=html_message,
+                inline_images=inline_images,
             )
 
         except Exception as e:
