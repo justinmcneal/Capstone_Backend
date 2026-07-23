@@ -3,6 +3,7 @@ from channels.layers import get_channel_layer
 from asgiref.sync import async_to_sync
 from django.conf import settings
 from notifications.ownership import notification_group_name
+from notifications.models.notification import serialize_utc_datetime
 
 logger = logging.getLogger("notifications")
 
@@ -47,5 +48,5 @@ def serialize_notification_for_ws(notification):
         "channel": notification.channel,
         "status": notification.status,
         "is_read": notification.status == "read",
-        "created_at": notification.created_at.isoformat() if notification.created_at else None,
+        "created_at": serialize_utc_datetime(notification.created_at),
     }

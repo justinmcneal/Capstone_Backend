@@ -9,6 +9,26 @@ def get_db():
     return settings.MONGODB
 
 
+def serialize_utc_datetime(value):
+    """Return a datetime as an explicit UTC ISO 8601 string.
+
+    PyMongo stores dates as UTC but, unless configured otherwise, returns them
+    as naive ``datetime`` instances.  A timezone-less ISO string is interpreted
+    in the browser's local timezone, so API consumers would see an eight-hour
+    offset in the Philippines.  Treat naive values from MongoDB as UTC and
+    always include the UTC designator in the API contract.
+    """
+    if value is None:
+        return None
+
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    else:
+        value = value.astimezone(timezone.utc)
+
+    return value.isoformat().replace('+00:00', 'Z')
+
+
 # Notification types
 NOTIFICATION_TYPES = [
     'loan_submitted',

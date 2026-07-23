@@ -141,8 +141,8 @@ Full fields in `notifications` collection (not all exposed in list API):
 | `channel` | string | `email` or `in_app` |
 | `status` | string | `pending`, `sent`, `failed`, `read` |
 | `error_message` | string | Set when `status` = `failed` |
-| `created_at` | datetime | Record creation time |
-| `sent_at` | datetime | When email was sent |
+| `created_at` | datetime | Record creation time; API/WebSocket responses use an explicit UTC ISO 8601 value (for example, `2026-07-23T02:15:00Z`) |
+| `sent_at` | datetime | When email was sent; API responses use an explicit UTC ISO 8601 value when present |
 | `read_at` | datetime | Set when marked read via API |
 
 ---

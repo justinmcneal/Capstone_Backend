@@ -1,4 +1,5 @@
 import mongomock
+from datetime import datetime
 from types import SimpleNamespace
 from rest_framework.test import APIRequestFactory
 from django.conf import settings
@@ -51,3 +52,32 @@ def test_notification_list_view_with_mongomock(monkeypatch):
     data = payload['notifications']
     assert isinstance(data, list)
     assert any(n['notification_type'] == 'loan_submitted' for n in data)
+
+
+def test_notification_list_serializes_naive_mongodb_datetimes_as_utc(monkeypatch):
+    client = mongomock.MongoClient()
+    monkeypatch.setattr(settings, 'MONGODB', client['testdb'])
+
+    # MongoDB returns stored UTC dates as naive datetimes by default.
+    Notification(
+        user_id='123',
+        notification_type='application_unassigned',
+        created_at=datetime(2026, 7, 23, 2, 15, 0),
+    ).save()
+
+    factory = APIRequestFactory()
+    django_req = factory.get('/api/notifications/')
+    from rest_framework.request import Request as DRFRequest
+
+    request = DRFRequest(django_req)
+    request.user = SimpleNamespace(customer_id='123', role='customer')
+    monkeypatch.setattr(
+        NotificationListView,
+        'require_roles',
+        lambda self, request, roles, *a, **k: (True, request.user),
+    )
+
+    response = NotificationListView().get(request)
+
+    assert response.status_code == 200
+    assert response.data['data']['notifications'][0]['created_at'] == '2026-07-23T02:15:00Z'
