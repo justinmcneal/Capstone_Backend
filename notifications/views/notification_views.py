@@ -20,7 +20,7 @@ from accounts.authentication import CustomJWTAuthentication
 from accounts.utils.access_control import AccessControlMixin
 from accounts.utils.validation_utils import sanitize_text, parse_optional_bool
 from config.views import success_response, error_response
-from notifications.models.notification import Notification, get_db
+from notifications.models.notification import Notification, get_db, serialize_utc_datetime
 from notifications.models.device_token import DeviceToken
 from notifications.ownership import (
     build_notification_owner_query as _build_notification_owner_query,
@@ -124,8 +124,8 @@ class NotificationListView(AccessControlMixin, APIView):
                 'channel': notification.channel,
                 'status': notification.status,
                 'is_read': notification.status == 'read',
-                'created_at': notification.created_at.isoformat() if notification.created_at else None,
-                'sent_at': notification.sent_at.isoformat() if notification.sent_at else None,
+                'created_at': serialize_utc_datetime(notification.created_at),
+                'sent_at': serialize_utc_datetime(notification.sent_at),
             })
         
         # Get unread count
