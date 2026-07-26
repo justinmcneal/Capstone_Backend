@@ -74,7 +74,7 @@ class TwoFactorService:
             return False
 
     @staticmethod
-    def generate_backup_codes(count: int = None) -> tuple[list[str], list[str]]:
+    def generate_backup_codes(count: int | None = None) -> tuple[list[str], list[str]]:
         """
         Generate one-time backup codes for 2FA recovery.
 

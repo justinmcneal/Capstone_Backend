@@ -11,8 +11,8 @@ logger = logging.getLogger("authentication")
 
 
 class ActiveSessionsView(APIView):
-    authentication_classes = [CustomJWTAuthentication]
-    permission_classes = [IsAuthenticated]
+    authentication_classes = (CustomJWTAuthentication,)
+    permission_classes = (IsAuthenticated,)
 
     def get(self, request):
         user_id = (
@@ -72,8 +72,8 @@ class ActiveSessionsView(APIView):
 
 
 class LoginActivityView(APIView):
-    authentication_classes = [CustomJWTAuthentication]
-    permission_classes = [IsAuthenticated]
+    authentication_classes = (CustomJWTAuthentication,)
+    permission_classes = (IsAuthenticated,)
 
     def get(self, request):
         user_id = (

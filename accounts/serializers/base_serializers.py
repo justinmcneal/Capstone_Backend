@@ -1,3 +1,5 @@
+from typing import ClassVar
+
 from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError
 from rest_framework import serializers
@@ -30,17 +32,15 @@ class PasswordConfirmationMixin:
         password_field = "new_password" if "new_password" in attrs else "password"
         confirm_field = "confirm_password"
 
-        if password_field in attrs and confirm_field in attrs:
-            if attrs.get(password_field) != attrs.get(confirm_field):
-                raise serializers.ValidationError(
-                    {confirm_field: "Passwords do not match"}
-                )
+        if password_field in attrs and confirm_field in attrs and attrs.get(password_field) != attrs.get(confirm_field):
+            raise serializers.ValidationError(
+                {confirm_field: "Passwords do not match"}
+            )
 
-        if "old_password" in attrs and "new_password" in attrs:
-            if attrs.get("old_password") == attrs.get("new_password"):
-                raise serializers.ValidationError(
-                    {"new_password": "New password must be different from old password"}
-                )
+        if "old_password" in attrs and "new_password" in attrs and attrs.get("old_password") == attrs.get("new_password"):
+            raise serializers.ValidationError(
+                {"new_password": "New password must be different from old password"}
+            )
 
         return super().validate(attrs) if hasattr(super(), "validate") else attrs
 
@@ -53,7 +53,7 @@ class InputSanitizationMixin:
     fields like passwords and OTP.
     """
 
-    sanitize_excluded_fields = {
+    sanitize_excluded_fields: ClassVar[set[str]] = {
         "password",
         "password_confirm",
         "new_password",

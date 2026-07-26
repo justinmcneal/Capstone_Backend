@@ -21,9 +21,11 @@ logger = logging.getLogger("authentication")
 
 
 class ForgotPasswordView(APIView):
-    permission_classes = [AllowAny]
-    authentication_classes = []
-    throttle_classes = [ForgotPasswordRateThrottle]
+    permission_classes = (AllowAny,)
+    authentication_classes = ()
+    throttle_classes = (
+        ForgotPasswordRateThrottle,
+    )
 
     def post(self, request):
         serializer = ForgotPasswordSerializer(data=request.data)
@@ -49,9 +51,11 @@ class ForgotPasswordView(APIView):
 
 
 class VerifyResetOTPView(APIView):
-    permission_classes = [AllowAny]
-    authentication_classes = []
-    throttle_classes = [OTPVerificationRateThrottle]
+    permission_classes = (AllowAny,)
+    authentication_classes = ()
+    throttle_classes = (
+        OTPVerificationRateThrottle,
+    )
 
     def post(self, request):
         serializer = VerifyResetOTPSerializer(data=request.data)
@@ -76,9 +80,11 @@ class VerifyResetOTPView(APIView):
 
 
 class ResetPasswordView(APIView):
-    permission_classes = [AllowAny]
-    authentication_classes = []
-    throttle_classes = [OTPVerificationRateThrottle]
+    permission_classes = (AllowAny,)
+    authentication_classes = ()
+    throttle_classes = (
+        OTPVerificationRateThrottle,
+    )
 
     def post(self, request):
         serializer = ResetPasswordSerializer(data=request.data)
@@ -111,7 +117,7 @@ class ChangePasswordView(APIView):
     Requires old password verification.
     """
 
-    permission_classes = [IsAuthenticated]
+    permission_classes = (IsAuthenticated,)
 
     def post(self, request):
         serializer = ChangePasswordSerializer(data=request.data)

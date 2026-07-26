@@ -134,7 +134,7 @@ class PasswordService:
                 f"Too many OTP attempts. Please try again in {seconds_remaining} seconds.",
             )
 
-        valid, message = OTPService.validate_otp(
+        valid, _message = OTPService.validate_otp(
             user, otp, "password_reset_otp", "password_reset_otp_expires"
         )
 
@@ -165,7 +165,7 @@ class PasswordService:
                 f"Too many OTP attempts. Please try again in {seconds_remaining} seconds.",
             )
 
-        valid, message = OTPService.validate_otp(
+        valid, _message = OTPService.validate_otp(
             user, otp, "password_reset_otp", "password_reset_otp_expires"
         )
 

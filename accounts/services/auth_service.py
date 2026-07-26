@@ -9,6 +9,10 @@ from accounts.utils.email_utils import EmailUtils
 from accounts.utils.token_utils import TokenUtils
 
 
+class RegistrationError(Exception):
+    pass
+
+
 class AuthService:
 
     @staticmethod
@@ -96,8 +100,8 @@ class AuthService:
             raise ValueError("An account with this email already exists")
         except ValueError:
             raise  # Propagate ValueError so SignUpView can return a proper 400 response
-        except Exception as e:
-            raise Exception(f"Registration failed: {e!s}")
+        except Exception as e: 
+            raise RegistrationError(f"Registration failed: {e!s}") from e
 
     @staticmethod
     def create_customer_tokens(customer, token_type="signup"):

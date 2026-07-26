@@ -16,9 +16,9 @@ def _strip_html(text: str) -> str:
 
 
 class ContactSupportView(APIView):
-    permission_classes = [AllowAny]
-    authentication_classes = []
-    throttle_classes = []
+    permission_classes = (AllowAny,)
+    authentication_classes = ()
+    throttle_classes = ()
 
     def post(self, request):
         serializer = ContactSupportSerializer(data=request.data)
