@@ -16,7 +16,8 @@ from types import SimpleNamespace
 import pytest
 from unittest.mock import patch, MagicMock
 
-from ai_assistant.views.chat_views import StreamingChatView, EventStreamRenderer
+from ai_assistant.views import StreamingChatView
+from ai_assistant.views.chat_views import EventStreamRenderer
 from accounts.authentication import AuthenticatedUser
 from accounts.utils.access_control import AccessControlMixin
 
@@ -122,7 +123,7 @@ class TestStreamingContentFilter:
 class TestStreamGenerator:
     """StreamingChatView event_stream generator should yield expected event shapes."""
 
-    @patch('ai_assistant.views.chat_views.get_llm_service')
+    @patch('ai_assistant.views.streaming.get_llm_service')
     @patch('ai_assistant.services.tools.invalidate_user_tool_cache')
     def test_successful_chat_yields_token_and_done(self, mock_invalidate, mock_get_llm):
         from ai_assistant.services.llm_service import GroqService
@@ -143,7 +144,7 @@ class TestStreamGenerator:
         assert 'world' in text
         assert 'llama3.1' in text
 
-    @patch('ai_assistant.views.chat_views.get_llm_service')
+    @patch('ai_assistant.views.streaming.get_llm_service')
     def test_unavailable_llm_returns_503(self, mock_get_llm):
         mock_llm = MagicMock()
         mock_llm.is_available.return_value = False
