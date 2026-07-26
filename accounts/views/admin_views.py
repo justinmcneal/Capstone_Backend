@@ -19,6 +19,7 @@ from accounts.utils.auth_cookies import (
     get_refresh_token_from_request,
 )
 from accounts.utils.email_utils import EmailUtils
+from accounts.utils.exception_types import NON_FATAL_EXCEPTIONS
 from accounts.utils.response_helpers import error_response, success_response
 from accounts.utils.throttles import AdminLoginRateThrottle
 from accounts.utils.token_utils import TokenUtils
@@ -72,7 +73,7 @@ def _log_admin_login_failure(request, login_identifier, reason, admin=None):
             },
             ip_address=ip_address,
         )
-    except Exception as log_error:
+    except NON_FATAL_EXCEPTIONS as log_error:
         logger.error(
             "failed_to_write_audit action=user_login_failed role=admin identifier=%s error=%s",
             login_identifier,
@@ -291,7 +292,7 @@ class AdminLoginView(APIView):
                 message="2FA verification required",
             )
 
-        except Exception as e:
+        except NON_FATAL_EXCEPTIONS as e:
             logger.error(f"Admin login error: {e!s}")
             return error_response(
                 message="An error occurred during login",
@@ -326,7 +327,7 @@ class AdminLogoutView(APIView):
                     )
                     user_id = payload.get("customer_id")
                     user_email = payload.get("email", "")
-            except Exception:
+            except NON_FATAL_EXCEPTIONS:
                 logger.warning(
                     "Could not decode token for audit log user info during admin logout"
                 )
@@ -351,7 +352,7 @@ class AdminLogoutView(APIView):
             clear_auth_cookies(response)
             return response
 
-        except Exception as e:
+        except NON_FATAL_EXCEPTIONS as e:
             logger.error(f"Admin logout error: {e!s}")
             response = success_response(message="Logged out successfully")
             clear_auth_cookies(response)
@@ -561,7 +562,7 @@ class LoanOfficerManagementView(AdminRequiredMixin, APIView):
                 message="Loan officers retrieved successfully",
             )
 
-        except Exception as e:
+        except NON_FATAL_EXCEPTIONS as e:
             logger.error(f"List loan officers error: {e!s}")
             return error_response(
                 message="Failed to retrieve loan officers",
@@ -734,7 +735,7 @@ class LoanOfficerManagementView(AdminRequiredMixin, APIView):
                 status_code=status.HTTP_201_CREATED,
             )
 
-        except Exception as e:
+        except NON_FATAL_EXCEPTIONS as e:
             logger.error(f"Create loan officer error: {e!s}")
             return error_response(
                 message="Failed to create loan officer",
@@ -794,7 +795,7 @@ class LoanOfficerDetailView(AdminRequiredMixin, APIView):
                 message="Loan officer retrieved successfully",
             )
 
-        except Exception as e:
+        except NON_FATAL_EXCEPTIONS as e:
             logger.error(f"Get loan officer error: {e!s}")
             return error_response(
                 message="Failed to retrieve loan officer",
@@ -943,7 +944,7 @@ class LoanOfficerDetailView(AdminRequiredMixin, APIView):
                 message="Loan officer updated successfully",
             )
 
-        except Exception:
+        except NON_FATAL_EXCEPTIONS:
             return error_response(
                 message="Failed to update loan officer",
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -972,7 +973,7 @@ class LoanOfficerDetailView(AdminRequiredMixin, APIView):
 
             return success_response(message="Loan officer deactivated successfully")
 
-        except Exception:
+        except NON_FATAL_EXCEPTIONS:
             return error_response(
                 message="Failed to deactivate loan officer",
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -1171,7 +1172,7 @@ class AdminManagementView(SuperAdminRequiredMixin, APIView):
                 message="Admins retrieved successfully",
             )
 
-        except Exception:
+        except NON_FATAL_EXCEPTIONS:
             return error_response(
                 message="Failed to retrieve admins",
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -1265,7 +1266,7 @@ class AdminManagementView(SuperAdminRequiredMixin, APIView):
                 status_code=status.HTTP_201_CREATED,
             )
 
-        except Exception:
+        except NON_FATAL_EXCEPTIONS:
             return error_response(
                 message="Failed to create admin",
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -1328,7 +1329,7 @@ class AdminDetailView(SuperAdminRequiredMixin, APIView):
                 message="Admin retrieved successfully",
             )
 
-        except Exception:
+        except NON_FATAL_EXCEPTIONS:
             return error_response(
                 message="Failed to retrieve admin",
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -1412,7 +1413,7 @@ class AdminDetailView(SuperAdminRequiredMixin, APIView):
                 message="Admin updated successfully",
             )
 
-        except Exception:
+        except NON_FATAL_EXCEPTIONS:
             return error_response(
                 message="Failed to update admin",
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -1450,7 +1451,7 @@ class AdminDetailView(SuperAdminRequiredMixin, APIView):
 
             return success_response(message="Admin deactivated successfully")
 
-        except Exception:
+        except NON_FATAL_EXCEPTIONS:
             return error_response(
                 message="Failed to deactivate admin",
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -1525,7 +1526,7 @@ class AdminPermissionsView(SuperAdminRequiredMixin, APIView):
                 message="Permissions updated successfully",
             )
 
-        except Exception:
+        except NON_FATAL_EXCEPTIONS:
             return error_response(
                 message="Failed to update permissions",
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -1577,7 +1578,7 @@ class AdminProfileView(APIView):
                     "login_attempt_count": getattr(user, "login_attempt_count", 0),
                 }
             )
-        except Exception:
+        except NON_FATAL_EXCEPTIONS:
             return error_response(
                 message="Failed to retrieve profile",
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -1660,7 +1661,7 @@ class AdminProfileView(APIView):
                 message="Profile updated successfully",
             )
 
-        except Exception:
+        except NON_FATAL_EXCEPTIONS:
             return error_response(
                 message="Failed to update profile",
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,

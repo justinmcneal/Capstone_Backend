@@ -27,6 +27,7 @@ from accounts.utils.auth_cookies import (
     set_auth_cookies,
 )
 from accounts.utils.email_utils import EmailUtils
+from accounts.utils.exception_types import NON_FATAL_EXCEPTIONS
 from accounts.utils.response_helpers import APIResponseHelper
 from accounts.utils.throttles import (
     LoginRateThrottle,
@@ -71,7 +72,7 @@ def _log_customer_login_failure(request, email, reason, user=None):
             },
             ip_address=ip_address,
         )
-    except Exception as log_error:
+    except NON_FATAL_EXCEPTIONS as log_error:
         logger.error(
             "failed_to_write_audit action=user_login_failed role=customer email=%s error=%s",
             email,
@@ -90,7 +91,7 @@ def _log_customer_login_failure(request, email, reason, user=None):
             device_info=device_info,
             failure_reason=reason,
         ).save()
-    except Exception as e:
+    except NON_FATAL_EXCEPTIONS as e:
         logger.error("Failed to save LoginActivity: %s", e)
 
     # Dispatch signal for django-axes
@@ -175,7 +176,7 @@ class SignUpView(APIView):
             )
             return APIResponseHelper.error_response(str(e))
 
-        except Exception as e:
+        except NON_FATAL_EXCEPTIONS as e:
             logger.error(
                 f"Signup error from IP {request.META.get('REMOTE_ADDR')}: {e!s}"
             )
@@ -220,7 +221,7 @@ class UpdateLanguageView(APIView):
             )
         except ValueError as e:
             return APIResponseHelper.error_response(str(e), status.HTTP_400_BAD_REQUEST)
-        except Exception as e:
+        except NON_FATAL_EXCEPTIONS as e:
             logger.error("Error updating language: %s", e)
             return APIResponseHelper.server_error_response(
                 "Failed to update language preference"
@@ -370,7 +371,7 @@ class LoginView(APIView):
                     ip_address=ip_address,
                     device_info=device_info,
                 ).save()
-            except Exception as e:
+            except NON_FATAL_EXCEPTIONS as e:
                 logger.error("Failed to save LoginActivity: %s", e)
 
             # Create ActiveSession
@@ -382,7 +383,7 @@ class LoginView(APIView):
                     ip_address=ip_address,
                     device_info=device_info,
                 ).save()
-            except Exception as e:
+            except NON_FATAL_EXCEPTIONS as e:
                 logger.error("Failed to save ActiveSession: %s", e)
 
             # Dispatch signal for django-axes
@@ -407,7 +408,7 @@ class LoginView(APIView):
             set_auth_cookies(response, tokens["access"], tokens["refresh"])
             return response
 
-        except Exception as e:
+        except NON_FATAL_EXCEPTIONS as e:
             logger.error(
                 f"Login error for {email} from IP {request.META.get('REMOTE_ADDR')}: {e!s}"
             )
@@ -500,7 +501,7 @@ class VerifyOTP(APIView):
             )
             set_auth_cookies(response, tokens["access"], tokens["refresh"])
             return response
-        except Exception as e:
+        except NON_FATAL_EXCEPTIONS as e:
             logger.error(
                 f"OTP verification error for {email} from IP {request.META.get('REMOTE_ADDR')}: {e!s}"
             )
@@ -559,7 +560,7 @@ class ResendOTP(APIView):
                 message=GENERIC_OTP_RESEND_MESSAGE
             )
 
-        except Exception as e:
+        except NON_FATAL_EXCEPTIONS as e:
             logger.error(
                 f"OTP resend error for {email} from IP {request.META.get('REMOTE_ADDR')}: {e!s}"
             )
@@ -653,7 +654,7 @@ class RefreshTokenView(APIView):
             else:
                 try:
                     object_id = ObjectId(customer_id)
-                except Exception:
+                except NON_FATAL_EXCEPTIONS:
                     logger.warning(
                         f"Token refresh received invalid user id {customer_id} from IP {request.META.get('REMOTE_ADDR')}"
                     )
@@ -718,7 +719,7 @@ class RefreshTokenView(APIView):
                     ip_address=ip_address,
                     device_info=device_info,
                 ).save()
-            except Exception as e:
+            except NON_FATAL_EXCEPTIONS as e:
                 logger.error("Failed to manage ActiveSession during refresh: %s", e)
 
             logger.info(
@@ -738,7 +739,7 @@ class RefreshTokenView(APIView):
             return APIResponseHelper.error_response(
                 "Invalid or expired token", status.HTTP_401_UNAUTHORIZED
             )
-        except Exception as e:
+        except NON_FATAL_EXCEPTIONS as e:
             logger.error(
                 f"Token refresh error from IP {request.META.get('REMOTE_ADDR')}: {e!s}"
             )
@@ -777,7 +778,7 @@ class LogoutView(APIView):
                     )
                     user_id = payload.get("customer_id")
                     user_email = payload.get("email", "")
-            except Exception:
+            except NON_FATAL_EXCEPTIONS:
                 logger.warning(
                     "Could not decode token for audit log user info during logout"
                 )
@@ -805,7 +806,7 @@ class LogoutView(APIView):
                             {"session_token": refresh_token},
                             {"$set": {"is_active": False}},
                         )
-                    except Exception as e:
+                    except NON_FATAL_EXCEPTIONS as e:
                         logger.error("Failed to deactivate ActiveSession: %s", e)
 
                 response = APIResponseHelper.success_response(
@@ -819,7 +820,7 @@ class LogoutView(APIView):
                 )
                 return APIResponseHelper.error_response("Logout failed")
 
-        except Exception as e:
+        except NON_FATAL_EXCEPTIONS as e:
             logger.error(
                 f"Logout error from IP {request.META.get('REMOTE_ADDR')}: {e!s}"
             )

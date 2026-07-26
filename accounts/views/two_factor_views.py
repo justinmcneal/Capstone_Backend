@@ -17,6 +17,7 @@ from accounts.models import Admin, LoanOfficer
 from accounts.services import AuthService
 from accounts.services.two_factor_service import TwoFactorService
 from accounts.utils.auth_cookies import set_auth_cookies
+from accounts.utils.exception_types import NON_FATAL_EXCEPTIONS
 from accounts.utils.response_helpers import APIResponseHelper
 from accounts.utils.throttles import TwoFactorRateThrottle
 from accounts.utils.token_utils import TokenUtils
@@ -60,7 +61,7 @@ class Setup2FAView(APIView):
                 message="2FA setup initiated",
             )
 
-        except Exception as e:
+        except NON_FATAL_EXCEPTIONS as e:
             logger.error(f"2FA setup error: {e!s}")
             return APIResponseHelper.server_error_response("Failed to setup 2FA")
 
@@ -112,7 +113,7 @@ class Confirm2FASetupView(APIView):
                 message="2FA enabled successfully",
             )
 
-        except Exception as e:
+        except NON_FATAL_EXCEPTIONS as e:
             logger.error(f"2FA confirmation error: {e!s}")
             return APIResponseHelper.server_error_response(
                 "Failed to confirm 2FA setup"
@@ -325,7 +326,7 @@ class Verify2FAView(APIView):
                     description=f"User {user.email} logged in successfully via 2FA",
                     ip_address=request.META.get("REMOTE_ADDR", ""),
                 )
-            except Exception as log_error:
+            except NON_FATAL_EXCEPTIONS as log_error:
                 logger.error(
                     f"Failed to write login audit after 2FA for {user.email} ({user_type}): {log_error!s}"
                 )
@@ -353,7 +354,7 @@ class Verify2FAView(APIView):
             return APIResponseHelper.error_response(
                 "Invalid or expired temporary token", status.HTTP_401_UNAUTHORIZED
             )
-        except Exception as e:
+        except NON_FATAL_EXCEPTIONS as e:
             logger.error(f"2FA verification error: {e!s}")
             return APIResponseHelper.server_error_response("2FA verification failed")
 
@@ -408,7 +409,7 @@ class Disable2FAView(APIView):
                 message="2FA disabled successfully"
             )
 
-        except Exception as e:
+        except NON_FATAL_EXCEPTIONS as e:
             logger.error(f"2FA disable error: {e!s}")
             return APIResponseHelper.server_error_response("Failed to disable 2FA")
 
@@ -460,7 +461,7 @@ class RegenerateBackupCodesView(APIView):
                 message="Backup codes regenerated successfully",
             )
 
-        except Exception as e:
+        except NON_FATAL_EXCEPTIONS as e:
             logger.error(f"Backup code regeneration error: {e!s}")
             return APIResponseHelper.server_error_response(
                 "Failed to regenerate backup codes"
@@ -489,6 +490,6 @@ class Get2FAStatusView(APIView):
                 }
             )
 
-        except Exception as e:
+        except NON_FATAL_EXCEPTIONS as e:
             logger.error(f"2FA status error: {e!s}")
             return APIResponseHelper.server_error_response("Failed to get 2FA status")

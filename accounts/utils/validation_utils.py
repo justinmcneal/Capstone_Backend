@@ -195,8 +195,7 @@ def validate_phone_number(
         return True, None, ""
 
     cleaned = raw.replace("(", "").replace(")", "").replace(".", "")
-    if cleaned.startswith("+"):
-        cleaned = cleaned[1:]
+    cleaned = cleaned.removeprefix("+")
 
     if not re.fullmatch(r"[0-9\s-]+", cleaned):
         return False, f"{field_name} must contain numbers only", raw

@@ -13,6 +13,7 @@ from accounts.serializers.consent_serializers import (
 )
 from accounts.services.consent_service import ConsentService
 from accounts.utils.access_control import AccessControlMixin
+from accounts.utils.exception_types import NON_FATAL_EXCEPTIONS
 from accounts.utils.response_helpers import error_response, success_response
 
 logger = logging.getLogger("consent")
@@ -75,7 +76,7 @@ class ConsentView(APIView):
             return success_response(
                 data=consent_status, message="Consent status retrieved successfully"
             )
-        except Exception as e:
+        except NON_FATAL_EXCEPTIONS as e:
             logger.error(f"Error retrieving consent: {e!s}")
             return error_response(
                 message="Failed to retrieve consent status",
@@ -151,7 +152,7 @@ class ConsentView(APIView):
                     consent_timestamp=_to_iso(consent_timestamp),
                     previous_state=previous_state,
                 )
-            except Exception as e:
+            except NON_FATAL_EXCEPTIONS as e:
                 logger.warning(f"Blockchain sync skipped for consent {user_id}: {e}")
 
             response_data = {
@@ -166,7 +167,7 @@ class ConsentView(APIView):
                 message="Consent recorded successfully",
                 status_code=status.HTTP_201_CREATED,
             )
-        except Exception as e:
+        except NON_FATAL_EXCEPTIONS as e:
             logger.error(f"Error recording consent: {e!s}")
             return error_response(
                 message="Failed to record consent",
@@ -243,7 +244,7 @@ class ConsentView(APIView):
                     consent_timestamp=_to_iso(consent_timestamp),
                     previous_state=previous_state,
                 )
-            except Exception as e:
+            except NON_FATAL_EXCEPTIONS as e:
                 logger.warning(f"Blockchain sync skipped for consent {user_id}: {e}")
 
             response_data = {
@@ -258,7 +259,7 @@ class ConsentView(APIView):
             )
         except ValueError as e:
             return error_response(message=str(e), status_code=status.HTTP_404_NOT_FOUND)
-        except Exception as e:
+        except NON_FATAL_EXCEPTIONS as e:
             logger.error(f"Error updating consent: {e!s}")
             return error_response(
                 message="Failed to update consent",
@@ -331,7 +332,7 @@ class ConsentAuditView(AccessControlMixin, APIView):
                 },
                 message="Consent audit retrieved successfully",
             )
-        except Exception as e:
+        except NON_FATAL_EXCEPTIONS as e:
             logger.error(f"Error retrieving consent audit: {e!s}")
             return error_response(
                 message="Failed to retrieve consent audit",
@@ -362,7 +363,7 @@ class ConsentHistoryView(APIView):
                 data={"history": history},
                 message="Consent history retrieved successfully",
             )
-        except Exception as e:
+        except NON_FATAL_EXCEPTIONS as e:
             logger.error(f"Error retrieving consent history: {e!s}")
             return error_response(
                 message="Failed to retrieve consent history",
@@ -448,7 +449,7 @@ class ConsentRequiredMixin:
                 else:
                     handler = self.http_method_not_allowed
                 response = handler(request, *args, **kwargs)
-        except Exception as exc:
+        except NON_FATAL_EXCEPTIONS as exc:
             response = self.handle_exception(exc)
 
         self.response = self.finalize_response(request, response, *args, **kwargs)

@@ -6,6 +6,8 @@ from django.conf import settings
 from django.core.mail import EmailMultiAlternatives
 from django.template.loader import render_to_string
 
+from accounts.utils.exception_types import NON_FATAL_EXCEPTIONS
+
 logger = logging.getLogger(__name__)
 
 
@@ -95,7 +97,7 @@ class CentralizedEmailService:
                         )
                     image.add_header("Content-ID", f"<{content_id}>")
                     email.attach(image)
-                except Exception as image_error:
+                except NON_FATAL_EXCEPTIONS as image_error:
                     logger.warning(
                         "Failed to attach inline email image %s: %s",
                         image_path,
@@ -106,7 +108,7 @@ class CentralizedEmailService:
             logger.info(f"Email sent successfully to {to_emails}")
             return True
 
-        except Exception as e:
+        except NON_FATAL_EXCEPTIONS as e:
             logger.error(f"Failed to send email: {e!s}")
             if settings.DEBUG:
                 print(f"Email error: {e!s}")
@@ -144,7 +146,7 @@ class CentralizedEmailService:
                 inline_images=inline_images,
             )
 
-        except Exception as e:
+        except NON_FATAL_EXCEPTIONS as e:
             logger.error(f"Failed to send template email: {e!s}")
             if settings.DEBUG:
                 print(f"Template email error: {e!s}")

@@ -7,6 +7,8 @@ import secrets
 import pyotp
 import qrcode
 
+from accounts.utils.exception_types import NON_FATAL_EXCEPTIONS
+
 logger = logging.getLogger("authentication")
 
 
@@ -69,7 +71,7 @@ class TwoFactorService:
             totp = pyotp.TOTP(secret)
             # valid_window=1 allows for slight time drift (30 seconds before/after)
             return totp.verify(code, valid_window=1)
-        except Exception as e:
+        except NON_FATAL_EXCEPTIONS as e:
             logger.error(f"TOTP verification error: {e!s}")
             return False
 
@@ -183,7 +185,7 @@ class TwoFactorService:
             image.save(buffer, format="PNG")
             encoded = base64.b64encode(buffer.getvalue()).decode("ascii")
             return f"data:image/png;base64,{encoded}"
-        except Exception as e:
+        except NON_FATAL_EXCEPTIONS as e:
             logger.error(f"QR code generation error: {e!s}")
             return ""
 
