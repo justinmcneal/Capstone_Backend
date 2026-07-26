@@ -33,11 +33,11 @@ class Setup2FAView(APIView):
     Returns secret and QR code provisioning URI.
     """
 
-    permission_classes = [IsAuthenticated]
+    permission_classes = (IsAuthenticated,)
 
     def post(self, request):
         try:
-            user, user_type = get_authenticated_user(request)
+            user, _user_type = get_authenticated_user(request)
             if not user:
                 return APIResponseHelper.error_response("User not found")
 
@@ -48,7 +48,7 @@ class Setup2FAView(APIView):
 
             setup_data = TwoFactorService.setup_2fa(user)
 
-            logger.info(f"2FA setup initiated for {user.email} ({user_type})")
+            logger.info(f"2FA setup initiated for {user.email} ({_user_type})")
 
             return APIResponseHelper.success_response(
                 data={
@@ -71,8 +71,10 @@ class Confirm2FASetupView(APIView):
     Returns backup codes on success.
     """
 
-    permission_classes = [IsAuthenticated]
-    throttle_classes = [TwoFactorRateThrottle]
+    permission_classes = (IsAuthenticated,)
+    throttle_classes = (
+        TwoFactorRateThrottle,
+    )
 
     def post(self, request):
         code = str(request.data.get("code") or "").strip()
@@ -87,20 +89,20 @@ class Confirm2FASetupView(APIView):
             )
 
         try:
-            user, user_type = get_authenticated_user(request)
+            user, _user_type = get_authenticated_user(request)
             if not user:
                 return APIResponseHelper.error_response("User not found")
 
             success, backup_codes = TwoFactorService.confirm_2fa_setup(user, code)
 
             if not success:
-                logger.warning(f"Invalid 2FA setup code for {user.email} ({user_type})")
+                logger.warning(f"Invalid 2FA setup code for {user.email}")
                 return APIResponseHelper.error_response(
                     "Invalid verification code. Please try again.",
                     status.HTTP_400_BAD_REQUEST,
                 )
 
-            logger.info(f"2FA enabled for {user.email} ({user_type})")
+            logger.info(f"2FA enabled for {user.email}")
 
             return APIResponseHelper.success_response(
                 data={
@@ -124,9 +126,11 @@ class Verify2FAView(APIView):
     Supports both Customer and LoanOfficer.
     """
 
-    permission_classes = [AllowAny]
-    authentication_classes = []
-    throttle_classes = [TwoFactorRateThrottle]
+    permission_classes = (AllowAny,)
+    authentication_classes = ()
+    throttle_classes = (
+        TwoFactorRateThrottle,
+    )
 
     def post(self, request):
         temp_token = str(request.data.get("temp_token") or "").strip()
@@ -360,7 +364,7 @@ class Disable2FAView(APIView):
     Requires password verification.
     """
 
-    permission_classes = [IsAuthenticated]
+    permission_classes = (IsAuthenticated,)
 
     def post(self, request):
         password = request.data.get("password")
@@ -377,11 +381,11 @@ class Disable2FAView(APIView):
             )
 
         try:
-            user, user_type = get_authenticated_user(request)
+            user, _user_type = get_authenticated_user(request)
             if not user:
                 return APIResponseHelper.error_response("User not found")
 
-            if user_type == "admin":
+            if _user_type == "admin":
                 return APIResponseHelper.error_response(
                     "2FA is mandatory for administrator accounts and cannot be disabled.",
                     error_code=status.HTTP_403_FORBIDDEN,
@@ -398,7 +402,7 @@ class Disable2FAView(APIView):
                     "Invalid password", status.HTTP_400_BAD_REQUEST
                 )
 
-            logger.info(f"2FA disabled for {user.email} ({user_type})")
+            logger.info(f"2FA disabled for {user.email}")
 
             return APIResponseHelper.success_response(
                 message="2FA disabled successfully"
@@ -415,7 +419,7 @@ class RegenerateBackupCodesView(APIView):
     Requires password verification.
     """
 
-    permission_classes = [IsAuthenticated]
+    permission_classes = (IsAuthenticated,)
 
     def post(self, request):
         password = request.data.get("password")
@@ -432,7 +436,7 @@ class RegenerateBackupCodesView(APIView):
             )
 
         try:
-            user, user_type = get_authenticated_user(request)
+            user, _user_type = get_authenticated_user(request)
             if not user:
                 return APIResponseHelper.error_response("User not found")
 
@@ -446,7 +450,7 @@ class RegenerateBackupCodesView(APIView):
                     "Invalid password", status.HTTP_400_BAD_REQUEST
                 )
 
-            logger.info(f"Backup codes regenerated for {user.email} ({user_type})")
+            logger.info(f"Backup codes regenerated for {user.email}")
 
             return APIResponseHelper.success_response(
                 data={
@@ -468,11 +472,11 @@ class Get2FAStatusView(APIView):
     Get 2FA status for authenticated user.
     """
 
-    permission_classes = [IsAuthenticated]
+    permission_classes = (IsAuthenticated,)
 
     def get(self, request):
         try:
-            user, user_type = get_authenticated_user(request)
+            user, _user_type = get_authenticated_user(request)
             if not user:
                 return APIResponseHelper.error_response("User not found")
 

@@ -91,7 +91,7 @@ def _log_customer_login_failure(request, email, reason, user=None):
             failure_reason=reason,
         ).save()
     except Exception as e:
-        logger.error(f"Failed to save LoginActivity: {e!s}")
+        logger.error("Failed to save LoginActivity: %s", e)
 
     # Dispatch signal for django-axes
     user_login_failed.send(
@@ -102,8 +102,8 @@ def _log_customer_login_failure(request, email, reason, user=None):
 
 
 class CSRFTokenView(APIView):
-    permission_classes = [AllowAny]
-    authentication_classes = []
+    permission_classes = (AllowAny,)
+    authentication_classes = ()
 
     def get(self, request):
         csrf_token = get_token(request)
@@ -126,9 +126,11 @@ class CSRFTokenView(APIView):
 
 
 class SignUpView(APIView):
-    permission_classes = [AllowAny]
-    authentication_classes = []
-    throttle_classes = [SignUpRateThrottle]
+    permission_classes = (AllowAny,)
+    authentication_classes = ()
+    throttle_classes = (
+        SignUpRateThrottle,
+    )
 
     def post(self, request):
         serializer = SignUpSerializer(data=request.data)
@@ -189,8 +191,8 @@ class UpdateLanguageView(APIView):
     Request body: {"language": "en" | "tl"}
     """
 
-    authentication_classes = [CustomJWTAuthentication]
-    permission_classes = [IsAuthenticated]
+    authentication_classes = (CustomJWTAuthentication,)
+    permission_classes = (IsAuthenticated,)
 
     def patch(self, request):
         serializer = UpdateLanguageSerializer(data=request.data)
@@ -219,16 +221,18 @@ class UpdateLanguageView(APIView):
         except ValueError as e:
             return APIResponseHelper.error_response(str(e), status.HTTP_400_BAD_REQUEST)
         except Exception as e:
-            logger.error(f"Error updating language: {e!s}")
+            logger.error("Error updating language: %s", e)
             return APIResponseHelper.server_error_response(
                 "Failed to update language preference"
             )
 
 
 class LoginView(APIView):
-    permission_classes = [AllowAny]
-    authentication_classes = []
-    throttle_classes = [LoginRateThrottle]
+    permission_classes = (AllowAny,)
+    authentication_classes = ()
+    throttle_classes = (
+        LoginRateThrottle,
+    )
 
     def post(self, request):
         serializer = LoginSerializer(data=request.data)
@@ -367,7 +371,7 @@ class LoginView(APIView):
                     device_info=device_info,
                 ).save()
             except Exception as e:
-                logger.error(f"Failed to save LoginActivity: {e!s}")
+                logger.error("Failed to save LoginActivity: %s", e)
 
             # Create ActiveSession
             try:
@@ -379,7 +383,7 @@ class LoginView(APIView):
                     device_info=device_info,
                 ).save()
             except Exception as e:
-                logger.error(f"Failed to save ActiveSession: {e!s}")
+                logger.error("Failed to save ActiveSession: %s", e)
 
             # Dispatch signal for django-axes
             user_logged_in.send(
@@ -411,9 +415,11 @@ class LoginView(APIView):
 
 
 class VerifyOTP(APIView):
-    permission_classes = [AllowAny]
-    authentication_classes = []
-    throttle_classes = [OTPVerificationRateThrottle]
+    permission_classes = (AllowAny,)
+    authentication_classes = ()
+    throttle_classes = (
+        OTPVerificationRateThrottle,
+    )
 
     def post(self, request):
         email = EmailUtils.normalize_email(str(request.data.get("email") or ""))
@@ -502,9 +508,11 @@ class VerifyOTP(APIView):
 
 
 class ResendOTP(APIView):
-    permission_classes = [AllowAny]
-    authentication_classes = []
-    throttle_classes = [OTPResendRateThrottle]
+    permission_classes = (AllowAny,)
+    authentication_classes = ()
+    throttle_classes = (
+        OTPResendRateThrottle,
+    )
 
     def post(self, request):
         email = EmailUtils.normalize_email(str(request.data.get("email") or ""))
@@ -559,8 +567,8 @@ class ResendOTP(APIView):
 
 
 class RefreshTokenView(APIView):
-    permission_classes = [AllowAny]
-    authentication_classes = []
+    permission_classes = (AllowAny,)
+    authentication_classes = ()
 
     def post(self, request):
         """Refresh access token and blacklist old refresh token"""
@@ -711,7 +719,7 @@ class RefreshTokenView(APIView):
                     device_info=device_info,
                 ).save()
             except Exception as e:
-                logger.error(f"Failed to manage ActiveSession during refresh: {e!s}")
+                logger.error("Failed to manage ActiveSession during refresh: %s", e)
 
             logger.info(
                 f"Token refreshed for user {user_email} ({role}) from IP {request.META.get('REMOTE_ADDR')}"
@@ -738,8 +746,8 @@ class RefreshTokenView(APIView):
 
 
 class LogoutView(APIView):
-    permission_classes = [AllowAny]
-    authentication_classes = []
+    permission_classes = (AllowAny,)
+    authentication_classes = ()
 
     def post(self, request):
         """Logout by blacklisting both access and refresh tokens"""
@@ -798,7 +806,7 @@ class LogoutView(APIView):
                             {"$set": {"is_active": False}},
                         )
                     except Exception as e:
-                        logger.error(f"Failed to deactivate ActiveSession: {e!s}")
+                        logger.error("Failed to deactivate ActiveSession: %s", e)
 
                 response = APIResponseHelper.success_response(
                     message="Logged out successfully"

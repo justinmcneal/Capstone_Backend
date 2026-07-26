@@ -24,6 +24,7 @@ __all__ = [
     "CSRFTokenView",
     "ChangePasswordView",
     "ConsentAuditView",
+    "ConsentHistoryView",
     "ConsentRequiredMixin",
     "ConsentView",
     "ForgotPasswordView",

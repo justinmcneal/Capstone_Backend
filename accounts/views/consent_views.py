@@ -46,8 +46,8 @@ class ConsentView(APIView):
     - PUT: Update consent preferences
     """
 
-    authentication_classes = [CustomJWTAuthentication]
-    permission_classes = [IsAuthenticated]
+    authentication_classes = (CustomJWTAuthentication,)
+    permission_classes = (IsAuthenticated,)
 
     def get(self, request):
         """
@@ -269,8 +269,8 @@ class ConsentView(APIView):
 class ConsentAuditView(AccessControlMixin, APIView):
     """Admin report of customers with and without AI consent."""
 
-    authentication_classes = [CustomJWTAuthentication]
-    permission_classes = [IsAuthenticated]
+    authentication_classes = (CustomJWTAuthentication,)
+    permission_classes = (IsAuthenticated,)
 
     def get(self, request):
         try:
@@ -344,8 +344,8 @@ class ConsentHistoryView(APIView):
     Get the consent history for the authenticated user from the blockchain transaction logs.
     """
 
-    authentication_classes = [CustomJWTAuthentication]
-    permission_classes = [IsAuthenticated]
+    authentication_classes = (CustomJWTAuthentication,)
+    permission_classes = (IsAuthenticated,)
 
     def get(self, request):
         try:
@@ -396,35 +396,33 @@ class ConsentRequiredMixin:
         user_id = user.customer_id
         user_type = user.role if hasattr(user, "role") else "customer"
 
-        if self.require_ai_consent:
-            if not ConsentService.check_ai_consent(user_id, user_type):
-                return False, error_response(
-                    message="AI consent is required to use this feature",
-                    code="CONSENT_REQUIRED",
-                    errors={
-                        "action_required": {
-                            "endpoint": "/api/auth/consent/",
-                            "method": "POST",
-                            "required_fields": ["ai_consent"],
-                        }
-                    },
-                    status_code=status.HTTP_403_FORBIDDEN,
-                )
+        if self.require_ai_consent and not ConsentService.check_ai_consent(user_id, user_type):
+            return False, error_response(
+                message="AI consent is required to use this feature",
+                code="CONSENT_REQUIRED",
+                errors={
+                    "action_required": {
+                        "endpoint": "/api/auth/consent/",
+                        "method": "POST",
+                        "required_fields": ["ai_consent"],
+                    }
+                },
+                status_code=status.HTTP_403_FORBIDDEN,
+            )
 
-        if self.require_data_consent:
-            if not ConsentService.check_data_consent(user_id, user_type):
-                return False, error_response(
-                    message="Data consent is required to use this feature",
-                    code="CONSENT_REQUIRED",
-                    errors={
-                        "action_required": {
-                            "endpoint": "/api/auth/consent/",
-                            "method": "POST",
-                            "required_fields": ["data_consent"],
-                        }
-                    },
-                    status_code=status.HTTP_403_FORBIDDEN,
-                )
+        if self.require_data_consent and not ConsentService.check_data_consent(user_id, user_type):
+            return False, error_response(
+                message="Data consent is required to use this feature",
+                code="CONSENT_REQUIRED",
+                errors={
+                    "action_required": {
+                        "endpoint": "/api/auth/consent/",
+                        "method": "POST",
+                        "required_fields": ["data_consent"],
+                    }
+                },
+                status_code=status.HTTP_403_FORBIDDEN,
+            )
 
         return True, None
 

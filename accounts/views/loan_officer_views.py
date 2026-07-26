@@ -71,9 +71,11 @@ class LoanOfficerLoginView(APIView):
     }
     """
 
-    permission_classes = [AllowAny]
-    authentication_classes = []
-    throttle_classes = [LoanOfficerLoginRateThrottle]
+    permission_classes = (AllowAny,)
+    authentication_classes = ()
+    throttle_classes = (
+        LoanOfficerLoginRateThrottle,
+    )
 
     def post(self, request):
         try:
@@ -260,8 +262,8 @@ class LoanOfficerLogoutView(APIView):
     }
     """
 
-    permission_classes = [AllowAny]
-    authentication_classes = []
+    permission_classes = (AllowAny,)
+    authentication_classes = ()
 
     def post(self, request):
         try:
@@ -326,8 +328,8 @@ class LoanOfficerProfileView(APIView):
 
     from accounts.authentication import CustomJWTAuthentication
 
-    authentication_classes = [CustomJWTAuthentication]
-    permission_classes = [IsAuthenticated]
+    authentication_classes = (CustomJWTAuthentication,)
+    permission_classes = (IsAuthenticated,)
 
     def get(self, request):
         from accounts.utils.user_detection import get_authenticated_user

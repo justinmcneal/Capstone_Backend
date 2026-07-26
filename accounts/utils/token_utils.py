@@ -328,7 +328,4 @@ class TokenUtils:
                 expires_at = expires_at.replace(tzinfo=timezone.utc)
             if expires_at <= datetime.now(timezone.utc):
                 return False
-        if TokenUtils.is_token_blacklisted(token, token_type="refresh"):
-            return False
-
-        return True
+        return not TokenUtils.is_token_blacklisted(token, token_type="refresh")

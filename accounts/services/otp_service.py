@@ -1,10 +1,7 @@
 from datetime import datetime, timedelta, timezone
-from typing import TYPE_CHECKING
 
+from accounts.models import Customer
 from accounts.utils.email_utils import EmailUtils
-
-if TYPE_CHECKING:
-    from accounts.models import Customer
 
 
 class OTPService:

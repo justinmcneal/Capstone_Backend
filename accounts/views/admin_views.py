@@ -138,9 +138,9 @@ class AdminLoginView(APIView):
     }
     """
 
-    permission_classes = [AllowAny]
-    authentication_classes = []
-    throttle_classes = [AdminLoginRateThrottle]
+    permission_classes = (AllowAny,)
+    authentication_classes = ()
+    throttle_classes = (AdminLoginRateThrottle,)
 
     def post(self, request):
         try:
@@ -296,8 +296,8 @@ class AdminLogoutView(APIView):
     Logout endpoint for administrators.
     """
 
-    permission_classes = [AllowAny]
-    authentication_classes = []
+    permission_classes = (AllowAny,)
+    authentication_classes = ()
 
     def post(self, request):
         try:
@@ -353,7 +353,7 @@ class AdminLogoutView(APIView):
 class AdminRequiredMixin(AccessControlMixin):
     """Mixin to require admin authentication and permissions"""
 
-    required_permissions = []
+    required_permissions = ()
 
     def check_admin_permission(self, request):
         """Check if authenticated user is admin with required permissions"""
@@ -372,9 +372,9 @@ class LoanOfficerManagementView(AdminRequiredMixin, APIView):
     POST /api/auth/admin/loan-officers/ - Create new loan officer
     """
 
-    authentication_classes = [CustomJWTAuthentication]
-    permission_classes = [IsAuthenticated]
-    required_permissions = ["create_loan_officer"]
+    authentication_classes = (CustomJWTAuthentication,)
+    permission_classes = (IsAuthenticated,)
+    required_permissions = ("create_loan_officer",)
 
     def get(self, request):
         """List all loan officers with search, filtering, and pagination"""
@@ -517,7 +517,7 @@ class LoanOfficerManagementView(AdminRequiredMixin, APIView):
                 )
             else:  # created_at
                 all_officers.sort(
-                    key=lambda o: o.created_at or datetime.min,
+                    key=lambda o: o.created_at or datetime.min.replace(tzinfo=timezone.utc),
                     reverse=(sort_order == "desc"),
                 )
 
@@ -739,9 +739,9 @@ class LoanOfficerDetailView(AdminRequiredMixin, APIView):
     DELETE /api/auth/admin/loan-officers/<id>/ - Deactivate loan officer
     """
 
-    authentication_classes = [CustomJWTAuthentication]
-    permission_classes = [IsAuthenticated]
-    required_permissions = ["manage_loan_officers"]
+    authentication_classes = (CustomJWTAuthentication,)
+    permission_classes = (IsAuthenticated,)
+    required_permissions = ("manage_loan_officers",)
 
     def get(self, request, officer_id):
         """Get loan officer details"""
@@ -931,8 +931,7 @@ class LoanOfficerDetailView(AdminRequiredMixin, APIView):
                 message="Loan officer updated successfully",
             )
 
-        except Exception as e:
-            logger.error(f"Update loan officer error: {e!s}")
+        except Exception:
             return error_response(
                 message="Failed to update loan officer",
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -961,8 +960,7 @@ class LoanOfficerDetailView(AdminRequiredMixin, APIView):
 
             return success_response(message="Loan officer deactivated successfully")
 
-        except Exception as e:
-            logger.error(f"Deactivate loan officer error: {e!s}")
+        except Exception:
             return error_response(
                 message="Failed to deactivate loan officer",
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -994,8 +992,8 @@ class AdminManagementView(SuperAdminRequiredMixin, APIView):
     POST /api/auth/admin/admins/ - Create new admin
     """
 
-    authentication_classes = [CustomJWTAuthentication]
-    permission_classes = [IsAuthenticated]
+    authentication_classes = (CustomJWTAuthentication,)
+    permission_classes = (IsAuthenticated,)
 
     def get(self, request):
         """List all admins with search, filtering, and pagination"""
@@ -1124,7 +1122,7 @@ class AdminManagementView(SuperAdminRequiredMixin, APIView):
                 )
             else:  # created_at
                 all_admins.sort(
-                    key=lambda a: a.created_at or datetime.min,
+                    key=lambda a: a.created_at or datetime.min.replace(tzinfo=timezone.utc),
                     reverse=(sort_order == "desc"),
                 )
 
@@ -1161,8 +1159,7 @@ class AdminManagementView(SuperAdminRequiredMixin, APIView):
                 message="Admins retrieved successfully",
             )
 
-        except Exception as e:
-            logger.error(f"List admins error: {e!s}")
+        except Exception:
             return error_response(
                 message="Failed to retrieve admins",
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -1256,8 +1253,7 @@ class AdminManagementView(SuperAdminRequiredMixin, APIView):
                 status_code=status.HTTP_201_CREATED,
             )
 
-        except Exception as e:
-            logger.error(f"Create admin error: {e!s}")
+        except Exception:
             return error_response(
                 message="Failed to create admin",
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -1273,8 +1269,8 @@ class AdminDetailView(SuperAdminRequiredMixin, APIView):
     DELETE /api/auth/admin/admins/<id>/ - Deactivate admin
     """
 
-    authentication_classes = [CustomJWTAuthentication]
-    permission_classes = [IsAuthenticated]
+    authentication_classes = (CustomJWTAuthentication,)
+    permission_classes = (IsAuthenticated,)
 
     def get(self, request, admin_id):
         """Get admin details"""
@@ -1320,8 +1316,7 @@ class AdminDetailView(SuperAdminRequiredMixin, APIView):
                 message="Admin retrieved successfully",
             )
 
-        except Exception as e:
-            logger.error(f"Get admin error: {e!s}")
+        except Exception:
             return error_response(
                 message="Failed to retrieve admin",
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -1405,8 +1400,7 @@ class AdminDetailView(SuperAdminRequiredMixin, APIView):
                 message="Admin updated successfully",
             )
 
-        except Exception as e:
-            logger.error(f"Update admin error: {e!s}")
+        except Exception:
             return error_response(
                 message="Failed to update admin",
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -1444,8 +1438,7 @@ class AdminDetailView(SuperAdminRequiredMixin, APIView):
 
             return success_response(message="Admin deactivated successfully")
 
-        except Exception as e:
-            logger.error(f"Deactivate admin error: {e!s}")
+        except Exception:
             return error_response(
                 message="Failed to deactivate admin",
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -1459,8 +1452,8 @@ class AdminPermissionsView(SuperAdminRequiredMixin, APIView):
     PUT /api/auth/admin/admins/<id>/permissions/ - Update permissions
     """
 
-    authentication_classes = [CustomJWTAuthentication]
-    permission_classes = [IsAuthenticated]
+    authentication_classes = (CustomJWTAuthentication,)
+    permission_classes = (IsAuthenticated,)
 
     def put(self, request, admin_id):
         """Update admin permissions"""
@@ -1520,8 +1513,7 @@ class AdminPermissionsView(SuperAdminRequiredMixin, APIView):
                 message="Permissions updated successfully",
             )
 
-        except Exception as e:
-            logger.error(f"Update permissions error: {e!s}")
+        except Exception:
             return error_response(
                 message="Failed to update permissions",
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -1540,8 +1532,8 @@ class AdminProfileView(APIView):
 
     from accounts.authentication import CustomJWTAuthentication
 
-    authentication_classes = [CustomJWTAuthentication]
-    permission_classes = [IsAuthenticated]
+    authentication_classes = (CustomJWTAuthentication,)
+    permission_classes = (IsAuthenticated,)
 
     def get(self, request):
         from accounts.utils.user_detection import get_authenticated_user
@@ -1573,8 +1565,7 @@ class AdminProfileView(APIView):
                     "login_attempt_count": getattr(user, "login_attempt_count", 0),
                 }
             )
-        except Exception as e:
-            logger.error(f"Get Admin Profile error: {e!s}")
+        except Exception:
             return error_response(
                 message="Failed to retrieve profile",
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -1657,8 +1648,7 @@ class AdminProfileView(APIView):
                 message="Profile updated successfully",
             )
 
-        except Exception as e:
-            logger.error(f"Update Admin Profile error: {e!s}")
+        except Exception:
             return error_response(
                 message="Failed to update profile",
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
