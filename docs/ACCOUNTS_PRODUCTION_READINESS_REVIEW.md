@@ -18,15 +18,15 @@ The `accounts/` module has strong foundations (peppered password hashing, lockou
 - Non-customer token path persists refresh-token entries via `TokenUtils.generate_tokens()` (`accounts/utils/token_utils.py:172`).
 - Risk: deactivated privileged users can continue rotating sessions. **Status: MITIGATED.**
 
-3. Field encryption is fail-open when key is missing in DEBUG mode.
-- Encryption helper returns plaintext when `FIELD_ENCRYPTION_KEY` is absent (`config/field_encryption.py:13`).
+3. Field encryption behavior is documented and production-hardened.
 - Production settings hard-fail when key is missing/invalid (`config/settings.py:142`).
-- Risk: sensitive values may be stored unencrypted in development. **Status: PARTIAL — production-safe, development still permissive.**
+- In DEBUG mode, missing key allows plaintext pass-through for local development convenience (`config/field_encryption.py:11`).
+- Behavior is documented in `config/field_encryption.py`, `config/settings.py`, and `.env.example`.
+- Risk: production deployments without the key will fail startup; developers should avoid committing plaintext-sensitive test data. **Status: MITIGATED.**
 
-4. Index creation is mostly complete but excludes activity/session models.
-- `init_db.py` creates indexes for Customer, BlacklistedToken, RefreshTokenEntry, LoanOfficer, Admin, Consent, and profile models.
-- `ActiveSession` and `LoginActivity` define `create_indexes()` (`accounts/models/activity.py:92`, `accounts/models/activity.py:166`) but are not invoked in `init_db.py`.
-- Risk: session/activity query performance and uniqueness expectations may not be enforced consistently. **Status: MINOR GAP.**
+4. Index creation covers all account-related models. (DONE)
+- `init_db.py` creates indexes for Customer, BlacklistedToken, RefreshTokenEntry, LoanOfficer, Admin, Consent, ActiveSession, LoginActivity, and profile models.
+- Risk: uniqueness/TTL expectations are enforced consistently across collections. **Status: MITIGATED.**
 
 ## Medium Priority Findings
 
@@ -94,7 +94,7 @@ The following items were added or improved after the 2026-02-20 review:
 - [x] Enforce `active` checks for admin/loan-officer on refresh and token issue.
 - [x] Persist non-customer refresh sessions or introduce equivalent revocation/session controls.
 - [x] Fail startup in production when `FIELD_ENCRYPTION_KEY` is missing/invalid.
-- [ ] Ensure index bootstrap covers all account-related models, including activity/session collections.
+- [x] Ensure index bootstrap covers all account-related models, including activity/session collections.
 - [x] Normalize auth/reset/OTP failure messaging to prevent enumeration.
 - [x] Add throttles to admin/loan-officer login endpoints.
 - [x] Add per-account password-reset OTP cooldown and attempt limits.
@@ -103,9 +103,7 @@ The following items were added or improved after the 2026-02-20 review:
 
 ## Recommended Next Steps
 
-1. Add `ActiveSession.create_indexes()` and `LoginActivity.create_indexes()` to `init_db.py`.
-2. Consider making field-encryption fail-closed in all environments, or document that DEBUG mode intentionally allows plaintext.
-3. Resolve remaining `ruff check accounts` warnings to reach zero lint issues.
+1. Resolve remaining `ruff check accounts` warnings to reach zero lint issues.
 
 ## Notes
 

@@ -138,7 +138,8 @@ MONGODB_URI = os.getenv('MONGODB_URI', '')
 MONGODB_NAME = os.getenv('MONGODB_NAME', 'capstone_db')
 FIELD_ENCRYPTION_KEY = os.getenv('FIELD_ENCRYPTION_KEY', '').strip()
 
-# Fail fast in production: sensitive fields must never be stored plaintext.
+# Production must never store sensitive fields as plaintext.
+# In DEBUG/development, allow plaintext pass-through so local setups do not require key management.
 if not DEBUG:
     if not FIELD_ENCRYPTION_KEY:
         raise ImproperlyConfigured("FIELD_ENCRYPTION_KEY must be set when DEBUG=False")
