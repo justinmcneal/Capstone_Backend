@@ -14,11 +14,13 @@ os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings")
 django.setup()
 
 from accounts.models import (  # noqa: E402
+    ActiveSession,
     Admin,
     BlacklistedToken,
     Consent,
     Customer,
     LoanOfficer,
+    LoginActivity,
     RefreshTokenEntry,
 )
 from pymongo.errors import DuplicateKeyError, OperationFailure  # noqa: E402
@@ -146,6 +148,24 @@ def create_indexes():
         print("⚠ AlternativeData indexes already exist, skipping")
     except Exception as e:
         print(f"✗ AlternativeData error: {e}")
+
+    try:
+        print("Creating indexes for ActiveSession collection...")
+        ActiveSession.create_indexes()
+        print("✓ ActiveSession indexes created")
+    except (DuplicateKeyError, OperationFailure):
+        print("⚠ ActiveSession indexes already exist, skipping")
+    except Exception as e:
+        print(f"✗ ActiveSession error: {e}")
+
+    try:
+        print("Creating indexes for LoginActivity collection...")
+        LoginActivity.create_indexes()
+        print("✓ LoginActivity indexes created")
+    except (DuplicateKeyError, OperationFailure):
+        print("⚠ LoginActivity indexes already exist, skipping")
+    except Exception as e:
+        print(f"✗ LoginActivity error: {e}")
 
     print("-" * 50)
     print("Done! (Warnings are OK - indexes may already exist)")
