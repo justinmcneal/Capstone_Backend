@@ -1,3 +1,4 @@
+import re
 from datetime import datetime, timedelta, timezone
 
 from pymongo.errors import DuplicateKeyError
@@ -20,7 +21,12 @@ class AuthService:
     def get_customer_by_email(email, normalize=True):
         if normalize:
             email = EmailUtils.normalize_email(email)
-        return Customer.find_one({"email": email})
+
+        customer = Customer.find_one({"email": email})
+        if customer:
+            return customer
+
+        return Customer.find_one({"email": re.compile(f"^{re.escape(email)}$", re.IGNORECASE)})
 
     @staticmethod
     def get_customer_by_id(customer_id):
