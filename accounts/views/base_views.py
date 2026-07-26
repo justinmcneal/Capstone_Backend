@@ -1,7 +1,8 @@
-from rest_framework.views import APIView
 from rest_framework import status
-from accounts.utils.response_helpers import APIResponseHelper
+from rest_framework.views import APIView
+
 from accounts.utils.logging_utils import RequestLogger
+from accounts.utils.response_helpers import APIResponseHelper
 
 
 class BaseAuthView(APIView):

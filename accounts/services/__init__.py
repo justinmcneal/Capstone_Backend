@@ -1,18 +1,18 @@
 from .auth_service import AuthService
-from .password_service import PasswordService
-from .otp_service import OTPService
-from .email_service import email_service, CentralizedEmailService
-from .lockout_service import LockoutService
-from .two_factor_service import TwoFactorService
 from .consent_service import ConsentService
+from .email_service import CentralizedEmailService, email_service
+from .lockout_service import LockoutService
+from .otp_service import OTPService
+from .password_service import PasswordService
+from .two_factor_service import TwoFactorService
 
 __all__ = [
     "AuthService",
-    "PasswordService",
-    "OTPService",
-    "email_service",
     "CentralizedEmailService",
-    "LockoutService",
-    "TwoFactorService",
     "ConsentService",
+    "LockoutService",
+    "OTPService",
+    "PasswordService",
+    "TwoFactorService",
+    "email_service",
 ]

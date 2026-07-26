@@ -1,5 +1,5 @@
 from datetime import datetime, timedelta, timezone
-from typing import TYPE_CHECKING, Any, Optional, Tuple
+from typing import TYPE_CHECKING
 
 from accounts.utils.email_utils import EmailUtils
 
@@ -18,17 +18,17 @@ class OTPService:
     OTP_COOLDOWN_SECONDS = 600  # 10 minutes cooldown after max attempts
 
     @staticmethod
-    def generate_otp(length: Optional[int] = None) -> str:
+    def generate_otp(length: int | None = None) -> str:
         return EmailUtils.generate_otp(length or OTPService.OTP_LENGTH)
 
     @staticmethod
-    def get_otp_expiry(minutes: Optional[int] = None) -> datetime:
+    def get_otp_expiry(minutes: int | None = None) -> datetime:
         """Get OTP expiry time. Default is OTP_EXPIRY_MINUTES (10 min)."""
         expiry_minutes = minutes or OTPService.OTP_EXPIRY_MINUTES
         return datetime.now(timezone.utc) + timedelta(minutes=expiry_minutes)
 
     @staticmethod
-    def is_otp_expired(expiry_time: Optional[datetime]) -> bool:
+    def is_otp_expired(expiry_time: datetime | None) -> bool:
         return EmailUtils.is_otp_expired(expiry_time)
 
     @staticmethod
@@ -36,7 +36,7 @@ class OTPService:
         customer: Customer,
         attempt_field: str = "otp_attempt_count",
         last_attempt_field: str = "otp_last_attempt",
-    ) -> Tuple[bool, int]:
+    ) -> tuple[bool, int]:
         attempt_count = getattr(customer, attempt_field, 0)
         last_attempt = getattr(customer, last_attempt_field, None)
 
@@ -84,7 +84,7 @@ class OTPService:
         provided_otp: str,
         otp_field: str = "verification_token",
         expiry_field: str = "verification_token_expires",
-    ) -> Tuple[bool, str]:
+    ) -> tuple[bool, str]:
         stored_otp = getattr(customer, otp_field, None)
         expiry_time = getattr(customer, expiry_field, None)
 
@@ -104,7 +104,7 @@ class OTPService:
         customer: Customer,
         otp_field: str = "verification_token",
         expiry_field: str = "verification_token_expires",
-        expiry_minutes: Optional[int] = None,
+        expiry_minutes: int | None = None,
     ) -> str:
         """Set OTP for customer with optional custom expiry time."""
         otp = OTPService.generate_otp()

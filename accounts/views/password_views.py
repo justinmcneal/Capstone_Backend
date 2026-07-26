@@ -1,19 +1,21 @@
-from rest_framework.views import APIView
+import logging
+
 from rest_framework import status
 from rest_framework.permissions import AllowAny, IsAuthenticated
+from rest_framework.views import APIView
+
 from accounts.serializers.password_serializers import (
-    ForgotPasswordSerializer,
-    VerifyResetOTPSerializer,
-    ResetPasswordSerializer,
     ChangePasswordSerializer,
+    ForgotPasswordSerializer,
+    ResetPasswordSerializer,
+    VerifyResetOTPSerializer,
 )
 from accounts.services.password_service import PasswordService
 from accounts.utils.response_helpers import APIResponseHelper
 from accounts.utils.throttles import (
-    OTPVerificationRateThrottle,
     ForgotPasswordRateThrottle,
+    OTPVerificationRateThrottle,
 )
-import logging
 
 logger = logging.getLogger("authentication")
 
@@ -154,7 +156,7 @@ class ChangePasswordView(APIView):
                 message=message, error_code=status.HTTP_400_BAD_REQUEST
             )
         except Exception as e:
-            logger.error(f"Password change error: {str(e)}")
+            logger.error(f"Password change error: {e!s}")
             return APIResponseHelper.error_response(
                 message=str(e), error_code=status.HTTP_400_BAD_REQUEST
             )

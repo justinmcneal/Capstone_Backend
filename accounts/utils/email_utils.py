@@ -1,13 +1,12 @@
 import secrets
 import string
 from datetime import datetime, timedelta, timezone
-from typing import Optional
 
 
 class EmailUtils:
 
     @staticmethod
-    def normalize_email(email: Optional[str]) -> str:
+    def normalize_email(email: str | None) -> str:
         """Normalize email to lowercase and strip whitespace"""
         if not email:
             return ""
@@ -22,7 +21,7 @@ class EmailUtils:
         return datetime.now(timezone.utc) + timedelta(hours=12)
 
     @staticmethod
-    def to_aware_utc(value: Optional[datetime]) -> Optional[datetime]:
+    def to_aware_utc(value: datetime | None) -> datetime | None:
         if value is None:
             return None
         if value.tzinfo is None or value.tzinfo.utcoffset(value) is None:
@@ -30,14 +29,14 @@ class EmailUtils:
         return value.astimezone(timezone.utc)
 
     @staticmethod
-    def is_otp_expired(expiry_time: Optional[datetime]) -> bool:
+    def is_otp_expired(expiry_time: datetime | None) -> bool:
         expiry_time = EmailUtils.to_aware_utc(expiry_time)
         if not expiry_time:
             return True
         return datetime.now(timezone.utc) > expiry_time
 
     @staticmethod
-    def send_verification_email(email: str, first_name: Optional[str], token: str) -> bool:
+    def send_verification_email(email: str, first_name: str | None, token: str) -> bool:
         from accounts.services.email_service import email_service
 
         context = {"first_name": first_name, "otp": token}
@@ -50,7 +49,7 @@ class EmailUtils:
         )
 
     @staticmethod
-    def send_password_reset_email(email: str, first_name: Optional[str], otp: str) -> bool:
+    def send_password_reset_email(email: str, first_name: str | None, otp: str) -> bool:
         from accounts.services.email_service import email_service
 
         context = {"first_name": first_name, "otp": otp}
@@ -63,7 +62,9 @@ class EmailUtils:
         )
 
     @staticmethod
-    def send_officer_temporary_password_email(email: str, first_name: Optional[str], temporary_password: str) -> bool:
+    def send_officer_temporary_password_email(
+        email: str, first_name: str | None, temporary_password: str
+    ) -> bool:
         from accounts.services.email_service import email_service
 
         context = {

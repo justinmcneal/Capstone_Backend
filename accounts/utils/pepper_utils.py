@@ -16,10 +16,10 @@ Usage (in any model):
             return verify_password(raw_password, self.password)
 """
 
-import hmac
 import hashlib
-import os
+import hmac
 import logging
+import os
 
 import bcrypt
 

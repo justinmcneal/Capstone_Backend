@@ -4,23 +4,25 @@ Two-Factor Authentication (2FA) Views.
 Unified views that support both Customer and LoanOfficer authentication.
 """
 
-from rest_framework.views import APIView
+import logging
+
+from bson import ObjectId
 from rest_framework import status
-from rest_framework.permissions import IsAuthenticated, AllowAny
-from accounts.services.two_factor_service import TwoFactorService
+from rest_framework.permissions import AllowAny, IsAuthenticated
+from rest_framework.views import APIView
+from rest_framework_simplejwt.exceptions import TokenError
+from rest_framework_simplejwt.tokens import RefreshToken
+
+from accounts.models import Admin, LoanOfficer
 from accounts.services import AuthService
-from accounts.models import LoanOfficer, Admin
-from accounts.utils.response_helpers import APIResponseHelper
+from accounts.services.two_factor_service import TwoFactorService
 from accounts.utils.auth_cookies import set_auth_cookies
+from accounts.utils.response_helpers import APIResponseHelper
 from accounts.utils.throttles import TwoFactorRateThrottle
 from accounts.utils.token_utils import TokenUtils
 from accounts.utils.user_detection import get_authenticated_user
 from accounts.utils.validation_utils import parse_bool
-from rest_framework_simplejwt.tokens import RefreshToken
-from rest_framework_simplejwt.exceptions import TokenError
 from analytics.models import AuditLog
-from bson import ObjectId
-import logging
 
 logger = logging.getLogger("authentication")
 
@@ -59,7 +61,7 @@ class Setup2FAView(APIView):
             )
 
         except Exception as e:
-            logger.error(f"2FA setup error: {str(e)}")
+            logger.error(f"2FA setup error: {e!s}")
             return APIResponseHelper.server_error_response("Failed to setup 2FA")
 
 
@@ -109,7 +111,7 @@ class Confirm2FASetupView(APIView):
             )
 
         except Exception as e:
-            logger.error(f"2FA confirmation error: {str(e)}")
+            logger.error(f"2FA confirmation error: {e!s}")
             return APIResponseHelper.server_error_response(
                 "Failed to confirm 2FA setup"
             )
@@ -266,7 +268,11 @@ class Verify2FAView(APIView):
                     "role": "admin",
                     "permissions": user.permissions if not user.super_admin else ["*"],
                     "super_admin": user.super_admin,
-                    "last_login_attempt": user.last_login_attempt.isoformat() if getattr(user, "last_login_attempt", None) else None,
+                    "last_login_attempt": (
+                        user.last_login_attempt.isoformat()
+                        if getattr(user, "last_login_attempt", None)
+                        else None
+                    ),
                 }
             else:
                 # Loan Officer tokens
@@ -287,7 +293,11 @@ class Verify2FAView(APIView):
                     "department": user.department,
                     "employee_id": user.employee_id,
                     "role": "loan_officer",
-                    "last_login_attempt": user.last_login_attempt.isoformat() if getattr(user, "last_login_attempt", None) else None,
+                    "last_login_attempt": (
+                        user.last_login_attempt.isoformat()
+                        if getattr(user, "last_login_attempt", None)
+                        else None
+                    ),
                 }
 
             if initial_admin_setup:
@@ -313,7 +323,7 @@ class Verify2FAView(APIView):
                 )
             except Exception as log_error:
                 logger.error(
-                    f"Failed to write login audit after 2FA for {user.email} ({user_type}): {str(log_error)}"
+                    f"Failed to write login audit after 2FA for {user.email} ({user_type}): {log_error!s}"
                 )
 
             response_payload = {
@@ -340,7 +350,7 @@ class Verify2FAView(APIView):
                 "Invalid or expired temporary token", status.HTTP_401_UNAUTHORIZED
             )
         except Exception as e:
-            logger.error(f"2FA verification error: {str(e)}")
+            logger.error(f"2FA verification error: {e!s}")
             return APIResponseHelper.server_error_response("2FA verification failed")
 
 
@@ -395,7 +405,7 @@ class Disable2FAView(APIView):
             )
 
         except Exception as e:
-            logger.error(f"2FA disable error: {str(e)}")
+            logger.error(f"2FA disable error: {e!s}")
             return APIResponseHelper.server_error_response("Failed to disable 2FA")
 
 
@@ -447,7 +457,7 @@ class RegenerateBackupCodesView(APIView):
             )
 
         except Exception as e:
-            logger.error(f"Backup code regeneration error: {str(e)}")
+            logger.error(f"Backup code regeneration error: {e!s}")
             return APIResponseHelper.server_error_response(
                 "Failed to regenerate backup codes"
             )
@@ -476,5 +486,5 @@ class Get2FAStatusView(APIView):
             )
 
         except Exception as e:
-            logger.error(f"2FA status error: {str(e)}")
+            logger.error(f"2FA status error: {e!s}")
             return APIResponseHelper.server_error_response("Failed to get 2FA status")

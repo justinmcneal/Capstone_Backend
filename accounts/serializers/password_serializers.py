@@ -1,8 +1,9 @@
 from rest_framework import serializers
+
 from .base_serializers import (
-    PasswordValidationMixin,
     OTPValidationMixin,
     PasswordConfirmationMixin,
+    PasswordValidationMixin,
 )
 
 

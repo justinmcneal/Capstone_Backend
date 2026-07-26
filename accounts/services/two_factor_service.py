@@ -1,10 +1,10 @@
-import pyotp
-import secrets
-import hashlib
 import base64
+import hashlib
 import io
-from typing import List, Tuple, Optional
 import logging
+import secrets
+
+import pyotp
 import qrcode
 
 logger = logging.getLogger("authentication")
@@ -70,11 +70,11 @@ class TwoFactorService:
             # valid_window=1 allows for slight time drift (30 seconds before/after)
             return totp.verify(code, valid_window=1)
         except Exception as e:
-            logger.error(f"TOTP verification error: {str(e)}")
+            logger.error(f"TOTP verification error: {e!s}")
             return False
 
     @staticmethod
-    def generate_backup_codes(count: int = None) -> Tuple[List[str], List[str]]:
+    def generate_backup_codes(count: int = None) -> tuple[list[str], list[str]]:
         """
         Generate one-time backup codes for 2FA recovery.
 
@@ -111,8 +111,8 @@ class TwoFactorService:
 
     @staticmethod
     def verify_backup_code(
-        code: str, hashed_codes: List[str]
-    ) -> Tuple[bool, Optional[str]]:
+        code: str, hashed_codes: list[str]
+    ) -> tuple[bool, str | None]:
         """
         Verify a backup code against stored hashes.
 
@@ -184,11 +184,11 @@ class TwoFactorService:
             encoded = base64.b64encode(buffer.getvalue()).decode("ascii")
             return f"data:image/png;base64,{encoded}"
         except Exception as e:
-            logger.error(f"QR code generation error: {str(e)}")
+            logger.error(f"QR code generation error: {e!s}")
             return ""
 
     @staticmethod
-    def confirm_2fa_setup(customer, code: str) -> Tuple[bool, Optional[List[str]]]:
+    def confirm_2fa_setup(customer, code: str) -> tuple[bool, list[str] | None]:
         """
         Confirm 2FA setup by verifying the first code.
 
@@ -271,7 +271,7 @@ class TwoFactorService:
         return False
 
     @staticmethod
-    def regenerate_backup_codes(customer, password: str) -> Optional[List[str]]:
+    def regenerate_backup_codes(customer, password: str) -> list[str] | None:
         """
         Regenerate backup codes (requires password verification).
 

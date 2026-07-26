@@ -5,10 +5,12 @@ Provides a helper function to detect the authenticated user type
 (Customer, LoanOfficer, or Admin) from the JWT token and return the appropriate model.
 """
 
-from accounts.services.auth_service import AuthService
-from accounts.models import LoanOfficer, Admin
-from bson import ObjectId
 import logging
+
+from bson import ObjectId
+
+from accounts.models import Admin, LoanOfficer
+from accounts.services.auth_service import AuthService
 
 logger = logging.getLogger("authentication")
 
@@ -52,7 +54,7 @@ def get_authenticated_user(request):
                 return (officer, "loan_officer")
             logger.warning(f"Loan officer not found with id={user_id}")
         except Exception as e:
-            logger.error(f"Error fetching loan officer: {str(e)}")
+            logger.error(f"Error fetching loan officer: {e!s}")
         return (None, None)
 
     elif role == "customer":
@@ -69,7 +71,7 @@ def get_authenticated_user(request):
                 return (admin, "admin")
             logger.warning(f"Admin not found with id={user_id}")
         except Exception as e:
-            logger.error(f"Error fetching admin: {str(e)}")
+            logger.error(f"Error fetching admin: {e!s}")
         return (None, None)
 
     logger.warning(f"Unknown role: {role}")

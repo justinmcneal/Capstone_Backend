@@ -1,6 +1,8 @@
 from rest_framework import serializers
+
 from accounts.utils.email_utils import EmailUtils
 from accounts.utils.validation_utils import validate_person_name
+
 from .base_serializers import InputSanitizationMixin, PasswordValidationMixin
 
 

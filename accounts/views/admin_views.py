@@ -1,37 +1,38 @@
-from rest_framework.views import APIView
-from rest_framework import status
-from rest_framework.permissions import AllowAny, IsAuthenticated
-from datetime import datetime, timedelta, timezone
-from bson import ObjectId
-from django.utils.dateparse import parse_datetime
+import logging
 import secrets
 import string
+from datetime import datetime, timedelta, timezone
 
-from accounts.models import Admin, LoanOfficer
+from bson import ObjectId
+from django.utils.dateparse import parse_datetime
+from rest_framework import status
+from rest_framework.permissions import AllowAny, IsAuthenticated
+from rest_framework.views import APIView
+
 from accounts.authentication import CustomJWTAuthentication
-from accounts.utils.token_utils import TokenUtils
-from accounts.utils.response_helpers import success_response, error_response
-from accounts.utils.email_utils import EmailUtils
+from accounts.models import Admin, LoanOfficer
+from accounts.services.two_factor_service import TwoFactorService
+from accounts.utils.access_control import AccessControlMixin
 from accounts.utils.auth_cookies import (
     clear_auth_cookies,
     get_access_token_from_request,
     get_refresh_token_from_request,
 )
+from accounts.utils.email_utils import EmailUtils
+from accounts.utils.response_helpers import error_response, success_response
+from accounts.utils.throttles import AdminLoginRateThrottle
+from accounts.utils.token_utils import TokenUtils
 from accounts.utils.validation_utils import (
-    validate_email,
-    validate_employee_id,
-    validate_phone_number,
-    validate_person_name,
     normalize_text,
-    sanitize_text,
     parse_bool,
     parse_optional_bool,
+    sanitize_text,
+    validate_email,
+    validate_employee_id,
+    validate_person_name,
+    validate_phone_number,
 )
-from accounts.utils.access_control import AccessControlMixin
-from accounts.utils.throttles import AdminLoginRateThrottle
-from accounts.services.two_factor_service import TwoFactorService
 from analytics.models import AuditLog
-import logging
 
 logger = logging.getLogger("admin_auth")
 GENERIC_LOGIN_ERROR_MESSAGE = "Invalid email/username or password."
@@ -283,7 +284,7 @@ class AdminLoginView(APIView):
             )
 
         except Exception as e:
-            logger.error(f"Admin login error: {str(e)}")
+            logger.error(f"Admin login error: {e!s}")
             return error_response(
                 message="An error occurred during login",
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -343,7 +344,7 @@ class AdminLogoutView(APIView):
             return response
 
         except Exception as e:
-            logger.error(f"Admin logout error: {str(e)}")
+            logger.error(f"Admin logout error: {e!s}")
             response = success_response(message="Logged out successfully")
             clear_auth_cookies(response)
             return response
@@ -453,7 +454,7 @@ class LoanOfficerManagementView(AdminRequiredMixin, APIView):
             if search:
                 # Split search into terms for multi-word search support
                 search_terms = search.strip().split()
-                
+
                 if len(search_terms) == 1:
                     # Single term - search in all fields
                     search_regex = re.compile(re.escape(search_terms[0]), re.IGNORECASE)
@@ -469,14 +470,16 @@ class LoanOfficerManagementView(AdminRequiredMixin, APIView):
                     and_conditions = []
                     for term in search_terms:
                         term_regex = re.compile(re.escape(term), re.IGNORECASE)
-                        and_conditions.append({
-                            "$or": [
-                                {"first_name": {"$regex": term_regex}},
-                                {"last_name": {"$regex": term_regex}},
-                                {"email": {"$regex": term_regex}},
-                                {"employee_id": {"$regex": term_regex}},
-                            ]
-                        })
+                        and_conditions.append(
+                            {
+                                "$or": [
+                                    {"first_name": {"$regex": term_regex}},
+                                    {"last_name": {"$regex": term_regex}},
+                                    {"email": {"$regex": term_regex}},
+                                    {"employee_id": {"$regex": term_regex}},
+                                ]
+                            }
+                        )
                     query["$and"] = and_conditions
 
             # Get total count before pagination
@@ -551,7 +554,7 @@ class LoanOfficerManagementView(AdminRequiredMixin, APIView):
             )
 
         except Exception as e:
-            logger.error(f"List loan officers error: {str(e)}")
+            logger.error(f"List loan officers error: {e!s}")
             return error_response(
                 message="Failed to retrieve loan officers",
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -720,7 +723,7 @@ class LoanOfficerManagementView(AdminRequiredMixin, APIView):
             )
 
         except Exception as e:
-            logger.error(f"Create loan officer error: {str(e)}")
+            logger.error(f"Create loan officer error: {e!s}")
             return error_response(
                 message="Failed to create loan officer",
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -780,7 +783,7 @@ class LoanOfficerDetailView(AdminRequiredMixin, APIView):
             )
 
         except Exception as e:
-            logger.error(f"Get loan officer error: {str(e)}")
+            logger.error(f"Get loan officer error: {e!s}")
             return error_response(
                 message="Failed to retrieve loan officer",
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -929,7 +932,7 @@ class LoanOfficerDetailView(AdminRequiredMixin, APIView):
             )
 
         except Exception as e:
-            logger.error(f"Update loan officer error: {str(e)}")
+            logger.error(f"Update loan officer error: {e!s}")
             return error_response(
                 message="Failed to update loan officer",
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -959,7 +962,7 @@ class LoanOfficerDetailView(AdminRequiredMixin, APIView):
             return success_response(message="Loan officer deactivated successfully")
 
         except Exception as e:
-            logger.error(f"Deactivate loan officer error: {str(e)}")
+            logger.error(f"Deactivate loan officer error: {e!s}")
             return error_response(
                 message="Failed to deactivate loan officer",
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -1070,7 +1073,7 @@ class AdminManagementView(SuperAdminRequiredMixin, APIView):
             if search:
                 # Split search into terms for multi-word search support
                 search_terms = search.strip().split()
-                
+
                 if len(search_terms) == 1:
                     # Single term - search in all fields
                     search_regex = re.compile(re.escape(search_terms[0]), re.IGNORECASE)
@@ -1086,14 +1089,16 @@ class AdminManagementView(SuperAdminRequiredMixin, APIView):
                     and_conditions = []
                     for term in search_terms:
                         term_regex = re.compile(re.escape(term), re.IGNORECASE)
-                        and_conditions.append({
-                            "$or": [
-                                {"username": {"$regex": term_regex}},
-                                {"first_name": {"$regex": term_regex}},
-                                {"last_name": {"$regex": term_regex}},
-                                {"email": {"$regex": term_regex}},
-                            ]
-                        })
+                        and_conditions.append(
+                            {
+                                "$or": [
+                                    {"username": {"$regex": term_regex}},
+                                    {"first_name": {"$regex": term_regex}},
+                                    {"last_name": {"$regex": term_regex}},
+                                    {"email": {"$regex": term_regex}},
+                                ]
+                            }
+                        )
                     query["$and"] = and_conditions
 
             # Get all matching admins
@@ -1157,7 +1162,7 @@ class AdminManagementView(SuperAdminRequiredMixin, APIView):
             )
 
         except Exception as e:
-            logger.error(f"List admins error: {str(e)}")
+            logger.error(f"List admins error: {e!s}")
             return error_response(
                 message="Failed to retrieve admins",
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -1252,7 +1257,7 @@ class AdminManagementView(SuperAdminRequiredMixin, APIView):
             )
 
         except Exception as e:
-            logger.error(f"Create admin error: {str(e)}")
+            logger.error(f"Create admin error: {e!s}")
             return error_response(
                 message="Failed to create admin",
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -1316,7 +1321,7 @@ class AdminDetailView(SuperAdminRequiredMixin, APIView):
             )
 
         except Exception as e:
-            logger.error(f"Get admin error: {str(e)}")
+            logger.error(f"Get admin error: {e!s}")
             return error_response(
                 message="Failed to retrieve admin",
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -1401,7 +1406,7 @@ class AdminDetailView(SuperAdminRequiredMixin, APIView):
             )
 
         except Exception as e:
-            logger.error(f"Update admin error: {str(e)}")
+            logger.error(f"Update admin error: {e!s}")
             return error_response(
                 message="Failed to update admin",
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -1440,7 +1445,7 @@ class AdminDetailView(SuperAdminRequiredMixin, APIView):
             return success_response(message="Admin deactivated successfully")
 
         except Exception as e:
-            logger.error(f"Deactivate admin error: {str(e)}")
+            logger.error(f"Deactivate admin error: {e!s}")
             return error_response(
                 message="Failed to deactivate admin",
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -1516,7 +1521,7 @@ class AdminPermissionsView(SuperAdminRequiredMixin, APIView):
             )
 
         except Exception as e:
-            logger.error(f"Update permissions error: {str(e)}")
+            logger.error(f"Update permissions error: {e!s}")
             return error_response(
                 message="Failed to update permissions",
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -1526,93 +1531,135 @@ class AdminPermissionsView(SuperAdminRequiredMixin, APIView):
 class AdminProfileView(APIView):
     """
     Get or update the authenticated Admin's profile.
-    
+
     GET /api/auth/admin/me/
     PUT /api/auth/admin/me/
     """
+
     from rest_framework.permissions import IsAuthenticated
+
     from accounts.authentication import CustomJWTAuthentication
-    
+
     authentication_classes = [CustomJWTAuthentication]
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
         from accounts.utils.user_detection import get_authenticated_user
+
         try:
             user, user_type = get_authenticated_user(request)
             if not user or user_type != "admin":
-                return error_response(message="Unauthorized", status_code=status.HTTP_401_UNAUTHORIZED)
-            
-            return success_response(data={
-                "id": user.id,
-                "username": user.username,
-                "email": user.email,
-                "first_name": user.first_name,
-                "last_name": user.last_name,
-                "full_name": user.full_name,
-                "role": "admin",
-                "permissions": user.permissions if not user.super_admin else ["*"],
-                "super_admin": user.super_admin,
-                "last_login_attempt": user.last_login_attempt.isoformat() if getattr(user, "last_login_attempt", None) else None,
-                "failed_login_attempts": getattr(user, "failed_login_attempts", 0),
-                "login_attempt_count": getattr(user, "login_attempt_count", 0),
-            })
+                return error_response(
+                    message="Unauthorized", status_code=status.HTTP_401_UNAUTHORIZED
+                )
+
+            return success_response(
+                data={
+                    "id": user.id,
+                    "username": user.username,
+                    "email": user.email,
+                    "first_name": user.first_name,
+                    "last_name": user.last_name,
+                    "full_name": user.full_name,
+                    "role": "admin",
+                    "permissions": user.permissions if not user.super_admin else ["*"],
+                    "super_admin": user.super_admin,
+                    "last_login_attempt": (
+                        user.last_login_attempt.isoformat()
+                        if getattr(user, "last_login_attempt", None)
+                        else None
+                    ),
+                    "failed_login_attempts": getattr(user, "failed_login_attempts", 0),
+                    "login_attempt_count": getattr(user, "login_attempt_count", 0),
+                }
+            )
         except Exception as e:
-            logger.error(f"Get Admin Profile error: {str(e)}")
-            return error_response(message="Failed to retrieve profile", status_code=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            logger.error(f"Get Admin Profile error: {e!s}")
+            return error_response(
+                message="Failed to retrieve profile",
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
 
     def put(self, request):
         from accounts.utils.user_detection import get_authenticated_user
         from accounts.utils.validation_utils import validate_person_name
-        
+
         try:
             user, user_type = get_authenticated_user(request)
             if not user or user_type != "admin":
-                return error_response(message="Unauthorized", status_code=status.HTTP_401_UNAUTHORIZED)
-                
+                return error_response(
+                    message="Unauthorized", status_code=status.HTTP_401_UNAUTHORIZED
+                )
+
             data = request.data
             changes = False
-            
+
             if "first_name" in data:
-                is_valid, error_msg, normalized_name = validate_person_name(data["first_name"], "First name", 50)
+                is_valid, error_msg, normalized_name = validate_person_name(
+                    data["first_name"], "First name", 50
+                )
                 if not is_valid:
-                    return error_response(message=error_msg, errors={"first_name": error_msg}, status_code=status.HTTP_400_BAD_REQUEST)
+                    return error_response(
+                        message=error_msg,
+                        errors={"first_name": error_msg},
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                    )
                 user.first_name = normalized_name
                 changes = True
-                
+
             if "last_name" in data:
-                is_valid, error_msg, normalized_name = validate_person_name(data["last_name"], "Last name", 50)
+                is_valid, error_msg, normalized_name = validate_person_name(
+                    data["last_name"], "Last name", 50
+                )
                 if not is_valid:
-                    return error_response(message=error_msg, errors={"last_name": error_msg}, status_code=status.HTTP_400_BAD_REQUEST)
+                    return error_response(
+                        message=error_msg,
+                        errors={"last_name": error_msg},
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                    )
                 user.last_name = normalized_name
                 changes = True
-                
+
             if changes:
                 user.save()
                 AuditLog.log_action(
                     action="profile_updated",
                     user_id=user.id,
-                    user_type="super_admin" if getattr(user, "super_admin", False) else "admin",
+                    user_type=(
+                        "super_admin"
+                        if getattr(user, "super_admin", False)
+                        else "admin"
+                    ),
                     user_email=user.email,
                     description=f"Admin {user.email} updated their profile",
                     ip_address=request.META.get("REMOTE_ADDR", ""),
                 )
-                
-            return success_response(data={
-                "id": user.id,
-                "username": user.username,
-                "email": user.email,
-                "first_name": user.first_name,
-                "last_name": user.last_name,
-                "full_name": user.full_name,
-                "role": "admin",
-                "permissions": user.permissions if not user.super_admin else ["*"],
-                "super_admin": user.super_admin,
-                "last_login_attempt": user.last_login_attempt.isoformat() if getattr(user, "last_login_attempt", None) else None,
-                "failed_login_attempts": getattr(user, "failed_login_attempts", 0),
-                "login_attempt_count": getattr(user, "login_attempt_count", 0),
-            }, message="Profile updated successfully")
-            
+
+            return success_response(
+                data={
+                    "id": user.id,
+                    "username": user.username,
+                    "email": user.email,
+                    "first_name": user.first_name,
+                    "last_name": user.last_name,
+                    "full_name": user.full_name,
+                    "role": "admin",
+                    "permissions": user.permissions if not user.super_admin else ["*"],
+                    "super_admin": user.super_admin,
+                    "last_login_attempt": (
+                        user.last_login_attempt.isoformat()
+                        if getattr(user, "last_login_attempt", None)
+                        else None
+                    ),
+                    "failed_login_attempts": getattr(user, "failed_login_attempts", 0),
+                    "login_attempt_count": getattr(user, "login_attempt_count", 0),
+                },
+                message="Profile updated successfully",
+            )
+
         except Exception as e:
-            logger.error(f"Update Admin Profile error: {str(e)}")
-            return error_response(message="Failed to update profile", status_code=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            logger.error(f"Update Admin Profile error: {e!s}")
+            return error_response(
+                message="Failed to update profile",
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )

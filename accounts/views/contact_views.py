@@ -1,10 +1,12 @@
-from rest_framework.views import APIView
+import logging
+import re
+
 from rest_framework.permissions import AllowAny
+from rest_framework.views import APIView
+
 from accounts.serializers.contact_serializers import ContactSupportSerializer
 from accounts.services.email_service import email_service
 from accounts.utils.response_helpers import APIResponseHelper
-import logging
-import re
 
 logger = logging.getLogger("support")
 
@@ -26,9 +28,7 @@ class ContactSupportView(APIView):
         data = serializer.validated_data
         recipient = "sorianoeligabriel@gmail.com"
 
-        subject = (
-            f"[Support] {data['concern_type']} - {data['full_name']}"
-        )
+        subject = f"[Support] {data['concern_type']} - {data['full_name']}"
         body = (
             f"Name: {data['full_name']}\n"
             f"Email: {data['contact_email']}\n"

@@ -1,6 +1,8 @@
-from django.core.management.base import BaseCommand, CommandError
-from accounts.models.admin import Admin, ADMIN_PERMISSIONS
 import getpass
+
+from django.core.management.base import BaseCommand, CommandError
+
+from accounts.models.admin import ADMIN_PERMISSIONS, Admin
 
 
 class Command(BaseCommand):

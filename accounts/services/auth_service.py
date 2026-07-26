@@ -1,10 +1,12 @@
-from accounts.models import Customer
-from accounts.utils.token_utils import TokenUtils
-from accounts.utils.email_utils import EmailUtils
-from accounts.services.otp_service import OTPService
-from rest_framework_simplejwt.tokens import RefreshToken
 from datetime import datetime, timedelta, timezone
+
 from pymongo.errors import DuplicateKeyError
+from rest_framework_simplejwt.tokens import RefreshToken
+
+from accounts.models import Customer
+from accounts.services.otp_service import OTPService
+from accounts.utils.email_utils import EmailUtils
+from accounts.utils.token_utils import TokenUtils
 
 
 class AuthService:
@@ -95,7 +97,7 @@ class AuthService:
         except ValueError:
             raise  # Propagate ValueError so SignUpView can return a proper 400 response
         except Exception as e:
-            raise Exception(f"Registration failed: {str(e)}")
+            raise Exception(f"Registration failed: {e!s}")
 
     @staticmethod
     def create_customer_tokens(customer, token_type="signup"):

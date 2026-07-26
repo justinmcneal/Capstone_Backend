@@ -1,7 +1,8 @@
+import logging
 from datetime import datetime, timedelta, timezone
+
 from accounts.models import Customer
 from accounts.utils.email_utils import EmailUtils
-import logging
 
 logger = logging.getLogger("authentication")
 
