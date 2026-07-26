@@ -13,7 +13,7 @@ from accounts.authentication import CustomJWTAuthentication
 from accounts.utils.access_control import AccessControlMixin
 from accounts.utils.response_helpers import success_response, error_response
 from accounts.utils.throttles import ChatRateThrottle
-from accounts.utils.validation_utils import sanitize_text, sanitize_multiline_text
+from accounts.utils.validation_utils import sanitize_text, sanitize_multiline_text, escape_llm_output
 from accounts.services.consent_service import ConsentService
 from ai_assistant.models import AIInteraction
 from ai_assistant.services import get_llm_service
@@ -161,7 +161,7 @@ class ChatView(ConsentRequiredMixin, APIView):
                 ai_interaction = AIInteraction(
                     customer_id=customer_id,
                     message=message,
-                    response=redirect_response,
+                    response=escape_llm_output(redirect_response),
                     conversation_id=conversation_id,
                     role='assistant',
                     model_used='content_filter',
@@ -171,7 +171,7 @@ class ChatView(ConsentRequiredMixin, APIView):
                 
                 return success_response(
                     data={
-                        'message': redirect_response,
+                        'message': escape_llm_output(redirect_response),
                         'conversation_id': conversation_id,
                         'filtered': True,
                     },
@@ -212,7 +212,7 @@ class ChatView(ConsentRequiredMixin, APIView):
                     status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
                 )
 
-            ai_response = sanitize_multiline_text(result.get('response', ''))
+            ai_response = escape_llm_output(sanitize_multiline_text(result.get('response', '')))
             if not ai_response:
                 return error_response(
                     message="AI returned an empty response",
@@ -396,7 +396,7 @@ class StreamingChatView(ConsentRequiredMixin, APIView):
                         yield f"event: tool_result\ndata: {json.dumps({'name': chunk.get('name'), 'success': chunk.get('success', True)})}\n\n"
                     
                     elif chunk_type == 'token':
-                        content = chunk.get('content', '')
+                        content = escape_llm_output(chunk.get('content', ''))
                         full_response.append(content)
                         yield f"event: token\ndata: {json.dumps({'content': content})}\n\n"
                     
@@ -406,7 +406,7 @@ class StreamingChatView(ConsentRequiredMixin, APIView):
                         elapsed_ms = int((time.time() - start_time) * 1000)
                         
                         # Save interactions to database
-                        ai_response = sanitize_multiline_text(''.join(full_response))
+                        ai_response = escape_llm_output(sanitize_multiline_text(''.join(full_response)))
                         if ai_response:
                             # Save user message
                             user_interaction = AIInteraction(
@@ -436,12 +436,12 @@ class StreamingChatView(ConsentRequiredMixin, APIView):
                         yield f"event: done\ndata: {json.dumps({'model': model_used, 'tokens_used': tokens_used, 'response_time_ms': elapsed_ms, 'conversation_id': conversation_id, 'tools_called': tools_called})}\n\n"
                     
                     elif chunk_type == 'error':
-                        yield f"event: error\ndata: {json.dumps({'content': chunk.get('content', 'Unknown error')})}\n\n"
+                        yield f"event: error\ndata: {json.dumps({'content': escape_llm_output(chunk.get('content', 'Unknown error'))})}\n\n"
                         break
                         
             except Exception as e:
                 logger.error(f"Stream error: {str(e)}")
-                yield f"event: error\ndata: {json.dumps({'content': 'Stream error occurred'})}\n\n"
+                yield f"event: error\ndata: {json.dumps({'content': escape_llm_output('Stream error occurred')})}\n\n"
         
         response = StreamingHttpResponse(
             event_stream(),
