@@ -1,10 +1,17 @@
+from __future__ import annotations
+
 from datetime import datetime, timedelta, timezone
+from typing import TYPE_CHECKING, Optional
+
 from rest_framework_simplejwt.tokens import AccessToken, RefreshToken
 from django.conf import settings
 from accounts.models import BlacklistedToken
 from accounts.models import RefreshTokenEntry
 import hashlib
 import logging
+
+if TYPE_CHECKING:
+    from accounts.models import Customer
 
 logger = logging.getLogger("authentication")
 
@@ -13,11 +20,11 @@ class TokenUtils:
     """Utility class for token operations with single-device enforcement"""
 
     @staticmethod
-    def _hash_token(token):
+    def _hash_token(token: str) -> str:
         return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
     @staticmethod
-    def _token_membership_query(customer_id, role="customer", active_only=False):
+    def _token_membership_query(customer_id: str, role: str = "customer", active_only: bool = False) -> dict:
         query = {"customer": str(customer_id)}
         and_filters = []
 
@@ -42,8 +49,11 @@ class TokenUtils:
 
     @staticmethod
     def _store_refresh_token_entry(
-        customer_id, refresh_token, role="customer", expires_at=None
-    ):
+        customer_id: str,
+        refresh_token: str,
+        role: str = "customer",
+        expires_at: datetime | None = None,
+    ) -> None:
         if expires_at is None:
             parsed_refresh = RefreshToken(refresh_token)
             expires_at = datetime.fromtimestamp(parsed_refresh["exp"], tz=timezone.utc)
@@ -60,7 +70,7 @@ class TokenUtils:
         refresh_entry.save()
 
     @staticmethod
-    def _get_token_lifetimes(token_type="no_remember_me"):
+    def _get_token_lifetimes(token_type: str = "no_remember_me") -> dict[str, timedelta]:
         lifetimes = getattr(settings, "TOKEN_LIFETIMES", {})
         default_lifetimes = lifetimes.get(
             "no_remember_me",
@@ -72,7 +82,7 @@ class TokenUtils:
         return lifetimes.get(token_type, default_lifetimes)
 
     @staticmethod
-    def generate_jwt_tokens(customer, token_type="no_remember_me"):
+    def generate_jwt_tokens(customer: Customer, token_type: str = "no_remember_me") -> dict[str, str]:
         """
         Generate JWT access and refresh tokens for a customer with dynamic lifetimes.
         Invalidates all existing refresh tokens for this customer (single-device enforcement).
@@ -125,8 +135,12 @@ class TokenUtils:
 
     @staticmethod
     def generate_tokens(
-        user_id, email, verified=True, role="customer", token_type="no_remember_me"
-    ):
+        user_id: str,
+        email: str,
+        verified: bool = True,
+        role: str = "customer",
+        token_type: str = "no_remember_me",
+    ) -> dict[str, str]:
         """
         Generate JWT tokens for non-customer users (admin, loan officer).
 
@@ -179,7 +193,7 @@ class TokenUtils:
         return {"access": str(access), "refresh": str(refresh)}
 
     @staticmethod
-    def generate_2fa_temp_token(user_id, email, role="customer"):
+    def generate_2fa_temp_token(user_id: str, email: str, role: str = "customer") -> str:
         """
         Generate a temporary token for 2FA verification.
         This token is short-lived and only valid for completing 2FA.
@@ -206,7 +220,7 @@ class TokenUtils:
         return str(refresh)
 
     @staticmethod
-    def blacklist_token(token, token_type="refresh"):
+    def blacklist_token(token: str, token_type: str = "refresh") -> bool:
         """
         Add a token to the blacklist.
 
@@ -249,7 +263,7 @@ class TokenUtils:
             return False
 
     @staticmethod
-    def blacklist_tokens_on_logout(access_token, refresh_token):
+    def blacklist_tokens_on_logout(access_token: str | None, refresh_token: str | None) -> bool:
         """
         Blacklist both access and refresh tokens on logout.
 
@@ -268,7 +282,7 @@ class TokenUtils:
             return False
 
     @staticmethod
-    def is_token_blacklisted(token, token_type="refresh"):
+    def is_token_blacklisted(token: str, token_type: str = "refresh") -> bool:
         """Check if a token is blacklisted."""
         token_hash = TokenUtils._hash_token(token)
         return (
@@ -277,7 +291,7 @@ class TokenUtils:
         )
 
     @staticmethod
-    def is_refresh_token_valid(customer_id, token, role="customer"):
+    def is_refresh_token_valid(customer_id: str, token: str, role: str = "customer") -> bool:
         """
         Check if the refresh token is valid for this customer.
         Used for single-device token validation.

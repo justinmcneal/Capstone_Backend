@@ -1,5 +1,10 @@
 from datetime import datetime, timedelta, timezone
+from typing import TYPE_CHECKING, Any, Optional, Tuple
+
 from accounts.utils.email_utils import EmailUtils
+
+if TYPE_CHECKING:
+    from accounts.models import Customer
 
 
 class OTPService:
@@ -13,25 +18,25 @@ class OTPService:
     OTP_COOLDOWN_SECONDS = 600  # 10 minutes cooldown after max attempts
 
     @staticmethod
-    def generate_otp(length=None):
+    def generate_otp(length: Optional[int] = None) -> str:
         return EmailUtils.generate_otp(length or OTPService.OTP_LENGTH)
 
     @staticmethod
-    def get_otp_expiry(minutes=None):
+    def get_otp_expiry(minutes: Optional[int] = None) -> datetime:
         """Get OTP expiry time. Default is OTP_EXPIRY_MINUTES (10 min)."""
         expiry_minutes = minutes or OTPService.OTP_EXPIRY_MINUTES
         return datetime.now(timezone.utc) + timedelta(minutes=expiry_minutes)
 
     @staticmethod
-    def is_otp_expired(expiry_time):
+    def is_otp_expired(expiry_time: Optional[datetime]) -> bool:
         return EmailUtils.is_otp_expired(expiry_time)
 
     @staticmethod
     def check_otp_rate_limit(
-        customer,
-        attempt_field="otp_attempt_count",
-        last_attempt_field="otp_last_attempt",
-    ):
+        customer: Customer,
+        attempt_field: str = "otp_attempt_count",
+        last_attempt_field: str = "otp_last_attempt",
+    ) -> Tuple[bool, int]:
         attempt_count = getattr(customer, attempt_field, 0)
         last_attempt = getattr(customer, last_attempt_field, None)
 
@@ -54,10 +59,10 @@ class OTPService:
 
     @staticmethod
     def increment_otp_attempt(
-        customer,
-        attempt_field="otp_attempt_count",
-        last_attempt_field="otp_last_attempt",
-    ):
+        customer: Customer,
+        attempt_field: str = "otp_attempt_count",
+        last_attempt_field: str = "otp_last_attempt",
+    ) -> None:
         current_count = getattr(customer, attempt_field, 0)
         setattr(customer, attempt_field, current_count + 1)
         setattr(customer, last_attempt_field, datetime.now(timezone.utc))
@@ -65,21 +70,21 @@ class OTPService:
 
     @staticmethod
     def reset_otp_attempts(
-        customer,
-        attempt_field="otp_attempt_count",
-        last_attempt_field="otp_last_attempt",
-    ):
+        customer: Customer,
+        attempt_field: str = "otp_attempt_count",
+        last_attempt_field: str = "otp_last_attempt",
+    ) -> None:
         setattr(customer, attempt_field, 0)
         setattr(customer, last_attempt_field, None)
         customer.save()
 
     @staticmethod
     def validate_otp(
-        customer,
-        provided_otp,
-        otp_field="verification_token",
-        expiry_field="verification_token_expires",
-    ):
+        customer: Customer,
+        provided_otp: str,
+        otp_field: str = "verification_token",
+        expiry_field: str = "verification_token_expires",
+    ) -> Tuple[bool, str]:
         stored_otp = getattr(customer, otp_field, None)
         expiry_time = getattr(customer, expiry_field, None)
 
@@ -96,11 +101,11 @@ class OTPService:
 
     @staticmethod
     def set_otp(
-        customer,
-        otp_field="verification_token",
-        expiry_field="verification_token_expires",
-        expiry_minutes=None,
-    ):
+        customer: Customer,
+        otp_field: str = "verification_token",
+        expiry_field: str = "verification_token_expires",
+        expiry_minutes: Optional[int] = None,
+    ) -> str:
         """Set OTP for customer with optional custom expiry time."""
         otp = OTPService.generate_otp()
         setattr(customer, otp_field, otp)
@@ -109,10 +114,10 @@ class OTPService:
 
     @staticmethod
     def clear_otp(
-        customer,
-        otp_field="verification_token",
-        expiry_field="verification_token_expires",
-    ):
+        customer: Customer,
+        otp_field: str = "verification_token",
+        expiry_field: str = "verification_token_expires",
+    ) -> None:
         setattr(customer, otp_field, None)
         setattr(customer, expiry_field, None)
         customer.save()
