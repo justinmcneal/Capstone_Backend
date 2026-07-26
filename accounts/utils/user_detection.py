@@ -11,6 +11,7 @@ from bson import ObjectId
 
 from accounts.models import Admin, LoanOfficer
 from accounts.services.auth_service import AuthService
+from accounts.utils.exception_types import NON_FATAL_EXCEPTIONS
 
 logger = logging.getLogger("authentication")
 
@@ -53,7 +54,7 @@ def get_authenticated_user(request):
             if officer:
                 return (officer, "loan_officer")
             logger.warning(f"Loan officer not found with id={user_id}")
-        except Exception as e:
+        except NON_FATAL_EXCEPTIONS as e:
             logger.error(f"Error fetching loan officer: {e!s}")
         return (None, None)
 
@@ -70,7 +71,7 @@ def get_authenticated_user(request):
             if admin:
                 return (admin, "admin")
             logger.warning(f"Admin not found with id={user_id}")
-        except Exception as e:
+        except NON_FATAL_EXCEPTIONS as e:
             logger.error(f"Error fetching admin: {e!s}")
         return (None, None)
 

@@ -5,6 +5,7 @@ from rest_framework.views import APIView
 
 from accounts.authentication import CustomJWTAuthentication
 from accounts.models.activity import ActiveSession, LoginActivity
+from accounts.utils.exception_types import NON_FATAL_EXCEPTIONS
 from accounts.utils.response_helpers import APIResponseHelper
 
 logger = logging.getLogger("authentication")
@@ -64,7 +65,7 @@ class ActiveSessionsView(APIView):
             return APIResponseHelper.success_response(
                 message="Session terminated successfully"
             )
-        except Exception as e:
+        except NON_FATAL_EXCEPTIONS as e:
             logger.error(f"Failed to terminate session: {e!s}")
             return APIResponseHelper.server_error_response(
                 "Failed to terminate session"

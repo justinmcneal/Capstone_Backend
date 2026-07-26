@@ -6,6 +6,7 @@ from rest_framework_simplejwt.tokens import RefreshToken
 from accounts.models import Customer
 from accounts.services.otp_service import OTPService
 from accounts.utils.email_utils import EmailUtils
+from accounts.utils.exception_types import NON_FATAL_EXCEPTIONS
 from accounts.utils.token_utils import TokenUtils
 
 
@@ -27,7 +28,7 @@ class AuthService:
 
         try:
             return Customer.find_one({"_id": ObjectId(customer_id)})
-        except Exception:
+        except NON_FATAL_EXCEPTIONS:
             return None
 
     @staticmethod
@@ -100,7 +101,7 @@ class AuthService:
             raise ValueError("An account with this email already exists")
         except ValueError:
             raise  # Propagate ValueError so SignUpView can return a proper 400 response
-        except Exception as e: 
+        except NON_FATAL_EXCEPTIONS as e:
             raise RegistrationError(f"Registration failed: {e!s}") from e
 
     @staticmethod

@@ -9,6 +9,7 @@ from django.conf import settings
 from rest_framework_simplejwt.tokens import AccessToken, RefreshToken
 
 from accounts.models import BlacklistedToken, RefreshTokenEntry
+from accounts.utils.exception_types import NON_FATAL_EXCEPTIONS
 
 if TYPE_CHECKING:
     from accounts.models import Customer
@@ -266,7 +267,7 @@ class TokenUtils:
 
             logger.info(f"Blacklisted {token_type} token")
             return True
-        except Exception as e:
+        except NON_FATAL_EXCEPTIONS as e:
             logger.error(f"Failed to blacklist token: {e!s}")
             return False
 
@@ -287,7 +288,7 @@ class TokenUtils:
             if refresh_token:
                 TokenUtils.blacklist_token(refresh_token, token_type="refresh")
             return True
-        except Exception as e:
+        except NON_FATAL_EXCEPTIONS as e:
             logger.error(f"Failed to blacklist tokens on logout: {e!s}")
             return False
 

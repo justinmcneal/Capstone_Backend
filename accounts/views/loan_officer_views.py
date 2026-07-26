@@ -13,6 +13,7 @@ from accounts.utils.auth_cookies import (
     set_auth_cookies,
 )
 from accounts.utils.email_utils import EmailUtils
+from accounts.utils.exception_types import NON_FATAL_EXCEPTIONS
 from accounts.utils.response_helpers import error_response, success_response
 from accounts.utils.throttles import LoanOfficerLoginRateThrottle
 from accounts.utils.token_utils import TokenUtils
@@ -51,7 +52,7 @@ def _log_loan_officer_login_failure(request, email, reason, officer=None):
             },
             ip_address=ip_address,
         )
-    except Exception as log_error:
+    except NON_FATAL_EXCEPTIONS as log_error:
         logger.error(
             "failed_to_write_audit action=user_login_failed role=loan_officer email=%s error=%s",
             email,
@@ -244,7 +245,7 @@ class LoanOfficerLoginView(APIView):
             set_auth_cookies(response, tokens["access"], tokens["refresh"])
             return response
 
-        except Exception as e:
+        except NON_FATAL_EXCEPTIONS as e:
             logger.error(f"Loan officer login error: {e!s}")
             return error_response(
                 message="An error occurred during login",
@@ -284,7 +285,7 @@ class LoanOfficerLogoutView(APIView):
                     )
                     user_id = payload.get("customer_id")
                     user_email = payload.get("email", "")
-            except Exception:
+            except NON_FATAL_EXCEPTIONS:
                 logger.warning(
                     "Could not decode token for audit log user info during logout"
                 )
@@ -309,7 +310,7 @@ class LoanOfficerLogoutView(APIView):
             clear_auth_cookies(response)
             return response
 
-        except Exception as e:
+        except NON_FATAL_EXCEPTIONS as e:
             logger.error(f"Loan officer logout error: {e!s}")
             response = success_response(message="Logged out successfully")
             clear_auth_cookies(response)
@@ -359,7 +360,7 @@ class LoanOfficerProfileView(APIView):
                     ),
                 }
             )
-        except Exception as e:
+        except NON_FATAL_EXCEPTIONS as e:
             logger.error(f"Get Loan Officer Profile error: {e!s}")
             return error_response(
                 message="Failed to retrieve profile",
@@ -464,7 +465,7 @@ class LoanOfficerProfileView(APIView):
                 message="Profile updated successfully",
             )
 
-        except Exception as e:
+        except NON_FATAL_EXCEPTIONS as e:
             logger.error(f"Update Loan Officer Profile error: {e!s}")
             return error_response(
                 message="Failed to update profile",

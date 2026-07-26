@@ -11,6 +11,7 @@ from accounts.serializers.password_serializers import (
     VerifyResetOTPSerializer,
 )
 from accounts.services.password_service import PasswordService
+from accounts.utils.exception_types import NON_FATAL_EXCEPTIONS
 from accounts.utils.response_helpers import APIResponseHelper
 from accounts.utils.throttles import (
     ForgotPasswordRateThrottle,
@@ -161,7 +162,7 @@ class ChangePasswordView(APIView):
             return APIResponseHelper.error_response(
                 message=message, error_code=status.HTTP_400_BAD_REQUEST
             )
-        except Exception as e:
+        except NON_FATAL_EXCEPTIONS as e:
             logger.error(f"Password change error: {e!s}")
             return APIResponseHelper.error_response(
                 message=str(e), error_code=status.HTTP_400_BAD_REQUEST
