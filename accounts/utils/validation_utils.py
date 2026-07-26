@@ -1,7 +1,7 @@
 import os
 import re
 
-from django.utils.html import strip_tags
+from django.utils.html import escape, strip_tags
 
 # Unicode-aware: allows letters with optional separators between words.
 _PERSON_NAME_PATTERN = re.compile(r"^[^\W\d_]+(?:[ .'-][^\W\d_]+)*$", re.UNICODE)
@@ -64,6 +64,16 @@ def sanitize_multiline_text(value):
     cleaned = "\n".join(" ".join(line.split()) for line in cleaned.split("\n"))
     cleaned = _MULTI_NEWLINE_PATTERN.sub("\n\n", cleaned)
     return cleaned.strip()
+
+
+def escape_llm_output(value):
+    """
+    Escape HTML entities in LLM-generated text to prevent XSS.
+    Use for AI responses that may be rendered in frontend HTML contexts.
+    """
+    if value is None:
+        return ""
+    return escape(str(value))
 
 
 def sanitize_filename(value, fallback="uploaded_file"):

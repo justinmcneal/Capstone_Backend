@@ -67,11 +67,10 @@ The `ai_assistant` module provides an AI chatbot backed by Groq/Ollama with:
 - **Observation**: All tool calls now flow through `safe_execute_tool`. `execute_tool()` delegates to `safe_execute_tool()` with rate limiting, validation, and auditing. The raw executor is now `_execute_tool_raw()`.
 - **Status**: Fixed. Rate limiting is enforced for all tool execution paths.
 
-### 7. Unsanitized LLM output
-- **Files**: `ai_assistant/views/chat_views.py`, `ai_assistant/models/interaction.py`
-- **Observation**: AI responses are saved to MongoDB and returned to the client without sanitization.
-- **Risk**: If the model emits HTML/JS, it could be rendered in the frontend (XSS).
-- **Recommendation**: Sanitize LLM responses before saving/displaying, or ensure the frontend treats AI messages as plain text.
+### 7. Unsanitized LLM output (RESOLVED)
+- **Files**: `ai_assistant/views/chat_views.py`, `accounts/utils/validation_utils.py`
+- **Observation**: Added `escape_llm_output()` helper that HTML-escapes AI responses before saving to MongoDB and returning to clients. Applied to both streaming and non-streaming chat paths, including prohibited-content redirect responses and streamed token/error events.
+- **Status**: Fixed. All LLM output now passes through `html.escape` after multiline sanitization.
 
 ### 8. Cross-app import coupling (RESOLVED)
 - **Files**: `ai_assistant/services/tools.py`
@@ -95,4 +94,4 @@ The `ai_assistant` module provides an AI chatbot backed by Groq/Ollama with:
 
 ## Summary
 
-The `ai_assistant` module is well-structured and production-ready in concept. The primary remaining gaps are **test coverage**, **streaming correctness verification**, **potential blocking I/O at scale**, and **unsanitized LLM output**. The knowledge base is now aligned with other modules, but should be review-locked to prevent drift. Tool safety inconsistency and cross-app import coupling have been resolved.
+The `ai_assistant` module is well-structured and production-ready in concept. The primary remaining gaps are **large view file** (#1), **blocking I/O at scale** (#3), **streaming correctness verification** (#4), and **knowledge-base review lock** (#5). Test coverage, unsanitized LLM output, tool safety inconsistency, and cross-app import coupling have been resolved.
