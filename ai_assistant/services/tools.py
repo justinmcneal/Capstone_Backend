@@ -21,8 +21,8 @@ from ai_assistant.services.context_builder import (
     BUSINESS_PROFILE_REQUIRED_FIELDS,
     PERSONAL_PROFILE_REQUIRED_FIELDS,
 )
+from ai_assistant.services.tool_safety import safe_execute_tool
 from loans.services.qualification import resolve_required_document_types, document_type_label
-from notifications.models.notification import get_db
 
 logger = logging.getLogger('ai_assistant')
 
@@ -204,6 +204,26 @@ TOOL_SCHEMAS = [
 
 def execute_tool(tool_name, tool_args, customer_id):
     """
+    Execute a tool by name with safety checks (rate limiting, validation, auditing).
+    Returns the result as a JSON string.
+    All tools are read-only and scoped to the authenticated customer.
+    """
+    result = safe_execute_tool(tool_name, tool_args or {}, customer_id, skip_rate_limit=False)
+
+    if result.get('success'):
+        return result['result']
+    elif result.get('rate_limited'):
+        return json.dumps({
+            "error": result.get('error'),
+            "rate_limited": True,
+            "retry_after_seconds": result.get('retry_after_seconds', 60)
+        })
+    else:
+        return json.dumps({"error": result.get('error', 'Failed to retrieve data.')})
+
+
+def _execute_tool_raw(tool_name, tool_args, customer_id):
+    """
     Execute a tool by name and return the result as a JSON string.
     All tools are read-only and scoped to the authenticated customer.
     """
@@ -222,14 +242,9 @@ def execute_tool(tool_name, tool_args, customer_id):
 
     executor = executors.get(tool_name)
     if not executor:
-        return json.dumps({"error": f"Unknown tool: {tool_name}"})
+        raise ValueError(f"Unknown tool: {tool_name}")
 
-    try:
-        result = executor(customer_id=customer_id, **tool_args)
-        return json.dumps(result, default=str)
-    except Exception as e:
-        logger.error(f"Tool execution error ({tool_name}): {e}")
-        return json.dumps({"error": "Failed to retrieve data. Please try again."})
+    return executor(customer_id=customer_id, **tool_args)
 
 
 def _get_profile_status(customer_id, **kwargs):
@@ -738,15 +753,13 @@ def _get_customer_dashboard(customer_id, **kwargs):
 
 def _get_notification_status(customer_id, **kwargs):
     """Get notification inbox status with unread count and recent notifications."""
-    from notifications.models.notification import Notification
+    db = settings.MONGODB
+    collection = db["notifications"]
 
     cache_key = _get_user_cache_key(customer_id, 'notification_status')
     cached = cache.get(cache_key)
     if cached is not None:
         return cached
-
-    db = get_db()
-    collection = db[Notification.collection_name]
 
     # Build owner query (customers strictly by user_id)
     owner_query = {'user_id': str(customer_id)}
@@ -774,5 +787,5 @@ def _get_notification_status(customer_id, **kwargs):
         "summary": f"{unread_count} unread notification(s)." if unread_count else "No unread notifications."
     }
 
-    cache.set(cache_key, result, TOOL_CACHE_TTL['customer_dashboard'])
+    cache.set(cache_key, result, TOOL_CACHE_TTL['notification_status'])
     return result
