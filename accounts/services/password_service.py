@@ -1,4 +1,5 @@
 import logging
+import re
 
 from accounts.models import Admin, LoanOfficer
 from accounts.services.auth_service import AuthService
@@ -17,6 +18,17 @@ class PasswordService:
     RESET_LAST_ATTEMPT_FIELD = "password_reset_last_attempt"
 
     @staticmethod
+    def _find_by_email(model, email):
+        normalized_email = email.lower().strip()
+        user = model.find_one({"email": normalized_email})
+        if user:
+            return user
+
+        return model.find_one(
+            {"email": re.compile(f"^{re.escape(normalized_email)}$", re.IGNORECASE)}
+        )
+
+    @staticmethod
     def _find_user_by_email(email, requested_user_type=None):
         """
         Search for a user across all models: Customer, LoanOfficer, and Admin.
@@ -27,9 +39,9 @@ class PasswordService:
         if requested_user_type == "customer":
             return AuthService.get_customer_by_email(email), "customer"
         if requested_user_type == "loan_officer":
-            return LoanOfficer.find_one({"email": email}), "loan_officer"
+            return PasswordService._find_by_email(LoanOfficer, email), "loan_officer"
         if requested_user_type == "admin":
-            return Admin.find_one({"email": email}), "admin"
+            return PasswordService._find_by_email(Admin, email), "admin"
 
         # Check Customer first
         customer = AuthService.get_customer_by_email(email)
@@ -37,12 +49,12 @@ class PasswordService:
             return customer, "customer"
 
         # Check LoanOfficer
-        officer = LoanOfficer.find_one({"email": email})
+        officer = PasswordService._find_by_email(LoanOfficer, email)
         if officer:
             return officer, "loan_officer"
 
         # Check Admin (by email)
-        admin = Admin.find_one({"email": email})
+        admin = PasswordService._find_by_email(Admin, email)
         if admin:
             return admin, "admin"
 
