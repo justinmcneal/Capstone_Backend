@@ -1,19 +1,22 @@
 # Accounts API Testing Guide
 
 ## Scope
-Accounts handles authentication, OTP, password reset, consent, 2FA, loan officer auth, and admin management.
+Accounts handles authentication, OTP, password reset, consent, 2FA, loan officer auth, admin management, activity tracking, and support contact.
 
 ## Base URL and Auth
 - Base URL: `http://localhost:8000/api/auth`
-- Most protected endpoints require:
-```http
-Authorization: Bearer <access_token>
-Content-Type: application/json
-```
+- Protected endpoints require:
+  ```http
+  Authorization: Bearer <access_token>
+  Content-Type: application/json
+  ```
 - Customer-only endpoints require a customer token.
 - Admin endpoints require admin or super-admin tokens depending on the route.
+- Some endpoints accept tokens via cookies instead of the `Authorization` header.
 
 ## URL Reference
+
+### Customer Authentication
 
 1. `GET /csrf-token/`
 - Auth: none
@@ -31,7 +34,7 @@ Content-Type: application/json
   - `password_confirm` required
   - `phone` optional
   - `language` optional (`en` or `tl`)
-- Key response fields: customer `user` object, message
+- Key response fields: `user`, `message`
 
 3. `POST /verify-email/`
 - Auth: none
@@ -44,7 +47,7 @@ Content-Type: application/json
 - Auth: none
 - Request fields:
   - `email`
-- Key response fields: message only
+- Key response fields: `message`
 
 5. `POST /login/`
 - Auth: none
@@ -53,30 +56,36 @@ Content-Type: application/json
   - `password`
   - `remember_me` optional
 - Key response fields:
-  - If 2FA is enabled: `requires_2fa`, `temp_token`
+  - If 2FA is enabled: `requires_2fa`, `temp_token`, `message`
   - Otherwise: `user`, `access`, `refresh`, `remember_me`
 
 6. `POST /refresh-token/`
-- Auth: refresh token via cookie/header
-- Request fields: none required in body
+- Auth: refresh token via cookie or `Authorization: Bearer <refresh_token>`
+- Request body: none required
 - Key response fields: new `access` and `refresh` tokens
 
 7. `POST /logout/`
-- Auth: refresh token required, access token optional
+- Auth: refresh token via cookie; access token optional via cookie or request body
 - Request fields:
   - `access` optional in body
-- Key response fields: logout message
+- Key response fields: `message`
+
+### Password Management
 
 8. `POST /forgot-password/`
 - Auth: none
 - Request fields:
   - `email`
+  - `role` optional (`customer`, `loan_officer`, `admin`)
+- Key response fields: `message` only
 
 9. `POST /verify-reset-otp/`
 - Auth: none
 - Request fields:
   - `email`
   - `otp`
+  - `role` optional (`customer`, `loan_officer`, `admin`)
+- Key response fields: `message` only
 
 10. `POST /reset-password/`
 - Auth: none
@@ -85,32 +94,31 @@ Content-Type: application/json
   - `otp`
   - `new_password`
   - `confirm_password`
+  - `role` optional (`customer`, `loan_officer`, `admin`)
+- Key response fields: `message` only
 
 11. `POST /change-password/`
-- Auth: authenticated customer/loan officer
+- Auth: authenticated customer or loan officer
 - Request fields:
   - `old_password`
   - `new_password`
   - `confirm_password`
+- Key response fields: `message`
 
-12. `PATCH /language/`
-- Auth: authenticated customer
-- Request fields:
-  - `language` (`en` or `tl`)
-- Key response fields: updated `language`
+### Two-Factor Authentication
 
-13. `POST /2fa/setup/`
+12. `POST /2fa/setup/`
 - Auth: authenticated customer or loan officer
 - Request fields: none
-- Key response fields: `provisioning_uri`, `manual_entry_key`, `qr_code_data_url`
+- Key response fields: `provisioning_uri`, `manual_entry_key`, `qr_code_data_url`, `message`
 
-14. `POST /2fa/confirm/`
+13. `POST /2fa/confirm/`
 - Auth: authenticated customer or loan officer
 - Request fields:
   - `code`
-- Key response fields: `backup_codes`
+- Key response fields: `backup_codes`, `message`
 
-15. `POST /2fa/verify/`
+14. `POST /2fa/verify/`
 - Auth: none
 - Request fields:
   - `temp_token`
@@ -118,63 +126,116 @@ Content-Type: application/json
   - `use_backup` optional
 - Key response fields: `user`, `access`, `refresh`
 
-16. `POST /2fa/disable/`
+15. `POST /2fa/disable/`
 - Auth: authenticated customer or loan officer
 - Request fields:
   - `password`
+- Key response fields: `message`
 
-17. `POST /2fa/backup-codes/`
+16. `POST /2fa/backup-codes/`
 - Auth: authenticated customer or loan officer
 - Request fields:
   - `password`
 - Key response fields: `backup_codes`
 
-18. `GET /2fa/status/`
+17. `GET /2fa/status/`
 - Auth: authenticated customer or loan officer
 - Request fields: none
 - Key response fields: `two_factor_enabled`, `backup_codes_remaining`
 
-19. `GET /consent/`
+### Consent Management
+
+18. `GET /consent/`
 - Auth: authenticated customer
 - Request fields: none
-- Key response fields: `data_consent`, `ai_consent`, `consent_date`, `updated_at`, `can_access_ai`
+- Key response fields: `data_consent`, `ai_consent`, `consent_date`, `updated_at`, `can_access_ai`, `has_consent_record`
 
-20. `POST /consent/`
+19. `POST /consent/`
 - Auth: authenticated customer
 - Request fields:
   - `data_consent`
   - `ai_consent`
+- Key response fields: `data_consent`, `ai_consent`, `consent_date`, `can_access_ai`
 
-21. `PUT /consent/`
+20. `PUT /consent/`
 - Auth: authenticated customer
 - Request fields:
   - `data_consent` optional
   - `ai_consent` optional
+- Key response fields: `data_consent`, `ai_consent`, `updated_at`, `can_access_ai`
 
-22. `POST /loan-officer/login/`
+### Language
+
+21. `PATCH /language/`
+- Auth: authenticated customer
+- Request fields:
+  - `language` (`en` or `tl`)
+- Key response fields: `language`
+
+### Activity & Session Management
+
+22. `GET /sessions/`
+- Auth: authenticated customer
+- Request fields: none
+- Key response fields: list of active session objects
+
+23. `DELETE /sessions/`
+- Auth: authenticated customer
+- Request fields:
+  - `session_id`
+- Key response fields: `message`
+
+24. `GET /login-activity/`
+- Auth: authenticated customer
+- Request fields: none
+- Key response fields: list of login activity objects
+
+### Loan Officer Authentication
+
+25. `POST /loan-officer/login/`
 - Auth: none
 - Request fields:
   - `email`
   - `password`
   - `remember_me` optional
-- Key response fields: `requires_2fa` or `access_token`, `refresh_token`, `user`, `must_change_password`
+- Key response fields:
+  - If 2FA is enabled: `requires_2fa`, `temp_token`, `must_change_password`
+  - Otherwise: `access_token`, `refresh_token`, `user`, `must_change_password`
 
-23. `POST /loan-officer/logout/`
-- Auth: refresh token required, access token optional
+26. `POST /loan-officer/logout/`
+- Auth: refresh token required
 - Request fields: none required in body
+- Key response fields: `message`
 
-24. `POST /admin/login/`
+27. `GET /loan-officer/me/`
+- Auth: authenticated loan officer
+- Request fields: none
+- Key response fields: `id`, `email`, `first_name`, `last_name`, `full_name`, `phone`, `department`, `employee_id`, `role`, `last_login_attempt`
+
+### Admin Authentication
+
+28. `POST /admin/login/`
 - Auth: none
 - Request fields:
   - `username`
   - `password`
-- Key response fields: usually `requires_2fa`, `temp_token`
+- Key response fields:
+  - If 2FA setup required: `requires_2fa`, `requires_2fa_setup`, `temp_token`, `provisioning_uri`, `manual_entry_key`, `qr_code_data_url`
+  - If 2FA is enabled: `requires_2fa`, `temp_token`
 
-25. `POST /admin/logout/`
-- Auth: refresh token required, access token optional
+29. `POST /admin/logout/`
+- Auth: refresh token required
 - Request fields: none required in body
+- Key response fields: `message`
 
-26. `GET /admin/loan-officers/`
+30. `GET /admin/me/`
+- Auth: authenticated admin
+- Request fields: none
+- Key response fields: admin profile fields
+
+### Admin - Loan Officer Management
+
+31. `GET /admin/loan-officers/`
 - Auth: admin with `create_loan_officer`
 - Query fields:
   - `search`
@@ -186,22 +247,23 @@ Content-Type: application/json
   - `sort_order`
 - Key response fields: `loan_officers`, `total`, `page`, `page_size`, `total_pages`
 
-27. `POST /admin/loan-officers/`
+32. `POST /admin/loan-officers/`
 - Auth: admin with `create_loan_officer`
 - Request fields:
-  - `employee_id`
-  - `first_name`
-  - `last_name`
-  - `email`
-  - `phone` optional
-  - `department` optional
-- Key response fields: `loan_officer`, `email_sent`, temporary password message
+  - `employee_id` / `employeeId`
+  - `first_name` / `firstName`
+  - `last_name` / `lastName`
+  - `email` / `emailAddress`
+  - `phone` / `phone_number` / `phoneNumber` optional
+  - `department` / `departmentName` optional
+- Key response fields: `loan_officer`, `email_sent`, `message`
 
-28. `GET /admin/loan-officers/<officer_id>/`
+33. `GET /admin/loan-officers/<officer_id>/`
 - Auth: admin with `manage_loan_officers`
 - Request fields: none
+- Key response fields: loan officer detail object
 
-29. `PUT /admin/loan-officers/<officer_id>/`
+34. `PUT /admin/loan-officers/<officer_id>/`
 - Auth: admin with `manage_loan_officers`
 - Request fields:
   - `last_known_updated_at` optional
@@ -210,12 +272,16 @@ Content-Type: application/json
   - `phone` optional
   - `department` optional
   - `active` optional
+- Key response fields: updated loan officer object
 
-30. `DELETE /admin/loan-officers/<officer_id>/`
+35. `DELETE /admin/loan-officers/<officer_id>/`
 - Auth: admin with `manage_loan_officers`
 - Request fields: none
+- Key response fields: `message`
 
-31. `GET /admin/admins/`
+### Admin - Admin Management
+
+36. `GET /admin/admins/`
 - Auth: super admin
 - Query fields:
   - `search`
@@ -226,7 +292,7 @@ Content-Type: application/json
   - `sort_order`
 - Key response fields: `admins`, `total`, `page`, `page_size`, `total_pages`
 
-32. `POST /admin/admins/`
+37. `POST /admin/admins/`
 - Auth: super admin
 - Request fields:
   - `username`
@@ -237,48 +303,99 @@ Content-Type: application/json
   - `permissions` optional
 - Key response fields: `admin`, `temporary_password`
 
-33. `GET /admin/admins/<admin_id>/`
+38. `GET /admin/admins/<admin_id>/`
 - Auth: super admin
 - Request fields: none
+- Key response fields: admin detail object
 
-34. `PUT /admin/admins/<admin_id>/`
+39. `PUT /admin/admins/<admin_id>/`
 - Auth: super admin
 - Request fields:
   - `last_known_updated_at` optional
   - `first_name` optional
   - `last_name` optional
   - `active` optional
+- Key response fields: updated admin object
 
-35. `DELETE /admin/admins/<admin_id>/`
+40. `DELETE /admin/admins/<admin_id>/`
 - Auth: super admin
 - Request fields: none
+- Key response fields: `message`
 
-36. `PUT /admin/admins/<admin_id>/permissions/`
+41. `PUT /admin/admins/<admin_id>/permissions/`
 - Auth: super admin
 - Request fields:
   - `permissions` optional
   - `super_admin` optional
+- Key response fields: updated permissions object
+
+### Consent Audit
+
+42. `GET /consent/history/`
+- Auth: authenticated customer
+- Request fields: none
+- Key response fields: list of consent history records
+
+43. `GET /consent/audit/`
+- Auth: admin
+- Request fields: none
+- Key response fields: admin consent audit report
+
+### Support
+
+44. `POST /contact/`
+- Auth: none
+- Request fields:
+  - `full_name`
+  - `contact_email`
+  - `concern_type`
+  - `message`
+- Key response fields: `message`
 
 ## Smoke Test Sequence
+
 1. `GET /csrf-token/`
 2. Sign up a customer with `POST /signup/`
 3. Verify the email with `POST /verify-email/`
 4. Log in with `POST /login/`
-5. Test `GET /consent/` and `PUT /consent/`
+5. Test `GET /consent/`, `POST /consent/`, and `PUT /consent/`
 6. Test `PATCH /language/`
 7. Exercise the 2FA flow: `POST /2fa/setup/`, `POST /2fa/confirm/`, `POST /2fa/verify/`
 8. Test password reset: `POST /forgot-password/`, `POST /verify-reset-otp/`, `POST /reset-password/`
 9. Test `POST /refresh-token/` and `POST /logout/`
-10. If you have super-admin credentials, test `POST /admin/login/`, `POST /admin/admins/` (create admin), and the admin management routes.
+10. Test activity endpoints: `GET /sessions/` and `GET /login-activity/`
+11. Test `POST /contact/`
+12. If you have loan-officer credentials, test `POST /loan-officer/login/`, `GET /loan-officer/me/`, and `POST /loan-officer/logout/`
+13. If you have super-admin credentials, test `POST /admin/login/`, `POST /admin/admins/`, and the admin management routes.
 
 ## Common Errors
+
 1. `401 Unauthorized`
 - Missing or invalid auth token.
+- Inactive account attempting to refresh or access protected routes.
 
 2. `403 Forbidden`
 - Wrong role accessing a protected route.
+- Missing required permissions for admin routes.
 
 3. `400 Bad Request`
 - Missing required fields.
 - Invalid choice values.
 - Bad OTP or password confirmation mismatch.
+
+4. `429 Too Many Requests`
+- OTP or login rate limit exceeded. Wait for cooldown.
+
+5. `500 Internal Server Error`
+- Unexpected server error. Check logs for details.
+
+## Notes
+
+- Customer login returns `access` and `refresh`; loan officer login returns `access_token` and `refresh_token`.
+- Refresh and logout endpoints expect the refresh token via cookie or `Authorization: Bearer` header, not in the JSON body.
+- Admin login accepts `username` and `password`. The `username` field also supports email lookup.
+- Password reset accepts optional `role` (`customer`, `loan_officer`, `admin`) to target non-customer accounts.
+- Admin loan-officer creation accepts multiple field name aliases (snake_case and camelCase) for frontend compatibility.
+- 2FA is mandatory for admin accounts. If an admin has not enrolled in 2FA, login returns `requires_2fa_setup: true` plus QR provisioning data.
+- Consent GET returns `has_consent_record` to distinguish between no record and explicit false consent.
+- `remember_me` defaults to `false` on customer login and affects refresh token lifetime.
