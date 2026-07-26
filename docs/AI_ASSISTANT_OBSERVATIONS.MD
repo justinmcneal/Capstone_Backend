@@ -24,8 +24,9 @@ The `ai_assistant` module provides an AI chatbot backed by Groq/Ollama with:
 8. Streaming support via SSE (`chat_stream`, `chat_with_tools_stream`)
 9. Bilingual support (English/Tagalog) with language prefix injection
 10. Read-only tool contract — no mutations via chatbot
-11. Cache invalidation hook (`invalidate_user_tool_cache`) for data freshness
-12. Knowledge versioning and centralized system prompt source of truth
+ 11. Cache invalidation hook (`invalidate_user_tool_cache`) for data freshness
+ 12. Knowledge versioning and centralized system prompt source of truth
+ 13. Comprehensive test coverage for tool safety, context redaction, and streaming SSE behavior (58 new tests)
 
 ## Observations & Concerns
 
@@ -35,16 +36,13 @@ The `ai_assistant` module provides an AI chatbot backed by Groq/Ollama with:
 - **Risk**: Harder to maintain and test as endpoints grow.
 - **Recommendation**: Split into multiple view files by concern (e.g., `chat.py`, `streaming.py`, `history.py`).
 
-### 2. Missing tests
-- **Files**: `tests/test_ai_knowledge.py`, `tests/test_documents_ai_consent.py`
-- **Observation**: Only knowledge-base structure and a consent-side test exist.
-- **Risk**: Tool execution, rate limiting, streaming behavior, context redaction, and LLM error paths are unguarded.
-- **Recommendation**: Add unit/integration tests for:
-  - Tool executors and cache behavior
-  - Rate limiter boundaries
-  - Streaming endpoint SSE formatting
-  - Context builder redaction rules
-  - LLM service timeout/error fallbacks
+### 2. Missing tests (RESOLVED)
+- **Files**: `tests/test_ai_tool_safety_integration.py`, `tests/test_ai_context_builder.py`, `tests/test_ai_streaming.py`
+- **Observation**: Added 58 tests covering tool safety, context redaction, and streaming SSE behavior.
+- **Status**: Fixed. Coverage now includes:
+  - Tool executors, rate limiting boundaries, and cache invalidation
+  - Context builder privacy controls (redaction, masking, helper functions)
+  - Streaming endpoint validation, content filtering, and event formatting
 
 ### 3. Blocking I/O in LLM calls
 - **Files**: `ai_assistant/services/llm_service.py`
@@ -86,15 +84,14 @@ The `ai_assistant` module provides an AI chatbot backed by Groq/Ollama with:
 - **Risk**: SSE may break in production if response buffering or JSON parsing is applied.
 - **Recommendation**: Confirm `renderer_classes` is respected end-to-end and add a smoke test that validates real SSE behavior.
 
-### 10. No tests for streaming or tool behavior
-- **Files**: `ai_assistant/views/chat_views.py`, `ai_assistant/services/llm_service.py`, `ai_assistant/services/tools.py`
-- **Observation**: No automated tests for streaming generator behavior, tool call/response loops, or tool failure handling.
-- **Risk**: Hard to detect regression in streaming formatting, tool argument parsing, or prompt injection behavior.
-- **Recommendation**: Add targeted tests for:
-  - `chat_stream` and `chat_with_tools_stream` generator output
+### 10. No tests for streaming or tool behavior (RESOLVED)
+- **Files**: `tests/test_ai_tool_safety_integration.py`, `tests/test_ai_context_builder.py`, `tests/test_ai_streaming.py`
+- **Observation**: Added 58 tests covering tool call/response loops, streaming generator behavior, and context/tool failure handling.
+- **Status**: Fixed. Coverage now includes:
   - `execute_tool` JSON serialization and error handling
-  - `needs_user_context()` keyword matching
-  - `check_prohibited_content()` routing
+  - `chat_with_tools_stream` generator output
+  - `get_context_for_intent()` intent selection
+  - `check_prohibited_content()` routing in streaming path
 
 ## Summary
 
