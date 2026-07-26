@@ -1,14 +1,14 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
-from typing import TYPE_CHECKING, Optional
-
-from rest_framework_simplejwt.tokens import AccessToken, RefreshToken
-from django.conf import settings
-from accounts.models import BlacklistedToken
-from accounts.models import RefreshTokenEntry
 import hashlib
 import logging
+from datetime import datetime, timedelta, timezone
+from typing import TYPE_CHECKING
+
+from django.conf import settings
+from rest_framework_simplejwt.tokens import AccessToken, RefreshToken
+
+from accounts.models import BlacklistedToken, RefreshTokenEntry
 
 if TYPE_CHECKING:
     from accounts.models import Customer
@@ -24,7 +24,9 @@ class TokenUtils:
         return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
     @staticmethod
-    def _token_membership_query(customer_id: str, role: str = "customer", active_only: bool = False) -> dict:
+    def _token_membership_query(
+        customer_id: str, role: str = "customer", active_only: bool = False
+    ) -> dict:
         query = {"customer": str(customer_id)}
         and_filters = []
 
@@ -70,7 +72,9 @@ class TokenUtils:
         refresh_entry.save()
 
     @staticmethod
-    def _get_token_lifetimes(token_type: str = "no_remember_me") -> dict[str, timedelta]:
+    def _get_token_lifetimes(
+        token_type: str = "no_remember_me",
+    ) -> dict[str, timedelta]:
         lifetimes = getattr(settings, "TOKEN_LIFETIMES", {})
         default_lifetimes = lifetimes.get(
             "no_remember_me",
@@ -82,7 +86,9 @@ class TokenUtils:
         return lifetimes.get(token_type, default_lifetimes)
 
     @staticmethod
-    def generate_jwt_tokens(customer: Customer, token_type: str = "no_remember_me") -> dict[str, str]:
+    def generate_jwt_tokens(
+        customer: Customer, token_type: str = "no_remember_me"
+    ) -> dict[str, str]:
         """
         Generate JWT access and refresh tokens for a customer with dynamic lifetimes.
         Invalidates all existing refresh tokens for this customer (single-device enforcement).
@@ -193,7 +199,9 @@ class TokenUtils:
         return {"access": str(access), "refresh": str(refresh)}
 
     @staticmethod
-    def generate_2fa_temp_token(user_id: str, email: str, role: str = "customer") -> str:
+    def generate_2fa_temp_token(
+        user_id: str, email: str, role: str = "customer"
+    ) -> str:
         """
         Generate a temporary token for 2FA verification.
         This token is short-lived and only valid for completing 2FA.
@@ -259,11 +267,13 @@ class TokenUtils:
             logger.info(f"Blacklisted {token_type} token")
             return True
         except Exception as e:
-            logger.error(f"Failed to blacklist token: {str(e)}")
+            logger.error(f"Failed to blacklist token: {e!s}")
             return False
 
     @staticmethod
-    def blacklist_tokens_on_logout(access_token: str | None, refresh_token: str | None) -> bool:
+    def blacklist_tokens_on_logout(
+        access_token: str | None, refresh_token: str | None
+    ) -> bool:
         """
         Blacklist both access and refresh tokens on logout.
 
@@ -278,7 +288,7 @@ class TokenUtils:
                 TokenUtils.blacklist_token(refresh_token, token_type="refresh")
             return True
         except Exception as e:
-            logger.error(f"Failed to blacklist tokens on logout: {str(e)}")
+            logger.error(f"Failed to blacklist tokens on logout: {e!s}")
             return False
 
     @staticmethod
@@ -291,7 +301,9 @@ class TokenUtils:
         )
 
     @staticmethod
-    def is_refresh_token_valid(customer_id: str, token: str, role: str = "customer") -> bool:
+    def is_refresh_token_valid(
+        customer_id: str, token: str, role: str = "customer"
+    ) -> bool:
         """
         Check if the refresh token is valid for this customer.
         Used for single-device token validation.
@@ -309,7 +321,10 @@ class TokenUtils:
             return False
         if entry.expires_at:
             expires_at = entry.expires_at
-            if expires_at.tzinfo is None or expires_at.tzinfo.utcoffset(expires_at) is None:
+            if (
+                expires_at.tzinfo is None
+                or expires_at.tzinfo.utcoffset(expires_at) is None
+            ):
                 expires_at = expires_at.replace(tzinfo=timezone.utc)
             if expires_at <= datetime.now(timezone.utc):
                 return False

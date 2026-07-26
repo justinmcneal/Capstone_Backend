@@ -47,7 +47,7 @@ class RequestLogger:
         msg = f"{action}"
         if email:
             msg += f" for {email}"
-        msg += f" from IP {ip}: {str(error)}"
+        msg += f" from IP {ip}: {error!s}"
         logger.error(msg)
 
     @staticmethod

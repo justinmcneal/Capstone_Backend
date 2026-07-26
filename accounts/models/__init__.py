@@ -10,21 +10,21 @@ This package contains all database models:
 - RefreshTokenEntry: Active refresh token tracking
 """
 
-from accounts.models.customer import Customer
-from accounts.models.tokens import BlacklistedToken, RefreshTokenEntry
-from accounts.models.consent import Consent
-from accounts.models.loan_officer import LoanOfficer
-from accounts.models.admin import Admin, ADMIN_PERMISSIONS
 from accounts.models.activity import ActiveSession, LoginActivity
+from accounts.models.admin import ADMIN_PERMISSIONS, Admin
+from accounts.models.consent import Consent
+from accounts.models.customer import Customer
+from accounts.models.loan_officer import LoanOfficer
+from accounts.models.tokens import BlacklistedToken, RefreshTokenEntry
 
 __all__ = [
-    "Customer",
-    "BlacklistedToken",
-    "RefreshTokenEntry",
-    "Consent",
-    "LoanOfficer",
-    "Admin",
     "ADMIN_PERMISSIONS",
     "ActiveSession",
+    "Admin",
+    "BlacklistedToken",
+    "Consent",
+    "Customer",
+    "LoanOfficer",
     "LoginActivity",
+    "RefreshTokenEntry",
 ]

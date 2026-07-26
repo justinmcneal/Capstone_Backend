@@ -1,11 +1,10 @@
+import logging
 from email.message import MIMEPart
 from pathlib import Path
-from typing import List, Optional
 
 from django.conf import settings
 from django.core.mail import EmailMultiAlternatives
 from django.template.loader import render_to_string
-import logging
 
 logger = logging.getLogger(__name__)
 
@@ -25,11 +24,11 @@ class CentralizedEmailService:
 
     def send_email(
         self,
-        to_emails: List[str],
+        to_emails: list[str],
         subject: str,
         message: str,
-        html_message: Optional[str] = None,
-        inline_images: Optional[dict[str, Path]] = None,
+        html_message: str | None = None,
+        inline_images: dict[str, Path] | None = None,
     ) -> bool:
         """
         Send email with both plain text and HTML versions
@@ -88,13 +87,13 @@ class CentralizedEmailService:
             return True
 
         except Exception as e:
-            logger.error(f"Failed to send email: {str(e)}")
+            logger.error(f"Failed to send email: {e!s}")
             if settings.DEBUG:
-                print(f"Email error: {str(e)}")
+                print(f"Email error: {e!s}")
             return False
 
     def send_template_email(
-        self, to_emails: List[str], subject: str, template_name: str, context: dict
+        self, to_emails: list[str], subject: str, template_name: str, context: dict
     ) -> bool:
         try:
             context = {
@@ -126,9 +125,9 @@ class CentralizedEmailService:
             )
 
         except Exception as e:
-            logger.error(f"Failed to send template email: {str(e)}")
+            logger.error(f"Failed to send template email: {e!s}")
             if settings.DEBUG:
-                print(f"Template email error: {str(e)}")
+                print(f"Template email error: {e!s}")
                 import traceback
 
                 traceback.print_exc()

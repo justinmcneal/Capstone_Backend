@@ -1,8 +1,10 @@
-from rest_framework_simplejwt.authentication import JWTAuthentication
-from rest_framework_simplejwt.exceptions import InvalidToken, AuthenticationFailed
-from django.conf import settings
-from accounts.utils.token_utils import TokenUtils
 import logging
+
+from django.conf import settings
+from rest_framework_simplejwt.authentication import JWTAuthentication
+from rest_framework_simplejwt.exceptions import AuthenticationFailed, InvalidToken
+
+from accounts.utils.token_utils import TokenUtils
 
 logger = logging.getLogger("authentication")
 

@@ -1,5 +1,7 @@
 from datetime import datetime, timezone
+
 from django.conf import settings
+
 from config.field_encryption import decrypt_fields, encrypt_fields
 
 

@@ -1,39 +1,41 @@
-from rest_framework.views import APIView
+import logging
+
+from bson import ObjectId
+from django.conf import settings
+from django.contrib.auth.signals import user_logged_in, user_login_failed
+from django.middleware.csrf import get_token
 from rest_framework import status
 from rest_framework.permissions import AllowAny, IsAuthenticated
-from accounts.authentication import CustomJWTAuthentication
-from django.conf import settings
-from django.middleware.csrf import get_token
-from rest_framework_simplejwt.tokens import RefreshToken
+from rest_framework.views import APIView
 from rest_framework_simplejwt.exceptions import TokenError
-from bson import ObjectId
-from django.contrib.auth.signals import user_logged_in, user_login_failed
+from rest_framework_simplejwt.tokens import RefreshToken
+
+from accounts.authentication import CustomJWTAuthentication
 from accounts.models import Admin, LoanOfficer
+from accounts.models.activity import ActiveSession, LoginActivity
 from accounts.serializers import SignUpSerializer
+from accounts.serializers.auth_serializers import (
+    LoginSerializer,
+    UpdateLanguageSerializer,
+)
 from accounts.services import AuthService
 from accounts.services.lockout_service import LockoutService
-from accounts.utils.email_utils import EmailUtils
-from accounts.utils.response_helpers import APIResponseHelper
-from accounts.utils.token_utils import TokenUtils
 from accounts.utils.auth_cookies import (
     clear_auth_cookies,
     get_access_token_from_request,
     get_refresh_token_from_request,
     set_auth_cookies,
 )
-from accounts.serializers.auth_serializers import (
-    LoginSerializer,
-    UpdateLanguageSerializer,
-)
+from accounts.utils.email_utils import EmailUtils
+from accounts.utils.response_helpers import APIResponseHelper
 from accounts.utils.throttles import (
-    SignUpRateThrottle,
     LoginRateThrottle,
-    OTPVerificationRateThrottle,
     OTPResendRateThrottle,
+    OTPVerificationRateThrottle,
+    SignUpRateThrottle,
 )
+from accounts.utils.token_utils import TokenUtils
 from analytics.models import AuditLog
-from accounts.models.activity import LoginActivity, ActiveSession
-import logging
 
 logger = logging.getLogger("authentication")
 GENERIC_LOGIN_ERROR_MESSAGE = "Invalid email/username or password."
@@ -75,7 +77,7 @@ def _log_customer_login_failure(request, email, reason, user=None):
             email,
             str(log_error),
         )
-    
+
     # Record LoginActivity for failure
     try:
         device_info = request.META.get("HTTP_USER_AGENT", "")
@@ -89,12 +91,12 @@ def _log_customer_login_failure(request, email, reason, user=None):
             failure_reason=reason,
         ).save()
     except Exception as e:
-        logger.error(f"Failed to save LoginActivity: {str(e)}")
+        logger.error(f"Failed to save LoginActivity: {e!s}")
 
     # Dispatch signal for django-axes
     user_login_failed.send(
         sender=__name__,
-        credentials={'username': email},
+        credentials={"username": email},
         request=request,
     )
 
@@ -167,13 +169,13 @@ class SignUpView(APIView):
 
         except ValueError as e:
             logger.warning(
-                f"Signup failed for email {serializer.validated_data.get('email')}: {str(e)}"
+                f"Signup failed for email {serializer.validated_data.get('email')}: {e!s}"
             )
             return APIResponseHelper.error_response(str(e))
 
         except Exception as e:
             logger.error(
-                f"Signup error from IP {request.META.get('REMOTE_ADDR')}: {str(e)}"
+                f"Signup error from IP {request.META.get('REMOTE_ADDR')}: {e!s}"
             )
             return APIResponseHelper.server_error_response(
                 "An error occurred during registration"
@@ -217,7 +219,7 @@ class UpdateLanguageView(APIView):
         except ValueError as e:
             return APIResponseHelper.error_response(str(e), status.HTTP_400_BAD_REQUEST)
         except Exception as e:
-            logger.error(f"Error updating language: {str(e)}")
+            logger.error(f"Error updating language: {e!s}")
             return APIResponseHelper.server_error_response(
                 "Failed to update language preference"
             )
@@ -365,7 +367,7 @@ class LoginView(APIView):
                     device_info=device_info,
                 ).save()
             except Exception as e:
-                logger.error(f"Failed to save LoginActivity: {str(e)}")
+                logger.error(f"Failed to save LoginActivity: {e!s}")
 
             # Create ActiveSession
             try:
@@ -377,7 +379,7 @@ class LoginView(APIView):
                     device_info=device_info,
                 ).save()
             except Exception as e:
-                logger.error(f"Failed to save ActiveSession: {str(e)}")
+                logger.error(f"Failed to save ActiveSession: {e!s}")
 
             # Dispatch signal for django-axes
             user_logged_in.send(
@@ -403,7 +405,7 @@ class LoginView(APIView):
 
         except Exception as e:
             logger.error(
-                f"Login error for {email} from IP {request.META.get('REMOTE_ADDR')}: {str(e)}"
+                f"Login error for {email} from IP {request.META.get('REMOTE_ADDR')}: {e!s}"
             )
             return APIResponseHelper.server_error_response("Login failed")
 
@@ -494,7 +496,7 @@ class VerifyOTP(APIView):
             return response
         except Exception as e:
             logger.error(
-                f"OTP verification error for {email} from IP {request.META.get('REMOTE_ADDR')}: {str(e)}"
+                f"OTP verification error for {email} from IP {request.META.get('REMOTE_ADDR')}: {e!s}"
             )
             return APIResponseHelper.server_error_response("Verification failed")
 
@@ -551,7 +553,7 @@ class ResendOTP(APIView):
 
         except Exception as e:
             logger.error(
-                f"OTP resend error for {email} from IP {request.META.get('REMOTE_ADDR')}: {str(e)}"
+                f"OTP resend error for {email} from IP {request.META.get('REMOTE_ADDR')}: {e!s}"
             )
             return APIResponseHelper.server_error_response("Failed to resend OTP")
 
@@ -696,10 +698,9 @@ class RefreshTokenView(APIView):
             # Manage ActiveSession during refresh
             try:
                 ActiveSession.update_many(
-                    {"session_token": refresh_token},
-                    {"$set": {"is_active": False}}
+                    {"session_token": refresh_token}, {"$set": {"is_active": False}}
                 )
-                
+
                 ip_address = _get_client_ip(request)
                 device_info = request.META.get("HTTP_USER_AGENT", "")
                 ActiveSession(
@@ -710,7 +711,7 @@ class RefreshTokenView(APIView):
                     device_info=device_info,
                 ).save()
             except Exception as e:
-                logger.error(f"Failed to manage ActiveSession during refresh: {str(e)}")
+                logger.error(f"Failed to manage ActiveSession during refresh: {e!s}")
 
             logger.info(
                 f"Token refreshed for user {user_email} ({role}) from IP {request.META.get('REMOTE_ADDR')}"
@@ -731,7 +732,7 @@ class RefreshTokenView(APIView):
             )
         except Exception as e:
             logger.error(
-                f"Token refresh error from IP {request.META.get('REMOTE_ADDR')}: {str(e)}"
+                f"Token refresh error from IP {request.META.get('REMOTE_ADDR')}: {e!s}"
             )
             return APIResponseHelper.server_error_response("Token refresh failed")
 
@@ -794,10 +795,10 @@ class LogoutView(APIView):
                     try:
                         ActiveSession.update_many(
                             {"session_token": refresh_token},
-                            {"$set": {"is_active": False}}
+                            {"$set": {"is_active": False}},
                         )
                     except Exception as e:
-                        logger.error(f"Failed to deactivate ActiveSession: {str(e)}")
+                        logger.error(f"Failed to deactivate ActiveSession: {e!s}")
 
                 response = APIResponseHelper.success_response(
                     message="Logged out successfully"
@@ -812,6 +813,6 @@ class LogoutView(APIView):
 
         except Exception as e:
             logger.error(
-                f"Logout error from IP {request.META.get('REMOTE_ADDR')}: {str(e)}"
+                f"Logout error from IP {request.META.get('REMOTE_ADDR')}: {e!s}"
             )
             return APIResponseHelper.server_error_response("Logout failed")

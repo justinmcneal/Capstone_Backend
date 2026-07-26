@@ -1,8 +1,9 @@
-from accounts.services.auth_service import AuthService
-from accounts.utils.email_utils import EmailUtils
-from accounts.services.otp_service import OTPService
-from accounts.models import LoanOfficer, Admin
 import logging
+
+from accounts.models import Admin, LoanOfficer
+from accounts.services.auth_service import AuthService
+from accounts.services.otp_service import OTPService
+from accounts.utils.email_utils import EmailUtils
 
 logger = logging.getLogger("authentication")
 

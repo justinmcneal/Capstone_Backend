@@ -1,18 +1,19 @@
-from rest_framework.views import APIView
-from rest_framework import status
-from rest_framework.permissions import IsAuthenticated
+import logging
 from datetime import datetime, timezone
 
+from rest_framework import status
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.views import APIView
+
 from accounts.authentication import CustomJWTAuthentication
-from accounts.utils.access_control import AccessControlMixin
-from accounts.services.consent_service import ConsentService
+from accounts.models import Consent, Customer
 from accounts.serializers.consent_serializers import (
     ConsentCreateSerializer,
     ConsentUpdateSerializer,
 )
-from accounts.utils.response_helpers import success_response, error_response
-from accounts.models import Consent, Customer
-import logging
+from accounts.services.consent_service import ConsentService
+from accounts.utils.access_control import AccessControlMixin
+from accounts.utils.response_helpers import error_response, success_response
 
 logger = logging.getLogger("consent")
 
@@ -75,7 +76,7 @@ class ConsentView(APIView):
                 data=consent_status, message="Consent status retrieved successfully"
             )
         except Exception as e:
-            logger.error(f"Error retrieving consent: {str(e)}")
+            logger.error(f"Error retrieving consent: {e!s}")
             return error_response(
                 message="Failed to retrieve consent status",
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -160,14 +161,13 @@ class ConsentView(APIView):
                 "can_access_ai": consent.can_access_ai,
             }
 
-
             return success_response(
                 data=response_data,
                 message="Consent recorded successfully",
                 status_code=status.HTTP_201_CREATED,
             )
         except Exception as e:
-            logger.error(f"Error recording consent: {str(e)}")
+            logger.error(f"Error recording consent: {e!s}")
             return error_response(
                 message="Failed to record consent",
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -253,14 +253,13 @@ class ConsentView(APIView):
                 "can_access_ai": consent.can_access_ai,
             }
 
-
             return success_response(
                 data=response_data, message="Consent updated successfully"
             )
         except ValueError as e:
             return error_response(message=str(e), status_code=status.HTTP_404_NOT_FOUND)
         except Exception as e:
-            logger.error(f"Error updating consent: {str(e)}")
+            logger.error(f"Error updating consent: {e!s}")
             return error_response(
                 message="Failed to update consent",
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -311,7 +310,9 @@ class ConsentAuditView(AccessControlMixin, APIView):
                         "has_consent_record": has_record,
                         "data_consent": data_consent,
                         "ai_consent": ai_consent,
-                        "consent_date": _to_iso(consent.consent_date) if consent else None,
+                        "consent_date": (
+                            _to_iso(consent.consent_date) if consent else None
+                        ),
                         "updated_at": _to_iso(consent.updated_at) if consent else None,
                     }
                 )
@@ -331,7 +332,7 @@ class ConsentAuditView(AccessControlMixin, APIView):
                 message="Consent audit retrieved successfully",
             )
         except Exception as e:
-            logger.error(f"Error retrieving consent audit: {str(e)}")
+            logger.error(f"Error retrieving consent audit: {e!s}")
             return error_response(
                 message="Failed to retrieve consent audit",
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -342,6 +343,7 @@ class ConsentHistoryView(APIView):
     """
     Get the consent history for the authenticated user from the blockchain transaction logs.
     """
+
     authentication_classes = [CustomJWTAuthentication]
     permission_classes = [IsAuthenticated]
 
@@ -351,7 +353,7 @@ class ConsentHistoryView(APIView):
             user_id = user.customer_id
 
             from loans.blockchain.models import BlockchainTransaction
-            
+
             # Fetch transactions where loan_id equals user_id and action is consent
             transactions = BlockchainTransaction.find_by_loan(str(user_id))
             history = [tx.to_dict() for tx in transactions if tx.action == "consent"]
@@ -361,12 +363,11 @@ class ConsentHistoryView(APIView):
                 message="Consent history retrieved successfully",
             )
         except Exception as e:
-            logger.error(f"Error retrieving consent history: {str(e)}")
+            logger.error(f"Error retrieving consent history: {e!s}")
             return error_response(
                 message="Failed to retrieve consent history",
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
-
 
 
 class ConsentRequiredMixin:

@@ -1,7 +1,9 @@
-from datetime import datetime, timezone
-from bson import ObjectId
-from accounts.models.consent import Consent
 import logging
+from datetime import datetime, timezone
+
+from bson import ObjectId
+
+from accounts.models.consent import Consent
 
 logger = logging.getLogger("consent")
 

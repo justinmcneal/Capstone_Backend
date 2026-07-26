@@ -1,16 +1,29 @@
 from django.urls import path
+
 from accounts.views import (
-    CSRFTokenView,
-    SignUpView,
-    VerifyOTP,
-    ResendOTP,
-    ForgotPasswordView,
-    VerifyResetOTPView,
-    ResetPasswordView,
     ChangePasswordView,
-    ConsentView,
     ConsentAuditView,
     ConsentHistoryView,
+    ConsentView,
+    CSRFTokenView,
+    ForgotPasswordView,
+    ResendOTP,
+    ResetPasswordView,
+    SignUpView,
+    VerifyOTP,
+    VerifyResetOTPView,
+)
+from accounts.views.activity_views import ActiveSessionsView, LoginActivityView
+from accounts.views.admin_views import (
+    AdminDetailView,
+    AdminLoginView,
+    AdminLogoutView,
+    # Admin Management (Super Admin Only)
+    AdminManagementView,
+    AdminPermissionsView,
+    AdminProfileView,
+    LoanOfficerDetailView,
+    LoanOfficerManagementView,
 )
 from accounts.views.auth_views import (
     LoginView,
@@ -18,32 +31,20 @@ from accounts.views.auth_views import (
     RefreshTokenView,
     UpdateLanguageView,
 )
-from accounts.views.two_factor_views import (
-    Setup2FAView,
-    Confirm2FASetupView,
-    Verify2FAView,
-    Disable2FAView,
-    RegenerateBackupCodesView,
-    Get2FAStatusView,
-)
+from accounts.views.contact_views import ContactSupportView
 from accounts.views.loan_officer_views import (
     LoanOfficerLoginView,
     LoanOfficerLogoutView,
     LoanOfficerProfileView,
 )
-from accounts.views.admin_views import (
-    AdminLoginView,
-    AdminLogoutView,
-    LoanOfficerManagementView,
-    LoanOfficerDetailView,
-    # Admin Management (Super Admin Only)
-    AdminManagementView,
-    AdminDetailView,
-    AdminPermissionsView,
-    AdminProfileView,
+from accounts.views.two_factor_views import (
+    Confirm2FASetupView,
+    Disable2FAView,
+    Get2FAStatusView,
+    RegenerateBackupCodesView,
+    Setup2FAView,
+    Verify2FAView,
 )
-from accounts.views.contact_views import ContactSupportView
-from accounts.views.activity_views import ActiveSessionsView, LoginActivityView
 
 app_name = "accounts"
 
@@ -66,7 +67,11 @@ urlpatterns = [
     path("2fa/confirm/", Confirm2FASetupView.as_view(), name="2fa-confirm"),
     path("2fa/verify/", Verify2FAView.as_view(), name="2fa-verify"),
     path("2fa/disable/", Disable2FAView.as_view(), name="2fa-disable"),
-    path("2fa/backup-codes/", RegenerateBackupCodesView.as_view(), name="2fa-backup-codes"),
+    path(
+        "2fa/backup-codes/",
+        RegenerateBackupCodesView.as_view(),
+        name="2fa-backup-codes",
+    ),
     path("2fa/status/", Get2FAStatusView.as_view(), name="2fa-status"),
     # Consent Management
     path("consent/", ConsentView.as_view(), name="consent"),
@@ -77,20 +82,40 @@ urlpatterns = [
     path("sessions/", ActiveSessionsView.as_view(), name="active-sessions"),
     path("login-activity/", LoginActivityView.as_view(), name="login-activity"),
     # Loan Officer Authentication
-    path("loan-officer/login/", LoanOfficerLoginView.as_view(), name="loan-officer-login"),
-    path("loan-officer/logout/", LoanOfficerLogoutView.as_view(), name="loan-officer-logout"),
+    path(
+        "loan-officer/login/", LoanOfficerLoginView.as_view(), name="loan-officer-login"
+    ),
+    path(
+        "loan-officer/logout/",
+        LoanOfficerLogoutView.as_view(),
+        name="loan-officer-logout",
+    ),
     path("loan-officer/me/", LoanOfficerProfileView.as_view(), name="loan-officer-me"),
     # Admin Authentication
     path("admin/login/", AdminLoginView.as_view(), name="admin-login"),
     path("admin/logout/", AdminLogoutView.as_view(), name="admin-logout"),
     path("admin/me/", AdminProfileView.as_view(), name="admin-me"),
     # Admin - Loan Officer Management
-    path("admin/loan-officers/", LoanOfficerManagementView.as_view(), name="admin-loan-officers"),
-    path("admin/loan-officers/<str:officer_id>/", LoanOfficerDetailView.as_view(), name="admin-loan-officer-detail"),
+    path(
+        "admin/loan-officers/",
+        LoanOfficerManagementView.as_view(),
+        name="admin-loan-officers",
+    ),
+    path(
+        "admin/loan-officers/<str:officer_id>/",
+        LoanOfficerDetailView.as_view(),
+        name="admin-loan-officer-detail",
+    ),
     # Admin - Admin Management (Super Admin Only)
     path("admin/admins/", AdminManagementView.as_view(), name="admin-admins"),
-    path("admin/admins/<str:admin_id>/", AdminDetailView.as_view(), name="admin-detail"),
-    path("admin/admins/<str:admin_id>/permissions/", AdminPermissionsView.as_view(), name="admin-permissions"),
+    path(
+        "admin/admins/<str:admin_id>/", AdminDetailView.as_view(), name="admin-detail"
+    ),
+    path(
+        "admin/admins/<str:admin_id>/permissions/",
+        AdminPermissionsView.as_view(),
+        name="admin-permissions",
+    ),
     # Support
     path("contact/", ContactSupportView.as_view(), name="contact-support"),
 ]

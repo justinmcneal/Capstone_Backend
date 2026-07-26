@@ -1,7 +1,9 @@
-from celery import shared_task
-from datetime import datetime, timedelta, timezone
-from accounts.models import Customer
 import logging
+from datetime import datetime, timedelta, timezone
+
+from celery import shared_task
+
+from accounts.models import Customer
 
 logger = logging.getLogger(__name__)
 
