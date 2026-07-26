@@ -30,11 +30,10 @@ The `ai_assistant` module provides an AI chatbot backed by Groq/Ollama with:
 
 ## Observations & Concerns
 
-### 1. Large view file
-- **File**: `ai_assistant/views/chat_views.py` (~935 lines)
-- **Observation**: Contains 3 view classes (`ChatView`, `StreamingChatView`, plus history/suggestions/status/education/FAQs classes).
-- **Risk**: Harder to maintain and test as endpoints grow.
-- **Recommendation**: Split into multiple view files by concern (e.g., `chat.py`, `streaming.py`, `history.py`).
+### 1. Large view file (RESOLVED)
+- **Files**: `ai_assistant/views/chat_views.py` → split into `chat.py`, `streaming.py`, `history.py`, `auxiliary.py`
+- **Observation**: Split 935-line `chat_views.py` into logical modules by endpoint concern. Shared mixins, renderers, and constants remain in `chat_views.py`. URL patterns and `__init__.py` re-exports updated.
+- **Status**: Fixed. Each view class now has its own file, improving maintainability and test import isolation.
 
 ### 2. Missing tests (RESOLVED)
 - **Files**: `tests/test_ai_tool_safety_integration.py`, `tests/test_ai_context_builder.py`, `tests/test_ai_streaming.py`
@@ -94,4 +93,4 @@ The `ai_assistant` module provides an AI chatbot backed by Groq/Ollama with:
 
 ## Summary
 
-The `ai_assistant` module is well-structured and production-ready in concept. The primary remaining gaps are **large view file** (#1), **blocking I/O at scale** (#3), **streaming correctness verification** (#4), and **knowledge-base review lock** (#5). Test coverage, unsanitized LLM output, tool safety inconsistency, and cross-app import coupling have been resolved.
+The `ai_assistant` module is well-structured and production-ready in concept. The primary remaining gaps are **blocking I/O at scale** (#3), **streaming correctness verification** (#4), and **knowledge-base review lock** (#5). Test coverage, unsanitized LLM output, tool safety inconsistency, cross-app import coupling, and large view file have been resolved.

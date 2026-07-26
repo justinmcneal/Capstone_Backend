@@ -10,7 +10,7 @@ from rest_framework.test import APIRequestFactory, force_authenticate
 from accounts.authentication import AuthenticatedUser
 from accounts.models import Consent, Customer
 from ai_assistant.models import AIInteraction
-from ai_assistant.views.chat_views import (
+from ai_assistant.views import (
     AIStatusView,
     ChatHistoryView,
     ChatView,
@@ -166,7 +166,7 @@ class TestChatView:
             def is_available(self):
                 return False
 
-        monkeypatch.setattr("ai_assistant.views.chat_views.get_llm_service", lambda use_case=None: MockLLM())
+        monkeypatch.setattr("ai_assistant.views.chat.get_llm_service", lambda use_case=None: MockLLM())
 
         request = _auth_request("/api/ai/chat/", {"message": "Hello AI"}, customer.id)
         response = ChatView.as_view()(request)
@@ -185,7 +185,7 @@ class TestChatView:
             def chat_with_tools(self, **kwargs):
                 return {"success": False, "error": "LLM backend failed"}
 
-        monkeypatch.setattr("ai_assistant.views.chat_views.get_llm_service", lambda use_case=None: MockLLM())
+        monkeypatch.setattr("ai_assistant.views.chat.get_llm_service", lambda use_case=None: MockLLM())
 
         request = _auth_request("/api/ai/chat/", {"message": "Hello AI"}, customer.id)
         response = ChatView.as_view()(request)
@@ -204,7 +204,7 @@ class TestChatView:
             def chat_with_tools(self, **kwargs):
                 return {"success": True, "response": "   ", "model": "mock", "response_time_ms": 20}
 
-        monkeypatch.setattr("ai_assistant.views.chat_views.get_llm_service", lambda use_case=None: MockLLM())
+        monkeypatch.setattr("ai_assistant.views.chat.get_llm_service", lambda use_case=None: MockLLM())
 
         request = _auth_request("/api/ai/chat/", {"message": "Hello AI"}, customer.id)
         response = ChatView.as_view()(request)
@@ -230,7 +230,7 @@ class TestChatView:
                     "tokens_used": 42,
                 }
 
-        monkeypatch.setattr("ai_assistant.views.chat_views.get_llm_service", lambda use_case=None: MockLLM())
+        monkeypatch.setattr("ai_assistant.views.chat.get_llm_service", lambda use_case=None: MockLLM())
 
         request = _auth_request(
             "/api/ai/chat/",
@@ -268,7 +268,7 @@ class TestChatView:
                     "response_time_ms": 15,
                 }
 
-        monkeypatch.setattr("ai_assistant.views.chat_views.get_llm_service", lambda use_case=None: MockLLM())
+        monkeypatch.setattr("ai_assistant.views.chat.get_llm_service", lambda use_case=None: MockLLM())
 
         request = _auth_request("/api/ai/chat/", {"message": "Create a new conversation"}, customer.id)
         response = ChatView.as_view()(request)
@@ -294,9 +294,9 @@ class TestChatView:
                     "response_time_ms": 10,
                 }
 
-        monkeypatch.setattr("ai_assistant.views.chat_views.get_llm_service", lambda use_case=None: MockLLM())
-        monkeypatch.setattr("ai_assistant.views.chat_views.needs_user_context", lambda message: True)
-        monkeypatch.setattr("ai_assistant.views.chat_views.get_context_for_intent", lambda message, cid: " [CTX]")
+        monkeypatch.setattr("ai_assistant.views.chat.get_llm_service", lambda use_case=None: MockLLM())
+        monkeypatch.setattr("ai_assistant.views.chat.needs_user_context", lambda message: True)
+        monkeypatch.setattr("ai_assistant.views.chat.get_context_for_intent", lambda message, cid: " [CTX]")
 
         request = _auth_request("/api/ai/chat/", {"message": "Check my profile status"}, customer.id)
         response = ChatView.as_view()(request)
@@ -321,8 +321,8 @@ class TestChatView:
                     "response_time_ms": 10,
                 }
 
-        monkeypatch.setattr("ai_assistant.views.chat_views.get_llm_service", lambda use_case=None: MockLLM())
-        monkeypatch.setattr("ai_assistant.views.chat_views.needs_user_context", lambda message: False)
+        monkeypatch.setattr("ai_assistant.views.chat.get_llm_service", lambda use_case=None: MockLLM())
+        monkeypatch.setattr("ai_assistant.views.chat.needs_user_context", lambda message: False)
 
         request = _auth_request("/api/ai/chat/", {"message": "Hello"}, customer.id)
         response = ChatView.as_view()(request)
@@ -398,7 +398,7 @@ class TestStreamingChatView:
                 yield {"type": "token", "content": " there"}
                 yield {"type": "done", "model": "mock-stream", "tokens_used": 11}
 
-        monkeypatch.setattr("ai_assistant.views.chat_views.get_llm_service", lambda use_case=None: MockLLM())
+        monkeypatch.setattr("ai_assistant.views.streaming.get_llm_service", lambda use_case=None: MockLLM())
 
         request = _auth_request(
             "/api/ai/chat/stream/",
@@ -434,7 +434,7 @@ class TestStreamingChatView:
             def is_available(self):
                 return False
 
-        monkeypatch.setattr("ai_assistant.views.chat_views.get_llm_service", lambda use_case=None: MockLLM())
+        monkeypatch.setattr("ai_assistant.views.streaming.get_llm_service", lambda use_case=None: MockLLM())
 
         request = _auth_request("/api/ai/chat/stream/", {"message": "Hi"}, customer.id)
         response = StreamingChatView.as_view()(request)
@@ -453,7 +453,7 @@ class TestStreamingChatView:
             def chat_with_tools_stream(self, **kwargs):
                 raise RuntimeError("stream failure")
 
-        monkeypatch.setattr("ai_assistant.views.chat_views.get_llm_service", lambda use_case=None: MockLLM())
+        monkeypatch.setattr("ai_assistant.views.streaming.get_llm_service", lambda use_case=None: MockLLM())
 
         request = _auth_request("/api/ai/chat/stream/", {"message": "Hi"}, customer.id)
         response = StreamingChatView.as_view()(request)
@@ -612,7 +612,7 @@ class TestContentEndpoints:
             def is_available(self):
                 return True
 
-        monkeypatch.setattr("ai_assistant.views.chat_views.get_llm_service", lambda use_case=None: MockLLM())
+        monkeypatch.setattr("ai_assistant.views.auxiliary.get_llm_service", lambda use_case=None: MockLLM())
 
         request = _auth_get_request("/api/ai/status/", customer.id)
         response = AIStatusView.as_view()(request)
