@@ -332,12 +332,34 @@ CSRF_TRUSTED_ORIGINS = [
 ]
 
 # Email configuration
-EMAIL_BACKEND = os.getenv('EMAIL_BACKEND', 'django.core.mail.backends.smtp.EmailBackend')
+EMAIL_HOST_USER = os.getenv('EMAIL_HOST_USER', '')
+EMAIL_HOST_PASSWORD = os.getenv('EMAIL_HOST_PASSWORD', '')
+_email_backend = os.getenv('EMAIL_BACKEND')
+_placeholder_email_values = {
+    '',
+    'your-email@gmail.com',
+    'your-16-character-app-password',
+    'your-app-password',
+}
+_email_values_look_placeholder = (
+    EMAIL_HOST_USER.strip().lower() in _placeholder_email_values
+    or EMAIL_HOST_PASSWORD.strip().lower() in _placeholder_email_values
+    or EMAIL_HOST_USER.strip().startswith('your-')
+    or EMAIL_HOST_PASSWORD.strip().startswith('your-')
+)
+if _email_backend:
+    if DEBUG and _email_backend == 'django.core.mail.backends.smtp.EmailBackend' and _email_values_look_placeholder:
+        EMAIL_BACKEND = 'django.core.mail.backends.console.EmailBackend'
+    else:
+        EMAIL_BACKEND = _email_backend
+elif DEBUG and _email_values_look_placeholder:
+    EMAIL_BACKEND = 'django.core.mail.backends.console.EmailBackend'
+else:
+    EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
+
 EMAIL_HOST = os.getenv('EMAIL_HOST', 'smtp.gmail.com')
 EMAIL_PORT = int(os.getenv('EMAIL_PORT', 587))
 EMAIL_USE_TLS = os.getenv('EMAIL_USE_TLS', 'True') == 'True'
-EMAIL_HOST_USER = os.getenv('EMAIL_HOST_USER', '')
-EMAIL_HOST_PASSWORD = os.getenv('EMAIL_HOST_PASSWORD', '')
 DEFAULT_FROM_EMAIL = os.getenv('DEFAULT_FROM_EMAIL', EMAIL_HOST_USER)
 EMAIL_TIMEOUT = int(os.getenv('EMAIL_TIMEOUT', 10))
 

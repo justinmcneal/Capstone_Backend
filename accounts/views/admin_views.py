@@ -127,6 +127,14 @@ def _build_stale_update_response(current_updated_at):
     )
 
 
+def _get_request_value(request, *keys, default=""):
+    for key in keys:
+        value = request.data.get(key)
+        if value not in (None, ""):
+            return value
+    return default
+
+
 class AdminLoginView(APIView):
     """
     Login endpoint for system administrators.
@@ -570,15 +578,17 @@ class LoanOfficerManagementView(AdminRequiredMixin, APIView):
             admin = result  # result is the admin object when has_perm is True
 
             employee_id_valid, employee_id_error, employee_id = validate_employee_id(
-                request.data.get("employee_id", ""),
+                _get_request_value(request, "employee_id", "employeeId"),
                 field_name="Employee ID",
                 max_length=20,
             )
-            first_name = request.data.get("first_name", "")
-            last_name = request.data.get("last_name", "")
-            email = EmailUtils.normalize_email(str(request.data.get("email") or ""))
+            first_name = _get_request_value(request, "first_name", "firstName")
+            last_name = _get_request_value(request, "last_name", "lastName")
+            email = EmailUtils.normalize_email(
+                str(_get_request_value(request, "email", "emailAddress"))
+            )
             phone_valid, phone_error, phone_number = validate_phone_number(
-                request.data.get("phone", ""),
+                _get_request_value(request, "phone", "phone_number", "phoneNumber"),
                 field_name="Phone",
                 required=False,
                 min_digits=11,
@@ -662,7 +672,9 @@ class LoanOfficerManagementView(AdminRequiredMixin, APIView):
             temp_password = generate_temp_password()
 
             department = (
-                sanitize_text(request.data.get("department", ""))
+                sanitize_text(
+                    _get_request_value(request, "department", "departmentName")
+                )
                 or DEFAULT_LOAN_OFFICER_DEPARTMENT
             )
 
