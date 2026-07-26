@@ -1,3 +1,12 @@
+"""
+Field-level encryption utilities for sensitive database fields.
+
+Behavior:
+- Production (DEBUG=False): FIELD_ENCRYPTION_KEY is required. Startup fails if missing/invalid.
+- Development (DEBUG=True): FIELD_ENCRYPTION_KEY is optional. When missing, values pass through
+  as plaintext so local development does not require key management. Production deployments
+  must set FIELD_ENCRYPTION_KEY to ensure sensitive fields are never stored unencrypted.
+"""
 from functools import lru_cache
 
 from cryptography.fernet import Fernet, InvalidToken
