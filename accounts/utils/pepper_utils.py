@@ -32,11 +32,34 @@ logger = logging.getLogger("authentication")
 _pepper_cache = None
 
 
+def _is_debug_mode() -> bool:
+    return os.environ.get("DEBUG", "False").strip().lower() in {"1", "true", "yes", "on"}
+
+
 def _get_pepper() -> str:
     """Return the SECRET_PEPPER, loading it from the environment on first call."""
     global _pepper_cache
     if _pepper_cache is None:
-        _pepper_cache = os.environ.get("SECRET_PEPPER", "")
+        pepper = os.environ.get("SECRET_PEPPER", "").strip()
+        if not pepper:
+            if not _is_debug_mode():
+                raise ValueError(
+                    "SECRET_PEPPER environment variable is not set! "
+                    'Generate one with: python -c "import secrets; print(secrets.token_hex(32))"'
+                )
+
+            seed = os.environ.get("SECRET_KEY", "capstone-backend-dev-secret-key")
+            pepper = hmac.new(
+                key=seed.encode("utf-8"),
+                msg=b"capstone-backend-dev-pepper",
+                digestmod=hashlib.sha256,
+            ).hexdigest()
+            logger.warning(
+                "SECRET_PEPPER is not set; using a DEBUG-only fallback pepper. "
+                "Set SECRET_PEPPER to preserve password hashes across restarts."
+            )
+
+        _pepper_cache = pepper
         if not _pepper_cache:
             raise ValueError(
                 "SECRET_PEPPER environment variable is not set! "

@@ -15,9 +15,29 @@ class CentralizedEmailService:
         self.from_email = getattr(
             settings, "DEFAULT_FROM_EMAIL", "noreply@capstone.com"
         )
+        self.email_backend = getattr(
+            settings,
+            "EMAIL_BACKEND",
+            "django.core.mail.backends.smtp.EmailBackend",
+        )
         self.email_enabled = self._is_email_configured()
 
     def _is_email_configured(self) -> bool:
+        if self.email_backend == "django.core.mail.backends.console.EmailBackend":
+            return True
+
+        placeholder_values = {
+            "",
+            "your-email@gmail.com",
+            "your-16-character-app-password",
+            "your-app-password",
+        }
+
+        host_user = str(getattr(settings, "EMAIL_HOST_USER", "")).strip().lower()
+        host_password = str(getattr(settings, "EMAIL_HOST_PASSWORD", "")).strip().lower()
+        if host_user in placeholder_values or host_password in placeholder_values:
+            return False
+
         return bool(
             getattr(settings, "EMAIL_HOST_USER", None)
             and getattr(settings, "EMAIL_HOST_PASSWORD", None)

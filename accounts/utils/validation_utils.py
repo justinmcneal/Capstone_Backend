@@ -193,14 +193,20 @@ def validate_phone_number(
             return False, f"{field_name} is required", ""
         return True, None, ""
 
-    if not re.fullmatch(r"[0-9\s-]+", raw):
-        return (
-            False,
-            f"{field_name} must contain numbers only",
-            raw,
-        )
+    cleaned = raw.replace("(", "").replace(")", "").replace(".", "")
+    if cleaned.startswith("+"):
+        cleaned = cleaned[1:]
 
-    digits_only = re.sub(r"\D", "", raw)
+    if not re.fullmatch(r"[0-9\s-]+", cleaned):
+        return False, f"{field_name} must contain numbers only", raw
+
+    digits_only = re.sub(r"\D", "", cleaned)
+
+    # Accept common Philippine mobile formats like +63XXXXXXXXXX and normalize
+    # them to the local 11-digit format used elsewhere in the system.
+    if digits_only.startswith("63") and len(digits_only) == 12:
+        digits_only = "0" + digits_only[2:]
+
     digit_count = len(digits_only)
 
     if digit_count < min_digits or digit_count > max_digits:
