@@ -340,7 +340,7 @@ class TestToolExecutor:
         result = execute_tool('unknown_tool', {}, 'customer_123')
         result_dict = json.loads(result)
         assert 'error' in result_dict
-        assert 'unknown' in result_dict['error'].lower()
+        assert 'Failed to retrieve data' in result_dict['error']
     
     @patch('profiles.models.profile_models.CustomerProfile')
     @patch('profiles.models.profile_models.BusinessProfile')

@@ -281,7 +281,7 @@ def safe_execute_tool(
     """
     import time
     import json
-    from ai_assistant.services.tools import execute_tool
+    from ai_assistant.services.tools import _execute_tool_raw
     
     start_time = time.time()
     
@@ -319,7 +319,8 @@ def safe_execute_tool(
     
     # 3. Execute tool
     try:
-        result = execute_tool(tool_name, validated_args, customer_id)
+        result_data = _execute_tool_raw(tool_name, validated_args, customer_id)
+        result = json.dumps(result_data, default=str)
         duration_ms = int((time.time() - start_time) * 1000)
         
         # 4. Record successful call for rate limiting
