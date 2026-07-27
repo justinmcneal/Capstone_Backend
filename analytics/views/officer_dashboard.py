@@ -2,20 +2,22 @@
 Loan Officer Dashboard - Review activity and queue stats.
 """
 
-from rest_framework.views import APIView
+import logging
+from datetime import datetime, timezone
+from typing import ClassVar
+
+from bson import ObjectId
+from django.conf import settings
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
-from datetime import datetime, timezone
-from bson import ObjectId
+from rest_framework.views import APIView
 
 from accounts.authentication import CustomJWTAuthentication
 from accounts.utils.access_control import AccessControlMixin
-from accounts.utils.response_helpers import success_response, error_response
+from accounts.utils.response_helpers import error_response, success_response
 from accounts.utils.validation_utils import sanitize_text
-from django.conf import settings
 from analytics.models import AuditLog
 from analytics.models.audit_log import ACTION_GROUPS
-import logging
 
 logger = logging.getLogger("analytics")
 
@@ -37,8 +39,8 @@ class OfficerDashboardView(LoanOfficerRequiredMixin, APIView):
     GET /api/analytics/officer/
     """
 
-    authentication_classes = [CustomJWTAuthentication]
-    permission_classes = [IsAuthenticated]
+    authentication_classes: ClassVar[list[type]] = [CustomJWTAuthentication]
+    permission_classes: ClassVar[list[type]] = [IsAuthenticated]
 
     def get(self, request):
         has_permission, result = self.check_officer_permission(request)
@@ -124,8 +126,8 @@ class OfficerAuditLogsView(LoanOfficerRequiredMixin, APIView):
     GET /api/analytics/officer/audit-logs/
     """
 
-    authentication_classes = [CustomJWTAuthentication]
-    permission_classes = [IsAuthenticated]
+    authentication_classes: ClassVar[list[type]] = [CustomJWTAuthentication]
+    permission_classes: ClassVar[list[type]] = [IsAuthenticated]
 
     def get(self, request):
         import re
@@ -211,14 +213,21 @@ class OfficerAuditLogsView(LoanOfficerRequiredMixin, APIView):
             ts_filter = {}
             if date_from:
                 try:
-                    ts_filter["$gte"] = datetime.strptime(date_from, "%Y-%m-%d")
+                    ts_filter["$gte"] = datetime.strptime(
+                        date_from, "%Y-%m-%d"
+                    ).replace(tzinfo=timezone.utc)
                 except ValueError:
                     pass
             if date_to:
                 try:
-                    date_to_obj = datetime.strptime(date_to, "%Y-%m-%d")
+                    date_to_obj = datetime.strptime(date_to, "%Y-%m-%d").replace(
+                        tzinfo=timezone.utc
+                    )
                     ts_filter["$lte"] = date_to_obj.replace(
-                        hour=23, minute=59, second=59, microsecond=999999
+                        hour=23,
+                        minute=59,
+                        second=59,
+                        microsecond=999999,
                     )
                 except ValueError:
                     pass

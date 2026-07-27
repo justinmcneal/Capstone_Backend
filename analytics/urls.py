@@ -1,12 +1,13 @@
 from django.urls import path
+
 from analytics.views import (
     AdminDashboardView,
+    AuditLogDetailView,
     AuditLogsView,
     AuditLogUsersView,
-    AuditLogDetailView,
-    OfficerDashboardView,
-    OfficerAuditLogsView,
     CustomerDashboardView,
+    OfficerAuditLogsView,
+    OfficerDashboardView,
 )
 
 app_name = "analytics"

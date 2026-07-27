@@ -2,14 +2,16 @@
 Customer Dashboard - Personal stats for customers.
 """
 
-from rest_framework.views import APIView
+import logging
+from typing import ClassVar
+
+from django.conf import settings
 from rest_framework.permissions import IsAuthenticated
+from rest_framework.views import APIView
 
 from accounts.authentication import CustomJWTAuthentication
 from accounts.utils.access_control import AccessControlMixin
 from accounts.utils.response_helpers import success_response
-from django.conf import settings
-import logging
 
 logger = logging.getLogger("analytics")
 
@@ -21,8 +23,8 @@ class CustomerDashboardView(AccessControlMixin, APIView):
     GET /api/analytics/customer/
     """
 
-    authentication_classes = [CustomJWTAuthentication]
-    permission_classes = [IsAuthenticated]
+    authentication_classes: ClassVar[list[type]] = [CustomJWTAuthentication]
+    permission_classes: ClassVar[list[type]] = [IsAuthenticated]
 
     def get(self, request):
         has_permission, result = self.require_customer(request)
