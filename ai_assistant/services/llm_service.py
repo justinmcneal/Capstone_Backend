@@ -21,19 +21,19 @@ HOW IT WORKS:
 4. Response is saved and sent back to user
 =============================================================================
 """
-import os
 import json
-import requests
 import logging
-from django.conf import settings
-from concurrent.futures import ThreadPoolExecutor, as_completed
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
+import requests
+from django.conf import settings
+
+from ai_assistant.services.exception_types import NON_FATAL_EXCEPTIONS
 
 # Import from centralized knowledge base
 from ai_assistant.services.knowledge_base import (
     build_system_prompt,
-    check_prohibited_content,
-    KNOWLEDGE_VERSION,
 )
 
 logger = logging.getLogger('ai_assistant')
@@ -134,7 +134,7 @@ class GroqService:
             try:
                 resp = _session.get(f"{self._ollama_base_url}/api/tags", timeout=3)
                 return resp.status_code == 200
-            except Exception:
+            except NON_FATAL_EXCEPTIONS:
                 return False
         return bool(self.api_key)
     
@@ -252,7 +252,7 @@ class GroqService:
             return {'success': False, 'error': "Request timed out. Please try again."}
         except requests.RequestException as e:
             # Network or connection error
-            logger.error(f"Groq error: {str(e)}")
+            logger.error(f"Groq error: {e!s}")
             return {'success': False, 'error': "Could not connect to Groq API."}
     
     def _execute_tools_parallel(self, tool_calls, customer_id, max_workers=4):
@@ -268,7 +268,7 @@ class GroqService:
         Returns:
             List of (tool_call_id, tool_name, result_json) tuples in original order
         """
-        from ai_assistant.services.tool_safety import safe_execute_tool, rate_limiter
+        from ai_assistant.services.tool_safety import safe_execute_tool
         
         def run_tool(tool_call):
             func = tool_call.get('function', {})
@@ -307,7 +307,7 @@ class GroqService:
                 idx = future_to_idx[future]
                 try:
                     results[idx] = future.result()
-                except Exception as e:
+                except NON_FATAL_EXCEPTIONS as e:
                     # Handle individual tool failure
                     tool_call = tool_calls[idx]
                     tool_name = tool_call.get('function', {}).get('name', 'unknown')
@@ -484,7 +484,7 @@ class GroqService:
             except requests.Timeout:
                 return {'success': False, 'error': "Request timed out. Please try again."}
             except requests.RequestException as e:
-                logger.error(f"Groq error: {str(e)}")
+                logger.error(f"Groq error: {e!s}")
                 return {'success': False, 'error': "Could not connect to Groq API."}
             except json.JSONDecodeError:
                 return {'success': False, 'error': "Invalid response from AI service."}
@@ -560,8 +560,8 @@ class GroqService:
                 error_msg = response.text
                 try:
                     error_msg = response.json().get('error', {}).get('message', response.text)
-                except Exception:
-                    pass
+                except NON_FATAL_EXCEPTIONS:
+                    logger.warning("Failed to parse LLM error response body")
                 yield {'type': 'error', 'content': f"LLM error: {error_msg}"}
                 return
 
@@ -597,7 +597,7 @@ class GroqService:
         except requests.Timeout:
             yield {'type': 'error', 'content': "Request timed out"}
         except requests.RequestException as e:
-            logger.error(f"Stream error: {str(e)}")
+            logger.error(f"Stream error: {e!s}")
             yield {'type': 'error', 'content': "Connection error"}
 
     def chat_with_tools_stream(
@@ -663,7 +663,7 @@ class GroqService:
                     request_body["tools"] = tools
                     request_body["tool_choice"] = "auto"
 
-                timeout = 120 if self.provider == 'ollama' else 120
+                timeout = 120
                 response = _session.post(
                     self.api_url,
                     headers={
@@ -738,7 +738,7 @@ class GroqService:
             except requests.Timeout:
                 yield {'type': 'error', 'content': "Request timed out"}
                 return
-            except requests.RequestException as e:
+            except requests.RequestException:
                 yield {'type': 'error', 'content': "Connection error"}
                 return
 
@@ -798,7 +798,7 @@ class GroqService:
 
         except requests.Timeout:
             yield {'type': 'error', 'content': "Stream timed out"}
-        except requests.RequestException as e:
+        except requests.RequestException:
             yield {'type': 'error', 'content': "Stream connection error"}
 
 

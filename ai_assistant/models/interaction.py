@@ -1,8 +1,8 @@
 """
 AIInteraction Model for storing chat history.
 """
-from datetime import datetime, timezone
 import re
+from datetime import datetime, timezone
 
 from bson import ObjectId
 from django.conf import settings
@@ -77,10 +77,8 @@ class AIInteraction:
         else:
             customer_id_str = str(customer_id)
             candidates.append(customer_id_str)
-            try:
+            if ObjectId.is_valid(customer_id_str):
                 candidates.insert(0, ObjectId(customer_id_str))
-            except Exception:
-                pass
 
         deduped = []
         seen = set()

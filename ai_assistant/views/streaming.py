@@ -1,29 +1,33 @@
-from rest_framework.views import APIView
-from rest_framework import status
-from rest_framework.permissions import IsAuthenticated
-from django.http import StreamingHttpResponse
-import uuid
-import time
-
-from accounts.authentication import CustomJWTAuthentication
-from accounts.utils.access_control import AccessControlMixin
-from accounts.utils.response_helpers import success_response, error_response
-from accounts.utils.throttles import ChatRateThrottle
-from accounts.utils.validation_utils import sanitize_text, sanitize_multiline_text, escape_llm_output
-from accounts.services.consent_service import ConsentService
-from ai_assistant.models import AIInteraction
-from ai_assistant.services import get_llm_service
-from ai_assistant.services.llm_service import SYSTEM_PROMPT, needs_user_context
-from ai_assistant.services.knowledge_base import check_prohibited_content
-from ai_assistant.services.context_builder import get_context_for_intent
-from ai_assistant.services.tools import TOOL_SCHEMAS
-from ai_assistant.views.chat_views import (
-    ConsentRequiredMixin,
-    EventStreamRenderer,
-    ALLOWED_LANGUAGES,
-)
 import json
 import logging
+import time
+import uuid
+
+from django.http import StreamingHttpResponse
+from rest_framework import status
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.views import APIView
+
+from accounts.authentication import CustomJWTAuthentication
+from accounts.utils.response_helpers import error_response
+from accounts.utils.throttles import ChatRateThrottle
+from accounts.utils.validation_utils import (
+    escape_llm_output,
+    sanitize_multiline_text,
+    sanitize_text,
+)
+from ai_assistant.models import AIInteraction
+from ai_assistant.services import get_llm_service
+from ai_assistant.services.context_builder import get_context_for_intent
+from ai_assistant.services.exception_types import NON_FATAL_EXCEPTIONS
+from ai_assistant.services.knowledge_base import check_prohibited_content
+from ai_assistant.services.llm_service import SYSTEM_PROMPT, needs_user_context
+from ai_assistant.services.tools import TOOL_SCHEMAS
+from ai_assistant.views.chat_views import (
+    ALLOWED_LANGUAGES,
+    ConsentRequiredMixin,
+    EventStreamRenderer,
+)
 
 logger = logging.getLogger('ai_assistant')
 
@@ -41,10 +45,10 @@ class StreamingChatView(ConsentRequiredMixin, APIView):
     - event: done, data: {"model": "llama3.1", "tokens_used": 150}
     - event: error, data: {"content": "Error message"}
     """
-    authentication_classes = [CustomJWTAuthentication]
-    permission_classes = [IsAuthenticated]
-    throttle_classes = [ChatRateThrottle]
-    renderer_classes = [EventStreamRenderer]
+    authentication_classes = (CustomJWTAuthentication,)
+    permission_classes = (IsAuthenticated,)
+    throttle_classes = (ChatRateThrottle,)
+    renderer_classes = (EventStreamRenderer,)
 
     def post(self, request):
         """Stream AI response as Server-Sent Events"""
@@ -190,8 +194,8 @@ class StreamingChatView(ConsentRequiredMixin, APIView):
                         yield f"event: error\ndata: {json.dumps({'content': escape_llm_output(chunk.get('content', 'Unknown error'))})}\n\n"
                         break
                         
-            except Exception as e:
-                logger.error(f"Stream error: {str(e)}")
+            except NON_FATAL_EXCEPTIONS as e:
+                logger.error(f"Stream error: {e!s}")
                 yield f"event: error\ndata: {json.dumps({'content': escape_llm_output('Stream error occurred')})}\n\n"
         
         response = StreamingHttpResponse(

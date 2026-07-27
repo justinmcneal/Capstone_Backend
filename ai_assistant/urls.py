@@ -1,12 +1,13 @@
 from django.urls import path
+
 from ai_assistant.views import (
-    ChatView,
-    StreamingChatView,
-    ChatHistoryView,
-    SuggestionsView,
     AIStatusView,
+    ChatHistoryView,
+    ChatView,
     EducationView,
-    FAQsView
+    FAQsView,
+    StreamingChatView,
+    SuggestionsView,
 )
 
 app_name = 'ai_assistant'

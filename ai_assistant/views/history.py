@@ -1,17 +1,16 @@
-from rest_framework.views import APIView
+import logging
+import math
+
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
+from rest_framework.views import APIView
 
 from accounts.authentication import CustomJWTAuthentication
-from accounts.utils.access_control import AccessControlMixin
-from accounts.utils.response_helpers import success_response, error_response
-from accounts.utils.throttles import ChatRateThrottle
+from accounts.utils.response_helpers import error_response, success_response
 from accounts.utils.validation_utils import sanitize_text
-from accounts.services.consent_service import ConsentService
 from ai_assistant.models import AIInteraction
+from ai_assistant.services.exception_types import NON_FATAL_EXCEPTIONS
 from ai_assistant.views.chat_views import ConsentRequiredMixin
-import math
-import logging
 
 logger = logging.getLogger('ai_assistant')
 
@@ -23,8 +22,8 @@ class ChatHistoryView(ConsentRequiredMixin, APIView):
     GET /api/ai/history/
     DELETE /api/ai/history/
     """
-    authentication_classes = [CustomJWTAuthentication]
-    permission_classes = [IsAuthenticated]
+    authentication_classes = (CustomJWTAuthentication,)
+    permission_classes = (IsAuthenticated,)
 
     def _parse_positive_int(self, value, default=None):
         try:
@@ -91,8 +90,8 @@ class ChatHistoryView(ConsentRequiredMixin, APIView):
                 message="Chat history retrieved successfully"
             )
             
-        except Exception as e:
-            logger.error(f"Get history error: {str(e)}")
+        except NON_FATAL_EXCEPTIONS as e:
+            logger.error(f"Get history error: {e!s}")
             return error_response(
                 message="Failed to retrieve chat history",
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
@@ -117,8 +116,8 @@ class ChatHistoryView(ConsentRequiredMixin, APIView):
                 message="Chat history cleared successfully"
             )
             
-        except Exception as e:
-            logger.error(f"Clear history error: {str(e)}")
+        except NON_FATAL_EXCEPTIONS as e:
+            logger.error(f"Clear history error: {e!s}")
             return error_response(
                 message="Failed to clear chat history",
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
