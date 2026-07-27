@@ -28,6 +28,16 @@ import re
 KNOWLEDGE_VERSION = "1.7"
 
 # =============================================================================
+# REVIEW LOCK - Checklist for knowledge-base changes
+# =============================================================================
+# Before editing this file, confirm:
+# 1. Endpoints/fields referenced here still exist in source modules (accounts, loans, profiles, documents, notifications, analytics)
+# 2. URLs, query params, and response shapes match current API contracts
+# 3. Consent requirements, language behavior, and 2FA flows match accounts/ implementation
+# 4. Prohibited-topic redirect responses are still appropriate
+# 5. Run: pytest -q tests/test_ai_knowledge.py tests/test_chatbot_api.py tests/test_ai_streaming.py
+
+# =============================================================================
 # PLATFORM INFORMATION
 # =============================================================================
 
