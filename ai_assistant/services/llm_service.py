@@ -45,6 +45,7 @@ logger = logging.getLogger('ai_assistant')
 
 GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
 
+_session = requests.Session()
 
 def _get_config():
     """Read LLM config from Django settings (which reads .env via load_dotenv)."""
@@ -131,7 +132,7 @@ class GroqService:
         """Check if the LLM service is ready to use."""
         if self.provider == 'ollama':
             try:
-                resp = requests.get(f"{self._ollama_base_url}/api/tags", timeout=3)
+                resp = _session.get(f"{self._ollama_base_url}/api/tags", timeout=3)
                 return resp.status_code == 200
             except Exception:
                 return False
@@ -207,7 +208,7 @@ class GroqService:
         # Send request to LLM API
         timeout = 120 if self.provider == 'ollama' else 180
         try:
-            response = requests.post(
+            response = _session.post(
                 self.api_url,
                 headers={
                     "Authorization": f"Bearer {self.api_key}",
@@ -409,7 +410,7 @@ class GroqService:
                     request_body["tool_choice"] = "auto"
 
                 timeout = 120 if self.provider == 'ollama' else 180
-                response = requests.post(
+                response = _session.post(
                     self.api_url,
                     headers={
                         "Authorization": f"Bearer {self.api_key}",
@@ -537,7 +538,7 @@ class GroqService:
         messages.append({"role": "user", "content": message})
 
         try:
-            response = requests.post(
+            response = _session.post(
                 self.api_url,
                 headers={
                     "Authorization": f"Bearer {self.api_key}",
@@ -663,7 +664,7 @@ class GroqService:
                     request_body["tool_choice"] = "auto"
 
                 timeout = 120 if self.provider == 'ollama' else 120
-                response = requests.post(
+                response = _session.post(
                     self.api_url,
                     headers={
                         "Authorization": f"Bearer {self.api_key}",
@@ -743,7 +744,7 @@ class GroqService:
 
         # Phase 2: Stream the final response
         try:
-            response = requests.post(
+            response = _session.post(
                 self.api_url,
                 headers={
                     "Authorization": f"Bearer {self.api_key}",
