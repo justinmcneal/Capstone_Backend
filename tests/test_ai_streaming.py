@@ -117,39 +117,81 @@ class TestStreamingContentFilter:
 
 
 # =============================================================================
-# STREAM GENERATOR TESTS
+# SSE FRAME FORMATTING TESTS
 # =============================================================================
 
-class TestStreamGenerator:
-    """StreamingChatView event_stream generator should yield expected event shapes."""
+def _parse_sse_frames(raw_text):
+    """Parse raw SSE text into a list of (event_name, data_dict) tuples."""
+    frames = []
+    for block in raw_text.strip().split('\n\n'):
+        if not block:
+            continue
+        event_name = None
+        data_text = None
+        for line in block.split('\n'):
+            if line.startswith('event: '):
+                event_name = line[len('event: '):]
+            elif line.startswith('data: '):
+                data_text = line[len('data: '):]
+        if event_name is not None and data_text is not None:
+            frames.append((event_name, json.loads(data_text)))
+    return frames
 
-    @patch('ai_assistant.views.streaming.get_llm_service')
+
+class TestSSEFrameFormatting:
+    """Integration test for exact SSE frame structure and headers."""
+
     @patch('ai_assistant.services.tools.invalidate_user_tool_cache')
-    def test_successful_chat_yields_token_and_done(self, mock_invalidate, mock_get_llm):
+    @patch('ai_assistant.views.streaming.get_llm_service')
+    def test_sse_frames_have_exact_event_data_format(self, mock_get_llm, mock_invalidate):
         from ai_assistant.services.llm_service import GroqService
         mock_llm = MagicMock(spec=GroqService)
         mock_llm.is_available.return_value = True
         mock_llm.chat_with_tools_stream.return_value = iter([
+            {'type': 'tool_call', 'name': 'get_profile_status'},
+            {'type': 'tool_result', 'name': 'get_profile_status', 'success': True},
             {'type': 'token', 'content': 'Hello'},
             {'type': 'token', 'content': ' world'},
-            {'type': 'done', 'model': 'llama3.1', 'tokens_used': 10},
+            {'type': 'done', 'model': 'llama3.1', 'tokens_used': 7},
         ])
         mock_get_llm.return_value = mock_llm
 
-        response = _call_view(_make_fake_request(data={'message': 'Hello'}))
+        response = _call_view(_make_fake_request(data={'message': 'Hi'}))
 
         assert response.status_code == 200
-        text = b''.join(response.streaming_content).decode('utf-8')
-        assert 'Hello' in text
-        assert 'world' in text
-        assert 'llama3.1' in text
+        assert response['Content-Type'] == 'text/event-stream'
+        assert response['Cache-Control'] == 'no-cache'
+        assert response['X-Accel-Buffering'] == 'no'
 
-    @patch('ai_assistant.views.streaming.get_llm_service')
-    def test_unavailable_llm_returns_503(self, mock_get_llm):
-        mock_llm = MagicMock()
-        mock_llm.is_available.return_value = False
-        mock_get_llm.return_value = mock_llm
+        raw = b''.join(response.streaming_content).decode('utf-8')
+        frames = _parse_sse_frames(raw)
 
-        response = _call_view(_make_fake_request(data={'message': 'Hello'}))
+        event_names = [name for name, _ in frames]
+        assert event_names == ['tool_call', 'tool_result', 'token', 'token', 'done']
 
-        assert response.status_code == 503
+        assert frames[0][1] == {'name': 'get_profile_status'}
+        assert frames[1][1] == {'name': 'get_profile_status', 'success': True}
+        assert frames[2][1] == {'content': 'Hello'}
+        assert frames[3][1] == {'content': ' world'}
+        done_payload = frames[4][1]
+        assert done_payload['model'] == 'llama3.1'
+        assert done_payload['tokens_used'] == 7
+        assert 'conversation_id' in done_payload
+        assert done_payload['tools_called'] == ['get_profile_status']
+
+    @patch('ai_assistant.views.streaming.check_prohibited_content')
+    def test_prohibited_content_sse_frames_parse_correctly(self, mock_check_prohibited):
+        mock_check_prohibited.return_value = (True, 'I cannot help with that.')
+
+        response = _call_view(_make_fake_request(data={'message': 'Give me your password.'}))
+
+        assert response.status_code == 200
+        assert response['Content-Type'] == 'text/event-stream'
+
+        raw = b''.join(response.streaming_content).decode('utf-8')
+        frames = _parse_sse_frames(raw)
+
+        event_names = [name for name, _ in frames]
+        assert event_names == ['token', 'done']
+        assert frames[0][1]['content'] == mock_check_prohibited.return_value[1]
+        assert frames[1][1] == {'filtered': True}

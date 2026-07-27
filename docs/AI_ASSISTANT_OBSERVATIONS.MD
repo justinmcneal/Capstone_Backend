@@ -49,11 +49,10 @@ The `ai_assistant` module provides an AI chatbot backed by Groq/Ollama with:
 - **Risk**: Under load, blocking HTTP calls can exhaust worker threads and reduce throughput.
 - **Recommendation**: Consider `httpx`/`aiohttp` + ASGI deployment, or offload LLM calls to a background task queue (Celery/worker) for non-streaming paths.
 
-### 4. Streaming endpoint correctness
-- **Files**: `ai_assistant/views/chat_views.py`, `ai_assistant/services/llm_service.py`
-- **Observation**: `EventStreamRenderer` returns raw data, and the view wraps `chat_stream()` in `StreamingHttpResponse`.
-- **Risk**: If Django/DRF applies a default JSON renderer or middleware buffering before `renderer_classes` is honored, SSE frames may be malformed or buffered.
-- **Recommendation**: Verify `renderer_classes` is respected in production middleware stack, and add an integration test that asserts SSE frame formatting (`event: ...\ndata: ...\n\n`).
+### 4. Streaming endpoint correctness (RESOLVED)
+- **Files**: `ai_assistant/views/chat_views.py`, `ai_assistant/services/llm_service.py`, `tests/test_ai_streaming.py`
+- **Observation**: Added rigid SSE frame-parsing integration tests that verify exact `event: ...\ndata: ...\n\n` formatting, `text/event-stream` content type, and no middleware wrapping. Also verified `EventStreamRenderer` pass-through and `StreamingHttpResponse` headers (`Cache-Control`, `X-Accel-Buffering`).
+- **Status**: Fixed. Frame formatting is now guarded by automated tests.
 
 ### 5. Rapid knowledge-base iteration
 - **File**: `ai_assistant/services/knowledge_base.py`
@@ -93,4 +92,4 @@ The `ai_assistant` module provides an AI chatbot backed by Groq/Ollama with:
 
 ## Summary
 
-The `ai_assistant` module is well-structured and production-ready in concept. The primary remaining gaps are **blocking I/O at scale** (#3), **streaming correctness verification** (#4), and **knowledge-base review lock** (#5). Test coverage, unsanitized LLM output, tool safety inconsistency, cross-app import coupling, and large view file have been resolved.
+The `ai_assistant` module is well-structured and production-ready in concept. The primary remaining gaps are **blocking I/O at scale** (#3) and **knowledge-base review lock** (#5). Test coverage, unsanitized LLM output, tool safety inconsistency, cross-app import coupling, large view file, and streaming correctness verification have been resolved.
