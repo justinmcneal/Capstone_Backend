@@ -1,31 +1,31 @@
-from rest_framework.views import APIView
+import logging
+import uuid
+
+from django.conf import settings
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.renderers import BaseRenderer
-from django.http import StreamingHttpResponse
-from django.core.cache import cache
-from django.conf import settings
-import uuid
-import math
-import time
+from rest_framework.views import APIView
 
 from accounts.authentication import CustomJWTAuthentication
-from accounts.utils.access_control import AccessControlMixin
-from accounts.utils.response_helpers import success_response, error_response
-from accounts.utils.throttles import ChatRateThrottle
-from accounts.utils.validation_utils import sanitize_text, sanitize_multiline_text, escape_llm_output
 from accounts.services.consent_service import ConsentService
+from accounts.utils.access_control import AccessControlMixin
+from accounts.utils.response_helpers import error_response, success_response
+from accounts.utils.throttles import ChatRateThrottle
+from accounts.utils.validation_utils import (
+    escape_llm_output,
+    sanitize_multiline_text,
+    sanitize_text,
+)
 from ai_assistant.models import AIInteraction
 from ai_assistant.services import get_llm_service
-from ai_assistant.services.llm_service import SYSTEM_PROMPT, needs_user_context
-from ai_assistant.services.knowledge_base import check_prohibited_content
 from ai_assistant.services.context_builder import (
-    build_user_context,
     get_context_for_intent,
-    build_minimal_context,
 )
+from ai_assistant.services.exception_types import NON_FATAL_EXCEPTIONS
+from ai_assistant.services.knowledge_base import check_prohibited_content
+from ai_assistant.services.llm_service import SYSTEM_PROMPT, needs_user_context
 from ai_assistant.services.tools import TOOL_SCHEMAS
-import logging
 
 logger = logging.getLogger('ai_assistant')
 ALLOWED_LANGUAGES = {'en', 'tl'}
@@ -84,9 +84,9 @@ class ChatView(ConsentRequiredMixin, APIView):
     
     POST /api/ai/chat/
     """
-    authentication_classes = [CustomJWTAuthentication]
-    permission_classes = [IsAuthenticated]
-    throttle_classes = [ChatRateThrottle]
+    authentication_classes = (CustomJWTAuthentication,)
+    permission_classes = (IsAuthenticated,)
+    throttle_classes = (ChatRateThrottle,)
     
     def post(self, request):
         """Send a message to the AI assistant"""
@@ -240,8 +240,8 @@ class ChatView(ConsentRequiredMixin, APIView):
                 message="Response generated successfully"
             )
             
-        except Exception as e:
-            logger.error(f"Chat error: {str(e)}")
+        except NON_FATAL_EXCEPTIONS as e:
+            logger.error(f"Chat error: {e!s}")
             return error_response(
                 message="Failed to process chat message",
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR

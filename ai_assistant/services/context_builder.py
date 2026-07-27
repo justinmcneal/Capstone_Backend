@@ -13,8 +13,7 @@ VERSION: 1.0
 =============================================================================
 """
 import logging
-from datetime import datetime, timedelta
-from typing import Optional
+from datetime import datetime, timezone
 
 logger = logging.getLogger('ai_assistant')
 
@@ -90,7 +89,7 @@ def days_until(dt: datetime) -> int:
     """Calculate days until a date."""
     if not dt:
         return 0
-    delta = dt - datetime.now()
+    delta = dt - datetime.now(timezone.utc)
     return delta.days
 
 
@@ -128,7 +127,11 @@ def build_profile_summary(customer_id: str) -> dict:
         - has_business: Whether business profile has started
         - business_summary: One-line business summary
     """
-    from profiles.models.profile_models import CustomerProfile, BusinessProfile, AlternativeData
+    from profiles.models.profile_models import (
+        AlternativeData,
+        BusinessProfile,
+        CustomerProfile,
+    )
     
     result = {
         'completion_pct': 0,
@@ -459,8 +462,8 @@ def build_user_context(
         logger.info(f"Built context for {customer_id}: {len(context)} chars")
         return context
     
-    except Exception as e:
-        logger.error(f"Context build failed for {customer_id}: {e}", exc_info=True)
+    except Exception:
+        logger.exception("Context build failed for %s", customer_id)
         return ""
 
 
@@ -472,9 +475,9 @@ def build_minimal_context(customer_id: str) -> str:
     Returns ~100 tokens instead of ~300.
     """
     try:
-        from profiles.models.profile_models import CustomerProfile
         from documents.models.document import Document
         from loans.models.application import LoanApplication
+        from profiles.models.profile_models import CustomerProfile
         
         parts = []
         
@@ -501,8 +504,8 @@ def build_minimal_context(customer_id: str) -> str:
         
         return f"\n[User: {' | '.join(parts)}]"
     
-    except Exception as e:
-        logger.error(f"Minimal context failed: {e}")
+    except Exception:
+        logger.exception("Minimal context failed")
         return ""
 
 

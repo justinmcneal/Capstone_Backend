@@ -14,15 +14,20 @@ All tools are READ-ONLY — no mutations via chatbot.
 import json
 import logging
 from datetime import datetime
-from django.core.cache import cache
+
 from django.conf import settings
+from django.core.cache import cache
+
 from ai_assistant.services.context_builder import (
     ALTERNATIVE_DATA_REQUIRED_FIELDS,
     BUSINESS_PROFILE_REQUIRED_FIELDS,
     PERSONAL_PROFILE_REQUIRED_FIELDS,
 )
 from ai_assistant.services.tool_safety import safe_execute_tool
-from loans.services.qualification import resolve_required_document_types, document_type_label
+from loans.services.qualification import (
+    document_type_label,
+    resolve_required_document_types,
+)
 
 logger = logging.getLogger('ai_assistant')
 
@@ -249,7 +254,11 @@ def _execute_tool_raw(tool_name, tool_args, customer_id):
 
 def _get_profile_status(customer_id, **kwargs):
     """Get profile status with short-term caching."""
-    from profiles.models.profile_models import CustomerProfile, BusinessProfile, AlternativeData
+    from profiles.models.profile_models import (
+        AlternativeData,
+        BusinessProfile,
+        CustomerProfile,
+    )
 
     # Check cache first
     cache_key = _get_user_cache_key(customer_id, 'profile_status')
@@ -546,8 +555,12 @@ def _get_loan_products(customer_id, **kwargs):
 
 def _get_application_readiness(customer_id, **kwargs):
     """Check profile, business, and document completeness for loan application readiness."""
-    from profiles.models.profile_models import CustomerProfile, BusinessProfile, AlternativeData
     from documents.models.document import Document
+    from profiles.models.profile_models import (
+        AlternativeData,
+        BusinessProfile,
+        CustomerProfile,
+    )
 
     blockers = []
     completed = []
@@ -635,9 +648,6 @@ def _get_customer_dashboard(customer_id, **kwargs):
     Get customer's personal dashboard overview — aggregated summary
     mirroring the analytics customer dashboard endpoint.
     """
-    from profiles.models.profile_models import CustomerProfile, BusinessProfile, AlternativeData
-    from documents.models.document import Document
-    from loans.models.application import LoanApplication
     from django.conf import settings
 
     # Check cache first

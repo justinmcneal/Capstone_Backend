@@ -1,19 +1,19 @@
-from ai_assistant.views.chat import ChatView
-from ai_assistant.views.streaming import StreamingChatView
-from ai_assistant.views.history import ChatHistoryView
 from ai_assistant.views.auxiliary import (
-    SuggestionsView,
     AIStatusView,
     EducationView,
     FAQsView,
+    SuggestionsView,
 )
+from ai_assistant.views.chat import ChatView
+from ai_assistant.views.history import ChatHistoryView
+from ai_assistant.views.streaming import StreamingChatView
 
 __all__ = [
-    'ChatView',
-    'StreamingChatView',
-    'ChatHistoryView',
-    'SuggestionsView',
     'AIStatusView',
+    'ChatHistoryView',
+    'ChatView',
     'EducationView',
     'FAQsView',
+    'StreamingChatView',
+    'SuggestionsView',
 ]

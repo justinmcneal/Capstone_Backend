@@ -1,17 +1,17 @@
-from rest_framework.views import APIView
+import logging
+from typing import ClassVar
+
+from django.core.cache import cache
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
+from rest_framework.views import APIView
 
 from accounts.authentication import CustomJWTAuthentication
 from accounts.utils.access_control import AccessControlMixin
-from accounts.utils.response_helpers import success_response, error_response
-from accounts.utils.throttles import ChatRateThrottle
+from accounts.utils.response_helpers import error_response, success_response
 from accounts.utils.validation_utils import sanitize_text
-from accounts.services.consent_service import ConsentService
 from ai_assistant.services import get_llm_service
-from ai_assistant.views.chat_views import ConsentRequiredMixin, CACHE_TTL
-from django.core.cache import cache
-import logging
+from ai_assistant.views.chat_views import CACHE_TTL, ConsentRequiredMixin
 
 logger = logging.getLogger('ai_assistant')
 
@@ -24,9 +24,9 @@ class SuggestionsView(ConsentRequiredMixin, APIView):
     
     Responses are cached per language for performance.
     """
-    authentication_classes = [CustomJWTAuthentication]
-    permission_classes = [IsAuthenticated]
-    ALLOWED_LANGUAGES = {'en', 'tl'}
+    authentication_classes = (CustomJWTAuthentication,)
+    permission_classes = (IsAuthenticated,)
+    ALLOWED_LANGUAGES: ClassVar[set[str]] = {'en', 'tl'}
     
     def get(self, request):
         """Get conversation starters"""
@@ -91,8 +91,8 @@ class AIStatusView(AccessControlMixin, APIView):
     
     GET /api/ai/status/
     """
-    authentication_classes = [CustomJWTAuthentication]
-    permission_classes = [IsAuthenticated]
+    authentication_classes = (CustomJWTAuthentication,)
+    permission_classes = (IsAuthenticated,)
     
     def get(self, request):
         """Check if AI service is available"""
@@ -124,10 +124,10 @@ class EducationView(AccessControlMixin, APIView):
     
     Responses are cached for performance (content rarely changes).
     """
-    authentication_classes = [CustomJWTAuthentication]
-    permission_classes = [IsAuthenticated]
+    authentication_classes = (CustomJWTAuthentication,)
+    permission_classes = (IsAuthenticated,)
     
-    TOPICS = {
+    TOPICS: ClassVar[dict[str, dict[str, object]]] = {
         'what_is_a_loan': {
             'title': 'What is a Loan?',
             'content': 'A loan is money you borrow and agree to pay back with interest. Think of it as a tool to help your business grow when you need funds.',
@@ -288,10 +288,10 @@ class FAQsView(AccessControlMixin, APIView):
     
     Responses are cached for performance (FAQs rarely change).
     """
-    authentication_classes = [CustomJWTAuthentication]
-    permission_classes = [IsAuthenticated]
+    authentication_classes = (CustomJWTAuthentication,)
+    permission_classes = (IsAuthenticated,)
     
-    FAQS = [
+    FAQS: ClassVar[list[dict[str, str]]] = [
         {
             'category': 'Loan Applications',
             'question': 'How much can I borrow?',

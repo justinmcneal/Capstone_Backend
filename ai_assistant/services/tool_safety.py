@@ -10,14 +10,14 @@ Implements safety policies to prevent abuse of tool calls:
 - Graceful degradation when limits reached
 =============================================================================
 """
-import time
 import logging
-from typing import Dict, Any, Optional, List
+import time
 from dataclasses import dataclass, field
-from functools import wraps
+from typing import Any, ClassVar
 
 from django.core.cache import cache
-from django.conf import settings
+
+from ai_assistant.services.exception_types import NON_FATAL_EXCEPTIONS
 
 logger = logging.getLogger('ai_assistant')
 
@@ -35,7 +35,7 @@ class RateLimitConfig:
     max_calls_per_session: int = 50  # Per conversation session
     
     # Per-tool limits (some tools more expensive than others)
-    tool_costs: Dict[str, int] = field(default_factory=lambda: {
+    tool_costs: dict[str, int] = field(default_factory=lambda: {
         # Cost multiplier (1 = normal, 2 = counts as 2 calls, etc.)
         'get_profile_status': 1,
         'get_document_status': 1,
@@ -66,7 +66,7 @@ class ToolRateLimiter:
     Uses Django cache backend (Redis-compatible).
     """
     
-    def __init__(self, config: Optional[RateLimitConfig] = None):
+    def __init__(self, config: RateLimitConfig | None = None):
         self.config = config or RATE_LIMIT_CONFIG
     
     def _get_cache_key(self, customer_id: str, window: str) -> str:
@@ -85,7 +85,7 @@ class ToolRateLimiter:
         current = cache.get(key, 0)
         cache.set(key, current + cost, window_seconds)
     
-    def check_rate_limit(self, customer_id: str, tool_name: str) -> Dict[str, Any]:
+    def check_rate_limit(self, customer_id: str, tool_name: str) -> dict[str, Any]:
         """
         Check if a tool call is allowed under rate limits.
         
@@ -123,7 +123,7 @@ class ToolRateLimiter:
         self._increment_count(customer_id, 'minute', 60, tool_cost)
         self._increment_count(customer_id, 'hour', 3600, tool_cost)
     
-    def get_usage_stats(self, customer_id: str) -> Dict[str, Any]:
+    def get_usage_stats(self, customer_id: str) -> dict[str, Any]:
         """Get current usage stats for a customer."""
         return {
             'minute': {
@@ -152,7 +152,7 @@ class ToolParameterValidator:
     """
     
     # Parameter schemas for each tool
-    SCHEMAS = {
+    SCHEMAS: ClassVar[dict[str, dict[str, Any]]] = {
         'get_profile_status': {},
         'get_document_status': {},
         'get_loan_status': {},
@@ -167,7 +167,7 @@ class ToolParameterValidator:
     }
     
     @classmethod
-    def validate(cls, tool_name: str, params: Dict[str, Any]) -> Dict[str, Any]:
+    def validate(cls, tool_name: str, params: dict[str, Any]) -> dict[str, Any]:
         """
         Validate and sanitize tool parameters.
         
@@ -224,10 +224,10 @@ class ToolCallAuditor:
     def log_call(
         customer_id: str,
         tool_name: str,
-        params: Dict[str, Any],
+        params: dict[str, Any],
         success: bool,
         duration_ms: int,
-        error: Optional[str] = None
+        error: str | None = None
     ):
         """Log a tool call for auditing."""
         log_data = {
@@ -245,7 +245,7 @@ class ToolCallAuditor:
             logger.info(f"Tool call: {tool_name} for customer {customer_id} ({duration_ms}ms)")
     
     @staticmethod
-    def get_recent_calls(customer_id: str, limit: int = 10) -> List[Dict]:
+    def get_recent_calls(customer_id: str, limit: int = 10) -> list[dict]:
         """
         Get recent tool calls for a customer.
         (In production, this would query a proper audit log store)
@@ -263,10 +263,10 @@ auditor = ToolCallAuditor()
 
 def safe_execute_tool(
     tool_name: str,
-    tool_args: Dict[str, Any],
+    tool_args: dict[str, Any],
     customer_id: str,
     skip_rate_limit: bool = False
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Safely execute a tool with rate limiting, validation, and auditing.
     
@@ -279,8 +279,9 @@ def safe_execute_tool(
     Returns:
         dict with 'success', 'result' or 'error', 'rate_limited'
     """
-    import time
     import json
+    import time
+
     from ai_assistant.services.tools import _execute_tool_raw
     
     start_time = time.time()
@@ -309,11 +310,11 @@ def safe_execute_tool(
         auditor.log_call(
             customer_id, tool_name, tool_args,
             success=False, duration_ms=duration_ms,
-            error=f"Validation error: {str(e)}"
+            error=f"Validation error: {e!s}"
         )
         return {
             'success': False,
-            'error': f"Invalid parameters: {str(e)}",
+            'error': f"Invalid parameters: {e!s}",
             'rate_limited': False
         }
     
@@ -340,7 +341,7 @@ def safe_execute_tool(
             'duration_ms': duration_ms
         }
         
-    except Exception as e:
+    except NON_FATAL_EXCEPTIONS as e:
         duration_ms = int((time.time() - start_time) * 1000)
         auditor.log_call(
             customer_id, tool_name, tool_args,
@@ -369,6 +370,6 @@ def is_expensive_tool(tool_name: str) -> bool:
     return get_tool_cost(tool_name) > 1
 
 
-def get_all_tool_costs() -> Dict[str, int]:
+def get_all_tool_costs() -> dict[str, int]:
     """Get all tool costs for documentation/debugging."""
     return dict(RATE_LIMIT_CONFIG.tool_costs)
