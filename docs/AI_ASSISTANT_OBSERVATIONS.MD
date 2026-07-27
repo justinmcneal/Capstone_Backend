@@ -43,11 +43,10 @@ The `ai_assistant` module provides an AI chatbot backed by Groq/Ollama with:
   - Context builder privacy controls (redaction, masking, helper functions)
   - Streaming endpoint validation, content filtering, and event formatting
 
-### 3. Blocking I/O in LLM calls
+### 3. Blocking I/O in LLM calls (RESOLVED — immediate improvement)
 - **Files**: `ai_assistant/services/llm_service.py`
-- **Observation**: Uses `requests.post(...)` synchronously for all Groq/Ollama calls, including inside `ThreadPoolExecutor` tool execution.
-- **Risk**: Under load, blocking HTTP calls can exhaust worker threads and reduce throughput.
-- **Recommendation**: Consider `httpx`/`aiohttp` + ASGI deployment, or offload LLM calls to a background task queue (Celery/worker) for non-streaming paths.
+- **Observation**: Replaced raw `requests.get/post` calls with a module-level `requests.Session()` for TCP connection pooling and reuse. All existing timeouts retained (120s–180s depending on provider/use case).
+- **Status**: Fixed. No new dependencies; this reduces connection overhead and improves throughput under moderate load. Full async migration can be deferred until traffic/LLM volume justifies the architectural cost.
 
 ### 4. Streaming endpoint correctness (RESOLVED)
 - **Files**: `ai_assistant/views/chat_views.py`, `ai_assistant/services/llm_service.py`, `tests/test_ai_streaming.py`
@@ -92,4 +91,4 @@ The `ai_assistant` module provides an AI chatbot backed by Groq/Ollama with:
 
 ## Summary
 
-The `ai_assistant` module is well-structured and production-ready in concept. The primary remaining gaps are **blocking I/O at scale** (#3) and **knowledge-base review lock** (#5). Test coverage, unsanitized LLM output, tool safety inconsistency, cross-app import coupling, large view file, and streaming correctness verification have been resolved.
+The `ai_assistant` module is well-structured and production-ready in concept. The primary remaining gap is **knowledge-base review lock** (#5). Test coverage, unsanitized LLM output, tool safety inconsistency, cross-app import coupling, large view file, streaming correctness verification, and blocking I/O improvement have been resolved.
