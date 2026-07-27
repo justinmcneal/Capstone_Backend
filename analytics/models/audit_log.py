@@ -3,6 +3,7 @@ AuditLog Model - Track all important actions in the system.
 """
 
 from datetime import datetime, timezone
+
 from django.conf import settings
 
 
@@ -205,7 +206,9 @@ class AuditLog:
             if date_from:
                 try:
                     # Parse YYYY-MM-DD format to start of day
-                    date_from_obj = datetime.strptime(date_from, "%Y-%m-%d")
+                    date_from_obj = datetime.strptime(
+                        date_from, "%Y-%m-%d"
+                    ).replace(tzinfo=timezone.utc)
                     query["timestamp"]["$gte"] = date_from_obj
                 except ValueError:
                     # If parsing fails, ignore the filter
@@ -214,10 +217,15 @@ class AuditLog:
             if date_to:
                 try:
                     # Parse YYYY-MM-DD format to end of day
-                    date_to_obj = datetime.strptime(date_to, "%Y-%m-%d")
+                    date_to_obj = datetime.strptime(date_to, "%Y-%m-%d").replace(
+                        tzinfo=timezone.utc
+                    )
                     # Add 23:59:59 to include the entire day
                     date_to_obj = date_to_obj.replace(
-                        hour=23, minute=59, second=59, microsecond=999999
+                        hour=23,
+                        minute=59,
+                        second=59,
+                        microsecond=999999,
                     )
                     query["timestamp"]["$lte"] = date_to_obj
                 except ValueError:

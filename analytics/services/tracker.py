@@ -3,6 +3,9 @@ Audit Tracker Service - Log actions throughout the system.
 """
 
 import logging
+
+from pymongo.errors import PyMongoError
+
 from analytics.models.audit_log import AuditLog
 
 logger = logging.getLogger("analytics")
@@ -48,7 +51,7 @@ def log_action(
         log.save()
         logger.info(f"Audit: {action} by {user_type} {user_id}")
         return log
-    except Exception as e:
+    except PyMongoError as e:
         logger.error(f"Failed to log audit: {e}")
         return None
 

@@ -2,18 +2,21 @@
 Admin Dashboard - System-wide analytics for admins.
 """
 
-from rest_framework.views import APIView
+import logging
+from datetime import datetime, timedelta, timezone
+from typing import ClassVar
+
+from bson import ObjectId
+from bson.errors import InvalidId
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
-from datetime import datetime, timedelta, timezone
-from bson import ObjectId
+from rest_framework.views import APIView
 
 from accounts.authentication import CustomJWTAuthentication
-from accounts.utils.response_helpers import success_response, error_response
+from accounts.utils.response_helpers import error_response, success_response
 from accounts.utils.validation_utils import sanitize_text
 from accounts.views.admin_views import AdminRequiredMixin
 from analytics.models import AuditLog
-import logging
 
 logger = logging.getLogger("analytics")
 
@@ -25,9 +28,9 @@ class AdminDashboardView(AdminRequiredMixin, APIView):
     GET /api/analytics/admin/
     """
 
-    authentication_classes = [CustomJWTAuthentication]
-    permission_classes = [IsAuthenticated]
-    required_permissions = ["view_analytics"]
+    authentication_classes: ClassVar[list[type]] = [CustomJWTAuthentication]
+    permission_classes: ClassVar[list[type]] = [IsAuthenticated]
+    required_permissions: ClassVar[list[str]] = ["view_analytics"]
 
     def get(self, request):
         has_permission, result = self.check_admin_permission(request)
@@ -149,9 +152,9 @@ class AuditLogsView(AdminRequiredMixin, APIView):
     GET /api/analytics/audit-logs/
     """
 
-    required_permissions = ["view_logs"]
-    authentication_classes = [CustomJWTAuthentication]
-    permission_classes = [IsAuthenticated]
+    required_permissions: ClassVar[list[str]] = ["view_logs"]
+    authentication_classes: ClassVar[list[type]] = [CustomJWTAuthentication]
+    permission_classes: ClassVar[list[type]] = [IsAuthenticated]
 
     def get(self, request):
         import re
@@ -267,13 +270,14 @@ class AuditLogUsersView(AdminRequiredMixin, APIView):
     GET /api/analytics/audit-logs/users/
     """
 
-    required_permissions = ["view_logs"]
-    authentication_classes = [CustomJWTAuthentication]
-    permission_classes = [IsAuthenticated]
+    required_permissions: ClassVar[list[str]] = ["view_logs"]
+    authentication_classes: ClassVar[list[type]] = [CustomJWTAuthentication]
+    permission_classes: ClassVar[list[type]] = [IsAuthenticated]
 
     def get(self, request):
-        from django.conf import settings
         import re
+
+        from django.conf import settings
 
         has_permission, result = self.check_admin_permission(request)
         if not has_permission:
@@ -348,9 +352,9 @@ class AuditLogDetailView(AdminRequiredMixin, APIView):
     GET /api/analytics/audit-logs/<log_id>/
     """
 
-    required_permissions = ["view_logs"]
-    authentication_classes = [CustomJWTAuthentication]
-    permission_classes = [IsAuthenticated]
+    required_permissions: ClassVar[list[str]] = ["view_logs"]
+    authentication_classes: ClassVar[list[type]] = [CustomJWTAuthentication]
+    permission_classes: ClassVar[list[type]] = [IsAuthenticated]
 
     def get(self, request, log_id):
         from django.conf import settings
@@ -372,7 +376,7 @@ class AuditLogDetailView(AdminRequiredMixin, APIView):
 
         try:
             oid = ObjectId(log_id)
-        except Exception:
+        except InvalidId:
             return error_response(
                 message="Invalid log ID",
                 status_code=status.HTTP_400_BAD_REQUEST,
