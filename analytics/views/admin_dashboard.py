@@ -17,6 +17,15 @@ from accounts.utils.response_helpers import error_response, success_response
 from accounts.utils.validation_utils import sanitize_text
 from accounts.views.admin_views import AdminRequiredMixin
 from analytics.models import AuditLog
+from analytics.models.audit_log import ACTION_GROUPS
+from analytics.services.audit_queries import (
+    build_paginated_response,
+    default_log_search,
+    parse_date_range,
+    parse_pagination,
+    serialize_details,
+    serialize_log_entry,
+)
 
 logger = logging.getLogger("analytics")
 
@@ -167,108 +176,42 @@ class AuditLogsView(AdminRequiredMixin, APIView):
     permission_classes: ClassVar[list[type]] = [IsAuthenticated]
 
     def get(self, request):
-        import re
-
         has_permission, result = self.check_admin_permission(request)
         if not has_permission:
             return result
 
-        def serialize_details(value):
-            """Ensure details payload is JSON-serializable."""
-            if isinstance(value, datetime):
-                return value.isoformat()
-            if isinstance(value, ObjectId):
-                return str(value)
-            if isinstance(value, dict):
-                return {k: serialize_details(v) for k, v in value.items()}
-            if isinstance(value, list):
-                return [serialize_details(v) for v in value]
-            return value
-
-        # Pagination parameters
         try:
-            page = max(int(request.query_params.get("page", 1)), 1)
-        except (TypeError, ValueError):
+            page, page_size = parse_pagination(request)
+        except ValueError as exc:
             return error_response(
-                message="Invalid page parameter",
-                errors={"page": "page must be an integer"},
-                status_code=status.HTTP_400_BAD_REQUEST,
-            )
-        try:
-            page_size = min(max(int(request.query_params.get("page_size", 20)), 1), 200)
-        except (TypeError, ValueError):
-            return error_response(
-                message="Invalid page_size parameter",
-                errors={"page_size": "page_size must be an integer"},
+                message=str(exc.args[0]),
+                errors=exc.args[1] if len(exc.args) > 1 else {},
                 status_code=status.HTTP_400_BAD_REQUEST,
             )
 
-        # Filter parameters
         action_filter = sanitize_text(request.query_params.get("action", ""))
         action_group = sanitize_text(request.query_params.get("action_group", ""))
         user_id = sanitize_text(request.query_params.get("user_id", ""))
         user_type = sanitize_text(request.query_params.get("user_type", ""))
-        date_from = sanitize_text(request.query_params.get("date_from", ""))
-        date_to = sanitize_text(request.query_params.get("date_to", ""))
-        search = sanitize_text(request.query_params.get("search", ""))
+        date_filters = parse_date_range(request)
 
-        # Get all logs with filters (no limit to get accurate total)
         logs = AuditLog.find_with_filters(
             action=action_filter or None,
             action_group=action_group or None,
             user_id=user_id or None,
             user_type=user_type or None,
-            date_from=date_from or None,
-            date_to=date_to or None,
+            date_from=(date_filters or {}).get("$gte"),
+            date_to=(date_filters or {}).get("$lte"),
             limit=10000,
         )
 
-        # Filter by search term (description, user_email, action, user_id, user_type)
+        search = sanitize_text(request.query_params.get("search", ""))
         if search:
-            search_regex = re.compile(re.escape(search), re.IGNORECASE)
-            logs = [
-                log
-                for log in logs
-                if search_regex.search(log.description or "")
-                or search_regex.search(log.user_email or "")
-                or search_regex.search(log.action or "")
-                or search_regex.search(log.user_id or "")
-                or search_regex.search(log.user_type or "")
-            ]
+            logs = default_log_search(logs, search)
 
-        # Get total before pagination
-        total = len(logs)
-
-        # Paginate
-        start_idx = (page - 1) * page_size
-        end_idx = start_idx + page_size
-        paginated_logs = logs[start_idx:end_idx]
-
-        logs_data = [
-            {
-                "id": log.id,
-                "user_id": log.user_id,
-                "user_type": log.user_type,
-                "user_email": log.user_email,
-                "action": log.action,
-                "description": log.description,
-                "resource_type": log.resource_type,
-                "resource_id": log.resource_id,
-                "details": serialize_details(log.details or {}),
-                "ip_address": log.ip_address,
-                "timestamp": log.timestamp.isoformat(),
-            }
-            for log in paginated_logs
-        ]
-
+        response_data = build_paginated_response(logs, page, page_size)
         return success_response(
-            data={
-                "logs": logs_data,
-                "total": total,
-                "page": page,
-                "page_size": page_size,
-                "total_pages": (total + page_size - 1) // page_size if total > 0 else 1,
-            },
+            data=response_data,
             message="Audit logs retrieved",
         )
 

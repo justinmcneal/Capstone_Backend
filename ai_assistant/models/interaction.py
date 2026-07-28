@@ -36,6 +36,7 @@ class AIInteraction:
         self.model_used = kwargs.get('model_used', '')  # e.g., llama3.2
         self.response_time_ms = kwargs.get('response_time_ms')  # Processing time
         self.tokens_used = kwargs.get('tokens_used')
+        self.request_id = kwargs.get('request_id')  # Correlation/tracing ID
         
         # Timestamps
         self.timestamp = kwargs.get('timestamp', datetime.now(timezone.utc))
@@ -56,6 +57,7 @@ class AIInteraction:
             'model_used': self.model_used,
             'response_time_ms': self.response_time_ms,
             'tokens_used': self.tokens_used,
+            'request_id': self.request_id,
             'timestamp': self.timestamp,
             'created_at': self.created_at,
         }

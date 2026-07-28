@@ -18,11 +18,16 @@ from accounts.utils.response_helpers import error_response, success_response
 from accounts.utils.validation_utils import sanitize_text
 from analytics.models import AuditLog
 from analytics.models.audit_log import ACTION_GROUPS
+from analytics.services.audit_queries import (
+    build_paginated_response,
+    officer_search_conditions,
+    parse_date_range,
+    parse_pagination,
+    serialize_details,
+    serialize_log_entry,
+)
 
 logger = logging.getLogger("analytics")
-
-
-from accounts.models import Customer
 
 
 class LoanOfficerRequiredMixin(AccessControlMixin):
@@ -132,8 +137,6 @@ class OfficerAuditLogsView(LoanOfficerRequiredMixin, APIView):
     permission_classes: ClassVar[list[type]] = [IsAuthenticated]
 
     def get(self, request):
-        import re
-
         has_permission, result = self.check_officer_permission(request)
         if not has_permission:
             return result
@@ -146,34 +149,21 @@ class OfficerAuditLogsView(LoanOfficerRequiredMixin, APIView):
                 status_code=status.HTTP_404_NOT_FOUND,
             )
 
+        try:
+            page, page_size = parse_pagination(request)
+        except ValueError as exc:
+            return error_response(
+                message=str(exc.args[0]),
+                errors=exc.args[1] if len(exc.args) > 1 else {},
+                status_code=status.HTTP_400_BAD_REQUEST,
+            )
+
         db = settings.MONGODB
-
-        # Pagination parameters
-        try:
-            page = max(int(request.query_params.get("page", 1)), 1)
-        except (TypeError, ValueError):
-            return error_response(
-                message="Invalid page parameter",
-                errors={"page": "page must be an integer"},
-                status_code=status.HTTP_400_BAD_REQUEST,
-            )
-        try:
-            page_size = min(max(int(request.query_params.get("page_size", 20)), 1), 200)
-        except (TypeError, ValueError):
-            return error_response(
-                message="Invalid page_size parameter",
-                errors={"page_size": "page_size must be an integer"},
-                status_code=status.HTTP_400_BAD_REQUEST,
-            )
-
-        # Filters
         action_filter = sanitize_text(request.query_params.get("action", ""))
         action_group = sanitize_text(request.query_params.get("action_group", ""))
-        date_from = sanitize_text(request.query_params.get("date_from", ""))
-        date_to = sanitize_text(request.query_params.get("date_to", ""))
+        date_filters = parse_date_range(request)
         search = sanitize_text(request.query_params.get("search", ""))
 
-        # Loan IDs assigned to this officer
         assigned_ids = [
             str(doc.get("_id"))
             for doc in db["loan_applications"].find(
@@ -211,85 +201,13 @@ class OfficerAuditLogsView(LoanOfficerRequiredMixin, APIView):
                     }
                 )
 
-        if date_from or date_to:
-            ts_filter = {}
-            if date_from:
-                try:
-                    ts_filter["$gte"] = datetime.strptime(
-                        date_from, "%Y-%m-%d"
-                    ).replace(tzinfo=timezone.utc)
-                except ValueError:
-                    pass
-            if date_to:
-                try:
-                    date_to_obj = datetime.strptime(date_to, "%Y-%m-%d").replace(
-                        tzinfo=timezone.utc
-                    )
-                    ts_filter["$lte"] = date_to_obj.replace(
-                        hour=23,
-                        minute=59,
-                        second=59,
-                        microsecond=999999,
-                    )
-                except ValueError:
-                    pass
-            if ts_filter:
-                and_filters.append({"timestamp": ts_filter})
+        if date_filters:
+            and_filters.append({"timestamp": date_filters})
 
         if search:
-            regex = {"$regex": re.escape(search), "$options": "i"}
-            search_conditions = [
-                {"description": regex},
-                {"action": regex},
-                {"resource_id": regex},
-                {"resource_type": regex},
-            ]
-
-            customer_ids = []
-            search_terms = search.strip().split()
-            if len(search_terms) == 1:
-                name_regex = re.compile(
-                    f".*{re.escape(search_terms[0])}.*", re.IGNORECASE
-                )
-                matched_customers = Customer.find(
-                    {
-                        "$or": [
-                            {"first_name": name_regex},
-                            {"last_name": name_regex},
-                        ]
-                    }
-                )
-            else:
-                customer_and_conditions = []
-                for term in search_terms:
-                    term_regex = re.compile(f".*{re.escape(term)}.*", re.IGNORECASE)
-                    customer_and_conditions.append(
-                        {
-                            "$or": [
-                                {"first_name": term_regex},
-                                {"last_name": term_regex},
-                            ]
-                        }
-                    )
-                matched_customers = Customer.find({"$and": customer_and_conditions})
-            customer_ids = [c.id for c in matched_customers if c]
-            if customer_ids:
-                search_conditions.append({"details.customer_id": {"$in": customer_ids}})
-
-            and_filters.append({"$or": search_conditions})
+            and_filters.append({"$or": officer_search_conditions(search)})
 
         query = and_filters[0] if len(and_filters) == 1 else {"$and": and_filters}
-
-        def serialize_details(value):
-            if isinstance(value, datetime):
-                return value.isoformat()
-            if isinstance(value, ObjectId):
-                return str(value)
-            if isinstance(value, dict):
-                return {k: serialize_details(v) for k, v in value.items()}
-            if isinstance(value, list):
-                return [serialize_details(v) for v in value]
-            return value
 
         collection = db["audit_logs"]
         total = collection.count_documents(query)
@@ -298,24 +216,7 @@ class OfficerAuditLogsView(LoanOfficerRequiredMixin, APIView):
             collection.find(query).sort("timestamp", -1).skip(skip).limit(page_size)
         )
 
-        logs_data = []
-        for doc in cursor:
-            log = AuditLog.from_dict(doc)
-            logs_data.append(
-                {
-                    "id": log.id,
-                    "user_id": log.user_id,
-                    "user_type": log.user_type,
-                    "user_email": log.user_email,
-                    "action": log.action,
-                    "description": log.description,
-                    "resource_type": log.resource_type,
-                    "resource_id": log.resource_id,
-                    "details": serialize_details(log.details or {}),
-                    "ip_address": log.ip_address,
-                    "timestamp": log.timestamp.isoformat() if log.timestamp else None,
-                }
-            )
+        logs_data = [serialize_log_entry(AuditLog.from_dict(doc)) for doc in cursor]
 
         return success_response(
             data={

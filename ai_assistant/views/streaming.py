@@ -52,6 +52,9 @@ class StreamingChatView(ConsentRequiredMixin, APIView):
 
     def post(self, request):
         """Stream AI response as Server-Sent Events"""
+        request_id = str(uuid.uuid4())
+        logger.info("LLM stream start", extra={"request_id": request_id, "customer_id": request.user.customer_id})
+        
         has_consent, result = self.check_ai_consent(request)
         if not has_consent:
             return result
@@ -171,7 +174,8 @@ class StreamingChatView(ConsentRequiredMixin, APIView):
                                 response='',
                                 language=language,
                                 conversation_id=conversation_id,
-                                role='user'
+                                role='user',
+                                request_id=request_id
                             )
                             user_interaction.save()
                             
@@ -184,7 +188,8 @@ class StreamingChatView(ConsentRequiredMixin, APIView):
                                 role='assistant',
                                 model_used=model_used,
                                 response_time_ms=elapsed_ms,
-                                tokens_used=tokens_used
+                                tokens_used=tokens_used,
+                                request_id=request_id
                             )
                             ai_interaction.save()
                         
