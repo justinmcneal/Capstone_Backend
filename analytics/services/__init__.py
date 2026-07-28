@@ -1,10 +1,22 @@
 from .tracker import (
     log_action as log_action,
+)
+from .tracker import (
     log_document_uploaded as log_document_uploaded,
+)
+from .tracker import (
     log_loan_approved as log_loan_approved,
+)
+from .tracker import (
     log_loan_rejected as log_loan_rejected,
+)
+from .tracker import (
     log_loan_submitted as log_loan_submitted,
+)
+from .tracker import (
     log_login as log_login,
+)
+from .tracker import (
     log_profile_updated as log_profile_updated,
 )
 

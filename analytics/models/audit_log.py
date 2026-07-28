@@ -206,9 +206,9 @@ class AuditLog:
             if date_from:
                 try:
                     # Parse YYYY-MM-DD format to start of day
-                    date_from_obj = datetime.strptime(
-                        date_from, "%Y-%m-%d"
-                    ).replace(tzinfo=timezone.utc)
+                    date_from_obj = datetime.strptime(date_from, "%Y-%m-%d").replace(
+                        tzinfo=timezone.utc
+                    )
                     query["timestamp"]["$gte"] = date_from_obj
                 except ValueError:
                     # If parsing fails, ignore the filter
