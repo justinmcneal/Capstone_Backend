@@ -56,7 +56,9 @@ class OfficerDashboardView(LoanOfficerRequiredMixin, APIView):
             )
         db = settings.MONGODB
 
-        today = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+        today = datetime.now(timezone.utc).replace(
+            hour=0, minute=0, second=0, microsecond=0
+        )
 
         # My reviews - applications I've reviewed
         my_approved = db["loan_applications"].count_documents(
@@ -260,9 +262,7 @@ class OfficerAuditLogsView(LoanOfficerRequiredMixin, APIView):
             else:
                 customer_and_conditions = []
                 for term in search_terms:
-                    term_regex = re.compile(
-                        f".*{re.escape(term)}.*", re.IGNORECASE
-                    )
+                    term_regex = re.compile(f".*{re.escape(term)}.*", re.IGNORECASE)
                     customer_and_conditions.append(
                         {
                             "$or": [
@@ -271,14 +271,10 @@ class OfficerAuditLogsView(LoanOfficerRequiredMixin, APIView):
                             ]
                         }
                     )
-                matched_customers = Customer.find(
-                    {"$and": customer_and_conditions}
-                )
+                matched_customers = Customer.find({"$and": customer_and_conditions})
             customer_ids = [c.id for c in matched_customers if c]
             if customer_ids:
-                search_conditions.append(
-                    {"details.customer_id": {"$in": customer_ids}}
-                )
+                search_conditions.append({"details.customer_id": {"$in": customer_ids}})
 
             and_filters.append({"$or": search_conditions})
 

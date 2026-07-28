@@ -90,9 +90,19 @@ class AdminDashboardView(AdminRequiredMixin, APIView):
 
         # Recent activity (last 10 audit logs, excluding standard noise)
         recent_logs = AuditLog.find(
-            query={"action": {"$nin": ["user_login", "user_logout", "user_login_failed", "loan_submitted", "document_uploaded"]}},
+            query={
+                "action": {
+                    "$nin": [
+                        "user_login",
+                        "user_logout",
+                        "user_login_failed",
+                        "loan_submitted",
+                        "document_uploaded",
+                    ]
+                }
+            },
             sort=[("timestamp", -1)],
-            limit=10
+            limit=10,
         )
         recent_activity = [
             {
@@ -120,7 +130,7 @@ class AdminDashboardView(AdminRequiredMixin, APIView):
                     "applications": total,
                     "approved": approved,
                     "approval_rate": (
-                        f"{(approved/total*100):.1f}%" if total > 0 else "0%"
+                        f"{(approved / total * 100):.1f}%" if total > 0 else "0%"
                     ),
                 }
             )
