@@ -13,6 +13,7 @@ import django
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings")
 django.setup()
 
+from analytics.models import AuditLog  # noqa: E402
 from accounts.models import (  # noqa: E402
     ActiveSession,
     Admin,
@@ -148,6 +149,15 @@ def create_indexes():
         print("⚠ AlternativeData indexes already exist, skipping")
     except Exception as e:
         print(f"✗ AlternativeData error: {e}")
+
+    try:
+        print("Creating indexes for AuditLog collection...")
+        AuditLog.create_indexes()
+        print("✓ AuditLog indexes created")
+    except (DuplicateKeyError, OperationFailure):
+        print("⚠ AuditLog indexes already exist, skipping")
+    except Exception as e:
+        print(f"✗ AuditLog error: {e}")
 
     try:
         print("Creating indexes for ActiveSession collection...")
