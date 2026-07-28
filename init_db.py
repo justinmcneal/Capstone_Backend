@@ -14,6 +14,7 @@ os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings")
 django.setup()
 
 from analytics.models import AuditLog  # noqa: E402
+from ai_assistant.models import AIInteraction  # noqa: E402
 from accounts.models import (  # noqa: E402
     ActiveSession,
     Admin,
@@ -24,6 +25,15 @@ from accounts.models import (  # noqa: E402
     LoginActivity,
     RefreshTokenEntry,
 )
+from documents.models import Document  # noqa: E402
+from loans.models import (  # noqa: E402
+    LoanApplication,
+    LoanPayment,
+    LoanProduct,
+    RepaymentSchedule,
+)
+from notifications.models import Notification  # noqa: E402
+from notifications.models.device_token import DeviceToken  # noqa: E402
 from pymongo.errors import DuplicateKeyError, OperationFailure  # noqa: E402
 from django.conf import settings  # noqa: E402
 from profiles.models import (  # noqa: E402
@@ -158,6 +168,81 @@ def create_indexes():
         print("⚠ AuditLog indexes already exist, skipping")
     except Exception as e:
         print(f"✗ AuditLog error: {e}")
+
+    try:
+        print("Creating indexes for AIInteraction collection...")
+        AIInteraction.create_indexes()
+        print("✓ AIInteraction indexes created")
+    except (DuplicateKeyError, OperationFailure):
+        print("⚠ AIInteraction indexes already exist, skipping")
+    except Exception as e:
+        print(f"✗ AIInteraction error: {e}")
+
+    # Loan indexes
+    try:
+        print("Creating indexes for LoanApplication collection...")
+        LoanApplication.create_indexes()
+        print("✓ LoanApplication indexes created")
+    except (DuplicateKeyError, OperationFailure):
+        print("⚠ LoanApplication indexes already exist, skipping")
+    except Exception as e:
+        print(f"✗ LoanApplication error: {e}")
+
+    try:
+        print("Creating indexes for LoanProduct collection...")
+        LoanProduct.create_indexes()
+        print("✓ LoanProduct indexes created")
+    except (DuplicateKeyError, OperationFailure):
+        print("⚠ LoanProduct indexes already exist, skipping")
+    except Exception as e:
+        print(f"✗ LoanProduct error: {e}")
+
+    try:
+        print("Creating indexes for RepaymentSchedule collection...")
+        RepaymentSchedule.create_indexes()
+        print("✓ RepaymentSchedule indexes created")
+    except (DuplicateKeyError, OperationFailure):
+        print("⚠ RepaymentSchedule indexes already exist, skipping")
+    except Exception as e:
+        print(f"✗ RepaymentSchedule error: {e}")
+
+    try:
+        print("Creating indexes for LoanPayment collection...")
+        LoanPayment.create_indexes()
+        print("✓ LoanPayment indexes created")
+    except (DuplicateKeyError, OperationFailure):
+        print("⚠ LoanPayment indexes already exist, skipping")
+    except Exception as e:
+        print(f"✗ LoanPayment error: {e}")
+
+    # Document indexes
+    try:
+        print("Creating indexes for Document collection...")
+        Document.create_indexes()
+        print("✓ Document indexes created")
+    except (DuplicateKeyError, OperationFailure):
+        print("⚠ Document indexes already exist, skipping")
+    except Exception as e:
+        print(f"✗ Document error: {e}")
+
+    # Notification indexes
+    try:
+        print("Creating indexes for Notification collection...")
+        Notification.create_indexes()
+        print("✓ Notification indexes created")
+    except (DuplicateKeyError, OperationFailure):
+        print("⚠ Notification indexes already exist, skipping")
+    except Exception as e:
+        print(f"✗ Notification error: {e}")
+
+    try:
+        print("Creating indexes for DeviceToken collection...")
+        DeviceToken.create_indexes()
+        print("✓ DeviceToken indexes created")
+    except (DuplicateKeyError, OperationFailure):
+        print("⚠ DeviceToken indexes already exist, skipping")
+    except Exception as e:
+        print(f"✗ DeviceToken error: {e}")
 
     try:
         print("Creating indexes for ActiveSession collection...")

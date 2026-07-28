@@ -91,20 +91,12 @@ The `ai_assistant` module provides a Groq/Ollama-backed chatbot with function ca
 - [x] Split large view file into logical modules.
 - [x] Add comprehensive tests for tool safety, context redaction, streaming, and API behavior.
 - [x] Remove cross-app import coupling (`notifications`).
-- [ ] Create MongoDB indexes for `ai_interactions` collection on startup/bootstrap.
-- [ ] Add request correlation/tracing IDs for LLM call debugging.
+- [x] Create MongoDB indexes for `ai_interactions` collection on startup/bootstrap.
+- [x] Add request correlation/tracing IDs for LLM call debugging.
 
 ## Recommended Next Steps
 
-1. Add `init_db.py` index bootstrap for AI collections.
-   - `ai_assistant/models/interaction.py` defines `create_indexes()` but it is not invoked from `init_db.py`.
-   - Add index creation for `ai_interactions` (customer_id, conversation_id, timestamp, compound).
-
-2. Add request correlation IDs for LLM streaming paths.
-   - Generate a request/call ID at the start of `StreamingChatView.post()` and attach it to log entries and `AIInteraction` metadata.
-   - Improves debuggability when tracing slow or failed LLM calls.
-
-3. Add automated tests for `AIInteraction` model methods.
+1. Add automated tests for `AIInteraction` model methods.  
    - Current tests exercise views/services; direct model tests for `find_by_customer_paginated`, `find_by_conversation`, and `delete_by_customer` would close the remaining coverage gap.
 
 ## Future Roadmap

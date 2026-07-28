@@ -23,9 +23,9 @@ Content-Type: application/json
 
 | Document | Purpose |
 |----------|---------|
-| `docs/ANALYTICS_IMPLEMENTATION_AND_TESTING_GUIDE.md` | Shorter implementation overview (legacy) |
 | `docs/LOANS_TESTING_GUIDE.md` | Loan APIs that generate many audit log entries |
 | `docs/AUTH_ACCESS_SECURITY_GUIDE.md` | Admin permissions (`view_analytics`, `view_logs`) |
+| `docs/ANALYTICS_PRODUCTION_READINESS_REVIEW.md` | Analytics module review, risks, and roadmap |
 
 ## Role and Permission Matrix
 
@@ -468,6 +468,7 @@ Standard success shape:
 | Officer dashboard + audit logs | `analytics/views/officer_dashboard.py` |
 | Customer dashboard | `analytics/views/customer_dashboard.py` |
 | Audit log model + filters | `analytics/models/audit_log.py` |
+| Shared audit query helpers | `analytics/services/audit_queries.py` |
 | Audit tracker service | `analytics/services/tracker.py` |
 
 ---
