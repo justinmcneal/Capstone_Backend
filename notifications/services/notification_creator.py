@@ -1,10 +1,11 @@
 import logging
+
+from notifications.models.device_token import DeviceToken
 from notifications.models.notification import Notification
 from notifications.services.websocket_service import (
     broadcast_notification_to_user,
-    serialize_notification_for_ws
+    serialize_notification_for_ws,
 )
-from notifications.models.device_token import DeviceToken
 
 try:
     import firebase_admin
@@ -62,8 +63,8 @@ def _send_push_notification(user_id, title, body, data_payload):
         if not firebase_admin._apps:
             try:
                 firebase_admin.initialize_app()
-            except Exception as e:
-                logger.warning(f"Could not initialize firebase admin: {e}")
+            except Exception as exc:  # noqa: BLE001 - Firebase init guard
+                logger.warning("Could not initialize firebase admin: %s", exc)
                 return
 
         tokens = DeviceToken.get_tokens_for_user(user_id)
@@ -98,5 +99,5 @@ def _send_push_notification(user_id, title, body, data_payload):
                         DeviceToken.deactivate_token(failed_token)
                         logger.info(f"Deactivated stale token: {failed_token}")
 
-    except Exception as e:
-        logger.error(f"Push notification delivery failed: {e}")
+    except Exception as exc:  # noqa: BLE001 - Push delivery guard
+        logger.error("Push notification delivery failed: %s", exc)
