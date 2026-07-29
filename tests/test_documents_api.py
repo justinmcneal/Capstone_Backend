@@ -3,6 +3,7 @@ Documents API tests for /api/documents/ endpoints.
 """
 import io
 from datetime import datetime, timezone
+from types import SimpleNamespace
 
 from django.core.files.uploadedfile import SimpleUploadedFile
 from PIL import Image
@@ -398,6 +399,48 @@ class TestDocumentList:
         response = DocumentListView.as_view()(request)
         assert response.status_code == 200
         assert response.data["data"]["total"] == len(docs)
+
+    def test_officer_scope_retains_customer_after_document_approval(
+        self, monkeypatch
+    ):
+        customer = _create_customer()
+        officer = _create_officer()
+        other_officer = _create_officer()
+
+        Document(
+            customer_id=str(customer.id),
+            document_type="valid_id",
+            original_filename="approved-id.jpg",
+            file_path="documents/approved-id.jpg",
+            file_size=1024,
+            mime_type="image/jpeg",
+            status="approved",
+            verified=True,
+            verified_by=str(officer.id),
+        ).save()
+
+        request = SimpleNamespace(user=_auth_officer(officer))
+        monkeypatch.setattr(
+            DocumentListView,
+            "require_officer_or_admin",
+            lambda self, request: (True, request.user),
+            raising=False,
+        )
+
+        has_scope, scoped_customer_ids = (
+            DocumentListView().get_officer_scoped_customer_ids(request)
+        )
+
+        assert has_scope is True
+        assert str(customer.id) in scoped_customer_ids
+
+        other_request = SimpleNamespace(user=_auth_officer(other_officer))
+        has_scope, other_scoped_customer_ids = (
+            DocumentListView().get_officer_scoped_customer_ids(other_request)
+        )
+
+        assert has_scope is True
+        assert str(customer.id) not in other_scoped_customer_ids
 
 
 class TestDocumentTypes:

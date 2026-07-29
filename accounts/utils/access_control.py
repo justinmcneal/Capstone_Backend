@@ -293,6 +293,7 @@ class AccessControlMixin:
         Scope for `loan_officer`:
         - customers with applications assigned to this officer
         - optionally customers with unassigned submitted/under_review applications
+        - customers whose documents this officer has already approved
 
         Returns:
             (True, None) for admin/super_admin (unrestricted)
@@ -366,12 +367,16 @@ class AccessControlMixin:
 
         # Include customers who uploaded documents (e.g. during profile
         # completion) but don't yet have a submitted loan application.
-        # This ensures officers can review pending/needs_review documents
-        # even before the customer submits a formal application.
+        # Pending/needs_review documents are available for review, while
+        # approved documents remain visible to the officer who reviewed them.
         docs_collection = db["documents"]
         doc_customer_ids = set()
-        for row in docs_collection.find(
+        document_scope_filters = [
             {"status": {"$in": ["pending", "needs_review"]}},
+            {"verified_by": {"$in": self._id_variants(subject_id)}},
+        ]
+        for row in docs_collection.find(
+            {"$or": document_scope_filters},
             {"customer_id": 1},
         ):
             cid = str(row.get("customer_id", "") or "").strip()
