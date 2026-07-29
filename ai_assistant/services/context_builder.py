@@ -13,7 +13,7 @@ VERSION: 1.0
 =============================================================================
 """
 import logging
-from datetime import datetime, timezone
+from datetime import datetime
 
 logger = logging.getLogger('ai_assistant')
 
@@ -89,7 +89,8 @@ def days_until(dt: datetime) -> int:
     """Calculate days until a date."""
     if not dt:
         return 0
-    delta = dt - datetime.now(timezone.utc)
+    now = datetime.now(dt.tzinfo) if dt.tzinfo else datetime.now()
+    delta = dt - now
     return delta.days
 
 
