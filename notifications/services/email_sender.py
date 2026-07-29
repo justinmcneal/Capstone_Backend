@@ -2,11 +2,14 @@
 Email Sender Service - Sends email notifications.
 """
 import logging
+
+from django.conf import settings
 from django.core.mail import EmailMultiAlternatives
 from django.template.loader import render_to_string
-from django.conf import settings
-from notifications.models.notification import Notification
-from notifications.services.notification_creator import create_and_broadcast_notification
+
+from notifications.services.notification_creator import (
+    create_and_broadcast_notification,
+)
 
 logger = logging.getLogger('notifications')
 
@@ -57,11 +60,11 @@ class EmailSender:
             
             return True
             
-        except Exception as e:
-            logger.error(f"Email send failed: {str(e)}")
+        except Exception as exc:  # noqa: BLE001
+            logger.error("Email send failed: %s", exc)
             
             if notification:
-                notification.mark_failed(str(e))
+                notification.mark_failed(str(exc))
             
             return False
     

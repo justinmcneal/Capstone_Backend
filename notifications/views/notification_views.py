@@ -7,21 +7,28 @@ Endpoints:
     POST /api/notifications/mark-all-read/  - Mark all notifications as read
     GET /api/notifications/unread-count/    - Get unread notification count
 """
+from __future__ import annotations
+
 import logging
 import math
 from datetime import datetime, timezone
-from bson import ObjectId
+from typing import ClassVar
 
-from rest_framework.views import APIView
-from rest_framework.permissions import IsAuthenticated
+from bson import ObjectId
 from rest_framework import status as http_status
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.views import APIView
 
 from accounts.authentication import CustomJWTAuthentication
 from accounts.utils.access_control import AccessControlMixin
-from accounts.utils.validation_utils import sanitize_text, parse_optional_bool
-from config.views import success_response, error_response
-from notifications.models.notification import Notification, get_db, serialize_utc_datetime
+from accounts.utils.validation_utils import parse_optional_bool, sanitize_text
+from config.views import error_response, success_response
 from notifications.models.device_token import DeviceToken
+from notifications.models.notification import (
+    Notification,
+    get_db,
+    serialize_utc_datetime,
+)
 from notifications.ownership import (
     build_notification_owner_query as _build_notification_owner_query,
 )
@@ -46,8 +53,8 @@ class NotificationListView(AccessControlMixin, APIView):
         - unread (bool): Filter to unread only (default: false)
         - channel (str): Filter by channel (email/in_app)
     """
-    authentication_classes = [CustomJWTAuthentication]
-    permission_classes = [IsAuthenticated]
+    authentication_classes: ClassVar[list] = [CustomJWTAuthentication]
+    permission_classes: ClassVar[list] = [IsAuthenticated]
     
     def get(self, request):
         has_permission, result = self.require_roles(
@@ -156,9 +163,9 @@ class NotificationMarkReadView(AccessControlMixin, APIView):
     
     POST /api/notifications/{id}/read/
     """
-    authentication_classes = [CustomJWTAuthentication]
-    permission_classes = [IsAuthenticated]
-    
+    authentication_classes: ClassVar[list] = [CustomJWTAuthentication]
+    permission_classes: ClassVar[list] = [IsAuthenticated]
+
     def post(self, request, notification_id):
         has_permission, result = self.require_roles(
             request,
@@ -182,7 +189,7 @@ class NotificationMarkReadView(AccessControlMixin, APIView):
             doc = collection.find_one({
                 **find_query
             })
-        except Exception:
+        except Exception:  # noqa: BLE001
             return error_response(
                 message="Invalid notification ID",
                 status_code=http_status.HTTP_400_BAD_REQUEST
@@ -214,8 +221,8 @@ class NotificationMarkAllReadView(AccessControlMixin, APIView):
     
     POST /api/notifications/mark-all-read/
     """
-    authentication_classes = [CustomJWTAuthentication]
-    permission_classes = [IsAuthenticated]
+    authentication_classes: ClassVar[list] = [CustomJWTAuthentication]
+    permission_classes: ClassVar[list] = [IsAuthenticated]
     
     def post(self, request):
         has_permission, result = self.require_roles(
@@ -251,8 +258,8 @@ class NotificationUnreadCountView(AccessControlMixin, APIView):
     
     GET /api/notifications/unread-count/
     """
-    authentication_classes = [CustomJWTAuthentication]
-    permission_classes = [IsAuthenticated]
+    authentication_classes: ClassVar[list] = [CustomJWTAuthentication]
+    permission_classes: ClassVar[list] = [IsAuthenticated]
     
     def get(self, request):
         has_permission, result = self.require_roles(
@@ -280,8 +287,8 @@ class NotificationDeleteView(AccessControlMixin, APIView):
     
     DELETE /api/notifications/{id}/
     """
-    authentication_classes = [CustomJWTAuthentication]
-    permission_classes = [IsAuthenticated]
+    authentication_classes: ClassVar[list] = [CustomJWTAuthentication]
+    permission_classes: ClassVar[list] = [IsAuthenticated]
     
     def delete(self, request, notification_id):
         has_permission, result = self.require_roles(
@@ -303,7 +310,7 @@ class NotificationDeleteView(AccessControlMixin, APIView):
                 find_query.update(owner_query)
 
             result = collection.delete_one(find_query)
-        except Exception:
+        except Exception:  # noqa: BLE001
             return error_response(
                 message="Invalid notification ID",
                 status_code=http_status.HTTP_400_BAD_REQUEST
@@ -329,8 +336,8 @@ class NotificationClearAllView(AccessControlMixin, APIView):
     
     DELETE /api/notifications/clear-all/
     """
-    authentication_classes = [CustomJWTAuthentication]
-    permission_classes = [IsAuthenticated]
+    authentication_classes: ClassVar[list] = [CustomJWTAuthentication]
+    permission_classes: ClassVar[list] = [IsAuthenticated]
     
     def delete(self, request):
         has_permission, result = self.require_roles(
@@ -363,8 +370,8 @@ class RegisterDeviceTokenView(AccessControlMixin, APIView):
         - token (str): The FCM device token
         - platform (str): Platform (android/ios/web)
     """
-    authentication_classes = [CustomJWTAuthentication]
-    permission_classes = [IsAuthenticated]
+    authentication_classes: ClassVar[list] = [CustomJWTAuthentication]
+    permission_classes: ClassVar[list] = [IsAuthenticated]
     
     def post(self, request):
         has_permission, result = self.require_roles(

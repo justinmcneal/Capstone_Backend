@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from django.core.management.base import BaseCommand
 from django.conf import settings
+from django.core.management.base import BaseCommand
 
 from config.prometheus_metrics import get_metrics_url, get_runtime_flag_file
 
@@ -31,8 +31,8 @@ class Command(BaseCommand):
                 with flag_path.open("w", encoding="utf-8") as fh:
                     fh.write("1")
                 self.stdout.write(self.style.SUCCESS(f"Prometheus runtime flag enabled: {flag_file}"))
-            except Exception as e:
-                self.stderr.write(f"Failed to create flag file: {e}")
+            except OSError as exc:
+                self.stderr.write(f"Failed to create flag file: {exc}")
         elif action == "disable":
             try:
                 if flag_path.exists():
@@ -40,8 +40,8 @@ class Command(BaseCommand):
                     self.stdout.write(self.style.SUCCESS(f"Prometheus runtime flag removed: {flag_file}"))
                 else:
                     self.stdout.write(self.style.WARNING(f"Prometheus runtime flag not present: {flag_file}"))
-            except Exception as e:
-                self.stderr.write(f"Failed to remove flag file: {e}")
+            except OSError as exc:
+                self.stderr.write(f"Failed to remove flag file: {exc}")
         else:  # status
             exists = flag_path.exists()
             self.stdout.write(f"Prometheus runtime flag file: {flag_file}\nPresent: {exists}")

@@ -2,7 +2,9 @@
 Device Token Model - Stores FCM push notification tokens.
 """
 from datetime import datetime, timezone
+
 from django.conf import settings
+
 
 def get_db():
     return settings.MONGODB
