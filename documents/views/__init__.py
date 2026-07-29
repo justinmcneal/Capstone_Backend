@@ -5,4 +5,5 @@ from .document_views import (
     DocumentVerifyView,
     DocumentTypesView,
     RequestReuploadView,
+    DocumentPresignedUploadView,
 )
