@@ -1,82 +1,11 @@
-<!DOCTYPE html>
-<html>
-
-<head>
-    <meta charset="UTF-8">
-    <title>Additional Documents Needed</title>
-    <style>
-        body {
-            font-family: Arial, sans-serif;
-            line-height: 1.6;
-            color: #333;
-            max-width: 600px;
-            margin: 0 auto;
-        }
-
-        .header {
-            background: #0f766e;
-            color: white;
-            padding: 20px;
-            text-align: center;
-        }
-
-        .content {
-            padding: 30px;
-        }
-
-        .highlight {
-            background: #f0fdfa;
-            padding: 20px;
-            border-radius: 8px;
-            margin: 20px 0;
-            border: 1px solid #ccfbf1;
-        }
-
-        .footer {
-            background: #f3f4f6;
-            padding: 15px;
-            text-align: center;
-            font-size: 12px;
-            color: #666;
-        }
-    </style>
-</head>
-
-<body>
-    <div class="header">
-        <h1>Additional Documents Required</h1>
-    </div>
-    <div class="content">
-        <p>Hello {{ name }},</p>
-
-        <p>Your loan application is still being reviewed. We need additional documents to continue processing your request.</p>
-
-        <div class="highlight">
-            <strong>Loan Application ID:</strong> {{ loan_id }}<br><br>
-            <strong>Requested Documents:</strong>
-            <ul>
-                {% for doc in missing_documents %}
-                <li>{{ doc }}</li>
-                {% endfor %}
-            </ul>
-            {% if reason %}
-            <strong>Officer Note:</strong>
-            <p>{{ reason }}</p>
-            {% endif %}
-        </div>
-
-        <p><strong>What to do next:</strong></p>
-        <ol>
-            <li>Log in to your account</li>
-            <li>Upload the requested document(s)</li>
-            <li>Resubmit if prompted</li>
-        </ol>
-
-        <p>Submitting these documents promptly will help avoid delays.</p>
-    </div>
-    <div class="footer">
-        This is an automated message. Please do not reply directly to this email.
-    </div>
-</body>
-
-</html>
+{% extends "email/_base.html" %}
+{% block title %}MSME Pathways - Additional Documents Needed{% endblock %}
+{% block badge_label %}ACTION REQUIRED{% endblock %}
+{% block heading %}Additional Documents Needed{% endblock %}
+{% block intro %}Hello <strong style="color: #111827;">{{ name }}</strong>,<br>Your loan application is still being reviewed. We need additional documents to continue processing your request.{% endblock %}
+{% block content %}
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border: 1px solid #ccfbf1; background-color: #f0fdfa; border-radius: 6px; margin-bottom: 20px;"><tr><td style="padding: 18px 20px; font-size: 13px; color: #134e4a; line-height: 1.6;"><div style="font-size: 10px; font-weight: 600; color: #0f766e; text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 8px;">REQUEST DETAILS</div><strong style="color: #115e59;">Loan Application ID:</strong> {{ loan_id }}<br><br><strong style="color: #115e59;">Requested Documents:</strong><ul style="margin: 8px 0 0 18px; padding: 0;">{% for doc in missing_documents %}<li style="margin-bottom: 4px;">{{ doc }}</li>{% endfor %}</ul>{% if reason %}<strong style="color: #115e59;">Officer Note:</strong><p style="margin: 4px 0 0 0;">{{ reason }}</p>{% endif %}</td></tr></table>
+<p style="font-size: 14px; font-weight: 700; color: #111827; margin: 0 0 10px 0;">What to do next</p>
+<ol style="font-size: 14px; color: #374151; line-height: 1.6; margin: 0 0 16px 20px; padding: 0;"><li>Log in to your account</li><li>Upload the requested document(s)</li><li>Resubmit if prompted</li></ol>
+<p style="font-size: 14px; color: #374151; line-height: 1.6; margin: 0 0 12px 0;">Submitting these documents promptly will help avoid delays.</p>
+{% endblock %}

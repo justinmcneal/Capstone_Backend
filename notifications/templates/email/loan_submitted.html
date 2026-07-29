@@ -1,45 +1,12 @@
-<!DOCTYPE html>
-<html>
-<head>
-    <meta charset="UTF-8">
-    <title>Loan Application Received</title>
-    <style>
-        body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; }
-        .header { background: #2563eb; color: white; padding: 20px; text-align: center; }
-        .content { padding: 30px; }
-        .highlight { background: #f0f9ff; padding: 20px; border-radius: 8px; margin: 20px 0; }
-        .footer { background: #f3f4f6; padding: 15px; text-align: center; font-size: 12px; color: #666; }
-    </style>
-</head>
-<body>
-    <div class="header">
-        <h1>Application Received</h1>
-    </div>
-    <div class="content">
-        <p>Hello {{ name }},</p>
-        
-        <p>Thank you for submitting your loan application. We have received your request and it is now being processed.</p>
-        
-        <div class="highlight">
-            <strong>Application Details:</strong><br>
-            Product: {{ product_name }}<br>
-            Requested Amount: ₱{{ amount|floatformat:2 }}<br>
-            Reference ID: {{ loan_id }}
-        </div>
-        
-        <p><strong>What happens next?</strong></p>
-        <ul>
-            <li>Our loan officers will review your application</li>
-            <li>We may contact you for additional documents if needed</li>
-            <li>You will receive an email once a decision is made</li>
-        </ul>
-        
-        <p>This usually takes 1-3 business days.</p>
-        
-        <p>Thank you for choosing us!</p>
-    </div>
-    <div class="footer">
-        This is an automated message. Please do not reply directly to this email.
-    </div>
-</body>
-</html>
+{% extends "email/_base.html" %}
+{% block title %}MSME Pathways - Loan Application Received{% endblock %}
+{% block badge_label %}APPLICATION RECEIVED{% endblock %}
+{% block heading %}Application Received{% endblock %}
+{% block intro %}Hello <strong style="color: #111827;">{{ name }}</strong>,<br>Thank you for submitting your loan application. We have received your request and it is now being processed.{% endblock %}
+{% block content %}
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border: 1px solid #dbeafe; background-color: #eff6ff; border-radius: 6px; margin-bottom: 20px;"><tr><td style="padding: 18px 20px; font-size: 13px; color: #1e3a8a; line-height: 1.7;"><div style="font-size: 10px; font-weight: 600; color: #2563eb; text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 8px;">APPLICATION DETAILS</div><strong style="color: #1e40af;">Product:</strong> {{ product_name }}<br><strong style="color: #1e40af;">Requested Amount:</strong> &#8369;{{ amount|floatformat:2 }}<br><strong style="color: #1e40af;">Reference ID:</strong> {{ loan_id }}</td></tr></table>
+<p style="font-size: 14px; font-weight: 700; color: #111827; margin: 0 0 10px 0;">What happens next?</p>
+<ul style="font-size: 14px; color: #374151; line-height: 1.6; margin: 0 0 16px 18px; padding: 0;"><li>Our loan officers will review your application</li><li>We may contact you for additional documents if needed</li><li>You will receive an email once a decision is made</li></ul>
+<p style="font-size: 14px; color: #374151; line-height: 1.6; margin: 0 0 10px 0;">This usually takes 1-3 business days.</p>
+<p style="font-size: 14px; color: #374151; line-height: 1.6; margin: 0 0 12px 0;">Thank you for choosing us!</p>
+{% endblock %}

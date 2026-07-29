@@ -1,17 +1,14 @@
-<html>
-<body>
-  <p>Hello {{ reviewer_name }},</p>
-
-  <p>A new customer document is pending review.</p>
-
-  <p>
-    <strong>Customer:</strong> {{ customer_name }}<br>
-    <strong>Document Type:</strong> {{ document_type }}<br>
-    <strong>Document ID:</strong> {{ document_id }}
-  </p>
-
-  <p>Please review it from your officer/admin documents page.</p>
-
-  <p>MSME Pathways</p>
-</body>
-</html>
+{% extends "email/_base.html" %}
+{% block title %}MSME Pathways - Document Pending Review{% endblock %}
+{% block badge_label %}REVIEW NEEDED{% endblock %}
+{% block heading %}Document Pending Review{% endblock %}
+{% block intro %}Hello <strong style="color: #111827;">{{ reviewer_name }}</strong>,<br>A new customer document is pending review.{% endblock %}
+{% block content %}
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border: 1px solid #dbeafe; background-color: #eff6ff; border-radius: 6px; margin-bottom: 20px;"><tr><td style="padding: 18px 20px; font-size: 13px; color: #1e3a8a; line-height: 1.7;">
+    <div style="font-size: 10px; font-weight: 600; color: #2563eb; text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 8px;">DOCUMENT DETAILS</div>
+    <strong style="color: #1e40af;">Customer:</strong> {{ customer_name }}<br>
+    <strong style="color: #1e40af;">Document Type:</strong> {{ document_type }}<br>
+    <strong style="color: #1e40af;">Document ID:</strong> {{ document_id }}
+</td></tr></table>
+<p style="font-size: 14px; color: #374151; line-height: 1.6; margin: 0 0 12px 0;">Please review it from your officer/admin documents page.</p>
+{% endblock %}

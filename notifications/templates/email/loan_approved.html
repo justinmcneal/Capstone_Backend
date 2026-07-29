@@ -1,80 +1,15 @@
-<!DOCTYPE html>
-<html>
-
-<head>
-    <meta charset="UTF-8">
-    <title>Loan Approved!</title>
-    <style>
-        body {
-            font-family: Arial, sans-serif;
-            line-height: 1.6;
-            color: #333;
-            max-width: 600px;
-            margin: 0 auto;
-        }
-
-        .header {
-            background: #16a34a;
-            color: white;
-            padding: 20px;
-            text-align: center;
-        }
-
-        .content {
-            padding: 30px;
-        }
-
-        .highlight {
-            background: #f0fdf4;
-            padding: 20px;
-            border-radius: 8px;
-            margin: 20px 0;
-            border: 2px solid #16a34a;
-        }
-
-        .amount {
-            font-size: 28px;
-            color: #16a34a;
-            font-weight: bold;
-        }
-
-        .footer {
-            background: #f3f4f6;
-            padding: 15px;
-            text-align: center;
-            font-size: 12px;
-            color: #666;
-        }
-    </style>
-</head>
-
-<body>
-    <div class="header">
-        <h1>🎉 Congratulations!</h1>
-    </div>
-    <div class="content">
-        <p>Hello {{ name }},</p>
-
-        <p>Great news! Your loan application has been <strong>approved</strong>!</p>
-
-        <div class="highlight">
-            <strong>Approved Amount:</strong><br>
-            <span class="amount">₱{{ approved_amount|floatformat:2 }}</span><br><br>
-            Reference ID: {{ loan_id }}
-        </div>
-
-        <p><strong>Next Steps:</strong></p>
-        <ul>
-            <li>You will be contacted for loan disbursement details</li>
-            <li>Please prepare 1 valid ID for verification</li>
-            <li>Funds will be released within 1-2 business days</li>
-        </ul>
-
-        <p>Thank you for choosing us for your financial needs!</p>
-    </div>
-    <div class="footer">
-        This is an automated message. Please do not reply directly to this email.
-    </div>
-</body>
-
-</html>
+{% extends "email/_base.html" %}
+{% block title %}MSME Pathways - Loan Approved{% endblock %}
+{% block badge_label %}LOAN APPROVED{% endblock %}
+{% block heading %}Congratulations!{% endblock %}
+{% block intro %}Hello <strong style="color: #111827;">{{ name }}</strong>,<br>Great news! Your loan application has been <strong style="color: #166534;">approved</strong>.{% endblock %}
+{% block content %}
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border: 1px solid #bbf7d0; background-color: #f0fdf4; border-radius: 6px; margin-bottom: 20px;"><tr><td style="padding: 20px;">
+    <div style="font-size: 10px; font-weight: 600; color: #15803d; text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 8px;">APPROVED AMOUNT</div>
+    <div style="font-size: 30px; font-weight: 700; color: #16a34a; letter-spacing: 0.02em; margin-bottom: 10px;">&#8369;{{ approved_amount|floatformat:2 }}</div>
+    <div style="font-size: 13px; color: #166534;">Reference ID: {{ loan_id }}</div>
+</td></tr></table>
+<p style="font-size: 14px; font-weight: 700; color: #111827; margin: 0 0 10px 0;">Next steps</p>
+<ul style="font-size: 14px; color: #374151; line-height: 1.6; margin: 0 0 16px 18px; padding: 0;"><li>You will be contacted for loan disbursement details</li><li>Please prepare 1 valid ID for verification</li><li>Funds will be released within 1-2 business days</li></ul>
+<p style="font-size: 14px; color: #374151; line-height: 1.6; margin: 0 0 12px 0;">Thank you for choosing us for your financial needs!</p>
+{% endblock %}
