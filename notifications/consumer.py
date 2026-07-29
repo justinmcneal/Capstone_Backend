@@ -1,9 +1,10 @@
 import json
 import logging
-from channels.generic.websocket import AsyncWebsocketConsumer
-from channels.db import database_sync_to_async
-from django.contrib.auth.models import AnonymousUser
 from datetime import datetime, timezone
+
+from channels.db import database_sync_to_async
+from channels.generic.websocket import AsyncWebsocketConsumer
+from django.contrib.auth.models import AnonymousUser
 
 from notifications.ownership import (
     build_notification_owner_query_from_values,
@@ -92,8 +93,10 @@ class NotificationConsumer(AsyncWebsocketConsumer):
 
     @database_sync_to_async
     def get_unread_count(self, user):
-        from notifications.models.notification import get_db, Notification
-        from notifications.views.notification_views import _build_notification_owner_query
+        from notifications.models.notification import Notification, get_db
+        from notifications.views.notification_views import (
+            _build_notification_owner_query,
+        )
 
         db = get_db()
         collection = db[Notification.collection_name]
@@ -104,7 +107,8 @@ class NotificationConsumer(AsyncWebsocketConsumer):
     @database_sync_to_async
     def mark_notification_read(self, notification_id):
         from bson import ObjectId
-        from notifications.models.notification import get_db, Notification
+
+        from notifications.models.notification import Notification, get_db
 
         try:
             db = get_db()
@@ -117,6 +121,6 @@ class NotificationConsumer(AsyncWebsocketConsumer):
                 {"$set": {"status": "read", "read_at": datetime.now(timezone.utc)}}
             )
             return result.modified_count > 0
-        except Exception as e:
-            logger.error(f"Error marking notification read: {e}")
+        except Exception as exc:  # noqa: BLE001
+            logger.error("Error marking notification read: %s", exc)
             return False

@@ -2,6 +2,7 @@
 Notification Model - Store notification history.
 """
 from datetime import datetime, timezone
+
 from django.conf import settings
 
 

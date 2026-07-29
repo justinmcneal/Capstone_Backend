@@ -4,13 +4,14 @@ Notification URL Routes.
 Customer-facing notification inbox API.
 """
 from django.urls import path
+
 from notifications.views import (
-    NotificationListView,
-    NotificationMarkReadView,
-    NotificationMarkAllReadView,
-    NotificationUnreadCountView,
-    NotificationDeleteView,
     NotificationClearAllView,
+    NotificationDeleteView,
+    NotificationListView,
+    NotificationMarkAllReadView,
+    NotificationMarkReadView,
+    NotificationUnreadCountView,
     RegisterDeviceTokenView,
 )
 

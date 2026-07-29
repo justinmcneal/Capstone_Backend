@@ -1,10 +1,10 @@
+import logging
+
+from bson import ObjectId
+
 from config.celery import app
 from notifications.models.notification import Notification
 from notifications.services.email_sender import EmailSender
-from datetime import timezone
-from bson import ObjectId
-from django.conf import settings
-import logging
 
 logger = logging.getLogger("notifications.tasks")
 
@@ -18,7 +18,7 @@ try:
     EMAIL_TASK_FAILURE = Counter(
         "notifications_email_task_failure_total", "Email task failures"
     )
-except Exception:
+except ImportError:
     EMAIL_TASK_SUCCESS = None
     EMAIL_TASK_FAILURE = None
 
@@ -46,10 +46,10 @@ def send_email_task(self, to_email: str, subject: str, template_name: str, conte
             collection = db[Notification.collection_name]
             doc = collection.find_one({"_id": ObjectId(notification_id)})
             notif = Notification.from_dict(doc)
-        except Exception:
+        except Exception:  # noqa: BLE001
             notif = None
 
-    success = sender._do_send(to_email, subject, template_name, context, notif)
+    success = sender.send(to_email, subject, template_name, context, notif)
 
     # Emit metrics
     try:
