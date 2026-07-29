@@ -6,7 +6,6 @@ import logging
 from datetime import datetime, timezone
 from typing import ClassVar
 
-from bson import ObjectId
 from django.conf import settings
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
@@ -19,11 +18,9 @@ from accounts.utils.validation_utils import sanitize_text
 from analytics.models import AuditLog
 from analytics.models.audit_log import ACTION_GROUPS
 from analytics.services.audit_queries import (
-    build_paginated_response,
     officer_search_conditions,
     parse_date_range,
     parse_pagination,
-    serialize_details,
     serialize_log_entry,
 )
 

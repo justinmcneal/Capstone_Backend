@@ -17,14 +17,11 @@ from accounts.utils.response_helpers import error_response, success_response
 from accounts.utils.validation_utils import sanitize_text
 from accounts.views.admin_views import AdminRequiredMixin
 from analytics.models import AuditLog
-from analytics.models.audit_log import ACTION_GROUPS
 from analytics.services.audit_queries import (
     build_paginated_response,
     default_log_search,
     parse_date_range,
     parse_pagination,
-    serialize_details,
-    serialize_log_entry,
 )
 
 logger = logging.getLogger("analytics")
