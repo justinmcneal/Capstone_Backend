@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <title>{% block title %}MSME Pathways{% endblock %}</title>
+    <!--[if mso]>
+    <style type="text/css">
+        body, table, td { font-family: Arial, sans-serif !important; }
+    </style>
+    <![endif]-->
+</head>
+<body style="margin: 0; padding: 0; background-color: #f3f4f6; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color: #f3f4f6;">
+        <tr>
+            <td align="center" style="padding: 40px 16px;">
+                <table role="presentation" width="560" cellpadding="0" cellspacing="0" border="0" style="width: 100%; max-width: 560px; background-color: #ffffff; border: 1px solid #e5e7eb; border-radius: 8px;">
+                    <tr>
+                        <td style="padding: 20px 24px 16px 24px;">
+                            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+                                <tr>
+                                    <td align="left" valign="middle">
+                                        <table role="presentation" cellpadding="0" cellspacing="0" border="0">
+                                            <tr>
+                                                <td valign="middle" style="padding-right: 10px;">
+                                                    <div style="width: 38px; height: 38px; background-color: #1a3c34; border-radius: 5px; color: #ffffff; font-size: 13px; font-weight: 700; line-height: 38px; text-align: center; letter-spacing: 0.04em;">MP</div>
+                                                </td>
+                                                <td valign="middle">
+                                                    <div style="font-size: 15px; font-weight: 700; color: #111827; line-height: 1.2;">MSME Pathways</div>
+                                                    <div style="font-size: 10px; font-weight: 400; color: #9ca3af; text-transform: uppercase; letter-spacing: 0.08em;">ENTERPRISE PORTAL</div>
+                                                </td>
+                                            </tr>
+                                        </table>
+                                    </td>
+                                    <td align="right" valign="middle">
+                                        <table role="presentation" cellpadding="0" cellspacing="0" border="0">
+                                            <tr>
+                                                <td valign="middle" style="padding-right: 6px;"><div style="width: 8px; height: 8px; background-color: #00a86b; border-radius: 50%;"></div></td>
+                                                <td valign="middle"><span style="font-size: 10px; font-weight: 600; color: #047857; text-transform: uppercase; letter-spacing: 0.04em;">{% block badge_label %}ACCOUNT UPDATE{% endblock %}</span></td>
+                                            </tr>
+                                        </table>
+                                    </td>
+                                </tr>
+                            </table>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td style="padding: 0 24px;"><div style="height: 1px; background-color: #e5e7eb;"></div></td>
+                    </tr>
+                    <tr>
+                        <td style="padding: 28px 24px 8px 24px;">
+                            <h1 style="font-size: 24px; font-weight: 700; color: #111827; line-height: 1.25; margin: 0 0 12px 0;">{% block heading %}{% endblock %}</h1>
+                            <div style="font-size: 14px; color: #374151; line-height: 1.65; margin: 0 0 24px 0;">{% block intro %}{% endblock %}</div>
+                            {% block content %}{% endblock %}
+                        </td>
+                    </tr>
+                    <tr>
+                        <td style="padding: 20px 24px 16px 24px;">
+                            <div style="font-size: 12px; color: #6b7280; font-style: italic; margin-bottom: 4px;">Empowering Filipino Entrepreneurs.</div>
+                            <div style="font-size: 13px; font-weight: 700; color: #111827;">The MSME Pathways Team</div>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td style="background-color: #f9fafb; border-top: 1px solid #e5e7eb; padding: 14px 24px; text-align: center;">
+                            <p style="font-size: 11px; color: #9ca3af; margin: 0 0 6px 0; line-height: 1.5;">You received this email because you have an MSME Pathways account.<br>Data Privacy Act of 2012 Compliant. All rights reserved.</p>
+                            <table role="presentation" align="center" cellpadding="0" cellspacing="0" border="0">
+                                <tr>
+                                    <td style="padding: 0 10px;"><a href="#" style="font-size: 10px; font-weight: 500; color: #6b7280; text-decoration: none; text-transform: uppercase; letter-spacing: 0.05em;">PRIVACY</a></td>
+                                    <td style="padding: 0 10px;"><a href="#" style="font-size: 10px; font-weight: 500; color: #6b7280; text-decoration: none; text-transform: uppercase; letter-spacing: 0.05em;">TERMS</a></td>
+                                    <td style="padding: 0 10px;"><a href="#" style="font-size: 10px; font-weight: 500; color: #6b7280; text-decoration: none; text-transform: uppercase; letter-spacing: 0.05em;">SUPPORT</a></td>
+                                </tr>
+                            </table>
+                        </td>
+                    </tr>
+                </table>
+            </td>
+        </tr>
+    </table>
+</body>
+</html>

@@ -1,20 +1,18 @@
-<html>
-<body>
-  <p>Hello {{ name }},</p>
-
-  <p>Your document has been approved.</p>
-
-  <p>
-    <strong>Document Type:</strong> {{ document_type }}<br>
-    {% if document_id %}<strong>Document ID:</strong> {{ document_id }}{% endif %}
-  </p>
-
-  {% if notes %}
-  <p><strong>Reviewer Notes:</strong><br>{{ notes }}</p>
-  {% endif %}
-
-  <p>No further action is needed for this document at this time.</p>
-
-  <p>Thank you,<br>MSME Pathways Team</p>
-</body>
-</html>
+{% extends "email/_base.html" %}
+{% block title %}MSME Pathways - Document Approved{% endblock %}
+{% block badge_label %}DOCUMENT APPROVED{% endblock %}
+{% block heading %}Your Document Has Been Approved{% endblock %}
+{% block intro %}Hello <strong style="color: #111827;">{{ name }}</strong>,<br>Your document has been approved and no further action is needed at this time.{% endblock %}
+{% block content %}
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border: 1px solid #d1fae5; background-color: #f0fdf4; border-radius: 6px; margin-bottom: 20px;">
+    <tr><td style="padding: 18px 20px; font-size: 13px; color: #14532d; line-height: 1.7;">
+        <div style="font-size: 10px; font-weight: 600; color: #15803d; text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 8px;">DOCUMENT DETAILS</div>
+        <strong style="color: #166534;">Document Type:</strong> {{ document_type }}<br>
+        {% if document_id %}<strong style="color: #166534;">Document ID:</strong> {{ document_id }}{% endif %}
+    </td></tr>
+</table>
+{% if notes %}
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color: #f9fafb; border-radius: 6px; margin-bottom: 20px;"><tr><td style="padding: 16px; font-size: 13px; color: #374151; line-height: 1.6;"><strong style="color: #111827;">Reviewer Notes</strong><br>{{ notes }}</td></tr></table>
+{% endif %}
+<p style="font-size: 14px; color: #374151; line-height: 1.6; margin: 0 0 12px 0;">Thank you,<br>MSME Pathways Team</p>
+{% endblock %}
