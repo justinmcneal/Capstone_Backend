@@ -23,6 +23,19 @@ class FakeDocument:
         self.document_type = kwargs.get("document_type")
         self.verified = False
         self.customer_id = kwargs.get("customer_id")
+        self.mime_type = kwargs.get("mime_type", "image/jpeg")
+        self.description = kwargs.get("description", "")
+        self.verified_by = kwargs.get("verified_by")
+        self.verified_at = kwargs.get("verified_at")
+        self.rejection_reason = kwargs.get("rejection_reason", "")
+        self.notes = kwargs.get("notes", "")
+        self.reupload_requested = kwargs.get("reupload_requested", False)
+        self.reupload_requested_by = kwargs.get("reupload_requested_by")
+        self.reupload_requested_at = kwargs.get("reupload_requested_at")
+        self.ai_analysis = kwargs.get("ai_analysis", {})
+        self.confidence_score = kwargs.get("confidence_score")
+        self.ai_analyzed_at = kwargs.get("ai_analyzed_at")
+        self.file_path = kwargs.get("file_path", "")
 
     def save(self):
         return True
@@ -120,7 +133,7 @@ def test_document_upload_skips_ai_when_consent_is_false(monkeypatch):
     assert response.status_code in (200, 201)
     assert response.data["status"] == "success"
     assert response.data["data"]["status"] == "pending"
-    assert "ai_analysis" not in response.data["data"]
+    assert response.data["data"].get("ai_analysis") is None
 
 
 def test_consent_audit_returns_customer_ai_consent_report(monkeypatch):

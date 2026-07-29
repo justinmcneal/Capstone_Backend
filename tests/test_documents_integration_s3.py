@@ -31,7 +31,7 @@ class FakeDocument:
 
 
 @mock_s3
-@override_settings(DOCUMENT_STORAGE_BACKEND='s3', AWS_STORAGE_BUCKET_NAME='test-bucket', DOCUMENT_UPLOAD_AI_ANALYSIS=False)
+@override_settings(DOCUMENT_STORAGE_BACKEND='s3', AWS_STORAGE_BUCKET_NAME='test-bucket', DOCUMENT_UPLOAD_AI_ANALYSIS=False, SECURE_SSL_REDIRECT=False)
 def test_document_upload_endpoint_s3(monkeypatch, settings):
     # Create bucket
     s3 = boto3.client('s3', region_name='us-east-1')

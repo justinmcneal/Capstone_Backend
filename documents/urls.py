@@ -1,8 +1,9 @@
 from django.urls import path
 from documents.views import (
-    DocumentUploadView,
     DocumentListView,
     DocumentDetailView,
+    DocumentPresignedUploadView,
+    DocumentUploadView,
     DocumentVerifyView,
     DocumentTypesView,
     RequestReuploadView,
@@ -13,6 +14,8 @@ app_name = "documents"
 urlpatterns = [
     # Upload document
     path("upload/", DocumentUploadView.as_view(), name="document-upload"),
+    # Direct client upload via presigned POST data
+    path("presigned-upload/", DocumentPresignedUploadView.as_view(), name="document-presigned-upload"),
     # List all documents
     path("", DocumentListView.as_view(), name="document-list"),
     # Get document types
