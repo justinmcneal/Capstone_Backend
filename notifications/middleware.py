@@ -1,9 +1,11 @@
+import logging
 from urllib.parse import parse_qs
+
 from channels.db import database_sync_to_async
 from channels.middleware import BaseMiddleware
 from django.contrib.auth.models import AnonymousUser
+
 from accounts.authentication import AuthenticatedUser
-import logging
 
 logger = logging.getLogger("notifications")
 
@@ -18,8 +20,8 @@ class JWTAuthMiddleware(BaseMiddleware):
                 tokens = parsed.get("token", [])
                 if tokens:
                     token = tokens[0]
-            except Exception:
-                pass
+            except ValueError:
+                logger.debug("Failed to parse WebSocket query string", exc_info=True)
 
         if not token:
             headers = dict(scope.get("headers", []))
@@ -41,7 +43,9 @@ class JWTAuthMiddleware(BaseMiddleware):
             return AnonymousUser()
 
         try:
+            from rest_framework_simplejwt.exceptions import TokenError
             from rest_framework_simplejwt.tokens import AccessToken
+
             access_token = AccessToken(token)
             customer_id = access_token.get("customer_id")
             email = access_token.get("email")
@@ -52,7 +56,7 @@ class JWTAuthMiddleware(BaseMiddleware):
                 return AuthenticatedUser(
                     customer_id=customer_id, email=email, verified=verified, role=role
                 )
-        except Exception as e:
-            logger.warning(f"JWT authentication failed: {e}")
+        except TokenError as exc:
+            logger.warning("JWT authentication failed: %s", exc)
 
         return AnonymousUser()

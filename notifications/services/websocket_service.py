@@ -1,9 +1,11 @@
 import logging
-from channels.layers import get_channel_layer
+
 from asgiref.sync import async_to_sync
+from channels.layers import get_channel_layer
 from django.conf import settings
-from notifications.ownership import notification_group_name
+
 from notifications.models.notification import serialize_utc_datetime
+from notifications.ownership import notification_group_name
 
 logger = logging.getLogger("notifications")
 
@@ -31,9 +33,9 @@ def broadcast_notification_to_user(user_id, user_type, notification_data):
             }
         )
 
-        logger.info(f"Notification broadcast to user {user_id} via WebSocket")
-    except Exception as e:
-        logger.error(f"Failed to broadcast notification via WebSocket: {e}")
+        logger.info("Notification broadcast to user %s via WebSocket", user_id)
+    except Exception as exc:  # noqa: BLE001
+        logger.error("Failed to broadcast notification via WebSocket: %s", exc)
 
 
 def serialize_notification_for_ws(notification):
