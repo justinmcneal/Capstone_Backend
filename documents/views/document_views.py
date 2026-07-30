@@ -5,7 +5,6 @@ from rest_framework.parsers import MultiPartParser, FormParser
 from django.conf import settings
 from bson import ObjectId
 from datetime import datetime, timezone
-import threading
 
 from accounts.authentication import CustomJWTAuthentication
 from accounts.utils.access_control import AccessControlMixin
@@ -20,7 +19,13 @@ from documents.serializers import (
     DocumentVerifySerializer,
     validate_uploaded_file,
 )
+from documents.services.notification import (
+    get_customer_by_identifier,
+    get_display_name,
+    notify_reviewers_document_pending,
+)
 from documents.storage import get_storage_backend
+from documents.tasks import notify_reviewers_document_pending_task
 from analytics.models import AuditLog
 import logging
 
@@ -38,140 +43,6 @@ def serialize_value(value):
     if isinstance(value, list):
         return [serialize_value(item) for item in value]
     return value
-
-
-def get_customer_by_identifier(customer_id):
-    """Resolve customer record from ObjectId/string IDs across legacy data shapes."""
-    if not customer_id:
-        return None
-
-    candidate_queries = []
-    if isinstance(customer_id, ObjectId):
-        candidate_queries.append({"_id": customer_id})
-        customer_id = str(customer_id)
-    else:
-        try:
-            candidate_queries.append({"_id": ObjectId(customer_id)})
-        except Exception:
-            pass
-
-    candidate_queries.append({"_id": customer_id})
-    candidate_queries.append({"customer_id": customer_id})
-
-    for query in candidate_queries:
-        customer = Customer.find_one(query)
-        if customer:
-            return customer
-    return None
-
-
-def get_display_name(user, fallback="User"):
-    """Build a readable display name from common account model fields."""
-    if not user:
-        return fallback
-
-    first_name = (getattr(user, "first_name", "") or "").strip()
-    last_name = (getattr(user, "last_name", "") or "").strip()
-    full_name = f"{first_name} {last_name}".strip()
-    if full_name:
-        return full_name
-
-    username = (getattr(user, "username", "") or "").strip()
-    if username:
-        return username
-
-    email = (getattr(user, "email", "") or "").strip()
-    if email:
-        return email
-    return fallback
-
-
-def notify_reviewers_document_pending(document):
-    """Notify active officers/admins that a document needs review."""
-    from notifications.services import get_email_sender
-
-    sender = get_email_sender()
-    customer = get_customer_by_identifier(document.customer_id)
-    customer_name = get_display_name(customer, fallback="Customer")
-
-    recipients = []
-    seen_emails = set()
-
-    for officer in LoanOfficer.find({"active": True}):
-        email = (officer.email or "").strip()
-        if not email:
-            continue
-        email_key = email.lower()
-        if email_key in seen_emails:
-            continue
-        seen_emails.add(email_key)
-        recipients.append(
-            {
-                "email": email,
-                "name": get_display_name(officer, fallback="Loan Officer"),
-                "user_id": officer.id,
-                "user_type": "loan_officer",
-            }
-        )
-
-    for admin in Admin.find({"active": True}):
-        email = (admin.email or "").strip()
-        if not email:
-            continue
-        email_key = email.lower()
-        if email_key in seen_emails:
-            continue
-        seen_emails.add(email_key)
-        recipients.append(
-            {
-                "email": email,
-                "name": get_display_name(admin, fallback="Admin"),
-                "user_id": admin.id,
-                "user_type": "admin",
-            }
-        )
-
-    if not recipients:
-        logger.warning(
-            f"No active reviewers found to notify for pending document {document.id}"
-        )
-        return
-
-    for recipient in recipients:
-        try:
-            sender.send_document_pending_review(
-                reviewer_email=recipient["email"],
-                reviewer_name=recipient["name"],
-                customer_name=customer_name,
-                document_type=document.document_type,
-                document_id=document.id,
-                reviewer_user_id=recipient["user_id"],
-                reviewer_user_type=recipient["user_type"],
-            )
-        except Exception as e:
-            logger.warning(
-                f"Failed pending-review email to {recipient['email']} for document {document.id}: {e}"
-            )
-
-
-def notify_reviewers_document_pending_async(document):
-    """Dispatch reviewer notifications in the background to avoid blocking upload responses."""
-    document_id = document.id or "unknown"
-
-    def _send():
-        try:
-            notify_reviewers_document_pending(document)
-        except Exception as e:
-            logger.warning(
-                f"Background reviewer notification failed for document {document_id}: {e}"
-            )
-
-    thread = threading.Thread(
-        target=_send,
-        name=f"document-review-notify-{document_id}",
-        daemon=True,
-    )
-    thread.start()
 
 
 class DocumentUploadView(AccessControlMixin, APIView):
@@ -329,7 +200,14 @@ class DocumentUploadView(AccessControlMixin, APIView):
             ]:
                 try:
                     if notify_async:
-                        notify_reviewers_document_pending_async(document)
+                        try:
+                            notify_reviewers_document_pending_task.delay(
+                                str(document.id)
+                            )
+                        except (RuntimeError, ImportError):
+                            logger.debug(
+                                "Reviewer notification skipped: Celery broker unavailable"
+                            )
                     else:
                         notify_reviewers_document_pending(document)
                 except Exception as notify_error:

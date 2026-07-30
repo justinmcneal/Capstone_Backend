@@ -87,7 +87,8 @@ class DocumentResponseSerializer(serializers.Serializer):
         return serialize_value(obj.customer_id)
 
     def get_customer_name(self, obj):
-        from documents.views.document_views import get_customer_by_identifier, get_display_name
+        from documents.services.notification import get_customer_by_identifier, get_display_name
+
         customer = get_customer_by_identifier(obj.customer_id)
         return get_display_name(customer, fallback="Customer")
 
