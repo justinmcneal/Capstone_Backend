@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from accounts.authentication import CustomJWTAuthentication
 from accounts.utils.access_control import AccessControlMixin
 from accounts.utils.response_helpers import success_response, error_response
+from accounts.utils.throttles import DocumentUploadRateThrottle
 from accounts.utils.validation_utils import sanitize_text, sanitize_filename
 from accounts.models import Admin, Customer, LoanOfficer
 from accounts.services.consent_service import ConsentService
@@ -55,6 +56,7 @@ class DocumentUploadView(AccessControlMixin, APIView):
     authentication_classes = [CustomJWTAuthentication]
     permission_classes = [IsAuthenticated]
     parser_classes = [MultiPartParser, FormParser]
+    throttle_classes = (DocumentUploadRateThrottle,)
 
     def post(self, request):
         """Upload a document"""
@@ -581,6 +583,7 @@ class DocumentPresignedUploadView(AccessControlMixin, APIView):
 
     authentication_classes = [CustomJWTAuthentication]
     permission_classes = [IsAuthenticated]
+    throttle_classes = (DocumentUploadRateThrottle,)
 
     def post(self, request):
         try:

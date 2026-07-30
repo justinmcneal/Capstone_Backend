@@ -4,7 +4,6 @@ Inbox API tests for /api/notifications/ endpoints.
 import mongomock
 from datetime import datetime, timezone
 from types import SimpleNamespace
-from unittest.mock import PropertyMock
 from rest_framework.test import APIRequestFactory
 from django.conf import settings
 from bson import ObjectId
@@ -84,7 +83,7 @@ def _make_request(user, method='get', path='/api/notifications/', data=None, que
     request.user = user
 
     if method == 'post' and data is not None:
-        type(request).data = PropertyMock(return_value=data)
+        request._full_data = data
 
     return request
 

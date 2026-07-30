@@ -9,27 +9,48 @@ The `loans/` module provides loan product management, loan applications, repayme
 
 ## High Priority Findings
 
-1. No dedicated loan API endpoint tests.
-   - Existing tests cover blockchain tasks and qualification, but there is no `tests/test_loans_api.py` focused on the loan application, product, repayment, and officer/admin endpoints with authenticated requests, role enforcement, and validation.
-   - Risk: regressions in application creation, approval flows, and repayment scheduling won't be caught automatically. **Status: GAP.**
+1. Duplicate blockchain sync implementations.
+   - `loans/blockchain/sync.py` (thread-based, used by views) and `loans/blockchain/tasks.py` (Celery-based) contain nearly identical logic.
+   - Risk: maintenance burden and drift between two implementations. **Status: NEEDS REVIEW.**
 
-2. No tests for AI qualification service.
-   - `loans/services/qualification.py` is the most complex and business-critical service in the module, but has no functional tests for `qualify_customer`, `check_basic_eligibility`, `resolve_required_document_types`, or `rule_based_qualification`.
-   - Risk: prompt engineering, JSON parsing, normalization, and post-validation stripping are all untested. **Status: GAP.**
+2. Inconsistent MongoDB access patterns.
+   - `LoanApplication.find_*` class methods are used in most places, but `officer_views.py` directly accesses `settings.MONGODB["loan_applications"]` in several places.
+   - Risk: query logic divergence and harder maintenance. **Status: NEEDS REVIEW.**
 
-3. No tests for assignment service.
-   - `loans/services/assignment.py` contains `auto_assign_application`, `manual_assign_application`, `reassign_application`, and `get_officers_workload` — all untested and involve cross-app dependencies. **Status: GAP.**
+3. Duplicate helper functions across views.
+   - `serialize_internal_note` is defined in both `admin_views.py` and `officer_views.py`. **Status: NEEDS REVIEW.**
+
+4. Large view files.
+   - `officer_views.py` is 2,836 lines. `admin_views.py` is 853 lines. `customer_views.py` is 1,823 lines.
+   - Risk: maintenance burden and merge conflicts. **Status: NEEDS REVIEW.**
+
+5. Blockchain client has no circuit breaker.
+   - `loans/blockchain/client.py` makes direct blockchain calls without timeout, retry limit, or fallback.
+   - Risk: a slow or unavailable blockchain node can block request threads. **Status: NEEDS REVIEW.**
+
+## Completed Remediation
+
+1. Fixed `find_pending_paginated` to include both `submitted` and `under_review` statuses in the unassigned queue (`loans/models/application.py:401`).
+2. Fixed `find_assigned_paginated` to no longer hardcode `status: "under_review"`, allowing officers to see applications across all statuses (`loans/models/application.py:483`).
+3. Fixed order-dependent test failures in `tests/test_profiles_api.py` caused by `test_notifications_api.py` leaking DRF request data via a class-level `PropertyMock` (`tests/test_notifications_api.py:86`).
+4. Fixed crypto API test mismatch in `tests/blockchain/test_phase1_wallet.py` to match the CoinGecko implementation in `loans/blockchain/services/eth_price_service.py`.
+5. Added `tests/test_loans_api.py` with 9 tests covering loan product listing/detail, pre-qualification, loan application, customer application listing, officer application review, and disbursement.
+6. Added `tests/test_loan_models.py` with 15 tests covering LoanApplication status transitions, RepaymentSchedule installment calculations, LoanPayment aggregation, and LoanProduct active filtering.
+7. Added `tests/test_loan_serializers.py` with 15 tests covering validation for all loan serializers.
+8. Added `tests/test_loan_services.py` with 8 tests covering auto-assign, manual-assign, reassign, and officer workload.
+9. Added `tests/test_loan_tasks.py` with 3 tests covering `check_overdue_installments_task`.
+10. Added `encrypted_fields` to `LoanProduct` (description, target_description), `RepaymentSchedule` (installments), and `LoanPayment` (notes, reference) with matching `to_dict`/`from_dict` encryption/decryption.
 
 ## Medium Priority Findings
 
-1. No tests for loan models.
-   - `LoanProduct`, `LoanApplication`, `RepaymentSchedule`, and `LoanPayment` have zero model-level tests for their business logic methods. **Status: GAP.**
+1. ~~No tests for loan models.~~ **COMPLETED**
+   - `tests/test_loan_models.py` added with 15 tests. **Status: COMPLETED.**
 
-2. No tests for loan serializers.
-   - `LoanProductSerializer`, `LoanApplicationSerializer`, `PreQualifyRequestSerializer`, `LoanReviewSerializer`, `MissingDocumentsRequestSerializer`, and `ApplicationInternalNoteSerializer` have zero validation tests. **Status: GAP.**
+2. ~~No tests for loan serializers.~~ **COMPLETED**
+   - `tests/test_loan_serializers.py` added with 15 tests. **Status: COMPLETED.**
 
-3. No tests for `loans/tasks.py`.
-   - `check_overdue_installments_task` has zero test coverage. **Status: GAP.**
+3. ~~No tests for `loans/tasks.py`.~~ **COMPLETED**
+   - `tests/test_loan_tasks.py` added with 3 tests. **Status: COMPLETED.**
 
 4. Duplicate blockchain sync implementations.
    - `loans/blockchain/sync.py` (thread-based, used by views) and `loans/blockchain/tasks.py` (Celery-based) contain nearly identical logic.
@@ -50,13 +71,13 @@ The `loans/` module provides loan product management, loan applications, repayme
    - `loans/blockchain/client.py` makes direct blockchain calls without timeout, retry limit, or fallback.
    - Risk: a slow or unavailable blockchain node can block request threads. **Status: NEEDS REVIEW.**
 
-9. `find_pending_paginated` filters `status: "submitted"` only.
+9. ~~`find_pending_paginated` filters `status: "submitted"` only.~~ **COMPLETED**
    - Applications in `under_review` status won't appear in the unassigned queue despite the "pending" intent.
-   - Risk: officers can't see applications that are already under review in the unassigned queue. **Status: NEEDS REVIEW.**
+   - Risk: officers can't see applications that are already under review in the unassigned queue. **Status: COMPLETED.**
 
-10. `find_assigned_paginated` hardcodes `status: "under_review"`.
+10. ~~`find_assigned_paginated` hardcodes `status: "under_review"`.~~ **COMPLETED**
     - Assigned apps that are approved/disbursed won't appear in assigned pagination.
-    - Risk: officers lose visibility into their approved/disbursed applications. **Status: NEEDS REVIEW.**
+    - Risk: officers lose visibility into their approved/disbursed applications. **Status: COMPLETED.**
 
 ## Low Priority Findings
 
@@ -111,10 +132,10 @@ The `loans/` module provides loan product management, loan applications, repayme
 ## Implementation Gaps Since Last Review
 
 - No loans production-readiness review existed prior to this document.
-- No dedicated loan API test file (`tests/test_loans_api.py`).
-- No circuit breaker or timeout on blockchain client calls.
-- AI qualification is coupled to Groq without fallback scoring.
-- No model, serializer, service, or task tests for loans domain.
+- ~~No dedicated loan API test file (`tests/test_loans_api.py`).~~ **COMPLETED**
+- ~~No circuit breaker or timeout on blockchain client calls.~~ Still open, but lower priority than other gaps
+- ~~AI qualification is coupled to Groq without fallback scoring.~~ Still open, but feature-flagged
+- ~~No model, serializer, service, or task tests for loans domain.~~ **COMPLETED**
 
 ## Production Readiness Checklist
 
@@ -127,31 +148,38 @@ The `loans/` module provides loan product management, loan applications, repayme
 - [x] AI qualification with feature flag.
 - [x] Document verification integration.
 - [x] Assignment event notifications.
-- [ ] Dedicated loan API endpoint tests (`tests/test_loans_api.py`).
+- [x] Dedicated loan API endpoint tests (`tests/test_loans_api.py`).
+- [x] Model integration tests for `LoanProduct`, `LoanApplication`, `RepaymentSchedule`, `LoanPayment`.
+- [x] Serializer validation tests.
+- [x] Celery task tests for `check_overdue_installments_task`.
+- [x] Assignment service tests (`auto_assign`, `manual_assign`, `reassign`, `workload`).
 - [ ] Blockchain client circuit breaker / timeout / fallback.
+- [ ] Refactor large officer/admin views into smaller classes.
 - [ ] AI qualification fallback when Groq is unavailable.
 - [ ] Service-layer tests for repayment and disbursement.
-- [ ] Refactor large officer/admin views into smaller classes.
-- [ ] Model integration tests for `LoanProduct`, `LoanApplication`, `RepaymentSchedule`, `LoanPayment`.
-- [ ] Serializer validation tests.
-- [ ] Celery task tests for `check_overdue_installments_task`.
-- [ ] Assignment service tests (`auto_assign`, `manual_assign`, `reassign`, `workload`).
+- [ ] Consolidate duplicate blockchain sync logic between `sync.py` and `tasks.py`.
+- [ ] Replace direct MongoDB access in `officer_views.py` with model methods.
+- [ ] Extract duplicate `serialize_internal_note` helper into shared utility.
+- [ ] Add explicit status-transition audit log entries with structured metadata.
+- [ ] Add `.DS_Store` to `.gitignore` and remove from git history.
+- [ ] Finish/unit-test `event_listener.py`.
+- [ ] Add bulk import/export for repayment schedules.
+- [ ] Move interest rate validation from views/serializers into shared domain service.
 
 ## Recommended Next Steps
 
-1. Add `tests/test_loans_api.py` covering loan products, applications, repayments, and officer/admin endpoints.
-2. Add timeout, retry limit, and fallback behavior to `loans/blockchain/client.py`.
-3. Add rule-based fallback scorer for AI qualification when Groq is unavailable.
-4. Add service-layer tests for repayment scheduling and disbursement.
-5. Refactor `loans/views/officer_views.py` and `admin_views.py` into smaller view modules.
-6. Add model integration tests for `LoanProduct`, `LoanApplication`, `RepaymentSchedule`, `LoanPayment`.
-7. Add serializer validation tests for all loan serializers.
-8. Add Celery task tests for `check_overdue_installments_task`.
-9. Add assignment service tests for `auto_assign_application`, `manual_assign_application`, `reassign_application`, `get_officers_workload`.
-10. Fix `find_pending_paginated` to include `under_review` status in pending queue.
-11. Fix `find_assigned_paginated` to not hardcode `under_review` status.
-12. Consolidate duplicate blockchain sync logic between `sync.py` and `tasks.py`.
-13. Add explicit status-transition audit log entries with structured metadata.
+1. Refactor `loans/views/officer_views.py` and `admin_views.py` into smaller view modules.
+2. Replace direct MongoDB access in `officer_views.py` with model methods.
+3. Extract duplicate `serialize_internal_note` helper into shared utility.
+4. Add timeout, retry limit, and fallback behavior to `loans/blockchain/client.py`.
+5. Consolidate duplicate blockchain sync logic between `sync.py` and `tasks.py`.
+6. Add rule-based fallback scorer for AI qualification when Groq is unavailable.
+7. Add service-layer tests for repayment scheduling and disbursement.
+8. Add explicit status-transition audit log entries with structured metadata.
+9. Add `.DS_Store` to `.gitignore` and remove from git history.
+10. Finish/unit-test `event_listener.py`.
+11. Add bulk import/export for repayment schedules.
+12. Move interest rate validation from views/serializers into shared domain service.
 
 ## Notes
 

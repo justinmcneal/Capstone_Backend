@@ -71,3 +71,9 @@ class ProfileRateThrottle(UserRateThrottle):
     """User-based throttling for profile endpoints."""
 
     rate = "500/hour"
+
+
+class DocumentUploadRateThrottle(UserRateThrottle):
+    """User-based throttling for document upload endpoints."""
+
+    rate = "100/hour"

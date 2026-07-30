@@ -4,6 +4,8 @@ LoanPayment Model - Records customer payments.
 
 from django.conf import settings
 
+from config.field_encryption import decrypt_fields, encrypt_fields
+
 from loans.utils.time import utcnow
 
 
@@ -20,6 +22,7 @@ class LoanPayment:
     """
 
     collection_name = "loan_payments"
+    encrypted_fields = ("notes", "reference")
 
     def __init__(self, **kwargs):
         self._id = kwargs.get("_id")
@@ -67,13 +70,13 @@ class LoanPayment:
         }
         if self._id:
             data["_id"] = self._id
-        return data
+        return encrypt_fields(data, self.encrypted_fields)
 
     @classmethod
     def from_dict(cls, data):
         if not data:
             return None
-        return cls(**data)
+        return cls(**decrypt_fields(data, cls.encrypted_fields))
 
     def save(self):
         db = get_db()

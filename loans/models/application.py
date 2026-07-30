@@ -397,9 +397,9 @@ class LoanApplication:
         db = get_db()
         collection = db[cls.collection_name]
 
-        # Base query: only truly unassigned applications
+        # Base query: only truly unassigned applications pending review
         query = {
-            "status": "submitted",
+            "status": {"$in": ["submitted", "under_review"]},
             "$or": [
                 {"assigned_officer": None},
                 {"assigned_officer": {"$exists": False}},
@@ -479,10 +479,9 @@ class LoanApplication:
         db = get_db()
         collection = db[cls.collection_name]
 
-        # Base query for assigned applications (only under_review)
+        # Base query for assigned applications
         query = {
             "assigned_officer": {"$nin": [None, "", False]},
-            "status": "under_review",
         }
 
         # Filter by officer if provided
