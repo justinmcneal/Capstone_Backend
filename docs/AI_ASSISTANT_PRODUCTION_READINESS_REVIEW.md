@@ -94,11 +94,6 @@ The `ai_assistant` module provides a Groq/Ollama-backed chatbot with function ca
 - [x] Create MongoDB indexes for `ai_interactions` collection on startup/bootstrap.
 - [x] Add request correlation/tracing IDs for LLM call debugging.
 
-## Recommended Next Steps
-
-1. Add automated tests for `AIInteraction` model methods.  
-   - Current tests exercise views/services; direct model tests for `find_by_customer_paginated`, `find_by_conversation`, and `delete_by_customer` would close the remaining coverage gap.
-
 ## Future Roadmap
 
 1. **Proactive Assistance**
