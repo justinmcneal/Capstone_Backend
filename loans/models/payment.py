@@ -107,6 +107,23 @@ class LoanPayment:
         return [cls.from_dict(doc) for doc in docs]
 
     @classmethod
+    def find(cls, query, sort=None, limit=None):
+        db = get_db()
+        collection = db[cls.collection_name]
+        cursor = collection.find(query)
+        if sort:
+            cursor = cursor.sort(sort)
+        if limit:
+            cursor = cursor.limit(limit)
+        return [cls.from_dict(doc) for doc in cursor]
+
+    @classmethod
+    def count(cls, query):
+        db = get_db()
+        collection = db[cls.collection_name]
+        return collection.count_documents(query)
+
+    @classmethod
     def get_total_paid(cls, loan_id):
         """Get total amount paid for a loan"""
         payments = cls.find_by_loan(loan_id)

@@ -57,11 +57,12 @@ The `loans/` module provides loan product management, loan applications, repayme
    - Risk: maintenance burden and drift between two implementations. **Status: NEEDS REVIEW.**
 
 5. Inconsistent MongoDB access patterns.
-   - `LoanApplication.find_*` class methods are used in most places, but `officer_views.py` directly accesses `settings.MONGODB["loan_applications"]` in several places.
-   - Risk: query logic divergence and harder maintenance. **Status: NEEDS REVIEW.**
+   - ~~`LoanApplication.find_*` class methods are used in most places, but `officer_views.py` directly accesses `settings.MONGODB["loan_applications"]` in several places.~~ **COMPLETED**
+   - `officer_views.py` now uses model methods exclusively: `LoanApplication.find()`, `LoanApplication.find_by_officer()`, `LoanApplication.count()`, `LoanPayment.find()`, `LoanPayment.count()`. **Status: COMPLETED.**
 
 6. Duplicate helper functions across views.
-   - `serialize_internal_note` is defined in both `admin_views.py` and `officer_views.py`. **Status: NEEDS REVIEW.**
+   - ~~`serialize_internal_note` is defined in both `admin_views.py` and `officer_views.py`.~~ **COMPLETED**
+   - Extracted into `loans/utils/serialization.py`. **Status: COMPLETED.**
 
 7. Large view files.
    - `officer_views.py` is 2,836 lines. `admin_views.py` is 853 lines. `customer_views.py` is 1,823 lines.
@@ -158,8 +159,8 @@ The `loans/` module provides loan product management, loan applications, repayme
 - [ ] AI qualification fallback when Groq is unavailable.
 - [ ] Service-layer tests for repayment and disbursement.
 - [ ] Consolidate duplicate blockchain sync logic between `sync.py` and `tasks.py`.
-- [ ] Replace direct MongoDB access in `officer_views.py` with model methods.
-- [ ] Extract duplicate `serialize_internal_note` helper into shared utility.
+- [x] Replace direct MongoDB access in `officer_views.py` with model methods.
+- [x] Extract duplicate `serialize_internal_note` helper into shared utility.
 - [ ] Add explicit status-transition audit log entries with structured metadata.
 - [ ] Add `.DS_Store` to `.gitignore` and remove from git history.
 - [ ] Finish/unit-test `event_listener.py`.
@@ -169,17 +170,15 @@ The `loans/` module provides loan product management, loan applications, repayme
 ## Recommended Next Steps
 
 1. Refactor `loans/views/officer_views.py` and `admin_views.py` into smaller view modules.
-2. Replace direct MongoDB access in `officer_views.py` with model methods.
-3. Extract duplicate `serialize_internal_note` helper into shared utility.
-4. Add timeout, retry limit, and fallback behavior to `loans/blockchain/client.py`.
-5. Consolidate duplicate blockchain sync logic between `sync.py` and `tasks.py`.
-6. Add rule-based fallback scorer for AI qualification when Groq is unavailable.
-7. Add service-layer tests for repayment scheduling and disbursement.
-8. Add explicit status-transition audit log entries with structured metadata.
-9. Add `.DS_Store` to `.gitignore` and remove from git history.
-10. Finish/unit-test `event_listener.py`.
-11. Add bulk import/export for repayment schedules.
-12. Move interest rate validation from views/serializers into shared domain service.
+2. Add timeout, retry limit, and fallback behavior to `loans/blockchain/client.py`.
+3. Consolidate duplicate blockchain sync logic between `sync.py` and `tasks.py`.
+4. Add rule-based fallback scorer for AI qualification when Groq is unavailable.
+5. Add service-layer tests for repayment scheduling and disbursement.
+6. Add explicit status-transition audit log entries with structured metadata.
+7. Add `.DS_Store` to `.gitignore` and remove from git history.
+8. Finish/unit-test `event_listener.py`.
+9. Add bulk import/export for repayment schedules.
+10. Move interest rate validation from views/serializers into shared domain service.
 
 ## Notes
 

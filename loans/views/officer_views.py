@@ -2,7 +2,6 @@ from rest_framework.views import APIView
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
 from bson import ObjectId
-from django.conf import settings
 
 from accounts.authentication import CustomJWTAuthentication
 from accounts.utils.access_control import AccessControlMixin
@@ -16,27 +15,11 @@ from loans.serializers import (
 )
 from analytics.models import AuditLog
 from loans.utils.time import utcnow
+from loans.utils.serialization import serialize_internal_note
 from datetime import datetime
 import logging
 
 logger = logging.getLogger("loans")
-
-
-def serialize_internal_note(note):
-    """Normalize a stored note entry for API responses."""
-    if not note:
-        return None
-
-    created_at = note.get("created_at")
-    if hasattr(created_at, "isoformat"):
-        created_at = created_at.isoformat()
-
-    return {
-        "content": note.get("content", ""),
-        "author_id": note.get("author_id"),
-        "author_role": note.get("author_role"),
-        "created_at": created_at,
-    }
 
 
 def internal_note_summary(app):
@@ -337,8 +320,6 @@ class OfficerApplicationListView(LoanOfficerRequiredMixin, APIView):
                 product_ids = [p.id for p in products if p]
 
         # Get applications from database
-        db = settings.MONGODB
-        collection = db["loan_applications"]
 
         # Build final query with customer and product search
         final_query = query.copy()
@@ -374,18 +355,16 @@ class OfficerApplicationListView(LoanOfficerRequiredMixin, APIView):
         sort_direction = 1 if sort_order == "asc" else -1
 
         # Get total count for pagination
-        total_count = collection.count_documents(final_query if final_query else query)
+        total_count = LoanApplication.count(final_query if final_query else query)
 
         # Get paginated results
         skip = (page - 1) * page_size
-        cursor = (
-            collection.find(final_query if final_query else query)
-            .sort(sort_field, sort_direction)
-            .skip(skip)
-            .limit(page_size)
+        applications = LoanApplication.find(
+            final_query if final_query else query,
+            sort=[(sort_field, sort_direction)],
+            skip=skip,
+            limit=page_size,
         )
-
-        applications = [LoanApplication.from_dict(doc) for doc in cursor]
 
         # Build response with product names and customer names
         apps_data = []
@@ -2239,12 +2218,8 @@ class RecentPaymentsView(LoanOfficerRequiredMixin, APIView):
         query = {}
         if getattr(user, "role", "") == "loan_officer":
             officer_id = self._actor_id(user)
-            assigned_loan_ids = [
-                str(application["_id"])
-                for application in settings.MONGODB["loan_applications"].find(
-                    {"assigned_officer": officer_id}, {"_id": 1}
-                )
-            ]
+            assigned_apps = LoanApplication.find_by_officer(officer_id)
+            assigned_loan_ids = [app.id for app in assigned_apps]
             if not assigned_loan_ids:
                 return success_response(
                     data={"payments": []},
@@ -2255,11 +2230,8 @@ class RecentPaymentsView(LoanOfficerRequiredMixin, APIView):
         from accounts.models import Customer
         from loans.models import LoanPayment
 
-        payment_documents = (
-            settings.MONGODB["loan_payments"]
-            .find(query)
-            .sort("recorded_at", -1)
-            .limit(limit)
+        payment_documents = LoanPayment.find(
+            query, sort=[("recorded_at", -1)], limit=limit
         )
         customer_cache = {}
         payments_data = []
@@ -2426,20 +2398,15 @@ class PaymentSearchView(LoanOfficerRequiredMixin, APIView):
                     return _empty_payment_result()
                 allowed_loan_ids = [loan_id]
             else:
-                app_collection = settings.MONGODB["loan_applications"]
-                disbursed_ids = app_collection.distinct("_id", {"status": "disbursed"})
-                allowed_loan_ids = [str(app_id) for app_id in disbursed_ids]
+                disbursed_apps = LoanApplication.find({"status": "disbursed"})
+                allowed_loan_ids = [app.id for app in disbursed_apps]
                 if not allowed_loan_ids:
                     return _empty_payment_result()
 
         # ABAC scope for loan officers: only payments for assigned applications.
         if user_role == "loan_officer":
-            app_collection = settings.MONGODB["loan_applications"]
             officer_assigned_ids = [
-                str(doc["_id"])
-                for doc in app_collection.find(
-                    {"assigned_officer": user_id}, {"_id": 1}
-                )
+                app.id for app in LoanApplication.find_by_officer(user_id)
             ]
             if allowed_loan_ids is None:
                 allowed_loan_ids = officer_assigned_ids
@@ -2569,8 +2536,7 @@ class PaymentSearchView(LoanOfficerRequiredMixin, APIView):
             search_regex = re.compile(f".*{re.escape(search_query)}.*", re.IGNORECASE)
 
         # Get payments from database
-        db = settings.MONGODB
-        collection = db["loan_payments"]
+        from loans.models import LoanPayment
 
         # Build final query with search
         if search_query:
@@ -2635,8 +2601,7 @@ class PaymentSearchView(LoanOfficerRequiredMixin, APIView):
 
         # Get filtered + paginated results
         if payment_status:
-            all_cursor = collection.find(final_query).sort(sort_field, sort_direction)
-            all_payments = [LoanPayment.from_dict(doc) for doc in all_cursor]
+            all_payments = LoanPayment.find(final_query, sort=[(sort_field, sort_direction)])
 
             status_filtered = []
             for payment in all_payments:
@@ -2650,15 +2615,14 @@ class PaymentSearchView(LoanOfficerRequiredMixin, APIView):
             skip = (page - 1) * page_size
             payments = status_filtered[skip : skip + page_size]
         else:
-            total_count = collection.count_documents(final_query)
+            total_count = LoanPayment.count(final_query)
             skip = (page - 1) * page_size
-            cursor = (
-                collection.find(final_query)
-                .sort(sort_field, sort_direction)
-                .skip(skip)
-                .limit(page_size)
+            payments = LoanPayment.find(
+                final_query,
+                sort=[(sort_field, sort_direction)],
+                limit=page_size,
+                skip=skip,
             )
-            payments = [LoanPayment.from_dict(doc) for doc in cursor]
 
         # Build response with customer names
         payments_data = []
