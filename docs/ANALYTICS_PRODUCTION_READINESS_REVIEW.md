@@ -15,9 +15,10 @@ The `analytics/` module provides read-only dashboards and audit-log APIs for adm
  2. `init_db.py` bootstraps analytics indexes.  
     - `analytics/models/audit_log.py` defines `AuditLog.create_indexes()` and `init_db.py` imports and invokes it. **Status: DONE.**
 
- 3. Admin audit logs still paginate in Python after loading up to 10,000 records.  
-    - `analytics/views/admin_dashboard.py` calls `AuditLog.find_with_filters(..., limit=10000)` and then paginates in memory.  
-    - Risk: bounded memory/performance impact for very large audit collections. **Status: ACCEPTED RISK.**
+ 3. Admin audit logs paginate at the database level.  
+    - `analytics/models/audit_log.py` now exposes `find_with_filters(skip, limit)` plus `count_with_filters()`.  
+    - `analytics/views/admin_dashboard.py` passes `skip=(page-1)*page_size` and `limit=page_size`, then uses `count_with_filters` for the total.  
+    - Risk: bounded memory/performance impact for very large audit collections. **Status: DONE.**
 
 ## Medium Priority Findings
 
@@ -57,10 +58,6 @@ No remaining implementation gaps.
  - [x] Add automated tests for dashboard and audit-log endpoints.
  - [x] Refactor duplicate audit-log search/filter logic.
  - [x] Review and consolidate analytics documentation.
-
- ## Recommended Next Steps
-
- No remaining open items.
 
 ## Notes
 
