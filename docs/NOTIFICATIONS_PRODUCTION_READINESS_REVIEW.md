@@ -9,31 +9,30 @@ The `notifications/` module provides an in-app notification inbox, role-scoped a
 
 ## High Priority Findings
 
- 1. `notifications/services/email_tasks.py` called a non-existent `EmailSender` method.  
-    - `send_email_task()` previously invoked `sender._do_send(...)` at line 52, but `EmailSender` only exposes `send()`.  
-    - Fixed: replaced with `sender.send(...)`. **Status: DONE.**
-
- 2. `EmailSender` did not support the `use_celery` parameter expected by tests.  
-    - `tests/test_notifications_use_celery.py` was rewritten to exercise the actual Celery task path using `send_email_task()` instead of constructing `EmailSender(use_celery=True)`.  
+ 1. Dedicated inbox API test file added.
+    - `tests/test_notifications_api.py` covers the 7 inbox endpoints with authenticated requests, role enforcement, filters, pagination edge cases, and failure modes.
     - **Status: DONE.**
 
- 3. `Notification` and `DeviceToken` indexes are bootstrapped in `init_db.py`.  
-    - `init_db.py` imports both models and invokes `create_indexes()` on startup.  
-    - Status: **DONE.**
+ 2. Documentation has been consolidated into a single canonical guide.
+    - `docs/NOTIFICATIONS_TESTING_GUIDE.md` covers inbox API, WebSocket, FCM, assignment events, email templates, metrics, and smoke tests.
+    - `docs/NOTIFICATIONS_IMPLEMENTATION_AND_TESTING_GUIDE.md` and `docs/NOTIFICATIONS_METRICS.md` have been merged and removed.
+    - **Status: DONE.**
+
+ 3. WebSocket consumer scope is narrow.
+    - `NotificationConsumer` handles `ping` and `mark_read` only.
+    - Risk: clients cannot mark-all-read, delete, or fetch unread count over WebSocket; they must fall back to REST.
+    - **Status: NEEDS REVIEW.** (low priority; REST fallback is acceptable for now)
 
 ## Medium Priority Findings
 
- 1. No dedicated inbox API test file.  
-    - Existing tests cover views in aggregate, mark-read, email sender, WebSocket, assignment events, isolation, and timestamps, but there is no `tests/test_notifications_api.py` focused on the 7 inbox endpoints with role enforcement, filters, pagination edge cases, and failure modes.  
-    - Risk: regressions in list pagination, ownership scoping, delete semantics, and device-token registration won’t be caught automatically. **Status: GAP.**
+ 1. WebSocket consumer scope is narrow.
+    - `NotificationConsumer` handles `ping` and `mark_read` only.
+    - Risk: clients cannot mark-all-read, delete, or fetch unread count over WebSocket; they must fall back to REST.
+    - **Status: NEEDS REVIEW.** (low priority; REST fallback is acceptable for now)
 
- 2. Documentation has been consolidated into a single canonical guide.  
-    - `docs/NOTIFICATIONS_TESTING_GUIDE.md` now covers inbox API, WebSocket, FCM, assignment events, email templates, metrics, and smoke tests.  
-    - `docs/NOTIFICATIONS_IMPLEMENTATION_AND_TESTING_GUIDE.md` and `docs/NOTIFICATIONS_METRICS.md` have been merged and removed. **Status: DONE.**
+## Low Priority Findings
 
- 3. WebSocket consumer scope is narrow.  
-    - `NotificationConsumer` handles `ping` and `mark_read` only.  
-    - Risk: clients cannot mark-all-read, delete, or fetch unread count over WebSocket; they must fall back to REST. **Status: NEEDS REVIEW.**
+No remaining low-priority findings.
 
 ## Low Priority Findings
 
@@ -65,10 +64,13 @@ No remaining low-priority findings.
 
 ## Implementation Gaps Since Last Review
 
-- No notifications production-readiness review exists.
-- `Notification` and `DeviceToken` indexes are not bootstrapped in `init_db.py`.
-- `NOTIFICATIONS_TESTING_GUIDE.md` missing delete/register-token endpoints.
-- Celery task expectations updated to match current `EmailSender` API.
+- No notifications production-readiness review existed prior to this document.
+- `tests/test_notifications_api.py` was added with dedicated inbox endpoint tests.
+- Documentation consolidated into `docs/NOTIFICATIONS_TESTING_GUIDE.md`.
+- `NOTIFICATIONS_IMPLEMENTATION_AND_TESTING_GUIDE.md` and `NOTIFICATIONS_METRICS.md` merged and removed.
+- Celery task fixed to call existing `EmailSender.send()`.
+- Celery tests rewritten to match actual `EmailSender` API.
+- `Notification` and `DeviceToken` indexes bootstrapped in `init_db.py`.
 
 ## Production Readiness Checklist
 
@@ -84,13 +86,8 @@ No remaining low-priority findings.
  - [x] Update Celery tests to match actual `EmailSender` API.
  - [x] Add `Notification` and `DeviceToken` index bootstrap to `init_db.py`.
  - [x] Add dedicated inbox API tests (`tests/test_notifications_api.py`).
- - [ ] Consolidate duplicate notification docs into `NOTIFICATIONS_TESTING_GUIDE.md`.
- - [ ] Document `DELETE`, `clear-all`, and `register-token` endpoints in testing guide.
-
- ## Recommended Next Steps
-
- 1. Consolidate `NOTIFICATIONS_TESTING_GUIDE.md` and `NOTIFICATIONS_IMPLEMENTATION_AND_TESTING_GUIDE.md` into one canonical guide.
- 2. Document `DELETE`, `clear-all`, and `register-token` endpoints in testing guide.
+ - [x] Consolidate duplicate notification docs into `NOTIFICATIONS_TESTING_GUIDE.md`.
+ - [x] Document `DELETE`, `clear-all`, and `register-token` endpoints in testing guide.
 
 ## Notes
 
