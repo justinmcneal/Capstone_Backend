@@ -101,10 +101,6 @@ The following items were added or improved after the 2026-02-20 review:
 - [x] Make 2FA temp tokens one-time-use.
 - [x] Add automated tests for `accounts` auth/security flows.
 
-## Recommended Next Steps
-
-1. Resolve remaining `ruff check accounts` warnings to reach zero lint issues.
-
 ## Notes
 
 - This review is code-level only (no live environment penetration testing).
