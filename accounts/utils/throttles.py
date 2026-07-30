@@ -65,3 +65,9 @@ class PreQualifyRateThrottle(UserRateThrottle):
     """User-based throttling for pre-qualification endpoint."""
 
     rate = "500/hour"
+
+
+class ProfileRateThrottle(UserRateThrottle):
+    """User-based throttling for profile endpoints."""
+
+    rate = "500/hour"
