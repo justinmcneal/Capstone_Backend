@@ -11,6 +11,7 @@ from accounts.utils.validation_utils import sanitize_text
 from accounts.views.admin_views import AdminRequiredMixin
 from loans.models import LoanProduct, LoanApplication
 from loans.serializers import LoanProductSerializer
+from loans.utils.serialization import serialize_internal_note
 import logging
 
 logger = logging.getLogger("loans")
@@ -20,22 +21,6 @@ def invalidate_loan_products_cache():
     """Invalidate all loan products related caches when products are modified."""
     cache.delete("ai_tool_loan_products")
     logger.debug("Loan products cache invalidated")
-
-
-def serialize_internal_note(note):
-    if not note:
-        return None
-
-    created_at = note.get("created_at")
-    if hasattr(created_at, "isoformat"):
-        created_at = created_at.isoformat()
-
-    return {
-        "content": note.get("content", ""),
-        "author_id": note.get("author_id"),
-        "author_role": note.get("author_role"),
-        "created_at": created_at,
-    }
 
 
 class AdminProductListView(AdminRequiredMixin, APIView):
