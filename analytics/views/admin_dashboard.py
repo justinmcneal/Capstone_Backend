@@ -199,14 +199,24 @@ class AuditLogsView(AdminRequiredMixin, APIView):
             user_type=user_type or None,
             date_from=(date_filters or {}).get("$gte"),
             date_to=(date_filters or {}).get("$lte"),
-            limit=10000,
+            skip=(page - 1) * page_size,
+            limit=page_size,
+        )
+
+        total = AuditLog.count_with_filters(
+            action=action_filter or None,
+            action_group=action_group or None,
+            user_id=user_id or None,
+            user_type=user_type or None,
+            date_from=(date_filters or {}).get("$gte"),
+            date_to=(date_filters or {}).get("$lte"),
         )
 
         search = sanitize_text(request.query_params.get("search", ""))
         if search:
             logs = default_log_search(logs, search)
 
-        response_data = build_paginated_response(logs, page, page_size)
+        response_data = build_paginated_response(list(logs), total, page, page_size)
         return success_response(
             data=response_data,
             message="Audit logs retrieved",
