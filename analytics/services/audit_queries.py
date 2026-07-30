@@ -153,14 +153,10 @@ def serialize_log_entry(log: AuditLog):
     }
 
 
-def build_paginated_response(logs, page: int, page_size: int):
+def build_paginated_response(logs, total, page: int, page_size: int):
     """Build the standard paginated audit log response payload."""
-    total = len(logs)
-    start_idx = (page - 1) * page_size
-    end_idx = start_idx + page_size
-    paginated_logs = logs[start_idx:end_idx]
     return {
-        "logs": [serialize_log_entry(log) for log in paginated_logs],
+        "logs": [serialize_log_entry(log) for log in logs],
         "total": total,
         "page": page,
         "page_size": page_size,

@@ -163,24 +163,61 @@ class AuditLog:
         user_type=None,
         date_from=None,
         date_to=None,
+        skip=0,
         limit=100,
     ):
-        """
-        Find audit logs with optional filters.
-        """
+        query = cls._build_filter_query(action, action_group, user_id, user_type, date_from, date_to)
+        db = get_db()
+        collection = db[cls.collection_name]
+        cursor = collection.find(query)
+        cursor = cursor.sort([("timestamp", -1)])
+        if skip:
+            cursor = cursor.skip(skip)
+        cursor = cursor.limit(limit)
+        return [cls.from_dict(doc) for doc in cursor]
+
+    @classmethod
+    def count_with_filters(
+        cls,
+        action=None,
+        action_group=None,
+        user_id=None,
+        user_type=None,
+        date_from=None,
+        date_to=None,
+    ):
+        query = cls._build_filter_query(action, action_group, user_id, user_type, date_from, date_to)
+        db = get_db()
+        collection = db[cls.collection_name]
+        return collection.count_documents(query)
+
+    @classmethod
+    def count_with_filters(
+        cls,
+        action=None,
+        action_group=None,
+        user_id=None,
+        user_type=None,
+        date_from=None,
+        date_to=None,
+    ):
+        query = cls._build_filter_query(action, action_group, user_id, user_type, date_from, date_to)
+        db = get_db()
+        collection = db[cls.collection_name]
+        return collection.count_documents(query)
+
+    @classmethod
+    def _build_filter_query(cls, action, action_group, user_id, user_type, date_from, date_to):
         query = {}
 
-        # Action filter
         if action:
             query["action"] = action
 
-        # Action-group filter (Login/Create/Update/Delete)
         if action_group:
             group = str(action_group).strip().lower()
             if group in ACTION_GROUPS:
                 query["action"] = {"$in": ACTION_GROUPS[group]}
             elif group == "delete":
-                # Most delete/deactivate events are captured as admin_action + descriptive text.
                 query["$and"] = [
                     {"action": "admin_action"},
                     {
@@ -191,36 +228,29 @@ class AuditLog:
                     },
                 ]
 
-        # User filter
         if user_id:
             query["user_id"] = str(user_id).strip()
 
-        # Role filter
         if user_type:
             query["user_type"] = str(user_type).strip()
 
-        # Date range filter
         if date_from or date_to:
             query["timestamp"] = {}
 
             if date_from:
                 try:
-                    # Parse YYYY-MM-DD format to start of day
                     date_from_obj = datetime.strptime(date_from, "%Y-%m-%d").replace(
                         tzinfo=timezone.utc
                     )
                     query["timestamp"]["$gte"] = date_from_obj
                 except ValueError:
-                    # If parsing fails, ignore the filter
                     pass
 
             if date_to:
                 try:
-                    # Parse YYYY-MM-DD format to end of day
                     date_to_obj = datetime.strptime(date_to, "%Y-%m-%d").replace(
                         tzinfo=timezone.utc
                     )
-                    # Add 23:59:59 to include the entire day
                     date_to_obj = date_to_obj.replace(
                         hour=23,
                         minute=59,
@@ -229,10 +259,9 @@ class AuditLog:
                     )
                     query["timestamp"]["$lte"] = date_to_obj
                 except ValueError:
-                    # If parsing fails, ignore the filter
                     pass
 
-        return cls.find(query, sort=[("timestamp", -1)], limit=limit)
+        return query
 
     @classmethod
     def count_by_action(cls, action, start_date=None, end_date=None):
