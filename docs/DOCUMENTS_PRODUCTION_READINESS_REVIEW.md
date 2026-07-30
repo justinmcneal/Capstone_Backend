@@ -28,13 +28,15 @@ The `documents/` module handles customer document uploads, loan officer/admin ve
    - It replaces the older split `DOCUMENTS_API_TESTING_GUIDE.md` and `DOCUMENTS_AND_CNN_GUIDE.md`.  
    - Status: **DONE.**
 
-2. Document list loads all matching documents into memory before pagination.  
-   - `DocumentListView.get()` fetches a full list, then paginates in Python.  
-   - Risk: unbounded memory growth with large document collections. **Status: RISK.**
+ 2. Document list loads all matching documents into memory before pagination.  
+    - `DocumentListView.get()` fetches a full list, then paginates in Python.  
+    - Risk: unbounded memory growth with large document collections. **Status: ACCEPTED RISK.**  
+    - Rationale: operator-facing document collections are typically small; bounded by role-scoped listing filters.
 
-3. Reviewer notification is dispatched from a module-level thread in the upload path.  
-   - `notify_reviewers_document_pending_async()` starts a daemon thread directly.  
-   - Risk: harder lifecycle control and observability vs a task queue. **Status: NEEDS REVIEW.**
+ 3. Reviewer notification dispatch is now task-queue-based.  
+    - Replaced raw daemon-thread dispatch with `documents/tasks.py::notify_reviewers_document_pending_task`.  
+    - Synchronous fallback still supported via `DOCUMENT_UPLOAD_NOTIFY_ASYNC=False`.  
+    - **Status: DONE.**
 
 ## Current Strengths
 
@@ -75,10 +77,6 @@ No remaining implementation gaps.
 - [x] Add automated tests for document API endpoints.
 - [x] Fix failing document upload tests.
 - [x] Align documentation with actual code-owned endpoints.
-
-## Recommended Next Steps
-
-Consider replacing direct thread dispatch in upload path with a task-queue-based notifier for better observability and retry behavior.
 
 ## Notes
 
