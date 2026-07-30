@@ -6,8 +6,8 @@ from .profile_serializers import (
 )
 
 __all__ = [
-    "CustomerProfileSerializer",
-    "CustomerProfileResponseSerializer",
-    "BusinessProfileSerializer",
     "AlternativeDataSerializer",
+    "BusinessProfileSerializer",
+    "CustomerProfileResponseSerializer",
+    "CustomerProfileSerializer",
 ]

@@ -1,7 +1,9 @@
-from rest_framework import serializers
-from profiles.models import BUSINESS_TYPES, EDUCATION_LEVELS, INCOME_RANGES
-from accounts.serializers.base_serializers import InputSanitizationMixin
 import re
+
+from rest_framework import serializers
+
+from accounts.serializers.base_serializers import InputSanitizationMixin
+from profiles.models import BUSINESS_TYPES, EDUCATION_LEVELS, INCOME_RANGES
 
 # Regex that matches valid Philippine location names:
 # - Must start with a letter
@@ -182,6 +184,12 @@ class BusinessProfileSerializer(InputSanitizationMixin, serializers.Serializer):
         allow_null=True,
         min_value=1,
         help_text="Business age in months (canonical unit). Minimum 1 month.",
+    )
+    years_in_operation = serializers.FloatField(
+        required=False,
+        allow_null=True,
+        min_value=0,
+        help_text="Legacy alias for business age in years. Converted to months.",
     )
     is_registered = serializers.BooleanField(required=False)
     registration_type = serializers.ChoiceField(

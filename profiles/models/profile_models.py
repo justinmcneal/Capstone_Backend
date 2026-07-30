@@ -7,10 +7,16 @@ Collections:
 - alternative_data: Alternative credit scoring data
 """
 
-from datetime import datetime, date, time, timezone
+import logging
+from datetime import date, datetime, time, timezone
+
 from bson import ObjectId
+from bson.errors import InvalidId
 from django.conf import settings
+
 from config.field_encryption import decrypt_fields, encrypt_fields
+
+logger = logging.getLogger("profiles")
 
 
 def get_db():
@@ -32,8 +38,8 @@ def _customer_id_candidates(customer_id):
         candidates.append(customer_id_str)
         try:
             candidates.insert(0, ObjectId(customer_id_str))
-        except Exception:
-            pass
+        except InvalidId:
+            logger.debug("Invalid ObjectId candidate: %s", customer_id_str)
 
     deduped = []
     seen = set()
@@ -312,11 +318,9 @@ class BusinessProfile:
             self.business_age_months = _age_months
         elif _years_op is not None:
             try:
-                # Accept numeric values (int/float) and convert years -> months
                 years = float(_years_op)
-                self.business_age_months = int(round(years * 12))
-            except Exception:
-                # If conversion fails, store the raw value to avoid data loss.
+                self.business_age_months = round(years * 12)
+            except (ValueError, TypeError):
                 self.business_age_months = _years_op
         else:
             self.business_age_months = None
@@ -329,6 +333,10 @@ class BusinessProfile:
         self.income_range = kwargs.get("income_range")  # From INCOME_RANGES
         self.estimated_monthly_expenses = kwargs.get("estimated_monthly_expenses")
         self.number_of_employees = kwargs.get("number_of_employees", 0)
+
+        # Profile Completion
+        self.profile_completed = kwargs.get("profile_completed", False)
+        self.completion_percentage = kwargs.get("completion_percentage", 0)
 
         # Timestamps
         self.created_at = kwargs.get("created_at", datetime.now(timezone.utc))
@@ -357,6 +365,8 @@ class BusinessProfile:
             "income_range": self.income_range,
             "estimated_monthly_expenses": self.estimated_monthly_expenses,
             "number_of_employees": self.number_of_employees,
+            "profile_completed": self.profile_completed,
+            "completion_percentage": self.completion_percentage,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
         }
@@ -375,6 +385,7 @@ class BusinessProfile:
         collection = db[self.collection_name]
 
         self.updated_at = datetime.now(timezone.utc)
+        self.calculate_completion()
         data = self.to_dict()
         data.pop("_id", None)
 
@@ -385,6 +396,14 @@ class BusinessProfile:
             self._id = result.inserted_id
 
         return self
+
+    def calculate_completion(self):
+        """Calculate business profile completion."""
+        required = [self.business_type, self.income_range]
+        filled = sum(1 for field in required if field)
+        self.completion_percentage = int((filled / len(required)) * 100)
+        self.profile_completed = self.completion_percentage == 100
+        return self.completion_percentage
 
     @classmethod
     def find_one(cls, query):
@@ -478,6 +497,10 @@ class AlternativeData:
         self.risk_category = kwargs.get("risk_category")  # low, medium, high
         self.score_calculated_at = kwargs.get("score_calculated_at")
 
+        # Profile Completion
+        self.profile_completed = kwargs.get("profile_completed", False)
+        self.completion_percentage = kwargs.get("completion_percentage", 0)
+
         # Timestamps
         self.created_at = kwargs.get("created_at", datetime.now(timezone.utc))
         self.updated_at = kwargs.get("updated_at", datetime.now(timezone.utc))
@@ -512,6 +535,8 @@ class AlternativeData:
             "risk_score": self.risk_score,
             "risk_category": self.risk_category,
             "score_calculated_at": self.score_calculated_at,
+            "profile_completed": self.profile_completed,
+            "completion_percentage": self.completion_percentage,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
         }
@@ -530,6 +555,7 @@ class AlternativeData:
         collection = db[self.collection_name]
 
         self.updated_at = datetime.now(timezone.utc)
+        self.calculate_completion()
         data = self.to_dict()
         data.pop("_id", None)
 
@@ -540,6 +566,14 @@ class AlternativeData:
             self._id = result.inserted_id
 
         return self
+
+    def calculate_completion(self):
+        """Calculate alternative data completion."""
+        required = [self.education_level, self.housing_status]
+        filled = sum(1 for field in required if field)
+        self.completion_percentage = int((filled / len(required)) * 100)
+        self.profile_completed = self.completion_percentage == 100
+        return self.completion_percentage
 
     @classmethod
     def find_one(cls, query):
