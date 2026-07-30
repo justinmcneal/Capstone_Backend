@@ -1,17 +1,17 @@
 from .profile_models import (
-    AlternativeData,
     BUSINESS_TYPES,
-    BusinessProfile,
-    CustomerProfile,
     EDUCATION_LEVELS,
     INCOME_RANGES,
+    AlternativeData,
+    BusinessProfile,
+    CustomerProfile,
 )
 
 __all__ = [
-    "CustomerProfile",
-    "BusinessProfile",
-    "AlternativeData",
     "BUSINESS_TYPES",
     "EDUCATION_LEVELS",
     "INCOME_RANGES",
+    "AlternativeData",
+    "BusinessProfile",
+    "CustomerProfile",
 ]

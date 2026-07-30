@@ -1,23 +1,30 @@
 # Profiles API Testing Guide
 
 ## Scope
+
 Profiles covers customer profile data used for loan readiness:
 - Personal profile
 - Business profile
 - Alternative credit data
 - Profile summary
 - Notification preferences
+- Risk score calculation
+- Officer read-only access
 
 ## Base URL and Auth
+
 - Base URL: `http://localhost:8000/api/profile`
 - Required headers:
 ```http
 Authorization: Bearer <customer_access_token>
 Content-Type: application/json
 ```
-- Access is customer-only.
+- Customer endpoints require customer role.
+- Officer endpoint (`/api/profile/officer/<customer_id>/`) requires loan officer or admin role.
 
 ## URL Reference
+
+### Customer Endpoints
 
 1. `GET /`
 - Auth: customer only
@@ -55,6 +62,10 @@ Content-Type: application/json
   - `emergency_contact_relationship`
   - `wallet_address`
 - Key response fields: `profile_completed`, `completion_percentage`
+- Validation:
+  - Mobile number must be Philippine format (+639 or 09)
+  - Wallet address must be valid Ethereum format (0x + 40 hex chars)
+  - Barangay/city/province must match location name regex
 
 3. `GET /business/`
 - Auth: customer only
@@ -79,6 +90,8 @@ Content-Type: application/json
   - `income_range`
   - `estimated_monthly_expenses`
   - `number_of_employees`
+  - `profile_completed`
+  - `completion_percentage`
 
 4. `PUT /business/`
 - Auth: customer only
@@ -92,7 +105,7 @@ Content-Type: application/json
   - `business_city`
   - `business_province`
   - `business_age_months` (canonical unit: months)
-  - `years_in_operation` (legacy alias accepted; when present it's used as months-equivalent)
+  - `years_in_operation` (legacy alias accepted; when present it's used as years and converted to months)
   
     Note: `years_in_operation` is accepted as a legacy field. The API treats it as years and converts it to `business_age_months` (months). Example: `years_in_operation: 2` → `business_age_months: 24`.
   - `is_registered`
@@ -133,6 +146,8 @@ Content-Type: application/json
   - `risk_score`
   - `risk_category`
   - `score_calculated_at`
+  - `profile_completed`
+  - `completion_percentage`
 
 6. `PUT /alternative-data/`
 - Auth: customer only
@@ -158,6 +173,7 @@ Content-Type: application/json
   - `is_coop_member`
   - `community_involvement`
 - Key response fields: success message only
+- Side effect: triggers async risk score calculation via Celery task `calculate_risk_score_task`
 
 7. `GET /summary/`
 - Auth: customer only
@@ -215,7 +231,17 @@ Content-Type: application/json
   - Unknown keys are rejected
   - Boolean-like values are parsed and validated
 
+### Officer Endpoints
+
+10. `GET /officer/<customer_id>/`
+- Auth: loan officer or admin only
+- Request fields: none
+- Returns same structure as `GET /summary/` for the specified customer
+- Read-only — no mutations allowed
+- Returns 400 for invalid customer ID format
+
 ## Smoke Test Sequence
+
 1. Log in as a customer and set the auth header.
 2. `GET /summary/` to capture initial completion.
 3. `PUT /` then `GET /` to confirm personal profile updates.
@@ -223,15 +249,67 @@ Content-Type: application/json
 5. `PUT /alternative-data/` then `GET /alternative-data/`.
 6. `GET /summary/` and verify `overall.profiles_complete` and `overall.ready_for_loan`.
 7. `GET /notifications/`, then `PUT /notifications/`, then `GET /notifications/` to confirm persistence.
+8. As officer/admin: `GET /officer/<customer_id>/` to verify read-only access.
 
 ## Common Error Cases
+
 1. `401 Unauthorized`
 - Missing or invalid auth token.
 
 2. `403 Forbidden`
-- Non-customer role accessing profile endpoints.
+- Non-customer role accessing customer endpoints.
+- Customer role accessing officer endpoint.
 
 3. `400 Bad Request`
 - Invalid choice values.
 - Invalid notification preference payload.
 - `business_type_other` missing when `business_type=other`.
+- Invalid customer ID format for officer endpoint.
+
+4. `404 Not Found`
+- Customer not found when updating notification preferences.
+
+## Rate Limiting
+
+- All profile endpoints are throttled at 500 requests/hour per authenticated user via `ProfileRateThrottle`.
+
+## Background Tasks
+
+- `calculate_risk_score_task` is triggered asynchronously after `PUT /alternative-data/`.
+- It calculates a weighted multi-factor risk score (0-100) and persists `risk_score`, `risk_category`, and `score_calculated_at` to the `alternative_data` collection.
+- If Celery broker is unavailable, the task is skipped gracefully without failing the request.
+
+## Backfill: `business_age_months` from `years_in_operation`
+
+### Purpose
+Some older records use the legacy `years_in_operation` field (years). The canonical field is `business_age_months` (months). This document describes the safe migration and backfill process.
+
+### Dry run
+Preview what would be changed without modifying the DB:
+
+```bash
+./venv/bin/python scripts/backfill_business_age_months.py --dry
+```
+
+This prints each document `_id` and the months value that would be written.
+
+### Full run
+After verifying the dry run and taking backups, run the real backfill:
+
+```bash
+# Ensure your environment is set (DJANGO_SETTINGS_MODULE, virtualenv activated)
+./venv/bin/python scripts/backfill_business_age_months.py
+```
+
+### Precautions
+- Always take a database backup before running the full backfill.
+- Run the script during a low-traffic maintenance window.
+- Test the script in a staging environment first.
+- Consider putting the code change behind a feature flag if your deployment supports it.
+
+### Rollback
+This backfill is additive (writes `business_age_months`). To roll back, restore from backup. If you only want to remove the written field for a small set of documents, use a manual `update_many` or targeted `update_one` undo.
+
+### Next steps
+- After backfill, monitor logs and alerts for anomalies.
+- Deprecate `years_in_operation` in the API clients over a scheduled window (e.g., 2-4 weeks) and then remove alias support in a follow-up release.

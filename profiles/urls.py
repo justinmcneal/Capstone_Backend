@@ -1,10 +1,12 @@
 from django.urls import path
+
 from profiles.views import (
-    CustomerProfileView,
-    BusinessProfileView,
     AlternativeDataView,
-    ProfileSummaryView,
+    BusinessProfileView,
+    CustomerProfileView,
     NotificationPreferencesView,
+    OfficerProfileView,
+    ProfileSummaryView,
 )
 
 app_name = "profiles"
@@ -20,4 +22,6 @@ urlpatterns = [
     path("summary/", ProfileSummaryView.as_view(), name="profile-summary"),
     # Notification Preferences
     path("notifications/", NotificationPreferencesView.as_view(), name="notifications"),
+    # Officer Read-Only Profile
+    path("officer/<str:customer_id>/", OfficerProfileView.as_view(), name="officer-profile"),
 ]
