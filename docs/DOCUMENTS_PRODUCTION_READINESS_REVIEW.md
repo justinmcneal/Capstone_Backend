@@ -77,6 +77,7 @@ No remaining implementation gaps.
 - [x] Add automated tests for document API endpoints.
 - [x] Fix failing document upload tests.
 - [x] Align documentation with actual code-owned endpoints.
+- [x] Rate limiting on document upload endpoints (`DocumentUploadRateThrottle`, 100/hour per user).
 
 ## Notes
 

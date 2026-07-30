@@ -90,28 +90,28 @@ class TestEthPriceService:
         _cache.update(rate=None, source=None, fetched_at=0)
 
     @patch("loans.blockchain.services.eth_price_service.requests.get")
-    def test_fetches_rate_from_cryptocompare(self, mock_get):
+    def test_fetches_rate_from_coingecko(self, mock_get):
         mock_get.return_value = MagicMock(
             status_code=200,
-            json=lambda: {"PHP": 130000.0},
+            json=lambda: {"ethereum": {"php": 130000.0}},
         )
         mock_get.return_value.raise_for_status = MagicMock()
 
         result = get_eth_php_rate()
         assert result["rate"] == 130000.0
-        assert result["source"] == "cryptocompare"
+        assert result["source"] == "coingecko"
         assert result["fetched_at"] > 0
 
         mock_get.assert_called_once()
         args, kwargs = mock_get.call_args
-        assert "cryptocompare" in args[0]
-        assert kwargs["params"] == {"fsym": "ETH", "tsyms": "PHP"}
+        assert "coingecko.com" in args[0]
+        assert kwargs["params"] == {"ids": "ethereum", "vs_currencies": "php"}
 
     @patch("loans.blockchain.services.eth_price_service.requests.get")
     def test_cache_prevents_duplicate_calls(self, mock_get):
         mock_get.return_value = MagicMock(
             status_code=200,
-            json=lambda: {"PHP": 130000.0},
+            json=lambda: {"ethereum": {"php": 130000.0}},
         )
         mock_get.return_value.raise_for_status = MagicMock()
 
@@ -129,14 +129,14 @@ class TestEthPriceService:
     def test_php_to_eth_conversion(self, mock_get):
         mock_get.return_value = MagicMock(
             status_code=200,
-            json=lambda: {"PHP": 100000.0},
+            json=lambda: {"ethereum": {"php": 100000.0}},
         )
         mock_get.return_value.raise_for_status = MagicMock()
 
         result = php_to_eth(50000)
         assert result["eth_amount"] == pytest.approx(0.5, rel=1e-6)
         assert result["rate"] == 100000.0
-        assert result["source"] == "cryptocompare"
+        assert result["source"] == "coingecko"
 
     def test_cache_ttl_is_five_minutes(self):
         assert _CACHE_TTL == 300
@@ -145,13 +145,13 @@ class TestEthPriceService:
     def test_no_api_key_in_request(self, mock_get):
         mock_get.return_value = MagicMock(
             status_code=200,
-            json=lambda: {"PHP": 130000.0},
+            json=lambda: {"ethereum": {"php": 130000.0}},
         )
         mock_get.return_value.raise_for_status = MagicMock()
 
         get_eth_php_rate()
         _, kwargs = mock_get.call_args
-        # Only fsym and tsyms params — no api_key or authorization
+        # Only ids and vs_currencies params — no api_key or authorization
         assert "api_key" not in kwargs.get("params", {})
         assert "apikey" not in kwargs.get("params", {})
         assert "Authorization" not in kwargs.get("headers", {})

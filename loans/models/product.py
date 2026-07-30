@@ -5,6 +5,8 @@ LoanProduct Model - Admin managed loan products catalog.
 from bson import ObjectId
 from django.conf import settings
 
+from config.field_encryption import decrypt_fields, encrypt_fields
+
 from loans.utils.time import utcnow
 
 
@@ -18,6 +20,7 @@ class LoanProduct:
     """
 
     collection_name = "loan_products"
+    encrypted_fields = ("description", "target_description")
 
     def __init__(self, **kwargs):
         self._id = kwargs.get("_id")
@@ -75,13 +78,13 @@ class LoanProduct:
         }
         if self._id:
             data["_id"] = self._id
-        return data
+        return encrypt_fields(data, self.encrypted_fields)
 
     @classmethod
     def from_dict(cls, data):
         if not data:
             return None
-        return cls(**data)
+        return cls(**decrypt_fields(data, cls.encrypted_fields))
 
     def save(self):
         db = get_db()

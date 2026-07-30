@@ -5,6 +5,8 @@ RepaymentSchedule Model - Loan repayment installments.
 from dateutil.relativedelta import relativedelta
 from django.conf import settings
 
+from config.field_encryption import decrypt_fields, encrypt_fields
+
 from loans.utils.time import utcnow
 
 
@@ -21,6 +23,7 @@ class RepaymentSchedule:
     """
 
     collection_name = "repayment_schedules"
+    encrypted_fields = ("installments",)
 
     def __init__(self, **kwargs):
         self._id = kwargs.get("_id")
@@ -66,13 +69,13 @@ class RepaymentSchedule:
         }
         if self._id:
             data["_id"] = self._id
-        return data
+        return encrypt_fields(data, self.encrypted_fields)
 
     @classmethod
     def from_dict(cls, data):
         if not data:
             return None
-        return cls(**data)
+        return cls(**decrypt_fields(data, cls.encrypted_fields))
 
     def save(self):
         db = get_db()
