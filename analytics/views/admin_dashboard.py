@@ -19,7 +19,6 @@ from accounts.views.admin_views import AdminRequiredMixin
 from analytics.models import AuditLog
 from analytics.services.audit_queries import (
     build_paginated_response,
-    default_log_search,
     parse_date_range,
     parse_pagination,
 )
@@ -190,6 +189,7 @@ class AuditLogsView(AdminRequiredMixin, APIView):
         action_group = sanitize_text(request.query_params.get("action_group", ""))
         user_id = sanitize_text(request.query_params.get("user_id", ""))
         user_type = sanitize_text(request.query_params.get("user_type", ""))
+        search = sanitize_text(request.query_params.get("search", ""))
         date_filters = parse_date_range(request)
 
         logs = AuditLog.find_with_filters(
@@ -199,6 +199,7 @@ class AuditLogsView(AdminRequiredMixin, APIView):
             user_type=user_type or None,
             date_from=(date_filters or {}).get("$gte"),
             date_to=(date_filters or {}).get("$lte"),
+            search=search or None,
             skip=(page - 1) * page_size,
             limit=page_size,
         )
@@ -210,11 +211,8 @@ class AuditLogsView(AdminRequiredMixin, APIView):
             user_type=user_type or None,
             date_from=(date_filters or {}).get("$gte"),
             date_to=(date_filters or {}).get("$lte"),
+            search=search or None,
         )
-
-        search = sanitize_text(request.query_params.get("search", ""))
-        if search:
-            logs = default_log_search(logs, search)
 
         response_data = build_paginated_response(list(logs), total, page, page_size)
         return success_response(
