@@ -1,1 +1,1 @@
-from .interaction import AIInteraction
+from .interaction import AIInteraction as AIInteraction
