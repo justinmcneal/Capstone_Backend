@@ -119,6 +119,7 @@ def sync_application_to_chain(self, loan_id):
     except Exception as exc:
         logger.error("sync_application_to_chain FAILED: loan=%s error=%s", loan_id, exc)
         if self.request.retries >= self.max_retries:
+            tx_record.mark_failed(str(exc))
             logger.error(
                 "sync_application_to_chain FAILED permanently: loan=%s error=%s",
                 loan_id,
@@ -187,6 +188,7 @@ def sync_approval_to_chain(self, loan_id):
     except Exception as exc:
         logger.error("sync_approval_to_chain FAILED: loan=%s error=%s", loan_id, exc)
         if self.request.retries >= self.max_retries:
+            tx_record.mark_failed(str(exc))
             logger.error(
                 "sync_approval_to_chain FAILED permanently: loan=%s error=%s",
                 loan_id,
@@ -271,6 +273,7 @@ def sync_disbursement_to_chain(self, loan_id):
             "sync_disbursement_to_chain FAILED: loan=%s error=%s", loan_id, exc
         )
         if self.request.retries >= self.max_retries:
+            tx_record.mark_failed(str(exc))
             logger.error(
                 "sync_disbursement_to_chain FAILED permanently: loan=%s error=%s",
                 loan_id,
@@ -297,8 +300,8 @@ def sync_schedule_to_chain(self, loan_id):
         return {"skipped": True, "reason": "blockchain disabled"}
 
     try:
-        _sync_schedule_common(loan_id)
-        return {"status": "confirmed"}
+        result = _sync_schedule_common(loan_id)
+        return result
     except Exception as exc:
         logger.error("sync_schedule_to_chain FAILED: loan=%s error=%s", loan_id, exc)
         if self.request.retries >= self.max_retries:
@@ -328,8 +331,8 @@ def sync_payment_to_chain(self, loan_id, payment_id):
         return {"skipped": True, "reason": "blockchain disabled"}
 
     try:
-        _sync_payment_common(loan_id, payment_id)
-        return {"status": "confirmed"}
+        result = _sync_payment_common(loan_id, payment_id)
+        return result
     except Exception as exc:
         logger.error(
             "sync_payment_to_chain FAILED: loan=%s payment=%s error=%s",

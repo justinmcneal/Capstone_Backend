@@ -722,10 +722,12 @@ def rule_based_qualification(
 
     # Check documents
     doc_types = set()
+    doc_status = {}
     for doc in docs:
         canonical_type = canonicalize_document_type(doc.document_type)
         if canonical_type:
             doc_types.add(canonical_type)
+            doc_status[canonical_type] = getattr(doc, "status", "pending")
     required_doc_types = resolve_required_document_types(product, scope)
     if require_approved_documents:
         for req_doc in required_doc_types:
@@ -733,6 +735,9 @@ def rule_based_qualification(
             if req_doc not in doc_types:
                 score -= 5
                 missing.append(f"Missing: {label}")
+            elif doc_status.get(req_doc) != "approved":
+                score -= 3
+                missing.append(f"Document not approved: {label}")
             else:
                 score += 5
 

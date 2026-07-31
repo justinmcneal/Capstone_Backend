@@ -141,3 +141,19 @@ class BlockchainTransaction:
             {"loan_id": loan_id, "action": action, "status": cls.STATUS_CONFIRMED}
         )
         return cls(**doc) if doc else None
+
+    @classmethod
+    def find_confirmed(cls, loan_id, action, **details):
+        """Find a confirmed transaction by loan + action + nested details."""
+        collection = _get_collection()
+        if collection is None:
+            return None
+        query = {
+            "loan_id": loan_id,
+            "action": action,
+            "status": cls.STATUS_CONFIRMED,
+        }
+        for key, value in details.items():
+            query[f"details.{key}"] = value
+        doc = collection.find_one(query)
+        return cls(**doc) if doc else None

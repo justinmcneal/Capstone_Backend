@@ -139,7 +139,7 @@ def sync_consent(
 
 
 def _ensure_application_synced_for_approval(loan_id):
-    from loans.blockchain.client import call_view
+    from loans.blockchain.client import call_view, get_contract
     from web3 import Web3
 
     loan_id_bytes = Web3.keccak(text=str(loan_id))
@@ -490,8 +490,10 @@ def _sync_disbursement_impl(loan_id, include_schedule=True):
 
 def _execute_eth_disbursement(loan_id, app):
     """Send actual ETH to the customer's wallet for wallet-based disbursements."""
+    from bson import ObjectId
     from loans.blockchain.client import send_eth_transfer, get_web3
     from loans.blockchain.services.eth_price_service import php_to_eth
+    from loans.models.application import LoanApplication
     from profiles.models.profile_models import CustomerProfile
 
     profile = CustomerProfile.find_by_customer(app.customer_id)
@@ -511,24 +513,15 @@ def _execute_eth_disbursement(loan_id, app):
 
     eth_result = send_eth_transfer(profile.wallet_address, amount_wei)
 
-    # Store ETH transfer details in the loan document
-    db = getattr(settings, "MONGODB", None)
-    if db is not None:
-        from bson import ObjectId as BsonObjectId
-
-        db["loan_applications"].update_one(
-            {"_id": BsonObjectId(loan_id)},
-            {
-                "$set": {
-                    "eth_disbursement_tx_hash": eth_result["tx_hash"],
-                    "eth_disbursement_amount": str(conversion["eth_amount"]),
-                    "eth_disbursement_amount_wei": str(amount_wei),
-                    "eth_disbursement_rate": conversion["rate"],
-                    "eth_disbursement_rate_source": conversion["source"],
-                    "eth_disbursement_recipient": profile.wallet_address,
-                }
-            },
-        )
+    LoanApplication.update_eth_disbursement(
+        ObjectId(loan_id),
+        tx_hash=eth_result["tx_hash"],
+        amount=str(conversion["eth_amount"]),
+        amount_wei=str(amount_wei),
+        rate=conversion["rate"],
+        rate_source=conversion["source"],
+        recipient=profile.wallet_address,
+    )
 
     logger.info(
         "ETH disbursement OK: loan=%s amount=%.6f ETH to=%s tx=%s",
@@ -563,13 +556,8 @@ def _sync_overdue_impl(loan_id, installment_number):
             block_number=result["block_number"],
         )
 
-        settings.MONGODB["repayment_schedules"].update_one(
-            {"loan_id": loan_id},
-            {
-                "$set": {
-                    f"blockchain_overdue_tx.{installment_number}": result["tx_hash"]
-                }
-            },
+        RepaymentSchedule.update_blockchain_overdue_tx(
+            loan_id, installment_number, result["tx_hash"]
         )
 
         logger.info(
@@ -587,19 +575,13 @@ def _sync_penalty_impl(loan_id, installment_number, amount, action, reason=""):
     from loans.blockchain.services.audit_service import log_penalty_onchain
 
     action_key = "penalty_waived" if action == "waive" else "penalty_applied"
-    db = getattr(settings, "MONGODB", None)
-    existing = None
-    if db is not None:
-        existing = db["blockchain_transactions"].find_one(
-            {
-                "loan_id": loan_id,
-                "action": action_key,
-                "status": BlockchainTransaction.STATUS_CONFIRMED,
-                "details.installment_number": installment_number,
-                "details.amount": amount,
-                "details.reason": reason,
-            }
-        )
+    existing = BlockchainTransaction.find_confirmed(
+        loan_id=loan_id,
+        action=action_key,
+        installment_number=installment_number,
+        amount=amount,
+        reason=reason,
+    )
     if existing:
         logger.info(
             "sync_penalty skipped existing confirmed tx: loan=%s installment=%s action=%s",
@@ -637,15 +619,8 @@ def _sync_penalty_impl(loan_id, installment_number, amount, action, reason=""):
             block_number=result["block_number"],
         )
 
-        settings.MONGODB["repayment_schedules"].update_one(
-            {"loan_id": loan_id},
-            {
-                "$set": {
-                    f"blockchain_penalty_tx.{installment_number}.{action_key}": result[
-                        "tx_hash"
-                    ]
-                }
-            },
+        RepaymentSchedule.update_blockchain_penalty_tx(
+            loan_id, installment_number, action, result["tx_hash"]
         )
 
         logger.info(

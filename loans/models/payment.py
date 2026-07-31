@@ -158,3 +158,32 @@ class LoanPayment:
         collection.create_index("schedule_id")
         collection.create_index("customer_id")
         collection.create_index("recorded_at")
+
+    @classmethod
+    def set_sync_result(cls, payment_id, tx_hash):
+        db = get_db()
+        collection = db[cls.collection_name]
+        collection.update_one(
+            {"_id": payment_id},
+            {
+                "$set": {
+                    "blockchain_tx_hash": tx_hash,
+                    "blockchain_sync_status": "synced",
+                    "blockchain_synced_at": utcnow(),
+                }
+            },
+        )
+
+    @classmethod
+    def set_sync_failed(cls, payment_id, error):
+        db = get_db()
+        collection = db[cls.collection_name]
+        collection.update_one(
+            {"_id": payment_id},
+            {
+                "$set": {
+                    "blockchain_sync_status": "failed",
+                    "blockchain_sync_error": str(error)[:500],
+                }
+            },
+        )

@@ -342,7 +342,7 @@ class TestSyncSchedule:
     @patch("loans.models.application.LoanApplication.find_by_id")
     def test_impl_success(self, mock_find, mock_pending, mock_create_sched, blockchain_settings):
         from datetime import datetime, timezone
-        from loans.blockchain.sync import _sync_schedule_impl
+        from loans.blockchain.sync_common import sync_schedule
         from loans.models.repayment import RepaymentSchedule
 
         mock_app = MagicMock()
@@ -367,7 +367,7 @@ class TestSyncSchedule:
 
         mock_create_sched.return_value = {"tx_hash": "0xeee", "gas_used": 200000, "block_number": 5}
 
-        _sync_schedule_impl("loan123")
+        sync_schedule("loan123")
 
         mock_create_sched.assert_called_once()
         mock_tx.mark_confirmed.assert_called_once()
@@ -388,7 +388,7 @@ class TestSyncPayment:
     def test_impl_success(self, mock_pending, mock_record, blockchain_settings):
         from datetime import datetime, timezone
         from bson import ObjectId
-        from loans.blockchain.sync import _sync_payment_impl
+        from loans.blockchain.sync_common import sync_payment
 
         mock_tx = MagicMock()
         mock_pending.return_value = mock_tx
@@ -407,7 +407,7 @@ class TestSyncPayment:
 
         mock_record.return_value = {"tx_hash": "0xfff", "gas_used": 90000, "block_number": 6}
 
-        _sync_payment_impl("loan123", str(payment_id))
+        sync_payment("loan123", str(payment_id))
 
         mock_record.assert_called_once()
         mock_tx.mark_confirmed.assert_called_once()

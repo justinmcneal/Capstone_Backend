@@ -47,6 +47,8 @@ class RepaymentSchedule:
 
         # Blockchain sync tracking
         self.blockchain_schedule_tx = kwargs.get("blockchain_schedule_tx", "")
+        self.blockchain_overdue_tx = kwargs.get("blockchain_overdue_tx", {})
+        self.blockchain_penalty_tx = kwargs.get("blockchain_penalty_tx", {})
 
     @property
     def id(self):
@@ -66,6 +68,8 @@ class RepaymentSchedule:
             "start_date": self.start_date,
             "created_at": self.created_at,
             "blockchain_schedule_tx": self.blockchain_schedule_tx,
+            "blockchain_overdue_tx": self.blockchain_overdue_tx,
+            "blockchain_penalty_tx": self.blockchain_penalty_tx,
         }
         if self._id:
             data["_id"] = self._id
@@ -88,6 +92,23 @@ class RepaymentSchedule:
             result = collection.insert_one(data)
             self._id = result.inserted_id
         return self
+
+    def update_blockchain_schedule_tx(self, tx_hash):
+        """Update the blockchain schedule transaction hash."""
+        self.blockchain_schedule_tx = tx_hash
+        return self.save()
+
+    def update_blockchain_overdue_tx(self, installment_number, tx_hash):
+        """Record an overdue marking transaction hash."""
+        self.blockchain_overdue_tx = dict(self.blockchain_overdue_tx or {})
+        self.blockchain_overdue_tx[str(installment_number)] = tx_hash
+        return self.save()
+
+    def update_blockchain_penalty_tx(self, installment_number, action, tx_hash):
+        """Record a penalty apply/waive transaction hash."""
+        self.blockchain_penalty_tx = dict(self.blockchain_penalty_tx or {})
+        self.blockchain_penalty_tx[str(installment_number)][action] = tx_hash
+        return self.save()
 
     @classmethod
     def generate_for_loan(cls, loan_application, product):
@@ -243,6 +264,35 @@ class RepaymentSchedule:
         collection = db[cls.collection_name]
         collection.create_index("loan_id", unique=True)
         collection.create_index("customer_id")
+
+    @classmethod
+    def update_blockchain_schedule_tx(cls, schedule_id, tx_hash):
+        db = get_db()
+        collection = db[cls.collection_name]
+        collection.update_one(
+            {"_id": schedule_id},
+            {"$set": {"blockchain_schedule_tx": tx_hash}},
+        )
+
+    @classmethod
+    def update_blockchain_overdue_tx(cls, schedule_id, installment_number, tx_hash):
+        db = get_db()
+        collection = db[cls.collection_name]
+        field = f"blockchain_overdue_tx.{installment_number}"
+        collection.update_one(
+            {"_id": schedule_id},
+            {"$set": {field: tx_hash}},
+        )
+
+    @classmethod
+    def update_blockchain_penalty_tx(cls, schedule_id, installment_number, action, tx_hash):
+        db = get_db()
+        collection = db[cls.collection_name]
+        field = f"blockchain_penalty_tx.{installment_number}.{action}"
+        collection.update_one(
+            {"_id": schedule_id},
+            {"$set": {field: tx_hash}},
+        )
 
     def record_payment(self, installment_number, amount):
         """
