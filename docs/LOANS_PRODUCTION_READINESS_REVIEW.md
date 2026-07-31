@@ -15,18 +15,20 @@ The `loans/` module provides loan product management, loan applications, repayme
 
 2. Inconsistent MongoDB access patterns.
    - `LoanApplication.find_*` class methods are used in most places, but `officer_views.py` directly accesses `settings.MONGODB["loan_applications"]` in several places.
-   - Risk: query logic divergence and harder maintenance. **Status: NEEDS REVIEW.**
+   - Risk: query logic divergence and harder maintenance. **Status: COMPLETED for officer admin views. `customer_views.py` and blockchain `sync.py`/`tasks.py` still use direct collection access.**
 
 3. Duplicate helper functions across views.
-   - `serialize_internal_note` is defined in both `admin_views.py` and `officer_views.py`. **Status: NEEDS REVIEW.**
+   - ~~`serialize_internal_note` is defined in both `admin_views.py` and `officer_views.py`.~~ **COMPLETED**
+   - Extracted into `loans/utils/serialization.py`. Old view modules now import from there. **Status: COMPLETED.**
 
 4. Large view files.
-   - `officer_views.py` is 2,836 lines. `admin_views.py` is 853 lines. `customer_views.py` is 1,823 lines.
-   - Risk: maintenance burden and merge conflicts. **Status: NEEDS REVIEW.**
+   - ~~`officer_views.py` is 2,836 lines. `admin_views.py` is 853 lines.~~ **COMPLETED**
+   - Refactored into `loans/views/officer/` and `loans/views/admin/` packages with focused view modules. **Status: COMPLETED.**
+   - Note: `customer_views.py` is still 1,823 lines and has not been refactored.
 
 5. Blockchain client has no circuit breaker.
-   - `loans/blockchain/client.py` makes direct blockchain calls without timeout, retry limit, or fallback.
-   - Risk: a slow or unavailable blockchain node can block request threads. **Status: NEEDS REVIEW.**
+   - ~~`loans/blockchain/client.py` makes direct blockchain calls without timeout, retry limit, or fallback.~~ **COMPLETED**
+   - Implemented `_CircuitBreaker` + `_with_retry` in `loans/blockchain/client.py`. Applied to `get_web3()`, `call_view()`, `send_transaction()`, and `send_eth_transfer()`. **Status: COMPLETED.**
 
 ## Completed Remediation
 
@@ -59,18 +61,20 @@ The `loans/` module provides loan product management, loan applications, repayme
 5. Inconsistent MongoDB access patterns.
    - ~~`LoanApplication.find_*` class methods are used in most places, but `officer_views.py` directly accesses `settings.MONGODB["loan_applications"]` in several places.~~ **COMPLETED**
    - `officer_views.py` now uses model methods exclusively: `LoanApplication.find()`, `LoanApplication.find_by_officer()`, `LoanApplication.count()`, `LoanPayment.find()`, `LoanPayment.count()`. **Status: COMPLETED.**
+   - Note: `customer_views.py` still uses direct `settings.MONGODB["loan_payments"]` access (2 places), and `loans/blockchain/sync.py` + `loans/blockchain/tasks.py` directly manipulate `repayment_schedules` and `loan_payments` collections.
 
 6. Duplicate helper functions across views.
    - ~~`serialize_internal_note` is defined in both `admin_views.py` and `officer_views.py`.~~ **COMPLETED**
-   - Extracted into `loans/utils/serialization.py`. **Status: COMPLETED.**
+   - Extracted into `loans/utils/serialization.py`. Old view modules now import from there. **Status: COMPLETED.**
 
 7. Large view files.
-   - `officer_views.py` is 2,836 lines. `admin_views.py` is 853 lines. `customer_views.py` is 1,823 lines.
-   - Risk: maintenance burden and merge conflicts. **Status: NEEDS REVIEW.**
+   - ~~`officer_views.py` is 2,836 lines. `admin_views.py` is 853 lines.~~ **COMPLETED**
+   - Refactored into `loans/views/officer/` and `loans/views/admin/` packages with focused view modules. **Status: COMPLETED.**
+   - Note: `customer_views.py` is still 1,823 lines and has not been refactored.
 
 8. Blockchain client has no circuit breaker.
-   - `loans/blockchain/client.py` makes direct blockchain calls without timeout, retry limit, or fallback.
-   - Risk: a slow or unavailable blockchain node can block request threads. **Status: NEEDS REVIEW.**
+   - ~~`loans/blockchain/client.py` makes direct blockchain calls without timeout, retry limit, or fallback.~~ **COMPLETED**
+   - Implemented `_CircuitBreaker` + `_with_retry` in `loans/blockchain/client.py`. Applied to `get_web3()`, `call_view()`, `send_transaction()`, and `send_eth_transfer()`. **Status: COMPLETED.**
 
 9. ~~`find_pending_paginated` filters `status: "submitted"` only.~~ **COMPLETED**
    - Applications in `under_review` status won't appear in the unassigned queue despite the "pending" intent.
@@ -97,6 +101,7 @@ The `loans/` module provides loan product management, loan applications, repayme
    - Has no tests, and appears unfinished (no cleanup for `last_block` on startup, no reconnection logic).
 
 5. `.DS_Store` files committed in `loans/` and `loans/views/`.
+   - `find loans/ -name ".DS_Store"` currently returns: `loans/.DS_Store`, `loans/views/.DS_Store`. **Status: NEEDS ACTION.**
 
 ## Current Strengths
 
@@ -134,7 +139,7 @@ The `loans/` module provides loan product management, loan applications, repayme
 
 - No loans production-readiness review existed prior to this document.
 - ~~No dedicated loan API test file (`tests/test_loans_api.py`).~~ **COMPLETED**
-- ~~No circuit breaker or timeout on blockchain client calls.~~ Still open, but lower priority than other gaps
+- ~~No circuit breaker or timeout on blockchain client calls.~~ **COMPLETED**
 - ~~AI qualification is coupled to Groq without fallback scoring.~~ Still open, but feature-flagged
 - ~~No model, serializer, service, or task tests for loans domain.~~ **COMPLETED**
 
@@ -154,12 +159,12 @@ The `loans/` module provides loan product management, loan applications, repayme
 - [x] Serializer validation tests.
 - [x] Celery task tests for `check_overdue_installments_task`.
 - [x] Assignment service tests (`auto_assign`, `manual_assign`, `reassign`, `workload`).
-- [ ] Blockchain client circuit breaker / timeout / fallback.
-- [ ] Refactor large officer/admin views into smaller classes.
+- [x] Blockchain client circuit breaker / timeout / fallback.
+- [x] Refactor large officer/admin views into smaller classes.
 - [ ] AI qualification fallback when Groq is unavailable.
 - [ ] Service-layer tests for repayment and disbursement.
 - [ ] Consolidate duplicate blockchain sync logic between `sync.py` and `tasks.py`.
-- [x] Replace direct MongoDB access in `officer_views.py` with model methods.
+- [x] Replace direct MongoDB access in officer and admin views with model methods.
 - [x] Extract duplicate `serialize_internal_note` helper into shared utility.
 - [ ] Add explicit status-transition audit log entries with structured metadata.
 - [ ] Add `.DS_Store` to `.gitignore` and remove from git history.
@@ -169,16 +174,15 @@ The `loans/` module provides loan product management, loan applications, repayme
 
 ## Recommended Next Steps
 
-1. Refactor `loans/views/officer_views.py` and `admin_views.py` into smaller view modules.
-2. Add timeout, retry limit, and fallback behavior to `loans/blockchain/client.py`.
-3. Consolidate duplicate blockchain sync logic between `sync.py` and `tasks.py`.
-4. Add rule-based fallback scorer for AI qualification when Groq is unavailable.
-5. Add service-layer tests for repayment scheduling and disbursement.
-6. Add explicit status-transition audit log entries with structured metadata.
-7. Add `.DS_Store` to `.gitignore` and remove from git history.
-8. Finish/unit-test `event_listener.py`.
-9. Add bulk import/export for repayment schedules.
-10. Move interest rate validation from views/serializers into shared domain service.
+1. Consolidate duplicate blockchain sync logic between `sync.py` and `tasks.py`.
+2. Add rule-based fallback scorer for AI qualification when Groq is unavailable.
+3. Add service-layer tests for repayment scheduling and disbursement.
+4. Add explicit status-transition audit log entries with structured metadata.
+5. Add `.DS_Store` to `.gitignore` and remove from git history.
+6. Finish/unit-test `event_listener.py`.
+7. Add bulk import/export for repayment schedules.
+8. Move interest rate validation from views/serializers into shared domain service.
+9. Refactor `loans/views/customer_views.py` (1,823 lines) into smaller view modules.
 
 ## Notes
 

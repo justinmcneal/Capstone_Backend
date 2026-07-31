@@ -256,20 +256,20 @@ class TestOfficerDetailResponse:
     """Verify that officer views include wallet_address and ETH fields."""
 
     def test_officer_view_has_wallet_address_in_response(self):
-        """Structural check: officer_views.py references wallet_address."""
+        """Structural check: officer views reference wallet_address."""
         import inspect
-        from loans.views import officer_views
+        from loans.views.officer import applications
 
-        source = inspect.getsource(officer_views)
+        source = inspect.getsource(applications)
         assert "wallet_address" in source
         assert "personal.wallet_address" in source or "wallet_address': personal.wallet_address" in source
 
     def test_officer_view_has_eth_disbursement_fields(self):
-        """Structural check: officer_views.py returns ETH disbursement fields."""
+        """Structural check: officer views return ETH disbursement fields."""
         import inspect
-        from loans.views import officer_views
+        from loans.views.officer import disburse
 
-        source = inspect.getsource(officer_views)
+        source = inspect.getsource(disburse)
         assert "eth_disbursement_tx_hash" in source
         assert "eth_disbursement_amount" in source
         assert "eth_disbursement_rate" in source
