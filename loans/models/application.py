@@ -27,12 +27,13 @@ APPLICATION_STATUSES = [
 
 class LoanApplication:
     """
+    Loan Application Model.
     Customer loan application.
     """
 
     collection_name = "loan_applications"
     encrypted_fields = (
-        "purpose",
+        "internal_notes",
         "officer_notes",
         "rejection_reason",
         "missing_documents_reason",
@@ -172,6 +173,28 @@ class LoanApplication:
             self._id = result.inserted_id
         return self
 
+    def _log_status_transition(self, action, actor_id, actor_type, description, extra_details=None):
+        """Log a status transition with structured metadata."""
+        try:
+            from analytics.models.audit_log import AuditLog
+            AuditLog.log_action(
+                action=action,
+                user_id=str(actor_id) if actor_id else None,
+                user_type=actor_type or "system",
+                description=description,
+                resource_type="loan",
+                resource_id=self.id,
+                details={
+                    "loan_id": self.id,
+                    "customer_id": self.customer_id,
+                    "old_status": getattr(self, "_prev_status", None),
+                    "new_status": self.status,
+                    **(extra_details or {}),
+                },
+            )
+        except Exception as exc:
+            pass
+
     def submit(self):
         """Submit the application for review"""
         self.status = "submitted"
@@ -180,9 +203,17 @@ class LoanApplication:
 
     def assign_officer(self, officer_id):
         """Assign to a loan officer"""
+        self._prev_status = self.status
         self.assigned_officer = officer_id
         self.status = "under_review"
-        return self.save()
+        self.save()
+        self._log_status_transition(
+            action="loan_assigned",
+            actor_id=str(officer_id),
+            actor_type="loan_officer",
+            description=f"Loan application assigned to officer {officer_id}",
+        )
+        return self
 
     def approve(self, officer_id, approved_amount, notes=""):
         """Approve the application"""
@@ -300,12 +331,12 @@ class LoanApplication:
         """Check if application can be resubmitted"""
         return self.status == "rejected"
 
-    def resubmit(self):
+    def resubmit(self, actor_id=None):
         """Resubmit a rejected application"""
         if not self.can_resubmit():
             raise ValueError("Only rejected applications can be resubmitted")
 
-        # Reset to draft status
+        self._prev_status = self.status
         self.status = "draft"
         self.rejection_reason = None
         self.officer_notes = None
@@ -316,7 +347,14 @@ class LoanApplication:
         self.missing_documents_requested_by = None
         self.missing_documents_requested_at = None
         self.updated_at = utcnow()
-        return self.save()
+        self.save()
+        self._log_status_transition(
+            action="loan_resubmitted",
+            actor_id=actor_id or self.customer_id,
+            actor_type="customer",
+            description="Loan application resubmitted after rejection",
+        )
+        return self
 
     @classmethod
     def find_one(cls, query):

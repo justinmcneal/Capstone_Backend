@@ -1,14 +1,24 @@
 """
-Lightweight blockchain event listener skeleton.
+Lightweight blockchain event listener for AuditRegistry events.
 
-This module provides a simple, optional event listener that can be started
-from a management command or a long-running process to capture on-chain
-AuditRegistry events and mirror them to MongoDB. It is intentionally
-minimal and safe — it does not start automatically on import.
+Features:
+- Polls AuditRegistry contract for AuditLogged events
+- Persists last processed block to MongoDB for crash recovery
+- Reconnects to blockchain node with exponential backoff on failure
+- Graceful shutdown via threading Event
+- Deduplicates events by tx_hash + log_index
 
-Usage (manual):
-    from loans.blockchain.event_listener import start_audit_listener
-    start_audit_listener(poll_interval=5)
+Usage:
+    from loans.blockchain.event_listener import AuditEventListener
+
+    listener = AuditEventListener(poll_interval=5)
+    listener.start()
+    # ... later ...
+    listener.stop()
+
+Or as a daemon thread (auto-stops on process exit):
+    listener = AuditEventListener(poll_interval=5)
+    listener.start_daemon()
 
 """
 
@@ -21,75 +31,202 @@ from django.conf import settings
 logger = logging.getLogger("blockchain.event_listener")
 
 
-def _process_event(entry):
-    # Minimal processing: store event JSON in MongoDB `blockchain_events` collection
-    try:
+class AuditEventListener:
+    """
+    Polls the AuditRegistry contract for AuditLogged events and mirrors
+    them to MongoDB with persistent state and reconnection support.
+    """
+
+    LISTENER_STATE_COLLECTION = "listener_state"
+    EVENTS_COLLECTION = "blockchain_events"
+    MAX_BACKOFF_SECONDS = 60
+    BASE_BACKOFF_SECONDS = 2
+
+    def __init__(self, poll_interval=5, start_block=None):
+        self.poll_interval = poll_interval
+        self.start_block = start_block
+        self._stop_event = threading.Event()
+        self._thread = None
+        self._w3 = None
+        self._contract = None
+        self._backoff = self.BASE_BACKOFF_SECONDS
+        self._event_abi = None
+
+    def start(self):
+        """Start the listener in a background thread (non-daemon)."""
+        if self._thread and self._thread.is_alive():
+            raise RuntimeError("Listener is already running")
+        self._stop_event.clear()
+        self._thread = threading.Thread(target=self._run, daemon=False)
+        self._thread.start()
+        logger.info("Started audit listener (poll_interval=%s)", self.poll_interval)
+        return self._thread
+
+    def start_daemon(self):
+        """Start the listener as a daemon thread (auto-exits with process)."""
+        if self._thread and self._thread.is_alive():
+            raise RuntimeError("Listener is already running")
+        self._stop_event.clear()
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
+        logger.info("Started audit listener daemon (poll_interval=%s)", self.poll_interval)
+        return self._thread
+
+    def stop(self, timeout=None):
+        """Signal the listener to stop and wait for it to finish."""
+        self._stop_event.set()
+        if self._thread and self._thread.is_alive():
+            self._thread.join(timeout=timeout)
+            logger.info("Audit listener stopped")
+
+    def reset_last_block(self):
+        """Clear persisted last_block so the listener replays from start_block."""
         db = getattr(settings, "MONGODB", None)
         if db is None:
             return
-        db["blockchain_events"].insert_one(entry)
-    except Exception as exc:
-        logger.exception("Failed to persist blockchain event: %s", exc)
+        db[self.LISTENER_STATE_COLLECTION].delete_one({"key": "audit_listener_last_block"})
+        logger.info("Reset listener last_block state")
 
+    def _run(self):
+        """Main listener loop with reconnection and backoff."""
+        while not self._stop_event.is_set():
+            try:
+                self._ensure_connection()
+                self._poll_events()
+                self._backoff = self.BASE_BACKOFF_SECONDS
+            except Exception as exc:
+                logger.exception("Event listener loop failed: %s", exc)
+                self._backoff = min(self._backoff * 2, self.MAX_BACKOFF_SECONDS)
+                logger.info("Backing off for %s seconds", self._backoff)
+            self._stop_event.wait(self._backoff if not self._w3 else self.poll_interval)
 
-def _listen_loop(poll_interval=5):
-    """Poll AuditRegistry events and persist new ones."""
-    from loans.blockchain.client import get_web3, get_contract
+    def _ensure_connection(self):
+        """Connect to blockchain node and contract, reconnecting if needed."""
+        from loans.blockchain.client import get_web3, get_contract
 
-    w3 = get_web3()
-    contract = get_contract("auditRegistry")
+        if self._w3 is None or not self._w3.is_connected():
+            self._w3 = get_web3()
+            self._contract = get_contract("auditRegistry")
+            self._event_abi = None
+            logger.info("Connected to blockchain node")
 
-    last_block = w3.eth.block_number if w3 else None
+        if self._contract is None:
+            self._contract = get_contract("auditRegistry")
 
-    while True:
-        try:
-            if not w3:
-                time.sleep(poll_interval)
-                continue
-
-            current_block = w3.eth.block_number
-            # Fetch logs for AuditLogged event
-            event_abi = None
-            for abi in contract.abi:
+        if self._event_abi is None:
+            for abi in self._contract.abi:
                 if abi.get("name") == "AuditLogged" and abi.get("type") == "event":
-                    event_abi = abi
+                    self._event_abi = abi
                     break
+            if self._event_abi is None:
+                raise ValueError("AuditLogged event not found in contract ABI")
 
-            if event_abi is None:
-                time.sleep(poll_interval)
-                continue
+    def _poll_events(self):
+        """Fetch and process new AuditLogged events."""
+        current_block = self._w3.eth.block_number
+        last_block = self._get_last_block(current_block)
 
-            from web3._utils.events import construct_event_filter_params
-
-            params = construct_event_filter_params(
-                event_abi,
-                contract_address=contract.address,
-                fromBlock=last_block or 0,
-                toBlock=current_block,
+        if current_block < last_block:
+            logger.warning(
+                "Chain reorg detected: current=%d < last_processed=%d",
+                current_block,
+                last_block,
             )
-            logs = w3.eth.get_logs(params)
-            for log in logs:
-                try:
-                    decoded = contract.events.AuditLogged().processLog(log)
-                    entry = {
-                        "tx_hash": log["transactionHash"].hex(),
-                        "block_number": log["blockNumber"],
-                        "args": dict(decoded["args"]),
-                        "timestamp": int(time.time()),
-                    }
-                    _process_event(entry)
-                except Exception:
-                    logger.exception("Failed to decode/process log")
+            last_block = max(0, current_block - 10)
 
-            last_block = current_block + 1
+        if current_block == last_block:
+            return
+
+        try:
+            logs = self._contract.events.AuditLogged().get_logs(
+                from_block=last_block,
+                to_block=current_block,
+            )
+        except Exception as exc:
+            logger.warning("Failed to fetch logs: %s", exc)
+            return
+
+        for log in logs:
+            if self._stop_event.is_set():
+                break
+            self._process_log(log)
+
+        self._save_last_block(current_block + 1)
+
+    def _get_last_block(self, current_block):
+        """Load persisted last_block, falling back to start_block or current."""
+        db = getattr(settings, "MONGODB", None)
+        if db is None:
+            return self.start_block or current_block
+
+        doc = db[self.LISTENER_STATE_COLLECTION].find_one({"key": "audit_listener_last_block"})
+        if doc and "block_number" in doc:
+            return doc["block_number"]
+
+        if self.start_block is not None:
+            return self.start_block
+
+        return current_block
+
+    def _save_last_block(self, block_number):
+        """Persist last processed block to MongoDB."""
+        db = getattr(settings, "MONGODB", None)
+        if db is None:
+            return
+        db[self.LISTENER_STATE_COLLECTION].update_one(
+            {"key": "audit_listener_last_block"},
+            {"$set": {"block_number": block_number, "updated_at": int(time.time())}},
+            upsert=True,
+        )
+
+    def _process_log(self, log):
+        """Decode and persist a single AuditLogged event."""
+        try:
+            decoded = self._contract.events.AuditLogged().processLog(log)
+            tx_hash = log["transactionHash"].hex()
+            entry = {
+                "tx_hash": tx_hash,
+                "log_index": log.get("logIndex", 0),
+                "block_number": log["blockNumber"],
+                "args": {
+                    "entryId": decoded["args"].get("entryId", b"").hex()
+                    if hasattr(decoded["args"].get("entryId", b""), "hex")
+                    else str(decoded["args"].get("entryId", "")),
+                    "resourceId": decoded["args"].get("resourceId", b"").hex()
+                    if hasattr(decoded["args"].get("resourceId", b""), "hex")
+                    else str(decoded["args"].get("resourceId", "")),
+                    "action": decoded["args"].get("action"),
+                    "actor": decoded["args"].get("actor"),
+                    "timestamp": decoded["args"].get("timestamp"),
+                },
+                "timestamp": int(time.time()),
+            }
+            self._persist_event(entry)
         except Exception:
-            logger.exception("Event listener loop failed")
-        time.sleep(poll_interval)
+            logger.exception("Failed to decode/process log %s", log.get("transactionHash", "?"))
+
+    def _persist_event(self, entry):
+        """Persist event to MongoDB, skipping duplicates."""
+        db = getattr(settings, "MONGODB", None)
+        if db is None:
+            return
+        try:
+            db[self.EVENTS_COLLECTION].insert_one(entry)
+        except Exception as exc:
+            logger.exception("Failed to persist blockchain event: %s", exc)
 
 
-def start_audit_listener(poll_interval=5):
-    """Start the audit registry listener in a daemon thread."""
-    thread = threading.Thread(target=_listen_loop, args=(poll_interval,), daemon=True)
-    thread.start()
-    logger.info("Started audit listener thread (poll_interval=%s)", poll_interval)
-    return thread
+def start_audit_listener(poll_interval=5, start_block=None):
+    """
+    Start the audit registry listener as a daemon thread.
+
+    Args:
+        poll_interval: Seconds between blockchain polls
+        start_block: Optional block number to start from (default: current block)
+
+    Returns:
+        AuditEventListener instance
+    """
+    listener = AuditEventListener(poll_interval=poll_interval, start_block=start_block)
+    listener.start_daemon()
+    return listener

@@ -1252,7 +1252,7 @@ class ResubmitApplicationView(CustomerRoleRequiredMixin, APIView):
                 status_code=status.HTTP_400_BAD_REQUEST,
             )
 
-        app.resubmit()
+        app.resubmit(actor_id=customer_id)
 
         return success_response(
             data={

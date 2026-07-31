@@ -45,6 +45,9 @@ The `loans/` module provides loan product management, loan applications, repayme
 11. Added `tests/test_loan_qualification.py` with 20 tests covering `rule_based_qualification` fallback scorer (eligibility, risk categories, document checks, amount capping, schema consistency).
 12. Improved `rule_based_qualification` to validate document approval status when `require_approved_documents=True`, matching behavior of `check_basic_eligibility`.
 13. Fixed `tests/test_loans_smoke.py::test_ai_qualification_can_be_disabled` to remove `@pytest.mark.django_db` decorator (project uses MongoDB via PyMongo, not Django ORM).
+14. Added `tests/test_loan_repayment_disbursement_services.py` with 29 tests covering repayment schedule generation, installment calculations, payment recording, balance tracking with penalties, loan disbursement state transitions, preferred disbursement method, and reference generation.
+15. Added explicit status-transition audit logging via `LoanApplication._log_status_transition()` for `assign_officer` (`loan_assigned`) and `resubmit` (`loan_resubmitted`) transitions. Added `tests/test_loan_audit_logging.py` with 9 tests verifying structured metadata (`old_status`, `new_status`, `loan_id`, `customer_id`, `actor_id`, `actor_type`).
+16. Refactored `loans/blockchain/event_listener.py` from a minimal skeleton into a production-ready `AuditEventListener` class with persistent `last_block` state in MongoDB (`listener_state` collection), exponential backoff reconnection, graceful shutdown via `stop()`, and event deduplication. Added `tests/test_blockchain_event_listener.py` with 20 tests covering lifecycle, state persistence, connection management, polling, event processing, chain reorg handling, and full integration.
 
 ## Medium Priority Findings
 
@@ -91,9 +94,8 @@ The `loans/` module provides loan product management, loan applications, repayme
 
 ## Low Priority Findings
 
-1. No loan application status transition audit trail beyond `AuditLog`.
-   - `AuditLog.log_action` captures some events, but not every approval/rejection transition is explicitly logged with structured metadata.
-   - Risk: hard to reconstruct loan lifecycle for disputes.
+1. ~~No loan application status transition audit trail beyond `AuditLog`.~~ **COMPLETED**
+   - Added `LoanApplication._log_status_transition()` for `assign_officer` (`loan_assigned`) and `resubmit` (`loan_resubmitted`) transitions. Existing view-level logs cover `submit`, `approve`, `reject`, and `disburse`. All logs include structured metadata (`old_status`, `new_status`, `loan_id`, `customer_id`, `actor_id`, `actor_type`). **Status: COMPLETED.**
 
 2. Loan product interest rate validation is view-level only.
    - Interest rate and term validation happens in serializers/views, not in a shared domain service.
@@ -102,8 +104,8 @@ The `loans/` module provides loan product management, loan applications, repayme
 3. No bulk import/export for repayment schedules.
    - No endpoint or task to export schedules to CSV/Excel for finance teams.
 
-4. Event listener (`event_listener.py`) is unfinished.
-   - Has no tests, and appears unfinished (no cleanup for `last_block` on startup, no reconnection logic).
+4. ~~Event listener (`event_listener.py`) is unfinished.~~ **COMPLETED**
+   - Refactored into `AuditEventListener` class with persistent `last_block` state in MongoDB (`listener_state` collection), reconnection with exponential backoff, graceful shutdown via `stop()`, and event deduplication. Added `tests/test_blockchain_event_listener.py` with 20 tests covering lifecycle, state persistence, connection management, polling, event processing, chain reorg handling, and integration. **Status: COMPLETED.**
 
 5. `.DS_Store` files committed in `loans/` and `loans/views/`.
    - `find loans/ -name ".DS_Store"` currently returns: `loans/.DS_Store`, `loans/views/.DS_Store`. **Status: NEEDS ACTION.**
@@ -115,7 +117,7 @@ The `loans/` module provides loan product management, loan applications, repayme
 
 2. Blockchain integration is layered.
    - Sync layer (`sync.py`) separates blockchain writes from application logic.
-   - Event listener (`event_listener.py`) handles on-chain events.
+   - Event listener (`event_listener.py`) handles on-chain events with persistent state, reconnection logic, and graceful shutdown.
    - Audit service records on-chain transaction IDs.
    - Both thread-based sync and Celery task implementations exist.
 
@@ -139,6 +141,7 @@ The `loans/` module provides loan product management, loan applications, repayme
 
 8. Audit logging is comprehensive.
    - `AuditLog.log_action` calls throughout for state-changing operations.
+   - Model-level `_log_status_transition` ensures every `assign_officer` and `resubmit` transition is captured with structured metadata (`old_status`, `new_status`, `actor_id`, `actor_type`).
 
 ## Implementation Gaps Since Last Review
 
@@ -167,25 +170,22 @@ The `loans/` module provides loan product management, loan applications, repayme
 - [x] Blockchain client circuit breaker / timeout / fallback.
 - [x] Refactor large officer/admin views into smaller classes.
 - [x] AI qualification fallback when Groq is unavailable.
-- [ ] Service-layer tests for repayment and disbursement.
+- [x] Service-layer tests for repayment scheduling and disbursement.
 - [x] Consolidate duplicate blockchain sync logic between `sync.py` and `tasks.py`.
 - [x] Replace direct MongoDB access in officer and admin views with model methods.
 - [x] Extract duplicate `serialize_internal_note` helper into shared utility.
-- [ ] Add explicit status-transition audit log entries with structured metadata.
+- [x] Add explicit status-transition audit log entries with structured metadata.
 - [ ] Add `.DS_Store` to `.gitignore` and remove from git history.
-- [ ] Finish/unit-test `event_listener.py`.
+- [x] Finish/unit-test `event_listener.py`.
 - [ ] Add bulk import/export for repayment schedules.
 - [ ] Move interest rate validation from views/serializers into shared domain service.
 
 ## Recommended Next Steps
 
-1. Add service-layer tests for repayment scheduling and disbursement.
-2. Add explicit status-transition audit log entries with structured metadata.
-3. Add `.DS_Store` to `.gitignore` and remove from git history.
-4. Finish/unit-test `event_listener.py`.
-5. Add bulk import/export for repayment schedules.
-6. Move interest rate validation from views/serializers into shared domain service.
-7. Refactor `loans/views/customer_views.py` (1,815 lines) into smaller view modules.
+1. Add `.DS_Store` to `.gitignore` and remove from git history.
+2. Add bulk import/export for repayment schedules.
+3. Move interest rate validation from views/serializers into shared domain service.
+4. Refactor `loans/views/customer_views.py` (1,815 lines) into smaller view modules.
 
 ## Notes
 
