@@ -47,6 +47,14 @@ class LoanPayment:
         self.blockchain_sync_error = kwargs.get("blockchain_sync_error", "")
         self.blockchain_synced_at = kwargs.get("blockchain_synced_at")
 
+        # ETH wallet payment metadata
+        self.eth_tx_hash = kwargs.get("eth_tx_hash", "")
+        self.eth_amount = kwargs.get("eth_amount", "")
+        self.eth_rate = kwargs.get("eth_rate")
+        self.eth_rate_source = kwargs.get("eth_rate_source", "")
+        self.eth_sender = kwargs.get("eth_sender", "")
+        self.eth_block_number = kwargs.get("eth_block_number")
+
     @property
     def id(self):
         return str(self._id) if self._id else None
@@ -67,6 +75,12 @@ class LoanPayment:
             "blockchain_sync_status": self.blockchain_sync_status,
             "blockchain_sync_error": self.blockchain_sync_error,
             "blockchain_synced_at": self.blockchain_synced_at,
+            "eth_tx_hash": self.eth_tx_hash,
+            "eth_amount": self.eth_amount,
+            "eth_rate": self.eth_rate,
+            "eth_rate_source": self.eth_rate_source,
+            "eth_sender": self.eth_sender,
+            "eth_block_number": self.eth_block_number,
         }
         if self._id:
             data["_id"] = self._id
@@ -116,6 +130,13 @@ class LoanPayment:
         if limit:
             cursor = cursor.limit(limit)
         return [cls.from_dict(doc) for doc in cursor]
+
+    @classmethod
+    def find_one(cls, query):
+        db = get_db()
+        collection = db[cls.collection_name]
+        doc = collection.find_one(query)
+        return cls.from_dict(doc) if doc else None
 
     @classmethod
     def count(cls, query):

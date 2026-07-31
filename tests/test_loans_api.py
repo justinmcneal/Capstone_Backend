@@ -334,7 +334,7 @@ class TestLoanApplyView:
             raising=False,
         )
         monkeypatch.setattr(
-            "loans.views.customer_views.AuditLog.log_action",
+            "analytics.models.AuditLog.log_action",
             lambda *args, **kwargs: None,
             raising=False,
         )
@@ -511,7 +511,7 @@ class TestOfficerReviewView:
             raising=False,
         )
         monkeypatch.setattr(
-            "loans.views.officer_views.AuditLog.log_action",
+            "analytics.models.AuditLog.log_action",
             lambda *args, **kwargs: None,
             raising=False,
         )
@@ -567,7 +567,7 @@ class TestDisburseView:
         app.save()
 
         monkeypatch.setattr(
-            "loans.views.officer_views.AuditLog.log_action",
+            "analytics.models.AuditLog.log_action",
             lambda *args, **kwargs: None,
             raising=False,
         )

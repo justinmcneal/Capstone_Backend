@@ -143,8 +143,8 @@ class Admin:
             data["_id"] = self._id
         return encrypt_fields(data, self.encrypted_fields)
 
-        def __repr__(self):
-            return f"<Admin id={self.id} username={self.username} email={self.email}>"
+    def __repr__(self):
+        return f"<Admin id={self.id} username={self.username} email={self.email}>"
 
     @classmethod
     def from_dict(cls, data):

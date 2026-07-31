@@ -1629,9 +1629,7 @@ class WalletPaymentView(CustomerRoleRequiredMixin, APIView):
                 )
 
             # Check for duplicate tx_hash
-            existing = settings.MONGODB["loan_payments"].find_one(
-                {"eth_tx_hash": tx_hash}
-            )
+            existing = LoanPayment.find_one({"eth_tx_hash": tx_hash})
             if existing:
                 return error_response(
                     message="This transaction has already been recorded",
@@ -1674,19 +1672,13 @@ class WalletPaymentView(CustomerRoleRequiredMixin, APIView):
         payment.save()
 
         # Store ETH-specific details IMMEDIATELY (before blockchain sync starts)
-        settings.MONGODB["loan_payments"].update_one(
-            {"_id": ObjectId(payment.id)},
-            {
-                "$set": {
-                    "eth_tx_hash": tx_hash,
-                    "eth_amount": str(eth_received),
-                    "eth_rate": rate_info["rate"],
-                    "eth_rate_source": rate_info["source"],
-                    "eth_sender": profile.wallet_address,
-                    "eth_block_number": receipt["blockNumber"],
-                }
-            },
-        )
+        payment.eth_tx_hash = tx_hash
+        payment.eth_amount = str(eth_received)
+        payment.eth_rate = rate_info["rate"]
+        payment.eth_rate_source = rate_info["source"]
+        payment.eth_sender = profile.wallet_address
+        payment.eth_block_number = receipt["blockNumber"]
+        payment.save()
 
         logger.info(
             "Wallet payment verified: loan=%s installment=%d amount=%.6f ETH tx=%s",

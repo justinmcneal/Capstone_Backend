@@ -1,12 +1,15 @@
 """
 Web3 client for interacting with deployed smart contracts.
 
-Provides cached connections, contract loading, and transaction helpers.
+Provides cached connections, contract loading, transaction helpers,
+and a lightweight circuit breaker with retry/backoff for node calls.
 All functions check BLOCKCHAIN_ENABLED before executing.
 """
 
 import json
 import logging
+import threading
+import time
 from functools import lru_cache
 from pathlib import Path
 
@@ -37,6 +40,53 @@ CONTRACT_NAME_MAP = {
     "paymentRecording": "PaymentRecording",
 }
 
+# Circuit breaker configuration
+_CB_FAILURE_THRESHOLD = 5
+_CB_RECOVERY_TIMEOUT = 60  # seconds
+_CB_MAX_RETRIES = 3
+_CB_RETRY_BACKOFF_BASE = 1  # seconds
+
+
+class _CircuitBreaker:
+    """Thread-safe circuit breaker for blockchain node availability."""
+
+    def __init__(self, failure_threshold, recovery_timeout):
+        self._failure_threshold = failure_threshold
+        self._recovery_timeout = recovery_timeout
+        self._failures = 0
+        self._opened_at = 0
+        self._lock = threading.Lock()
+
+    def allow_request(self):
+        """Return True if the circuit allows an attempt."""
+        with self._lock:
+            if self._failures >= self._failure_threshold:
+                if time.time() - self._opened_at < self._recovery_timeout:
+                    return False
+                self._failures = 0
+            return True
+
+    def record_failure(self):
+        """Record a failure and trip the circuit if threshold is reached."""
+        with self._lock:
+            self._failures += 1
+            if self._failures >= self._failure_threshold:
+                self._opened_at = time.time()
+                logger.warning(
+                    "Blockchain circuit breaker OPEN after %d failures", self._failures
+                )
+
+    def record_success(self):
+        """Reset failure count on success."""
+        with self._lock:
+            self._failures = 0
+
+
+_node_circuit_breaker = _CircuitBreaker(
+    failure_threshold=_CB_FAILURE_THRESHOLD,
+    recovery_timeout=_CB_RECOVERY_TIMEOUT,
+)
+
 
 def _check_enabled():
     """Raise if blockchain integration is disabled."""
@@ -44,6 +94,47 @@ def _check_enabled():
         raise BlockchainDisabledError(
             "Blockchain integration is disabled. Set BLOCKCHAIN_ENABLED=True"
         )
+
+
+def _with_retry(fn, *args, **kwargs):
+    """
+    Call fn(*args, **kwargs) with circuit breaker + exponential backoff retry.
+
+    Returns the result, or raises the last exception after exhausting retries.
+    """
+    last_exc = None
+    for attempt in range(1, _CB_MAX_RETRIES + 1):
+        if not _node_circuit_breaker.allow_request():
+            logger.warning(
+                "Blockchain circuit breaker OPEN; skipping %s attempt %d/%d",
+                fn.__name__,
+                attempt,
+                _CB_MAX_RETRIES,
+            )
+            last_exc = BlockchainConnectionError(
+                "Blockchain node unavailable (circuit breaker open)"
+            )
+            continue
+
+        try:
+            result = fn(*args, **kwargs)
+            _node_circuit_breaker.record_success()
+            return result
+        except (BlockchainConnectionError, TimeoutError, OSError) as exc:
+            _node_circuit_breaker.record_failure()
+            last_exc = exc
+            logger.warning(
+                "Blockchain call %s failed (attempt %d/%d): %s",
+                fn.__name__,
+                attempt,
+                _CB_MAX_RETRIES,
+                exc,
+            )
+            if attempt < _CB_MAX_RETRIES:
+                backoff = _CB_RETRY_BACKOFF_BASE * (2 ** (attempt - 1))
+                time.sleep(backoff)
+
+    raise last_exc or BlockchainConnectionError("Blockchain call failed after retries")
 
 
 def _normalize_tx_hash(tx_hash):
@@ -70,22 +161,24 @@ def get_web3():
     _check_enabled()
     rpc_url = settings.BLOCKCHAIN_RPC_URL
 
-    try:
-        w3 = Web3(Web3.HTTPProvider(rpc_url, request_kwargs={"timeout": 30}))
-        # Support PoA chains (Ganache, Polygon, etc.)
-        w3.middleware_onion.inject(ExtraDataToPOAMiddleware, layer=0)
-    except Exception as exc:
-        raise BlockchainConnectionError(
-            f"Failed to create Web3 provider for {rpc_url}: {exc}"
-        ) from exc
+    def _connect():
+        try:
+            w3 = Web3(Web3.HTTPProvider(rpc_url, request_kwargs={"timeout": 30}))
+            w3.middleware_onion.inject(ExtraDataToPOAMiddleware, layer=0)
+        except Exception as exc:
+            raise BlockchainConnectionError(
+                f"Failed to create Web3 provider for {rpc_url}: {exc}"
+            ) from exc
 
-    if not w3.is_connected():
-        raise BlockchainConnectionError(
-            f"Cannot connect to blockchain node at {rpc_url}"
-        )
+        if not w3.is_connected():
+            raise BlockchainConnectionError(
+                f"Cannot connect to blockchain node at {rpc_url}"
+            )
 
-    logger.debug("Connected to blockchain at %s (chain %s)", rpc_url, w3.eth.chain_id)
-    return w3
+        logger.debug("Connected to blockchain at %s (chain %s)", rpc_url, w3.eth.chain_id)
+        return w3
+
+    return _with_retry(_connect)
 
 
 @lru_cache(maxsize=1)
@@ -98,7 +191,6 @@ def get_account():
     key = settings.BLOCKCHAIN_WALLET_KEY
     if not key:
         raise BlockchainConnectionError("BLOCKCHAIN_WALLET_KEY is not configured")
-    # Ensure 0x prefix
     if not key.startswith("0x"):
         key = "0x" + key
     return w3.eth.account.from_key(key)
@@ -163,7 +255,7 @@ def send_transaction(contract, method_name, *args):
         *args: Arguments to pass to the function
 
     Returns:
-        dict with keys: tx_hash (hex str), gas_used (int), block_number (int), status (int)
+        dict with keys: tx_hash (hex str), gas_used (int), gas_price (int), block_number (int), status (int)
 
     Raises:
         BlockchainTransactionFailed: If the transaction reverts
@@ -179,43 +271,44 @@ def send_transaction(contract, method_name, *args):
         estimated_gas = fn.estimate_gas({"from": account.address})
         gas = min(
             int(estimated_gas * 1.2), settings.BLOCKCHAIN_GAS_LIMIT
-        )  # 20% buffer, capped
+        )
     except Exception:
         gas = settings.BLOCKCHAIN_GAS_LIMIT
 
-    # Use configured gas price as fallback
     gas_price_fallback = Web3.to_wei(settings.BLOCKCHAIN_GAS_PRICE_GWEI, "gwei")
 
-    try:
-        latest_block = w3.eth.get_block("latest")
-        base_fee = latest_block.get("baseFeePerGas")
-    except Exception:
-        base_fee = None
+    def _build_tx():
+        try:
+            latest_block = w3.eth.get_block("latest")
+            base_fee = latest_block.get("baseFeePerGas")
+        except Exception:
+            base_fee = None
 
-    tx_params = {
-        "from": account.address,
-        "nonce": w3.eth.get_transaction_count(account.address),
-        "gas": gas,
-        "chainId": settings.BLOCKCHAIN_CHAIN_ID,
-    }
+        tx_params = {
+            "from": account.address,
+            "nonce": w3.eth.get_transaction_count(account.address),
+            "gas": gas,
+            "chainId": settings.BLOCKCHAIN_CHAIN_ID,
+        }
 
-    if base_fee is not None and base_fee > 0:
-        max_priority_fee = Web3.to_wei(2, "gwei")
-        max_fee = (base_fee * 2) + max_priority_fee
-        if max_fee < gas_price_fallback:
-            max_fee = gas_price_fallback
-        tx_params["maxFeePerGas"] = max_fee
-        tx_params["maxPriorityFeePerGas"] = max_priority_fee
-    else:
-        tx_params["gasPrice"] = gas_price_fallback
+        if base_fee is not None and base_fee > 0:
+            max_priority_fee = Web3.to_wei(2, "gwei")
+            max_fee = (base_fee * 2) + max_priority_fee
+            if max_fee < gas_price_fallback:
+                max_fee = gas_price_fallback
+            tx_params["maxFeePerGas"] = max_fee
+            tx_params["maxPriorityFeePerGas"] = max_priority_fee
+        else:
+            tx_params["gasPrice"] = gas_price_fallback
 
-    tx = fn.build_transaction(tx_params)
+        return fn.build_transaction(tx_params)
+
+    tx = _with_retry(_build_tx)
 
     signed = account.sign_transaction(tx)
     tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
     receipt = w3.eth.wait_for_transaction_receipt(tx_hash, timeout=120)
 
-    # Return hex string without 0x prefix for compatibility with existing tests
     tx_hash_hex = _format_tx_hash(receipt["transactionHash"])
 
     if receipt["status"] != 1:
@@ -232,7 +325,6 @@ def send_transaction(contract, method_name, *args):
             receipt=receipt,
         )
 
-    # Get effective gas price from receipt (EIP-1559) or use the gas price we set
     effective_gas_price = receipt.get("effectiveGasPrice", gas_price_fallback)
 
     logger.info(
@@ -246,7 +338,7 @@ def send_transaction(contract, method_name, *args):
     return {
         "tx_hash": tx_hash_hex,
         "gas_used": receipt["gasUsed"],
-        "gas_price": effective_gas_price,  # Gas price in Wei
+        "gas_price": effective_gas_price,
         "block_number": receipt["blockNumber"],
         "status": receipt["status"],
     }
@@ -266,7 +358,7 @@ def call_view(contract, method_name, *args):
     """
     _check_enabled()
     fn = contract.functions[method_name](*args)
-    return fn.call()
+    return _with_retry(fn.call)
 
 
 def send_eth_transfer(to_address, amount_wei):
@@ -287,23 +379,29 @@ def send_eth_transfer(to_address, amount_wei):
     w3 = get_web3()
     account = get_account()
 
-    try:
-        gas_price_fallback = w3.eth.gas_price
-    except Exception:
-        gas_price_fallback = Web3.to_wei(20, "gwei")
+    def _get_gas_price():
+        try:
+            gas_price_fallback = w3.eth.gas_price
+        except Exception:
+            gas_price_fallback = Web3.to_wei(20, "gwei")
+        return gas_price_fallback
 
-    try:
-        latest_block = w3.eth.get_block("latest")
-        base_fee = latest_block.get("baseFeePerGas")
-    except Exception:
-        base_fee = None
+    def _get_base_fee():
+        try:
+            latest_block = w3.eth.get_block("latest")
+            return latest_block.get("baseFeePerGas")
+        except Exception:
+            return None
+
+    gas_price_fallback = _with_retry(_get_gas_price)
+    base_fee = _with_retry(_get_base_fee)
 
     tx = {
         "from": account.address,
         "to": Web3.to_checksum_address(to_address),
         "value": int(amount_wei),
         "nonce": w3.eth.get_transaction_count(account.address),
-        "gas": 21000,  # Standard ETH transfer gas
+        "gas": 21000,
         "chainId": settings.BLOCKCHAIN_CHAIN_ID,
     }
 
@@ -334,7 +432,6 @@ def send_eth_transfer(to_address, amount_wei):
             receipt=receipt,
         )
 
-    # Get effective gas price from receipt (EIP-1559) or use the gas price we set
     effective_gas_price = receipt.get("effectiveGasPrice", gas_price_fallback)
 
     logger.info(
@@ -347,7 +444,7 @@ def send_eth_transfer(to_address, amount_wei):
     return {
         "tx_hash": tx_hash_hex,
         "gas_used": receipt["gasUsed"],
-        "gas_price": effective_gas_price,  # Gas price in Wei
+        "gas_price": effective_gas_price,
         "block_number": receipt["blockNumber"],
         "status": receipt["status"],
         "amount_wei": int(amount_wei),
