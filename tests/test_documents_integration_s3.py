@@ -70,6 +70,8 @@ def test_document_upload_endpoint_s3(monkeypatch, settings):
     class User:
         is_authenticated = True
         customer_id = 'customer123'
+        pk = 'customer123'
+        id = 'customer123'
     client.force_authenticate(user=User())
 
     data = {'document_type': 'valid_id'}

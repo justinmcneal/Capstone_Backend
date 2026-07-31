@@ -92,7 +92,9 @@ class LoanApplication:
         # ETH wallet disbursement details
         self.eth_disbursement_tx_hash = kwargs.get("eth_disbursement_tx_hash")
         self.eth_disbursement_amount = kwargs.get("eth_disbursement_amount")
+        self.eth_disbursement_amount_wei = kwargs.get("eth_disbursement_amount_wei")
         self.eth_disbursement_rate = kwargs.get("eth_disbursement_rate")
+        self.eth_disbursement_rate_source = kwargs.get("eth_disbursement_rate_source", "")
         self.eth_disbursement_recipient = kwargs.get("eth_disbursement_recipient")
 
         # Timestamps
@@ -138,7 +140,9 @@ class LoanApplication:
             "disbursed_by": self.disbursed_by,
             "eth_disbursement_tx_hash": self.eth_disbursement_tx_hash,
             "eth_disbursement_amount": self.eth_disbursement_amount,
+            "eth_disbursement_amount_wei": self.eth_disbursement_amount_wei,
             "eth_disbursement_rate": self.eth_disbursement_rate,
+            "eth_disbursement_rate_source": self.eth_disbursement_rate_source,
             "eth_disbursement_recipient": self.eth_disbursement_recipient,
             "submitted_at": self.submitted_at,
             "created_at": self.created_at,
@@ -579,3 +583,22 @@ class LoanApplication:
         collection.create_index("status")
         collection.create_index("assigned_officer")
         collection.create_index("submitted_at")
+
+    @classmethod
+    def update_blockchain_tx_hash(cls, application_id, action, tx_hash):
+        db = get_db()
+        collection = db[cls.collection_name]
+        field = f"blockchain_tx_hashes.{action}"
+        collection.update_one(
+            {"_id": application_id},
+            {"$set": {field: tx_hash}},
+        )
+
+    @classmethod
+    def update_eth_disbursement(cls, application_id, **fields):
+        db = get_db()
+        collection = db[cls.collection_name]
+        collection.update_one(
+            {"_id": application_id},
+            {"$set": {f"eth_disbursement_{key}": value for key, value in fields.items()}},
+        )

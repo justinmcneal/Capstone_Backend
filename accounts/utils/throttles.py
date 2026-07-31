@@ -55,25 +55,43 @@ class ForgotPasswordRateThrottle(AnonRateThrottle):
     rate = "100/hour"
 
 
-class ChatRateThrottle(UserRateThrottle):
+class SafeUserRateThrottle(UserRateThrottle):
+    """UserRateThrottle that safely checks for pk, customer_id, or id on custom user objects."""
+
+    def get_cache_key(self, request, view):
+        if request.user and getattr(request.user, "is_authenticated", False):
+            ident = (
+                getattr(request.user, "pk", None)
+                or getattr(request.user, "customer_id", None)
+                or getattr(request.user, "id", None)
+            )
+            if ident:
+                return self.cache_format % {
+                    "scope": self.scope,
+                    "ident": ident,
+                }
+        return self.get_ident(request)
+
+
+class ChatRateThrottle(SafeUserRateThrottle):
     """User-based throttling for AI chat endpoint."""
 
     rate = "1000/hour"
 
 
-class PreQualifyRateThrottle(UserRateThrottle):
+class PreQualifyRateThrottle(SafeUserRateThrottle):
     """User-based throttling for pre-qualification endpoint."""
 
     rate = "500/hour"
 
 
-class ProfileRateThrottle(UserRateThrottle):
+class ProfileRateThrottle(SafeUserRateThrottle):
     """User-based throttling for profile endpoints."""
 
     rate = "500/hour"
 
 
-class DocumentUploadRateThrottle(UserRateThrottle):
+class DocumentUploadRateThrottle(SafeUserRateThrottle):
     """User-based throttling for document upload endpoints."""
 
     rate = "100/hour"

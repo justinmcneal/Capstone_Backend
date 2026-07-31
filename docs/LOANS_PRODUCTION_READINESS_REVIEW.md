@@ -42,6 +42,9 @@ The `loans/` module provides loan product management, loan applications, repayme
 8. Added `tests/test_loan_services.py` with 8 tests covering auto-assign, manual-assign, reassign, and officer workload.
 9. Added `tests/test_loan_tasks.py` with 3 tests covering `check_overdue_installments_task`.
 10. Added `encrypted_fields` to `LoanProduct` (description, target_description), `RepaymentSchedule` (installments), and `LoanPayment` (notes, reference) with matching `to_dict`/`from_dict` encryption/decryption.
+11. Added `tests/test_loan_qualification.py` with 20 tests covering `rule_based_qualification` fallback scorer (eligibility, risk categories, document checks, amount capping, schema consistency).
+12. Improved `rule_based_qualification` to validate document approval status when `require_approved_documents=True`, matching behavior of `check_basic_eligibility`.
+13. Fixed `tests/test_loans_smoke.py::test_ai_qualification_can_be_disabled` to remove `@pytest.mark.django_db` decorator (project uses MongoDB via PyMongo, not Django ORM).
 
 ## Medium Priority Findings
 
@@ -55,13 +58,15 @@ The `loans/` module provides loan product management, loan applications, repayme
    - `tests/test_loan_tasks.py` added with 3 tests. **Status: COMPLETED.**
 
 4. Duplicate blockchain sync implementations.
-   - `loans/blockchain/sync.py` (thread-based, used by views) and `loans/blockchain/tasks.py` (Celery-based) contain nearly identical logic.
-   - Risk: maintenance burden and drift between two implementations. **Status: NEEDS REVIEW.**
+   - ~~`loans/blockchain/sync.py` (thread-based, used by views) and `loans/blockchain/tasks.py` (Celery-based) contained nearly identical logic.~~ **COMPLETED**
+   - Extracted shared helpers (`_is_enabled`, `_monthly_rate_to_annual_bps`, `_risk_category_to_int`, `_update_application_tx`, `_create_tx_record`, `_finalize_tx`, `_fail_tx`) and full implementations for `sync_schedule` and `sync_payment` into `loans/blockchain/sync_common.py`.
+   - Both `sync.py` and `tasks.py` now delegate to `sync_common` for shared logic, while keeping their respective sync-specific implementations (thread-based vs Celery retry).
+   - **Status: COMPLETED.**
 
-5. Inconsistent MongoDB access patterns.
-   - ~~`LoanApplication.find_*` class methods are used in most places, but `officer_views.py` directly accesses `settings.MONGODB["loan_applications"]` in several places.~~ **COMPLETED**
-   - `officer_views.py` now uses model methods exclusively: `LoanApplication.find()`, `LoanApplication.find_by_officer()`, `LoanApplication.count()`, `LoanPayment.find()`, `LoanPayment.count()`. **Status: COMPLETED.**
-   - Note: `customer_views.py` still uses direct `settings.MONGODB["loan_payments"]` access (2 places), and `loans/blockchain/sync.py` + `loans/blockchain/tasks.py` directly manipulate `repayment_schedules` and `loan_payments` collections.
+ 5. Inconsistent MongoDB access patterns.
+    - ~~`LoanApplication.find_*` class methods are used in most places, but `officer_views.py` directly accesses `settings.MONGODB["loan_applications"]` in several places.~~ **COMPLETED**
+    - `officer_views.py` now uses model methods exclusively: `LoanApplication.find()`, `LoanApplication.find_by_officer()`, `LoanApplication.count()`, `LoanPayment.find()`, `LoanPayment.count()`. **Status: COMPLETED.**
+    - Blockchain sync no longer directly manipulates `repayment_schedules`, `loan_payments`, or `loan_applications`. Extracted into model class methods (`RepaymentSchedule.update_blockchain_schedule_tx`, `update_blockchain_overdue_tx`, `update_blockchain_penalty_tx`, `LoanPayment.set_sync_result`, `set_sync_failed`, `LoanApplication.update_blockchain_tx_hash`, `update_eth_disbursement`). **Status: COMPLETED.**
 
 6. Duplicate helper functions across views.
    - ~~`serialize_internal_note` is defined in both `admin_views.py` and `officer_views.py`.~~ **COMPLETED**
@@ -140,7 +145,7 @@ The `loans/` module provides loan product management, loan applications, repayme
 - No loans production-readiness review existed prior to this document.
 - ~~No dedicated loan API test file (`tests/test_loans_api.py`).~~ **COMPLETED**
 - ~~No circuit breaker or timeout on blockchain client calls.~~ **COMPLETED**
-- ~~AI qualification is coupled to Groq without fallback scoring.~~ Still open, but feature-flagged
+- ~~AI qualification is coupled to Groq without fallback scoring.~~ **COMPLETED**
 - ~~No model, serializer, service, or task tests for loans domain.~~ **COMPLETED**
 
 ## Production Readiness Checklist
@@ -161,9 +166,9 @@ The `loans/` module provides loan product management, loan applications, repayme
 - [x] Assignment service tests (`auto_assign`, `manual_assign`, `reassign`, `workload`).
 - [x] Blockchain client circuit breaker / timeout / fallback.
 - [x] Refactor large officer/admin views into smaller classes.
-- [ ] AI qualification fallback when Groq is unavailable.
+- [x] AI qualification fallback when Groq is unavailable.
 - [ ] Service-layer tests for repayment and disbursement.
-- [ ] Consolidate duplicate blockchain sync logic between `sync.py` and `tasks.py`.
+- [x] Consolidate duplicate blockchain sync logic between `sync.py` and `tasks.py`.
 - [x] Replace direct MongoDB access in officer and admin views with model methods.
 - [x] Extract duplicate `serialize_internal_note` helper into shared utility.
 - [ ] Add explicit status-transition audit log entries with structured metadata.
@@ -174,15 +179,13 @@ The `loans/` module provides loan product management, loan applications, repayme
 
 ## Recommended Next Steps
 
-1. Consolidate duplicate blockchain sync logic between `sync.py` and `tasks.py`.
-2. Add rule-based fallback scorer for AI qualification when Groq is unavailable.
-3. Add service-layer tests for repayment scheduling and disbursement.
-4. Add explicit status-transition audit log entries with structured metadata.
-5. Add `.DS_Store` to `.gitignore` and remove from git history.
-6. Finish/unit-test `event_listener.py`.
-7. Add bulk import/export for repayment schedules.
-8. Move interest rate validation from views/serializers into shared domain service.
-9. Refactor `loans/views/customer_views.py` (1,823 lines) into smaller view modules.
+1. Add service-layer tests for repayment scheduling and disbursement.
+2. Add explicit status-transition audit log entries with structured metadata.
+3. Add `.DS_Store` to `.gitignore` and remove from git history.
+4. Finish/unit-test `event_listener.py`.
+5. Add bulk import/export for repayment schedules.
+6. Move interest rate validation from views/serializers into shared domain service.
+7. Refactor `loans/views/customer_views.py` (1,815 lines) into smaller view modules.
 
 ## Notes
 

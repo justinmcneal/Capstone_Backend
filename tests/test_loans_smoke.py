@@ -9,7 +9,6 @@ from loans.blockchain.client import send_eth_transfer, send_transaction
 from loans.services.qualification import qualify_customer
 
 
-@pytest.mark.django_db
 def test_ai_qualification_can_be_disabled(settings, monkeypatch):
     settings.LOANS_AI_QUALIFICATION_ENABLED = False
 

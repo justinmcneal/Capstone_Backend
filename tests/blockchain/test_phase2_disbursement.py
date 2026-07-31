@@ -58,9 +58,7 @@ class TestExecuteEthDisbursement:
         app.approved_amount = 50000
         app.requested_amount = 50000
 
-        with patch("loans.blockchain.sync.settings") as mock_settings:
-            mock_db = MagicMock()
-            mock_settings.MONGODB = mock_db
+        with patch("loans.models.application.LoanApplication.update_eth_disbursement") as mock_update:
             _execute_eth_disbursement("6650a1b2c3d4e5f6a7b8c9d0", app)
 
         # Verify ETH was sent to customer's wallet
@@ -69,14 +67,13 @@ class TestExecuteEthDisbursement:
             385000000000000000,
         )
 
-        # Verify MongoDB update was called with ETH details
-        mock_db.__getitem__.return_value.update_one.assert_called_once()
-        update_call = mock_db.__getitem__.return_value.update_one.call_args
-        set_data = update_call[0][1]["$set"]
-        assert set_data["eth_disbursement_tx_hash"] == "0xabc123"
-        assert set_data["eth_disbursement_rate"] == 130000.0
-        assert set_data["eth_disbursement_rate_source"] == "cryptocompare"
-        assert set_data["eth_disbursement_recipient"] == "0x5F034623bFD198980e8Af188702b871458E5d854"
+        # Verify LoanApplication model method was called with ETH details
+        mock_update.assert_called_once()
+        call_kwargs = mock_update.call_args[1]
+        assert call_kwargs["tx_hash"] == "0xabc123"
+        assert call_kwargs["rate"] == 130000.0
+        assert call_kwargs["rate_source"] == "cryptocompare"
+        assert call_kwargs["recipient"] == "0x5F034623bFD198980e8Af188702b871458E5d854"
 
     @patch("profiles.models.profile_models.CustomerProfile.find_by_customer")
     def test_raises_if_no_wallet_address(self, mock_find_profile):
@@ -108,7 +105,7 @@ class TestExecuteEthDisbursement:
 # ── 2.1+ ETH transfer happens BEFORE audit trail ──────────────────
 
 class TestDisbursementOrdering:
-    @patch("loans.blockchain.sync._sync_schedule_impl")
+    @patch("loans.blockchain.sync_common.sync_schedule")
     @patch("loans.blockchain.client.send_transaction")
     @patch("loans.blockchain.client.get_contract")
     @patch("loans.blockchain.services.disbursement_service.complete_disbursement_onchain")
@@ -157,7 +154,7 @@ class TestDisbursementOrdering:
         mock_set_method.assert_called_once()
         mock_complete.assert_called_once()
 
-    @patch("loans.blockchain.sync._sync_schedule_impl")
+    @patch("loans.blockchain.sync_common.sync_schedule")
     @patch("loans.blockchain.client.send_transaction")
     @patch("loans.blockchain.client.get_contract")
     @patch("loans.blockchain.services.disbursement_service.complete_disbursement_onchain")

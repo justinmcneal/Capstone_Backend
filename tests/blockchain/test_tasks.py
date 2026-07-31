@@ -296,6 +296,7 @@ class TestSyncScheduleToChain:
         from datetime import datetime, timezone
 
         schedule_doc = {
+            "_id": "sched1",
             "loan_id": "loan_sched_1",
             "customer_id": "cust_1",
             "principal": 50000,

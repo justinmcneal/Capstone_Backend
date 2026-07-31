@@ -34,12 +34,9 @@ def _risk_category_to_int(risk_str):
 def _update_application_tx(loan_id, action, tx_hash):
     """Store a tx_hash in the application's blockchain_tx_hashes dict."""
     try:
-        db = getattr(settings, "MONGODB", None)
-        if db is None:
-            return
-        db["loan_applications"].update_one(
-            {"_id": __import__("bson").ObjectId(loan_id)},
-            {"$set": {f"blockchain_tx_hashes.{action}": tx_hash}},
+        from loans.models.application import LoanApplication
+        LoanApplication.update_blockchain_tx_hash(
+            __import__("bson").ObjectId(loan_id), action, tx_hash
         )
     except Exception as exc:
         logger.warning("Failed to store tx_hash for %s.%s: %s", loan_id, action, exc)
@@ -102,13 +99,10 @@ def sync_schedule(loan_id):
         if not app:
             raise ValueError(f"LoanApplication {loan_id} not found")
 
-        schedule_doc = settings.MONGODB["repayment_schedules"].find_one(
-            {"loan_id": loan_id}
-        )
-        if not schedule_doc:
+        schedule = RepaymentSchedule.find_one({"loan_id": loan_id})
+        if not schedule:
             raise ValueError(f"RepaymentSchedule for loan {loan_id} not found")
 
-        schedule = RepaymentSchedule.from_dict(schedule_doc)
         interest_bps = _monthly_rate_to_annual_bps(schedule.interest_rate)
 
         borrower_addr = settings.BLOCKCHAIN_CONTRACT_ADDRESSES.get("accessControl", "")
@@ -139,17 +133,18 @@ def sync_schedule(loan_id):
             gas_price=result.get("gas_price", 0),
         )
 
-        settings.MONGODB["repayment_schedules"].update_one(
-            {"_id": schedule_doc["_id"]},
-            {"$set": {"blockchain_schedule_tx": result["tx_hash"]}},
+        RepaymentSchedule.update_blockchain_schedule_tx(
+            schedule.id, result["tx_hash"]
         )
 
         logger.info(
             "sync_schedule OK: loan=%s tx=%s", loan_id, result["tx_hash"][:18]
         )
+        return {"tx_hash": result["tx_hash"], "status": "confirmed"}
 
     except Exception as exc:
         _fail_tx(tx_record, exc, loan_id=loan_id)
+        raise
 
 
 def sync_payment(loan_id, payment_id):
@@ -173,14 +168,13 @@ def sync_payment(loan_id, payment_id):
         details={"payment_id": payment_id},
     )
 
+    payment_obj = None
     try:
-        payment_doc = settings.MONGODB["loan_payments"].find_one(
-            {"_id": ObjectId(payment_id)}
-        )
-        if not payment_doc:
+        payment = LoanPayment.find_one({"_id": ObjectId(str(payment_id))})
+        if not payment:
             raise ValueError(f"LoanPayment {payment_id} not found")
+        payment_obj = payment
 
-        payment = LoanPayment.from_dict(payment_doc)
         ref_str = payment.reference or f"PAY_{payment_id}_{loan_id}"
 
         result = record_payment_onchain(
@@ -198,16 +192,7 @@ def sync_payment(loan_id, payment_id):
             block_number=result["block_number"],
         )
 
-        settings.MONGODB["loan_payments"].update_one(
-            {"_id": ObjectId(payment_id)},
-            {
-                "$set": {
-                    "blockchain_tx_hash": result["tx_hash"],
-                    "blockchain_sync_status": "synced",
-                    "blockchain_synced_at": utcnow(),
-                }
-            },
-        )
+        LoanPayment.set_sync_result(payment._id, result["tx_hash"])
 
         logger.info(
             "sync_payment OK: loan=%s payment=%s tx=%s",
@@ -215,15 +200,10 @@ def sync_payment(loan_id, payment_id):
             payment_id,
             result["tx_hash"][:18],
         )
+        return {"tx_hash": result["tx_hash"], "status": "confirmed"}
 
     except Exception as exc:
         _fail_tx(tx_record, exc, loan_id=loan_id)
-        settings.MONGODB["loan_payments"].update_one(
-            {"_id": ObjectId(payment_id)},
-            {
-                "$set": {
-                    "blockchain_sync_status": "failed",
-                    "blockchain_sync_error": str(exc)[:500],
-                }
-            },
-        )
+        if payment_obj is not None:
+            LoanPayment.set_sync_failed(payment_obj._id, exc)
+        raise
