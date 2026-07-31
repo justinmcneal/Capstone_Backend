@@ -163,10 +163,13 @@ class AuditLog:
         user_type=None,
         date_from=None,
         date_to=None,
+        search=None,
         skip=0,
         limit=100,
     ):
-        query = cls._build_filter_query(action, action_group, user_id, user_type, date_from, date_to)
+        query = cls._build_filter_query(
+            action, action_group, user_id, user_type, date_from, date_to, search
+        )
         db = get_db()
         collection = db[cls.collection_name]
         cursor = collection.find(query)
@@ -185,64 +188,62 @@ class AuditLog:
         user_type=None,
         date_from=None,
         date_to=None,
+        search=None,
     ):
-        query = cls._build_filter_query(action, action_group, user_id, user_type, date_from, date_to)
+        query = cls._build_filter_query(
+            action, action_group, user_id, user_type, date_from, date_to, search
+        )
         db = get_db()
         collection = db[cls.collection_name]
         return collection.count_documents(query)
 
     @classmethod
-    def count_with_filters(
+    def _build_filter_query(
         cls,
-        action=None,
-        action_group=None,
-        user_id=None,
-        user_type=None,
-        date_from=None,
-        date_to=None,
+        action,
+        action_group,
+        user_id,
+        user_type,
+        date_from,
+        date_to,
+        search=None,
     ):
-        query = cls._build_filter_query(action, action_group, user_id, user_type, date_from, date_to)
-        db = get_db()
-        collection = db[cls.collection_name]
-        return collection.count_documents(query)
+        import re
 
-    @classmethod
-    def _build_filter_query(cls, action, action_group, user_id, user_type, date_from, date_to):
-        query = {}
+        and_conditions = []
 
         if action:
-            query["action"] = action
+            and_conditions.append({"action": action})
 
         if action_group:
             group = str(action_group).strip().lower()
             if group in ACTION_GROUPS:
-                query["action"] = {"$in": ACTION_GROUPS[group]}
+                and_conditions.append({"action": {"$in": ACTION_GROUPS[group]}})
             elif group == "delete":
-                query["$and"] = [
-                    {"action": "admin_action"},
+                and_conditions.append(
                     {
+                        "action": "admin_action",
                         "description": {
                             "$regex": "(delete|deleted|deactivate|deactivated|remove|removed)",
                             "$options": "i",
-                        }
-                    },
-                ]
+                        },
+                    }
+                )
 
         if user_id:
-            query["user_id"] = str(user_id).strip()
+            and_conditions.append({"user_id": str(user_id).strip()})
 
         if user_type:
-            query["user_type"] = str(user_type).strip()
+            and_conditions.append({"user_type": str(user_type).strip()})
 
         if date_from or date_to:
-            query["timestamp"] = {}
-
+            ts_cond = {}
             if date_from:
                 try:
                     date_from_obj = datetime.strptime(date_from, "%Y-%m-%d").replace(
                         tzinfo=timezone.utc
                     )
-                    query["timestamp"]["$gte"] = date_from_obj
+                    ts_cond["$gte"] = date_from_obj
                 except ValueError:
                     pass
 
@@ -257,11 +258,31 @@ class AuditLog:
                         second=59,
                         microsecond=999999,
                     )
-                    query["timestamp"]["$lte"] = date_to_obj
+                    ts_cond["$lte"] = date_to_obj
                 except ValueError:
                     pass
+            if ts_cond:
+                and_conditions.append({"timestamp": ts_cond})
 
-        return query
+        if search and str(search).strip():
+            search_regex = {"$regex": re.escape(str(search).strip()), "$options": "i"}
+            and_conditions.append(
+                {
+                    "$or": [
+                        {"description": search_regex},
+                        {"user_email": search_regex},
+                        {"action": search_regex},
+                        {"user_id": search_regex},
+                        {"user_type": search_regex},
+                    ]
+                }
+            )
+
+        if not and_conditions:
+            return {}
+        if len(and_conditions) == 1:
+            return and_conditions[0]
+        return {"$and": and_conditions}
 
     @classmethod
     def count_by_action(cls, action, start_date=None, end_date=None):
