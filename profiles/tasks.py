@@ -2,6 +2,7 @@
 Background tasks for profile risk scoring.
 """
 import logging
+from datetime import datetime, timezone
 
 from celery import shared_task
 from django.conf import settings
@@ -26,20 +27,23 @@ def calculate_risk_score_task(customer_id: str):
         return {"customer_id": customer_id, "scored": False}
 
     result = calculate_risk_score(alternative)
-    alternative.risk_score = result["score"]
-    alternative.risk_category = result["category"]
+    score = result.get("total_score", result.get("score"))
+    category = result.get("category")
+    alternative.risk_score = score
+    alternative.risk_category = category
+    alternative.score_calculated_at = datetime.now(timezone.utc)
     alternative.save()
 
     logger.info(
         "Risk score calculated for customer %s: %s (%s)",
         customer_id,
-        result["score"],
-        result["category"],
+        score,
+        category,
     )
 
     return {
         "customer_id": customer_id,
         "scored": True,
-        "score": result["score"],
-        "category": result["category"],
+        "score": score,
+        "category": category,
     }

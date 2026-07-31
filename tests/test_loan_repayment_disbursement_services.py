@@ -455,7 +455,7 @@ class TestReferenceGeneration:
         db.counters.insert_one({"_id": "disbursement_counter", "seq": 0})
         ref = generate_disbursement_reference()
         assert ref.startswith("DSB-")
-        assert len(ref) == 15  # DSB-YYYYMMDD-NNNNNN
+        assert len(ref) == 19  # DSB-YYYYMMDD-NNNNNN
 
     def test_generate_payment_reference_format(self, monkeypatch):
         import mongomock
@@ -468,7 +468,7 @@ class TestReferenceGeneration:
         db.counters.insert_one({"_id": "payment_counter", "seq": 0})
         ref = generate_payment_reference()
         assert ref.startswith("PAY-")
-        assert len(ref) == 15  # PAY-YYYYMMDD-NNNNNN
+        assert len(ref) == 19  # PAY-YYYYMMDD-NNNNNN
 
     def test_references_are_incrementing(self, monkeypatch):
         import mongomock

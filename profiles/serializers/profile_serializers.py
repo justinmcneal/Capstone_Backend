@@ -182,8 +182,8 @@ class BusinessProfileSerializer(InputSanitizationMixin, serializers.Serializer):
     business_age_months = serializers.IntegerField(
         required=False,
         allow_null=True,
-        min_value=1,
-        help_text="Business age in months (canonical unit). Minimum 1 month.",
+        min_value=0,
+        help_text="Business age in months (canonical unit). Minimum 0 months.",
     )
     years_in_operation = serializers.FloatField(
         required=False,
