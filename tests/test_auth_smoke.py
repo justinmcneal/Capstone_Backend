@@ -153,3 +153,78 @@ def test_login_2fa_flow_smoke():
     twofa_data = response.json()["data"]
     assert "access" in twofa_data
     assert "refresh" in twofa_data
+
+
+@override_settings(SECURE_SSL_REDIRECT=False)
+def test_signup_duplicate_email_rejected():
+    client = APIClient()
+    email = "dup-signup@example.com"
+    password = "TempPass123!"
+
+    payload = {
+        "first_name": "Dup",
+        "last_name": "User",
+        "email": email,
+        "password": password,
+        "password_confirm": password,
+    }
+
+    response = client.post(reverse("accounts:signup"), payload, format="json")
+    assert response.status_code == 201
+
+    # Second signup with same email
+    response = client.post(reverse("accounts:signup"), payload, format="json")
+    assert response.status_code == 400
+
+
+@override_settings(SECURE_SSL_REDIRECT=False)
+def test_login_locked_account_rejected():
+    from datetime import datetime, timedelta, timezone
+
+    client = APIClient()
+    email = "locked-acc@example.com"
+    password = "TempPass123!"
+
+    customer = Customer(
+        first_name="Locked",
+        last_name="User",
+        email=EmailUtils.normalize_email(email),
+        password="",
+        verified=True,
+        locked_until=datetime.now(timezone.utc) + timedelta(minutes=15),
+    )
+    customer.set_password(password)
+    customer.save()
+
+    response = client.post(
+        reverse("accounts:login"),
+        {"email": email, "password": password},
+        format="json",
+    )
+    assert response.status_code == 401
+
+
+@override_settings(SECURE_SSL_REDIRECT=False)
+def test_verify_email_wrong_otp_rejected():
+    client = APIClient()
+    email = "wrong-otp@example.com"
+    password = "TempPass123!"
+
+    client.post(
+        reverse("accounts:signup"),
+        {
+            "first_name": "Wrong",
+            "last_name": "OTP",
+            "email": email,
+            "password": password,
+            "password_confirm": password,
+        },
+        format="json",
+    )
+
+    response = client.post(
+        reverse("accounts:verify-email"),
+        {"email": email, "otp": "000000"},
+        format="json",
+    )
+    assert response.status_code == 400

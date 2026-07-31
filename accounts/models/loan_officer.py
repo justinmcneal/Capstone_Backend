@@ -127,8 +127,8 @@ class LoanOfficer:
             data["_id"] = self._id
         return encrypt_fields(data, self.encrypted_fields)
 
-        def __repr__(self):
-            return f"<LoanOfficer id={self.id} employee_id={self.employee_id} email={self.email}>"
+    def __repr__(self):
+        return f"<LoanOfficer id={self.id} employee_id={self.employee_id} email={self.email}>"
 
     @classmethod
     def from_dict(cls, data):

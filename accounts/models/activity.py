@@ -39,7 +39,8 @@ class ActiveSession:
             "is_active": self.is_active,
         }
         if self._id:
-            data["_id"] = self._id
+            data["id"] = str(self._id)
+            data["_id"] = str(self._id)
         return data
 
     @classmethod
@@ -95,6 +96,8 @@ class ActiveSession:
         collection.create_index("user_id")
         collection.create_index("session_token", unique=True)
         collection.create_index("is_active")
+        # Automatically remove session records after 30 days of inactivity.
+        collection.create_index("last_active", expireAfterSeconds=2592000)
 
 
 class LoginActivity:
@@ -129,7 +132,8 @@ class LoginActivity:
             "failure_reason": self.failure_reason,
         }
         if self._id:
-            data["_id"] = self._id
+            data["id"] = str(self._id)
+            data["_id"] = str(self._id)
         return data
 
     @classmethod
@@ -170,3 +174,5 @@ class LoginActivity:
         collection.create_index("email")
         collection.create_index("ip_address")
         collection.create_index("timestamp")
+        # Automatically purge login activity records after 90 days.
+        collection.create_index("timestamp", expireAfterSeconds=7776000)

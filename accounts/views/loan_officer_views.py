@@ -317,7 +317,50 @@ class LoanOfficerLogoutView(APIView):
             return response
 
 
-class LoanOfficerProfileView(APIView):
+class MustChangePasswordMixin:
+    """
+    Blocks loan officers from accessing protected endpoints until they change
+    their initial (admin-assigned) password.
+
+    Returns HTTP 423 Locked so the frontend can redirect to the change-password
+    flow. Login, logout, and change-password endpoints are AllowAny and are
+    therefore unaffected by this mixin.
+    """
+
+    def check_permissions(self, request):
+        super().check_permissions(request)
+
+        if (
+            hasattr(request, "user")
+            and getattr(request.user, "is_authenticated", False)
+            and getattr(request.user, "role", "") == "loan_officer"
+        ):
+            user_id = getattr(request.user, "customer_id", None)
+            if user_id:
+                try:
+                    from bson import ObjectId
+                    from rest_framework.exceptions import PermissionDenied
+
+                    from accounts.models import LoanOfficer
+
+                    officer = LoanOfficer.find_one({"_id": ObjectId(user_id)})
+                    if officer and getattr(officer, "must_change_password", False):
+                        exc = PermissionDenied(
+                            detail=(
+                                "You must change your password before accessing "
+                                "this resource. Please use POST /change-password/."
+                            ),
+                            code="password_change_required",
+                        )
+                        exc.status_code = 423
+                        raise exc
+                except PermissionDenied:
+                    raise
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("Error checking must_change_password: %s", exc)
+
+
+class LoanOfficerProfileView(MustChangePasswordMixin, APIView):
     """
     Get or update the authenticated Loan Officer's profile.
 

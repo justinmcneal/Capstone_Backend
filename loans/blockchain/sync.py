@@ -4,6 +4,8 @@ Synchronous blockchain sync — no Celery/Redis required.
 Each function is called directly from Django views after a successful
 database operation. Blockchain failures are caught and logged but never
 block the API response.
+
+Common helpers and shared implementations are imported from sync_common.py.
 """
 
 import logging
@@ -11,13 +13,18 @@ import threading
 
 from django.conf import settings
 
-from loans.utils.time import utcnow
+from loans.blockchain.sync_common import (
+    _create_tx_record,
+    _fail_tx,
+    _finalize_tx,
+    _monthly_rate_to_annual_bps,
+    _risk_category_to_int,
+    _update_application_tx,
+    sync_payment as _sync_payment_common,
+    sync_schedule as _sync_schedule_common,
+)
 
 logger = logging.getLogger("blockchain")
-
-
-def _is_enabled():
-    return getattr(settings, "BLOCKCHAIN_ENABLED", False)
 
 
 def _run_in_thread(fn, *args):
@@ -35,67 +42,8 @@ def _run_in_thread(fn, *args):
     thread.start()
 
 
-def _monthly_rate_to_annual_bps(monthly_rate):
-    return int(round(monthly_rate * 12 * 10_000))
-
-
-def _risk_category_to_int(risk_str):
-    mapping = {"low": 0, "medium": 1, "high": 2}
-    if risk_str is None:
-        return 0
-    return mapping.get(str(risk_str).lower(), 0)
-
-
-def _update_application_tx(loan_id, action, tx_hash):
-    try:
-        db = getattr(settings, "MONGODB", None)
-        if db is None:
-            return
-        db["loan_applications"].update_one(
-            {"_id": __import__("bson").ObjectId(loan_id)},
-            {"$set": {f"blockchain_tx_hashes.{action}": tx_hash}},
-        )
-    except Exception as exc:
-        logger.warning("Failed to store tx_hash for %s.%s: %s", loan_id, action, exc)
-
-
-def _ensure_application_synced_for_approval(loan_id):
-    from loans.blockchain.client import get_contract, call_view
-    from web3 import Web3
-
-    loan_id_bytes = Web3.keccak(text=str(loan_id))
-    contract = get_contract("loanApplication")
-
-    try:
-        exists = bool(call_view(contract, "exists", loan_id_bytes))
-    except Exception as exc:
-        logger.warning(
-            "sync_approval: could not verify on-chain application for loan=%s: %s",
-            loan_id,
-            exc,
-        )
-        exists = False
-
-    if exists:
-        return
-
-    logger.info(
-        "sync_approval: on-chain application missing for loan=%s, rebuilding mirror first",
-        loan_id,
-    )
-    _sync_application_impl(loan_id)
-
-    try:
-        exists = bool(call_view(contract, "exists", loan_id_bytes))
-    except Exception as exc:
-        raise RuntimeError(
-            f"Failed to verify rebuilt on-chain application for loan {loan_id}: {exc}"
-        ) from exc
-
-    if not exists:
-        raise RuntimeError(
-            f"Failed to rebuild on-chain application mirror for loan {loan_id}"
-        )
+def _is_enabled():
+    return getattr(settings, "BLOCKCHAIN_ENABLED", False)
 
 
 # ---------------------------------------------------------------------------
@@ -135,14 +83,14 @@ def sync_schedule(loan_id):
     """Sync a repayment schedule to the blockchain."""
     if not _is_enabled():
         return
-    _run_in_thread(_sync_schedule_impl, loan_id)
+    _run_in_thread(_sync_schedule_common, loan_id)
 
 
 def sync_payment(loan_id, payment_id):
     """Sync a payment recording to the blockchain."""
     if not _is_enabled():
         return
-    _run_in_thread(_sync_payment_impl, loan_id, payment_id)
+    _run_in_thread(_sync_payment_common, loan_id, payment_id)
 
 
 def sync_overdue(loan_id, installment_number):
@@ -190,6 +138,45 @@ def sync_consent(
 # ---------------------------------------------------------------------------
 
 
+def _ensure_application_synced_for_approval(loan_id):
+    from loans.blockchain.client import call_view
+    from web3 import Web3
+
+    loan_id_bytes = Web3.keccak(text=str(loan_id))
+    contract = get_contract("loanApplication")
+
+    try:
+        exists = bool(call_view(contract, "exists", loan_id_bytes))
+    except Exception as exc:
+        logger.warning(
+            "sync_approval: could not verify on-chain application for loan=%s: %s",
+            loan_id,
+            exc,
+        )
+        exists = False
+
+    if exists:
+        return
+
+    logger.info(
+        "sync_approval: on-chain application missing for loan=%s, rebuilding mirror first",
+        loan_id,
+    )
+    _sync_application_impl(loan_id)
+
+    try:
+        exists = bool(call_view(contract, "exists", loan_id_bytes))
+    except Exception as exc:
+        raise RuntimeError(
+            f"Failed to verify rebuilt on-chain application for loan {loan_id}: {exc}"
+        ) from exc
+
+    if not exists:
+        raise RuntimeError(
+            f"Failed to rebuild on-chain application mirror for loan {loan_id}"
+        )
+
+
 def _sync_application_impl(loan_id):
     from loans.blockchain.models import BlockchainTransaction
     from loans.blockchain.services.application_service import (
@@ -200,7 +187,7 @@ def _sync_application_impl(loan_id):
     from loans.models.application import LoanApplication
     from web3 import Web3
 
-    tx_record = BlockchainTransaction.create_pending(
+    tx_record = _create_tx_record(
         loan_id=loan_id,
         action="submit",
         contract_name="LoanApplication",
@@ -264,30 +251,30 @@ def _sync_application_impl(loan_id):
         )
         logger.info("LoanCore createLoan+submitLoan OK: loan=%s", loan_id)
 
-        tx_record.mark_confirmed(
+        _finalize_tx(
+            tx_record,
             tx_hash=submit_result["tx_hash"],
             gas_used=create_result["gas_used"] + submit_result["gas_used"],
             block_number=submit_result["block_number"],
+            loan_id=loan_id,
+            action="submit",
         )
-        _update_application_tx(loan_id, "submit", submit_result["tx_hash"])
         logger.info(
             "sync_application OK: loan=%s tx=%s", loan_id, submit_result["tx_hash"][:18]
         )
 
     except Exception as exc:
-        logger.error("sync_application FAILED: loan=%s error=%s", loan_id, exc)
-        tx_record.mark_failed(str(exc))
+        _fail_tx(tx_record, exc, loan_id=loan_id)
 
 
 def _sync_approval_impl(loan_id):
-    from loans.blockchain.models import BlockchainTransaction
     from loans.blockchain.services.approval_service import approve_loan_onchain
     from loans.blockchain.services.review_service import assign_officer_onchain
-    from loans.blockchain.client import get_account, get_contract, send_transaction, call_view
+    from loans.blockchain.client import get_account, get_contract, send_transaction
     from loans.models.application import LoanApplication
     from web3 import Web3
 
-    tx_record = BlockchainTransaction.create_pending(
+    tx_record = _create_tx_record(
         loan_id=loan_id,
         action="approve",
         contract_name="LoanApproval",
@@ -313,7 +300,7 @@ def _sync_approval_impl(loan_id):
         la_contract = get_contract("loanApplication")
         try:
             onchain_app = call_view(la_contract, "getApplication", loan_id_bytes)
-            onchain_requested = int(onchain_app[3])  # requestedAmount is index 3
+            onchain_requested = int(onchain_app[3])
             if approved_amount > onchain_requested:
                 logger.warning(
                     "sync_approval: capping approved_amount from %d to on-chain "
@@ -327,7 +314,6 @@ def _sync_approval_impl(loan_id):
                 "using DB requested_amount as fallback cap",
                 loan_id, e,
             )
-            # Fallback: cap to DB requested_amount
             db_requested = int(app.requested_amount)
             if approved_amount > db_requested:
                 approved_amount = db_requested
@@ -363,28 +349,28 @@ def _sync_approval_impl(loan_id):
         send_transaction(lc, "approveLoan", loan_id_bytes, approved_amount, notes_bytes)
         logger.info("sync_approval step 4/4: LoanCore.approveLoan OK")
 
-        tx_record.mark_confirmed(
+        _finalize_tx(
+            tx_record,
             tx_hash=result["tx_hash"],
             gas_used=result["gas_used"],
             block_number=result["block_number"],
+            loan_id=loan_id,
+            action="approve",
         )
-        _update_application_tx(loan_id, "approve", result["tx_hash"])
         logger.info("sync_approval OK: loan=%s tx=%s", loan_id, result["tx_hash"][:18])
 
     except Exception as exc:
-        logger.error("sync_approval FAILED: loan=%s error=%s", loan_id, exc)
-        tx_record.mark_failed(str(exc))
+        _fail_tx(tx_record, exc, loan_id=loan_id)
 
 
 def _sync_rejection_impl(loan_id):
-    from loans.blockchain.models import BlockchainTransaction
     from loans.blockchain.services.approval_service import reject_loan_onchain
     from loans.blockchain.services.review_service import assign_officer_onchain
     from loans.blockchain.client import get_account, get_contract, send_transaction
     from loans.models.application import LoanApplication
     from web3 import Web3
 
-    tx_record = BlockchainTransaction.create_pending(
+    tx_record = _create_tx_record(
         loan_id=loan_id,
         action="reject",
         contract_name="LoanApproval",
@@ -419,21 +405,21 @@ def _sync_rejection_impl(loan_id):
         send_transaction(lc, "rejectLoan", loan_id_bytes, reason_bytes, notes_bytes)
         logger.info("LoanCore assignOfficer+rejectLoan OK: loan=%s", loan_id)
 
-        tx_record.mark_confirmed(
+        _finalize_tx(
+            tx_record,
             tx_hash=result["tx_hash"],
             gas_used=result["gas_used"],
             block_number=result["block_number"],
+            loan_id=loan_id,
+            action="reject",
         )
-        _update_application_tx(loan_id, "reject", result["tx_hash"])
         logger.info("sync_rejection OK: loan=%s tx=%s", loan_id, result["tx_hash"][:18])
 
     except Exception as exc:
-        logger.error("sync_rejection FAILED: loan=%s error=%s", loan_id, exc)
-        tx_record.mark_failed(str(exc))
+        _fail_tx(tx_record, exc, loan_id=loan_id)
 
 
 def _sync_disbursement_impl(loan_id, include_schedule=True):
-    from loans.blockchain.models import BlockchainTransaction
     from loans.blockchain.services.disbursement_service import (
         complete_disbursement_onchain,
         set_method_onchain,
@@ -442,7 +428,7 @@ def _sync_disbursement_impl(loan_id, include_schedule=True):
     from loans.models.application import LoanApplication
     from web3 import Web3
 
-    tx_record = BlockchainTransaction.create_pending(
+    tx_record = _create_tx_record(
         loan_id=loan_id,
         action="disburse",
         contract_name="DisbursementExecution",
@@ -482,23 +468,24 @@ def _sync_disbursement_impl(loan_id, include_schedule=True):
         logger.info("LoanCore markDisbursed OK: loan=%s", loan_id)
 
         complete_tx = result["complete_tx"]
-        tx_record.mark_confirmed(
+        _finalize_tx(
+            tx_record,
             tx_hash=complete_tx["tx_hash"],
             gas_used=complete_tx["gas_used"],
             block_number=complete_tx["block_number"],
+            loan_id=loan_id,
+            action="disburse",
         )
-        _update_application_tx(loan_id, "disburse", complete_tx["tx_hash"])
         logger.info(
             "sync_disbursement OK: loan=%s tx=%s", loan_id, complete_tx["tx_hash"][:18]
         )
 
         # Schedule must run AFTER disbursement (contract requires Disbursed status)
         if include_schedule:
-            _sync_schedule_impl(loan_id)
+            _sync_schedule_common(loan_id)
 
     except Exception as exc:
-        logger.error("sync_disbursement FAILED: loan=%s error=%s", loan_id, exc)
-        tx_record.mark_failed(str(exc))
+        _fail_tx(tx_record, exc, loan_id=loan_id)
 
 
 def _execute_eth_disbursement(loan_id, app):
@@ -552,148 +539,10 @@ def _execute_eth_disbursement(loan_id, app):
     )
 
 
-def _sync_schedule_impl(loan_id):
-    from loans.blockchain.models import BlockchainTransaction
-    from loans.blockchain.services.repayment_service import create_schedule_onchain
-    from loans.models.application import LoanApplication
-    from loans.models.repayment import RepaymentSchedule
-
-    tx_record = BlockchainTransaction.create_pending(
-        loan_id=loan_id,
-        action="schedule",
-        contract_name="RepaymentSchedule",
-        method="createSchedule",
-    )
-
-    try:
-        app = LoanApplication.find_by_id(loan_id)
-        if not app:
-            raise ValueError(f"LoanApplication {loan_id} not found")
-
-        schedule_doc = settings.MONGODB["repayment_schedules"].find_one(
-            {"loan_id": loan_id}
-        )
-        if not schedule_doc:
-            raise ValueError(f"RepaymentSchedule for loan {loan_id} not found")
-
-        schedule = RepaymentSchedule.from_dict(schedule_doc)
-        interest_bps = _monthly_rate_to_annual_bps(schedule.interest_rate)
-
-        borrower_addr = settings.BLOCKCHAIN_CONTRACT_ADDRESSES.get("accessControl", "")
-        if not borrower_addr:
-            from loans.blockchain.client import get_account
-
-            borrower_addr = get_account().address
-
-        start_timestamp = (
-            int(schedule.start_date.timestamp())
-            if hasattr(schedule.start_date, "timestamp")
-            else int(schedule.start_date)
-        )
-
-        result = create_schedule_onchain(
-            loan_id=loan_id,
-            borrower_address=borrower_addr,
-            principal=int(schedule.principal),
-            interest_rate_bps=interest_bps,
-            term_months=int(schedule.term_months),
-            start_date=start_timestamp,
-        )
-
-        tx_record.mark_confirmed(
-            tx_hash=result["tx_hash"],
-            gas_used=result["gas_used"],
-            block_number=result["block_number"],
-        )
-
-        settings.MONGODB["repayment_schedules"].update_one(
-            {"_id": schedule_doc["_id"]},
-            {"$set": {"blockchain_schedule_tx": result["tx_hash"]}},
-        )
-        logger.info("sync_schedule OK: loan=%s tx=%s", loan_id, result["tx_hash"][:18])
-
-    except Exception as exc:
-        logger.error("sync_schedule FAILED: loan=%s error=%s", loan_id, exc)
-        tx_record.mark_failed(str(exc))
-
-
-def _sync_payment_impl(loan_id, payment_id):
-    from bson import ObjectId
-
-    from loans.blockchain.models import BlockchainTransaction
-    from loans.blockchain.services.repayment_service import record_payment_onchain
-    from loans.models.payment import LoanPayment
-
-    tx_record = BlockchainTransaction.create_pending(
-        loan_id=loan_id,
-        action="payment",
-        contract_name="PaymentRecording",
-        method="recordPayment",
-        details={"payment_id": payment_id},
-    )
-
-    try:
-        payment_doc = settings.MONGODB["loan_payments"].find_one(
-            {"_id": ObjectId(payment_id)}
-        )
-        if not payment_doc:
-            raise ValueError(f"LoanPayment {payment_id} not found")
-
-        payment = LoanPayment.from_dict(payment_doc)
-        ref_str = payment.reference or f"PAY_{payment_id}_{loan_id}"
-
-        result = record_payment_onchain(
-            loan_id=loan_id,
-            installment_number=int(payment.installment_number),
-            amount=int(payment.amount),
-            payment_method=payment.payment_method or "other",
-            reference_hash=ref_str,
-        )
-
-        tx_record.mark_confirmed(
-            tx_hash=result["tx_hash"],
-            gas_used=result["gas_used"],
-            block_number=result["block_number"],
-        )
-
-        settings.MONGODB["loan_payments"].update_one(
-            {"_id": ObjectId(payment_id)},
-            {
-                "$set": {
-                    "blockchain_tx_hash": result["tx_hash"],
-                    "blockchain_sync_status": "synced",
-                    "blockchain_synced_at": utcnow(),
-                }
-            },
-        )
-        logger.info(
-            "sync_payment OK: loan=%s payment=%s tx=%s",
-            loan_id,
-            payment_id,
-            result["tx_hash"][:18],
-        )
-
-    except Exception as exc:
-        settings.MONGODB["loan_payments"].update_one(
-            {"_id": ObjectId(payment_id)},
-            {
-                "$set": {
-                    "blockchain_sync_status": "failed",
-                    "blockchain_sync_error": str(exc)[:500],
-                }
-            },
-        )
-        logger.error(
-            "sync_payment FAILED: loan=%s payment=%s error=%s", loan_id, payment_id, exc
-        )
-        tx_record.mark_failed(str(exc))
-
-
 def _sync_overdue_impl(loan_id, installment_number):
-    from loans.blockchain.models import BlockchainTransaction
     from loans.blockchain.services.repayment_service import mark_overdue_onchain
 
-    tx_record = BlockchainTransaction.create_pending(
+    tx_record = _create_tx_record(
         loan_id=loan_id,
         action="overdue",
         contract_name="PaymentRecording",
@@ -707,7 +556,8 @@ def _sync_overdue_impl(loan_id, installment_number):
             installment_number=int(installment_number),
         )
 
-        tx_record.mark_confirmed(
+        _finalize_tx(
+            tx_record,
             tx_hash=result["tx_hash"],
             gas_used=result["gas_used"],
             block_number=result["block_number"],
@@ -729,13 +579,7 @@ def _sync_overdue_impl(loan_id, installment_number):
             result["tx_hash"][:18],
         )
     except Exception as exc:
-        logger.error(
-            "sync_overdue FAILED: loan=%s installment=%s error=%s",
-            loan_id,
-            installment_number,
-            exc,
-        )
-        tx_record.mark_failed(str(exc))
+        _fail_tx(tx_record, exc, loan_id=loan_id)
 
 
 def _sync_penalty_impl(loan_id, installment_number, amount, action, reason=""):
@@ -765,7 +609,7 @@ def _sync_penalty_impl(loan_id, installment_number, amount, action, reason=""):
         )
         return
 
-    tx_record = BlockchainTransaction.create_pending(
+    tx_record = _create_tx_record(
         loan_id=loan_id,
         action=action_key,
         contract_name="AuditRegistry",
@@ -786,7 +630,8 @@ def _sync_penalty_impl(loan_id, installment_number, amount, action, reason=""):
             waived=action == "waive",
         )
 
-        tx_record.mark_confirmed(
+        _finalize_tx(
+            tx_record,
             tx_hash=result["tx_hash"],
             gas_used=result["gas_used"],
             block_number=result["block_number"],
@@ -811,14 +656,7 @@ def _sync_penalty_impl(loan_id, installment_number, amount, action, reason=""):
             result["tx_hash"][:18],
         )
     except Exception as exc:
-        logger.error(
-            "sync_penalty FAILED: loan=%s installment=%s action=%s error=%s",
-            loan_id,
-            installment_number,
-            action_key,
-            exc,
-        )
-        tx_record.mark_failed(str(exc))
+        _fail_tx(tx_record, exc, loan_id=loan_id)
 
 
 def _sync_consent_impl(
@@ -830,10 +668,9 @@ def _sync_consent_impl(
     consent_timestamp,
     previous_state,
 ):
-    from loans.blockchain.models import BlockchainTransaction
     from loans.blockchain.services.audit_service import log_consent_onchain
 
-    tx_record = BlockchainTransaction.create_pending(
+    tx_record = _create_tx_record(
         loan_id=str(user_id),
         action="consent",
         contract_name="AuditRegistry",
@@ -857,7 +694,8 @@ def _sync_consent_impl(
             previous_state=previous_state,
         )
 
-        tx_record.mark_confirmed(
+        _finalize_tx(
+            tx_record,
             tx_hash=result["tx_hash"],
             gas_used=result["gas_used"],
             block_number=result["block_number"],
@@ -865,5 +703,4 @@ def _sync_consent_impl(
 
         logger.info("sync_consent OK: user=%s tx=%s", user_id, result["tx_hash"][:18])
     except Exception as exc:
-        logger.error("sync_consent FAILED: user=%s error=%s", user_id, exc)
-        tx_record.mark_failed(str(exc))
+        _fail_tx(tx_record, exc, loan_id=user_id)

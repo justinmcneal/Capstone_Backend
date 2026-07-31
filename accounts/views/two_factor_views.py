@@ -35,6 +35,7 @@ class Setup2FAView(APIView):
     """
 
     permission_classes = (IsAuthenticated,)
+    throttle_classes = (TwoFactorRateThrottle,)
 
     def post(self, request):
         try:
