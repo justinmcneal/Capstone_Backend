@@ -42,6 +42,7 @@ class OTPService:
         if attempt_count >= OTPService.MAX_OTP_ATTEMPTS:
             if last_attempt:
                 last_attempt = EmailUtils.to_aware_utc(last_attempt)
+                assert last_attempt is not None  # to_aware_utc preserves non-None input
                 time_since_last = datetime.now(timezone.utc) - last_attempt
                 if time_since_last.total_seconds() < OTPService.OTP_COOLDOWN_SECONDS:
                     seconds_remaining = OTPService.OTP_COOLDOWN_SECONDS - int(

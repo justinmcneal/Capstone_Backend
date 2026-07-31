@@ -1,12 +1,14 @@
 import logging
 import re
 
+from django.conf import settings
 from rest_framework.permissions import AllowAny
 from rest_framework.views import APIView
 
 from accounts.serializers.contact_serializers import ContactSupportSerializer
 from accounts.services.email_service import email_service
 from accounts.utils.response_helpers import APIResponseHelper
+from accounts.utils.throttles import ForgotPasswordRateThrottle
 
 logger = logging.getLogger("support")
 
@@ -18,7 +20,7 @@ def _strip_html(text: str) -> str:
 class ContactSupportView(APIView):
     permission_classes = (AllowAny,)
     authentication_classes = ()
-    throttle_classes = ()
+    throttle_classes = (ForgotPasswordRateThrottle,)
 
     def post(self, request):
         serializer = ContactSupportSerializer(data=request.data)
@@ -26,7 +28,7 @@ class ContactSupportView(APIView):
             return APIResponseHelper.validation_error_response(serializer.errors)
 
         data = serializer.validated_data
-        recipient = "sorianoeligabriel@gmail.com"
+        recipient = getattr(settings, "SUPPORT_EMAIL", "sorianoeligabriel@gmail.com")
 
         subject = f"[Support] {data['concern_type']} - {data['full_name']}"
         body = (

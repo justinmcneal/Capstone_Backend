@@ -146,6 +146,21 @@ class ConsentService:
         if changes:
             logger.info(f"Consent updated for user {user_id}: {changes}")
 
+        # When ai_consent is revoked, clear any cached consent so the AI
+        # assistant cannot use a stale 'allowed' value.
+        ai_change = changes.get("ai_consent")
+        if ai_change and ai_change["from"] is True and ai_change["to"] is False:
+            try:
+                from accounts.tasks import invalidate_ai_consent_cache
+
+                invalidate_ai_consent_cache.delay(str(user_id))
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "Could not dispatch consent revocation task for user %s: %s",
+                    user_id,
+                    exc,
+                )
+
         return consent
 
     @staticmethod

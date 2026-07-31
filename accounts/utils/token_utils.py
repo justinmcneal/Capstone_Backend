@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import logging
 from datetime import datetime, timedelta, timezone
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from django.conf import settings
 from rest_framework_simplejwt.tokens import AccessToken, RefreshToken
@@ -28,8 +28,8 @@ class TokenUtils:
     def _token_membership_query(
         customer_id: str, role: str = "customer", active_only: bool = False
     ) -> dict:
-        query = {"customer": str(customer_id)}
-        and_filters = []
+        query: dict[str, Any] = {"customer": str(customer_id)}
+        and_filters: list[dict[str, Any]] = []
 
         # Backward compatible: older customer token records may not have a role field.
         if role == "customer":
@@ -58,7 +58,7 @@ class TokenUtils:
         expires_at: datetime | None = None,
     ) -> None:
         if expires_at is None:
-            parsed_refresh = RefreshToken(refresh_token)
+            parsed_refresh = RefreshToken(refresh_token)  # type: ignore[arg-type]
             expires_at = datetime.fromtimestamp(parsed_refresh["exp"], tz=timezone.utc)
 
         refresh_entry = RefreshTokenEntry(
@@ -128,6 +128,11 @@ class TokenUtils:
         refresh.set_exp(lifetime=lifetimes["refresh"])
 
         access = refresh.access_token
+        access["customer_id"] = str(customer.id)
+        access["email"] = customer.email
+        access["verified"] = customer.verified
+        access["role"] = customer.role
+        access["session_type"] = token_type
         access.set_exp(lifetime=lifetimes["access"])
 
         # Store new refresh token hash in DB
@@ -188,6 +193,11 @@ class TokenUtils:
         refresh.set_exp(lifetime=lifetimes["refresh"])
 
         access = refresh.access_token
+        access["customer_id"] = str(user_id)
+        access["email"] = email
+        access["verified"] = verified
+        access["role"] = role
+        access["session_type"] = token_type
         access.set_exp(lifetime=lifetimes["access"])
 
         TokenUtils._store_refresh_token_entry(
@@ -241,10 +251,10 @@ class TokenUtils:
             token_hash = TokenUtils._hash_token(token)
 
             if token_type == "refresh":
-                parsed_token = RefreshToken(token)
+                parsed_token = RefreshToken(token)  # type: ignore[arg-type]
             else:
                 # For access tokens, we just store their hash
-                parsed_token = AccessToken(token)
+                parsed_token = AccessToken(token)  # type: ignore[arg-type,assignment]
 
             expires_at = datetime.fromtimestamp(parsed_token["exp"], tz=timezone.utc)
 

@@ -362,7 +362,7 @@ class AdminLogoutView(APIView):
 class AdminRequiredMixin(AccessControlMixin):
     """Mixin to require admin authentication and permissions"""
 
-    required_permissions = ()
+    required_permissions: tuple[str, ...] = ()
 
     def check_admin_permission(self, request):
         """Check if authenticated user is admin with required permissions"""

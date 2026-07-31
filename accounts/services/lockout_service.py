@@ -1,7 +1,6 @@
 import logging
 from datetime import datetime, timedelta, timezone
 
-from accounts.models import Customer
 from accounts.utils.email_utils import EmailUtils
 
 logger = logging.getLogger("authentication")
@@ -32,6 +31,7 @@ class LockoutService:
             return (False, 0)
 
         locked_until = EmailUtils.to_aware_utc(customer.locked_until)
+        assert locked_until is not None  # to_aware_utc preserves non-None input
         now = datetime.now(timezone.utc)
         if locked_until > now:
             seconds_remaining = int((locked_until - now).total_seconds())
@@ -82,17 +82,32 @@ class LockoutService:
         logger.info(f"Account lockout reset for {customer.email}")
 
     @staticmethod
-    def admin_unlock(customer_email: str) -> bool:
+    def admin_unlock(user_email: str, role: str = "customer") -> bool:
         """
-        Admin function to unlock a customer account.
+        Admin function to unlock a user account.
+
+        Args:
+            user_email: Email of the account to unlock.
+            role: Role of the account to unlock ('customer', 'loan_officer', 'admin').
+                  Defaults to 'customer' for backward compatibility.
 
         Returns:
             bool: True if account was unlocked, False if not found
         """
-        customer = Customer.find_one({"email": customer_email})
-        if not customer:
+        from accounts.models import Admin, Customer, LoanOfficer
+
+        role = (role or "customer").strip().lower()
+
+        if role == "loan_officer":
+            user = LoanOfficer.find_one({"email": user_email})
+        elif role in {"admin", "super_admin"}:
+            user = Admin.find_one({"email": user_email})
+        else:
+            user = Customer.find_one({"email": user_email})
+
+        if not user:
             return False
 
-        LockoutService.reset_lockout(customer)
-        logger.info(f"Admin unlocked account for {customer_email}")
+        LockoutService.reset_lockout(user)
+        logger.info(f"Admin unlocked {role} account for {user_email}")
         return True
