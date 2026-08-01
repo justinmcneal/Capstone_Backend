@@ -107,8 +107,8 @@ The `loans/` module provides loan product management, loan applications, repayme
 4. ~~Event listener (`event_listener.py`) is unfinished.~~ **COMPLETED**
    - Refactored into `AuditEventListener` class with persistent `last_block` state in MongoDB (`listener_state` collection), reconnection with exponential backoff, graceful shutdown via `stop()`, and event deduplication. Added `tests/test_blockchain_event_listener.py` with 20 tests covering lifecycle, state persistence, connection management, polling, event processing, chain reorg handling, and integration. **Status: COMPLETED.**
 
-5. `.DS_Store` files committed in `loans/` and `loans/views/`.
-   - `find loans/ -name ".DS_Store"` currently returns: `loans/.DS_Store`, `loans/views/.DS_Store`. **Status: NEEDS ACTION.**
+5. ~~`.DS_Store` files committed in `loans/` and `loans/views/`.~~ **COMPLETED**
+   - Added `.DS_Store` to `.gitignore` (along with other macOS artifacts). Removed all tracked `.DS_Store` files from the current index and purged them from git history using `git filter-repo`. **Status: COMPLETED.**
 
 ## Current Strengths
 
@@ -175,17 +175,16 @@ The `loans/` module provides loan product management, loan applications, repayme
 - [x] Replace direct MongoDB access in officer and admin views with model methods.
 - [x] Extract duplicate `serialize_internal_note` helper into shared utility.
 - [x] Add explicit status-transition audit log entries with structured metadata.
-- [ ] Add `.DS_Store` to `.gitignore` and remove from git history.
+- [x] Add `.DS_Store` to `.gitignore` and remove from git history.
 - [x] Finish/unit-test `event_listener.py`.
 - [ ] Add bulk import/export for repayment schedules.
 - [ ] Move interest rate validation from views/serializers into shared domain service.
 
 ## Recommended Next Steps
 
-1. Add `.DS_Store` to `.gitignore` and remove from git history.
-2. Add bulk import/export for repayment schedules.
-3. Move interest rate validation from views/serializers into shared domain service.
-4. Refactor `loans/views/customer_views.py` (1,815 lines) into smaller view modules.
+1. Add bulk import/export for repayment schedules.
+2. Move interest rate validation from views/serializers into shared domain service.
+3. Refactor `loans/views/customer_views.py` (1,815 lines) into smaller view modules.
 
 ## Notes
 
