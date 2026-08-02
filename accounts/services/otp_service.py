@@ -2,6 +2,9 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
+from django.conf import settings
+from pymongo import ReturnDocument
+
 from accounts.models import Customer
 from accounts.utils.email_utils import EmailUtils
 
@@ -51,8 +54,9 @@ class OTPService:
                     return (False, seconds_remaining)
                 else:
                     # Reset counter after cooldown
-                    setattr(customer, attempt_field, 0)
-                    customer.save()
+                    OTPService.reset_otp_attempts(
+                        customer, attempt_field, last_attempt_field
+                    )
                     return (True, 0)
             return (False, 0)
         return (True, 0)
@@ -63,10 +67,17 @@ class OTPService:
         attempt_field: str = "otp_attempt_count",
         last_attempt_field: str = "otp_last_attempt",
     ) -> None:
-        current_count = getattr(customer, attempt_field, 0)
-        setattr(customer, attempt_field, current_count + 1)
-        setattr(customer, last_attempt_field, datetime.now(timezone.utc))
-        customer.save()
+        now = datetime.now(timezone.utc)
+        document = settings.MONGODB[customer.collection_name].find_one_and_update(
+            {"_id": customer._id},
+            {
+                "$inc": {attempt_field: 1},
+                "$set": {last_attempt_field: now, "updated_at": now},
+            },
+            return_document=ReturnDocument.AFTER,
+        )
+        setattr(customer, attempt_field, int((document or {}).get(attempt_field, 1)))
+        setattr(customer, last_attempt_field, now)
 
     @staticmethod
     def reset_otp_attempts(
@@ -74,9 +85,19 @@ class OTPService:
         attempt_field: str = "otp_attempt_count",
         last_attempt_field: str = "otp_last_attempt",
     ) -> None:
+        now = datetime.now(timezone.utc)
+        settings.MONGODB[customer.collection_name].update_one(
+            {"_id": customer._id},
+            {
+                "$set": {
+                    attempt_field: 0,
+                    last_attempt_field: None,
+                    "updated_at": now,
+                }
+            },
+        )
         setattr(customer, attempt_field, 0)
         setattr(customer, last_attempt_field, None)
-        customer.save()
 
     @staticmethod
     def validate_otp(
@@ -118,6 +139,57 @@ class OTPService:
         otp_field: str = "verification_token",
         expiry_field: str = "verification_token_expires",
     ) -> None:
+        now = datetime.now(timezone.utc)
+        settings.MONGODB[customer.collection_name].update_one(
+            {"_id": customer._id},
+            {
+                "$set": {
+                    otp_field: None,
+                    expiry_field: None,
+                    "updated_at": now,
+                }
+            },
+        )
         setattr(customer, otp_field, None)
         setattr(customer, expiry_field, None)
-        customer.save()
+
+    @staticmethod
+    def consume_otp(
+        customer: Customer,
+        provided_otp: str,
+        otp_field: str,
+        expiry_field: str,
+        *,
+        success_updates: dict | None = None,
+    ) -> bool:
+        """Validate and consume a one-time code with a single winning update."""
+        valid, _message = OTPService.validate_otp(
+            customer, provided_otp, otp_field, expiry_field
+        )
+        if not valid:
+            return False
+
+        expected_expiry = getattr(customer, expiry_field, None)
+        now = datetime.now(timezone.utc)
+        updates = {
+            otp_field: None,
+            expiry_field: None,
+            "updated_at": now,
+            **(success_updates or {}),
+        }
+        result = settings.MONGODB[customer.collection_name].update_one(
+            {
+                "_id": customer._id,
+                otp_field: {"$ne": None},
+                expiry_field: expected_expiry,
+            },
+            {"$set": updates},
+        )
+        if result.modified_count != 1:
+            return False
+
+        setattr(customer, otp_field, None)
+        setattr(customer, expiry_field, None)
+        for field, value in (success_updates or {}).items():
+            setattr(customer, field, value)
+        return True

@@ -4,6 +4,7 @@ import string
 from datetime import datetime, timedelta, timezone
 
 from bson import ObjectId
+from django.contrib.auth.signals import user_login_failed
 from django.utils.dateparse import parse_datetime
 from rest_framework import status
 from rest_framework.permissions import AllowAny, IsAuthenticated
@@ -11,6 +12,7 @@ from rest_framework.views import APIView
 
 from accounts.authentication import CustomJWTAuthentication
 from accounts.models import Admin, LoanOfficer
+from accounts.services.lockout_service import LockoutService
 from accounts.services.two_factor_service import TwoFactorService
 from accounts.utils.access_control import AccessControlMixin
 from accounts.utils.auth_cookies import (
@@ -21,8 +23,9 @@ from accounts.utils.auth_cookies import (
 )
 from accounts.utils.email_utils import EmailUtils
 from accounts.utils.exception_types import NON_FATAL_EXCEPTIONS
+from accounts.utils.request_utils import get_client_ip
 from accounts.utils.response_helpers import error_response, success_response
-from accounts.utils.throttles import AdminLoginRateThrottle
+from accounts.utils.throttles import AdminLoginRateThrottle, LoginIdentifierRateThrottle
 from accounts.utils.token_utils import TokenUtils
 from accounts.utils.validation_utils import (
     normalize_text,
@@ -41,15 +44,8 @@ GENERIC_LOGIN_ERROR_MESSAGE = "Invalid email/username or password."
 DEFAULT_LOAN_OFFICER_DEPARTMENT = "Loans Department"
 
 
-def _get_client_ip(request):
-    forwarded = request.META.get("HTTP_X_FORWARDED_FOR")
-    if forwarded:
-        return forwarded.split(",")[0].strip()
-    return request.META.get("REMOTE_ADDR", "")
-
-
 def _log_admin_login_failure(request, login_identifier, reason, admin=None):
-    ip_address = _get_client_ip(request)
+    ip_address = get_client_ip(request)
     logger.warning(
         "login_failed role=admin reason=%s identifier=%s ip=%s",
         reason,
@@ -80,6 +76,11 @@ def _log_admin_login_failure(request, login_identifier, reason, admin=None):
             login_identifier,
             str(log_error),
         )
+    user_login_failed.send(
+        sender=__name__,
+        credentials={"username": login_identifier},
+        request=request,
+    )
 
 
 def generate_temp_password(length=12):
@@ -150,7 +151,7 @@ class AdminLoginView(APIView):
 
     permission_classes = (AllowAny,)
     authentication_classes = ()
-    throttle_classes = (AdminLoginRateThrottle,)
+    throttle_classes = (AdminLoginRateThrottle, LoginIdentifierRateThrottle)
 
     def post(self, request):
         try:
@@ -234,13 +235,10 @@ class AdminLoginView(APIView):
 
             # Verify password
             if not admin.check_password(password):
-                admin.failed_login_attempts += 1
-
-                if admin.failed_login_attempts >= 5:
-                    admin.locked_until = datetime.now(timezone.utc) + timedelta(
-                        minutes=30
-                    )
-                    admin.save()
+                is_now_locked, attempts_remaining = LockoutService.record_failed_attempt(
+                    admin, lockout_duration=timedelta(minutes=30)
+                )
+                if is_now_locked:
                     _log_admin_login_failure(
                         request,
                         username,
@@ -252,11 +250,10 @@ class AdminLoginView(APIView):
                         status_code=status.HTTP_401_UNAUTHORIZED,
                     )
 
-                admin.save()
                 _log_admin_login_failure(
                     request,
                     username,
-                    f"password_incorrect_{5 - admin.failed_login_attempts}_attempts_remaining",
+                    f"password_incorrect_{attempts_remaining}_attempts_remaining",
                     admin=admin,
                 )
                 return error_response(
@@ -265,10 +262,9 @@ class AdminLoginView(APIView):
                 )
 
             # Reset failed attempts
-            admin.failed_login_attempts = 0
-            admin.locked_until = None
-            admin.last_login_attempt = datetime.now(timezone.utc)
-            admin.save()
+            LockoutService.reset_lockout(
+                admin, last_login_attempt=datetime.now(timezone.utc)
+            )
 
             # MFA / 2FA is mandatory for all administrator accounts.
             if not admin.two_factor_enabled:

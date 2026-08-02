@@ -59,6 +59,11 @@ class Customer:
             "password_reset_attempt_count", 0
         )
         self.password_reset_last_attempt = kwargs.get("password_reset_last_attempt")
+        self.password_reset_last_sent_at = kwargs.get("password_reset_last_sent_at")
+        self.password_reset_window_started_at = kwargs.get(
+            "password_reset_window_started_at"
+        )
+        self.password_reset_issue_count = kwargs.get("password_reset_issue_count", 0)
 
         # Two-Factor Authentication (2FA)
         self.two_factor_enabled = kwargs.get("two_factor_enabled", False)
@@ -128,6 +133,9 @@ class Customer:
             "password_reset_otp_expires": self.password_reset_otp_expires,
             "password_reset_attempt_count": self.password_reset_attempt_count,
             "password_reset_last_attempt": self.password_reset_last_attempt,
+            "password_reset_last_sent_at": self.password_reset_last_sent_at,
+            "password_reset_window_started_at": self.password_reset_window_started_at,
+            "password_reset_issue_count": self.password_reset_issue_count,
             "two_factor_enabled": self.two_factor_enabled,
             "two_factor_secret": self.two_factor_secret,
             "backup_codes": self.backup_codes,

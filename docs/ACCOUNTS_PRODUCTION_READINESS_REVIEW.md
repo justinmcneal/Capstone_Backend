@@ -591,11 +591,18 @@ used by the refresh request.
 ### Stage 4 — Brute-force, OTP, and concurrency hardening
 
 - [ ] Replace `100/hour` auth throttle values with reviewed production policy.
-- [ ] Add per-identifier and per-token limits in addition to IP limits.
-- [ ] Make login, OTP, reset, and backup-code changes atomic.
-- [ ] Add password-reset issuance cooldown and email-abuse protection.
-- [ ] Define trusted-proxy/IP extraction behavior.
-- [ ] Reconcile custom lockouts with django-axes.
+- [x] ~~Add per-identifier and per-token limits in addition to IP limits.~~
+- [x] ~~Make login, OTP, reset, and backup-code changes atomic.~~
+- [x] ~~Add password-reset issuance cooldown and email-abuse protection.~~
+- [x] ~~Define trusted-proxy/IP extraction behavior.~~
+- [x] ~~Reconcile custom lockouts with django-axes.~~
+
+Implementation note: auth throttles intentionally remain at `100/hour` for the
+current test phase. Identifier and token cache keys are SHA-256 digests rather
+than raw credentials. Password-reset issuance is limited to one message per
+minute and five messages per account per hour. `TRUSTED_PROXY_COUNT` defaults to
+zero, and MongoDB account lockouts are authoritative while django-axes remains an
+audit/reset observer rather than imposing a second lockout duration.
 
 ### Stage 5 — 2FA lifecycle integrity
 

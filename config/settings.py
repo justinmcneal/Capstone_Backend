@@ -190,6 +190,9 @@ AXES_COOLOFF_TIME = 1  # 1 hour
 AXES_RESET_ON_SUCCESS = True
 AXES_LOCKOUT_PARAMETERS = ["ip_address", "username"]
 AXES_HANDLER = 'axes.handlers.cache.AxesCacheHandler'
+# MongoDB account lockouts are authoritative. Axes records and resets attempts
+# but does not impose a second, conflicting lockout duration.
+AXES_LOCK_OUT_AT_FAILURE = False
 
 
 # Internationalization
@@ -273,6 +276,9 @@ REST_FRAMEWORK = {
     ],
     'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',
     'PAGE_SIZE': 10,
+    # Do not trust client-supplied forwarding headers by default. Set this to the
+    # exact number of trusted reverse proxies when deploying behind a proxy chain.
+    'NUM_PROXIES': int(os.getenv('TRUSTED_PROXY_COUNT', '0')),
 }
 
 # JWT Settings

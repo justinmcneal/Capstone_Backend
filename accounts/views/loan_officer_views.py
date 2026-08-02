@@ -1,11 +1,13 @@
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
+from django.contrib.auth.signals import user_logged_in, user_login_failed
 from rest_framework import status
 from rest_framework.permissions import AllowAny
 from rest_framework.views import APIView
 
 from accounts.models import LoanOfficer
+from accounts.services.lockout_service import LockoutService
 from accounts.utils.auth_cookies import (
     apply_auth_token_transport,
     clear_auth_cookies,
@@ -15,8 +17,12 @@ from accounts.utils.auth_cookies import (
 )
 from accounts.utils.email_utils import EmailUtils
 from accounts.utils.exception_types import NON_FATAL_EXCEPTIONS
+from accounts.utils.request_utils import get_client_ip
 from accounts.utils.response_helpers import error_response, success_response
-from accounts.utils.throttles import LoanOfficerLoginRateThrottle
+from accounts.utils.throttles import (
+    LoanOfficerLoginRateThrottle,
+    LoginIdentifierRateThrottle,
+)
 from accounts.utils.token_utils import TokenUtils
 from accounts.utils.validation_utils import parse_bool
 from analytics.models import AuditLog
@@ -25,15 +31,8 @@ logger = logging.getLogger("loan_officer_auth")
 GENERIC_LOGIN_ERROR_MESSAGE = "Invalid email/username or password."
 
 
-def _get_client_ip(request):
-    forwarded = request.META.get("HTTP_X_FORWARDED_FOR")
-    if forwarded:
-        return forwarded.split(",")[0].strip()
-    return request.META.get("REMOTE_ADDR", "")
-
-
 def _log_loan_officer_login_failure(request, email, reason, officer=None):
-    ip_address = _get_client_ip(request)
+    ip_address = get_client_ip(request)
     logger.warning(
         "login_failed role=loan_officer reason=%s email=%s ip=%s",
         reason,
@@ -59,6 +58,9 @@ def _log_loan_officer_login_failure(request, email, reason, officer=None):
             email,
             str(log_error),
         )
+    user_login_failed.send(
+        sender=__name__, credentials={"username": email}, request=request
+    )
 
 
 class LoanOfficerLoginView(APIView):
@@ -77,6 +79,7 @@ class LoanOfficerLoginView(APIView):
     authentication_classes = ()
     throttle_classes = (
         LoanOfficerLoginRateThrottle,
+        LoginIdentifierRateThrottle,
     )
 
     def post(self, request):
@@ -155,14 +158,10 @@ class LoanOfficerLoginView(APIView):
 
             # Verify password
             if not officer.check_password(password):
-                # Increment failed attempts
-                officer.failed_login_attempts += 1
-
-                if officer.failed_login_attempts >= 5:
-                    officer.locked_until = datetime.now(timezone.utc) + timedelta(
-                        minutes=15
-                    )
-                    officer.save()
+                is_now_locked, attempts_remaining = (
+                    LockoutService.record_failed_attempt(officer)
+                )
+                if is_now_locked:
                     _log_loan_officer_login_failure(
                         request,
                         email,
@@ -174,11 +173,10 @@ class LoanOfficerLoginView(APIView):
                         status_code=status.HTTP_401_UNAUTHORIZED,
                     )
 
-                officer.save()
                 _log_loan_officer_login_failure(
                     request,
                     email,
-                    f"password_incorrect_{5 - officer.failed_login_attempts}_attempts_remaining",
+                    f"password_incorrect_{attempts_remaining}_attempts_remaining",
                     officer=officer,
                 )
                 return error_response(
@@ -187,10 +185,9 @@ class LoanOfficerLoginView(APIView):
                 )
 
             # Reset failed attempts on successful login
-            officer.failed_login_attempts = 0
-            officer.locked_until = None
-            officer.last_login_attempt = datetime.now(timezone.utc)
-            officer.save()
+            LockoutService.reset_lockout(
+                officer, last_login_attempt=datetime.now(timezone.utc)
+            )
 
             # Check if 2FA is enabled
             if officer.two_factor_enabled:
@@ -236,6 +233,9 @@ class LoanOfficerLoginView(APIView):
                 user_email=officer.email,
                 description=f"Loan officer {officer.full_name} logged in",
                 ip_address=request.META.get("REMOTE_ADDR", ""),
+            )
+            user_logged_in.send(
+                sender=officer.__class__, request=request, user=officer
             )
 
             response = success_response(

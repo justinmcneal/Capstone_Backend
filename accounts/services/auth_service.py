@@ -1,6 +1,8 @@
 import re
 from datetime import datetime, timezone
 
+from django.conf import settings
+from pymongo import ReturnDocument
 from pymongo.errors import DuplicateKeyError
 
 from accounts.models import Customer
@@ -52,20 +54,47 @@ class AuthService:
         return data
 
     @staticmethod
-    def verify_customer_otp(customer):
-        customer.verified = True
-        OTPService.clear_otp(
-            customer, "verification_token", "verification_token_expires"
+    def verify_customer_otp(customer, provided_otp):
+        consumed = OTPService.consume_otp(
+            customer,
+            provided_otp,
+            "verification_token",
+            "verification_token_expires",
+            success_updates={"verified": True},
         )
-        return customer
+        return customer if consumed else None
 
     @staticmethod
     def resend_customer_otp(customer):
         otp = OTPService.set_otp(
             customer, "verification_token", "verification_token_expires"
         )
-        customer.verification_resend_count += 1
-        customer.save()
+        now = datetime.now(timezone.utc)
+        encrypted_otp = customer.to_dict()["verification_token"]
+        document = settings.MONGODB[customer.collection_name].find_one_and_update(
+            {
+                "_id": customer._id,
+                "verified": False,
+                "$or": [
+                    {"verification_resend_count": {"$exists": False}},
+                    {"verification_resend_count": {"$lt": 2}},
+                ],
+            },
+            {
+                "$set": {
+                    "verification_token": encrypted_otp,
+                    "verification_token_expires": customer.verification_token_expires,
+                    "updated_at": now,
+                },
+                "$inc": {"verification_resend_count": 1},
+            },
+            return_document=ReturnDocument.AFTER,
+        )
+        if document is None:
+            return None
+        customer.verification_resend_count = int(
+            document.get("verification_resend_count", 0)
+        )
 
         EmailUtils.send_verification_email(
             email=customer.email, first_name=customer.first_name, token=otp
@@ -164,8 +193,12 @@ class AuthService:
 
     @staticmethod
     def update_login_attempt(customer):
-        customer.last_login_attempt = datetime.now(timezone.utc)
-        customer.save()
+        now = datetime.now(timezone.utc)
+        settings.MONGODB[customer.collection_name].update_one(
+            {"_id": customer._id},
+            {"$set": {"last_login_attempt": now, "updated_at": now}},
+        )
+        customer.last_login_attempt = now
 
     @staticmethod
     def check_otp_rate_limit(customer):

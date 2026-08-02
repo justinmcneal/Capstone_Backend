@@ -1,5 +1,9 @@
 import logging
 import re
+from datetime import datetime, timedelta, timezone
+
+from django.conf import settings
+from pymongo import ReturnDocument
 
 from accounts.models import Admin, LoanOfficer
 from accounts.services.auth_service import AuthService
@@ -17,6 +21,9 @@ class PasswordService:
     GENERIC_RESET_VERIFY_ERROR = "Invalid email or OTP"
     RESET_ATTEMPT_FIELD = "password_reset_attempt_count"
     RESET_LAST_ATTEMPT_FIELD = "password_reset_last_attempt"
+    RESET_ISSUE_COOLDOWN_SECONDS = 60
+    RESET_ISSUE_WINDOW_SECONDS = 3600
+    MAX_RESET_ISSUES_PER_WINDOW = 5
 
     @staticmethod
     def _find_by_email(model, email):
@@ -81,16 +88,83 @@ class PasswordService:
             )
             return (True, PasswordService.GENERIC_RESET_INIT_MESSAGE)
 
-        # Use password reset expiry (15 minutes) instead of default (10 minutes)
+        now = datetime.now(timezone.utc)
+        collection = settings.MONGODB[user.collection_name]
+        window_cutoff = now - timedelta(
+            seconds=PasswordService.RESET_ISSUE_WINDOW_SECONDS
+        )
+        collection.update_one(
+            {
+                "_id": user._id,
+                "$or": [
+                    {"password_reset_window_started_at": {"$exists": False}},
+                    {"password_reset_window_started_at": None},
+                    {"password_reset_window_started_at": {"$lte": window_cutoff}},
+                ],
+            },
+            {
+                "$set": {
+                    "password_reset_window_started_at": now,
+                    "password_reset_issue_count": 0,
+                    "updated_at": now,
+                }
+            },
+        )
+
+        # Use password reset expiry (15 minutes) instead of default (10 minutes).
         otp = OTPService.set_otp(
             user,
             "password_reset_otp",
             "password_reset_otp_expires",
             expiry_minutes=OTPService.PASSWORD_RESET_EXPIRY_MINUTES,
         )
-        user.password_reset_attempt_count = 0
-        user.password_reset_last_attempt = None
-        user.save()
+        encrypted_otp = user.to_dict()["password_reset_otp"]
+        cooldown_cutoff = now - timedelta(
+            seconds=PasswordService.RESET_ISSUE_COOLDOWN_SECONDS
+        )
+        issued = collection.find_one_and_update(
+            {
+                "_id": user._id,
+                "$and": [
+                    {
+                        "$or": [
+                            {"password_reset_last_sent_at": {"$exists": False}},
+                            {"password_reset_last_sent_at": None},
+                            {"password_reset_last_sent_at": {"$lte": cooldown_cutoff}},
+                        ]
+                    },
+                    {
+                        "$or": [
+                            {"password_reset_issue_count": {"$exists": False}},
+                            {
+                                "password_reset_issue_count": {
+                                    "$lt": PasswordService.MAX_RESET_ISSUES_PER_WINDOW
+                                }
+                            },
+                        ]
+                    },
+                ],
+            },
+            {
+                "$set": {
+                    "password_reset_otp": encrypted_otp,
+                    "password_reset_otp_expires": user.password_reset_otp_expires,
+                    "password_reset_attempt_count": 0,
+                    "password_reset_last_attempt": None,
+                    "password_reset_last_sent_at": now,
+                    "updated_at": now,
+                },
+                "$inc": {"password_reset_issue_count": 1},
+            },
+            return_document=ReturnDocument.AFTER,
+        )
+        if issued is None:
+            logger.info(
+                "Password reset issuance suppressed by cooldown for %s (%s)",
+                email,
+                user_type,
+            )
+            return (True, PasswordService.GENERIC_RESET_INIT_MESSAGE)
 
         # Get name for email
         first_name = getattr(user, "first_name", None) or getattr(
@@ -186,26 +260,43 @@ class PasswordService:
             PasswordService._increment_reset_otp_attempt(user)
             return (False, PasswordService.GENERIC_RESET_VERIFY_ERROR)
 
-        PasswordService._reset_reset_otp_attempts(user)
-
         if user.check_password(new_password):
             return (False, "New password must be different from the old password")
 
         user.set_password(new_password)
-        user.security_version = int(getattr(user, "security_version", 1)) + 1
+        now = datetime.now(timezone.utc)
+        updates = {
+            "password": user.password,
+            "password_reset_otp": None,
+            "password_reset_otp_expires": None,
+            "password_reset_attempt_count": 0,
+            "password_reset_last_attempt": None,
+            "failed_login_attempts": 0,
+            "locked_until": None,
+            "updated_at": now,
+        }
+        if hasattr(user, "must_change_password"):
+            updates["must_change_password"] = False
 
-        # A verified password reset proves control of the account's email and
-        # should allow the user to sign in with the new password immediately.
-        if hasattr(user, "failed_login_attempts"):
-            user.failed_login_attempts = 0
-        if hasattr(user, "locked_until"):
-            user.locked_until = None
+        document = settings.MONGODB[user.collection_name].find_one_and_update(
+            {
+                "_id": user._id,
+                "password_reset_otp": {"$ne": None},
+                "password_reset_otp_expires": user.password_reset_otp_expires,
+            },
+            {"$set": updates, "$inc": {"security_version": 1}},
+            return_document=ReturnDocument.AFTER,
+        )
+        if document is None:
+            return (False, PasswordService.GENERIC_RESET_VERIFY_ERROR)
 
-        # A successful reset satisfies mandatory first-password change.
+        user.security_version = int(document.get("security_version", 1))
+        user.failed_login_attempts = 0
+        user.locked_until = None
         if hasattr(user, "must_change_password"):
             user.must_change_password = False
-
-        OTPService.clear_otp(user, "password_reset_otp", "password_reset_otp_expires")
+        user.password_reset_otp = None
+        user.password_reset_otp_expires = None
         if getattr(user, "id", None):
             TokenUtils.revoke_all_sessions(user.id, user_type)
 

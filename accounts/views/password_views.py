@@ -15,6 +15,7 @@ from accounts.utils.exception_types import NON_FATAL_EXCEPTIONS
 from accounts.utils.response_helpers import APIResponseHelper
 from accounts.utils.throttles import (
     ForgotPasswordRateThrottle,
+    OTPIdentifierRateThrottle,
     OTPVerificationRateThrottle,
 )
 
@@ -26,6 +27,7 @@ class ForgotPasswordView(APIView):
     authentication_classes = ()
     throttle_classes = (
         ForgotPasswordRateThrottle,
+        OTPIdentifierRateThrottle,
     )
 
     def post(self, request):
@@ -56,6 +58,7 @@ class VerifyResetOTPView(APIView):
     authentication_classes = ()
     throttle_classes = (
         OTPVerificationRateThrottle,
+        OTPIdentifierRateThrottle,
     )
 
     def post(self, request):
@@ -85,6 +88,7 @@ class ResetPasswordView(APIView):
     authentication_classes = ()
     throttle_classes = (
         OTPVerificationRateThrottle,
+        OTPIdentifierRateThrottle,
     )
 
     def post(self, request):

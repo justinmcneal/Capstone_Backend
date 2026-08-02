@@ -3,9 +3,11 @@ import hashlib
 import io
 import logging
 import secrets
+from datetime import datetime, timezone
 
 import pyotp
 import qrcode
+from django.conf import settings
 
 from accounts.utils.exception_types import NON_FATAL_EXCEPTIONS
 
@@ -262,9 +264,18 @@ class TwoFactorService:
         )
 
         if is_valid:
-            # Remove used code
-            customer.backup_codes.remove(used_hash)
-            customer.save()
+            now = datetime.now(timezone.utc)
+            result = settings.MONGODB[customer.collection_name].update_one(
+                {"_id": customer._id, "backup_codes": used_hash},
+                {"$pull": {"backup_codes": used_hash}, "$set": {"updated_at": now}},
+            )
+            if result.modified_count != 1:
+                return False
+            customer.backup_codes = [
+                stored_hash
+                for stored_hash in customer.backup_codes
+                if stored_hash != used_hash
+            ]
             logger.info(
                 f"Backup code used for {customer.email}. {len(customer.backup_codes)} remaining."
             )
@@ -288,8 +299,16 @@ class TwoFactorService:
             return None
 
         plain_codes, hashed_codes = TwoFactorService.generate_backup_codes()
+        settings.MONGODB[customer.collection_name].update_one(
+            {"_id": customer._id},
+            {
+                "$set": {
+                    "backup_codes": hashed_codes,
+                    "updated_at": datetime.now(timezone.utc),
+                }
+            },
+        )
         customer.backup_codes = hashed_codes
-        customer.save()
 
         logger.info(f"Backup codes regenerated for {customer.email}")
         return plain_codes

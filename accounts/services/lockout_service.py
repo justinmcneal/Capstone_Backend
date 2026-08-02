@@ -1,6 +1,9 @@
 import logging
 from datetime import datetime, timedelta, timezone
 
+from django.conf import settings
+from pymongo import ReturnDocument
+
 from accounts.utils.email_utils import EmailUtils
 
 logger = logging.getLogger("authentication")
@@ -37,48 +40,99 @@ class LockoutService:
             seconds_remaining = int((locked_until - now).total_seconds())
             return (True, seconds_remaining)
 
-        # Lock has expired, reset the lockout
-        LockoutService.reset_lockout(customer)
+        # Clear only the expired value observed here. A concurrent request may
+        # already have extended the lock and must not be overwritten.
+        result = settings.MONGODB[customer.collection_name].update_one(
+            {"_id": customer._id, "locked_until": {"$lte": now}},
+            {
+                "$set": {
+                    "failed_login_attempts": 0,
+                    "locked_until": None,
+                    "updated_at": now,
+                }
+            },
+        )
+        if result.modified_count:
+            customer.failed_login_attempts = 0
+            customer.locked_until = None
+        else:
+            current = settings.MONGODB[customer.collection_name].find_one(
+                {"_id": customer._id}, {"locked_until": 1}
+            )
+            current_lock = EmailUtils.to_aware_utc(
+                (current or {}).get("locked_until")
+            )
+            if current_lock and current_lock > now:
+                customer.locked_until = current_lock
+                return (True, int((current_lock - now).total_seconds()))
         return (False, 0)
 
     @staticmethod
-    def record_failed_attempt(customer) -> tuple:
+    def record_failed_attempt(customer, lockout_duration=None) -> tuple:
         """
         Record a failed login attempt and lock account if threshold reached.
 
         Returns:
             tuple: (is_now_locked: bool, attempts_remaining: int)
         """
-        customer.failed_login_attempts += 1
-        attempts_remaining = (
-            LockoutService.MAX_ATTEMPTS - customer.failed_login_attempts
+        now = datetime.now(timezone.utc)
+        collection = settings.MONGODB[customer.collection_name]
+        document = collection.find_one_and_update(
+            {"_id": customer._id},
+            {
+                "$inc": {"failed_login_attempts": 1},
+                "$set": {"last_login_attempt": now, "updated_at": now},
+            },
+            return_document=ReturnDocument.AFTER,
+        )
+        failed_attempts = int((document or {}).get("failed_login_attempts", 1))
+        customer.failed_login_attempts = failed_attempts
+        customer.last_login_attempt = now
+        attempts_remaining = max(
+            LockoutService.MAX_ATTEMPTS - failed_attempts, 0
         )
 
-        if customer.failed_login_attempts >= LockoutService.MAX_ATTEMPTS:
-            customer.locked_until = (
-                datetime.now(timezone.utc) + LockoutService.LOCKOUT_DURATION
+        if failed_attempts >= LockoutService.MAX_ATTEMPTS:
+            duration = lockout_duration or LockoutService.LOCKOUT_DURATION
+            locked_until = now + duration
+            collection.update_one(
+                {
+                    "_id": customer._id,
+                    "failed_login_attempts": {"$gte": LockoutService.MAX_ATTEMPTS},
+                },
+                {"$max": {"locked_until": locked_until}},
             )
-            customer.save()
+            customer.locked_until = locked_until
             logger.warning(
                 f"Account locked for {customer.email} after {LockoutService.MAX_ATTEMPTS} failed attempts"
             )
             return (True, 0)
 
-        customer.save()
         logger.info(
-            f"Failed login attempt {customer.failed_login_attempts}/{LockoutService.MAX_ATTEMPTS} for {customer.email}"
+            f"Failed login attempt {failed_attempts}/{LockoutService.MAX_ATTEMPTS} for {customer.email}"
         )
         return (False, attempts_remaining)
 
     @staticmethod
-    def reset_lockout(customer):
+    def reset_lockout(customer, *, last_login_attempt=None):
         """
         Reset failed attempts and unlock account.
         Called on successful login or by admin.
         """
+        now = datetime.now(timezone.utc)
+        updates = {
+            "failed_login_attempts": 0,
+            "locked_until": None,
+            "updated_at": now,
+        }
+        if last_login_attempt is not None:
+            updates["last_login_attempt"] = last_login_attempt
+            customer.last_login_attempt = last_login_attempt
+        settings.MONGODB[customer.collection_name].update_one(
+            {"_id": customer._id}, {"$set": updates}
+        )
         customer.failed_login_attempts = 0
         customer.locked_until = None
-        customer.save()
         logger.info(f"Account lockout reset for {customer.email}")
 
     @staticmethod

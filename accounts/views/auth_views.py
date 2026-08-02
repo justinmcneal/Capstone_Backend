@@ -32,11 +32,16 @@ from accounts.utils.auth_cookies import (
 )
 from accounts.utils.email_utils import EmailUtils
 from accounts.utils.exception_types import NON_FATAL_EXCEPTIONS
+from accounts.utils.request_utils import get_client_ip
 from accounts.utils.response_helpers import APIResponseHelper
 from accounts.utils.throttles import (
+    LoginIdentifierRateThrottle,
     LoginRateThrottle,
+    OTPIdentifierRateThrottle,
     OTPResendRateThrottle,
     OTPVerificationRateThrottle,
+    RefreshTokenRateThrottle,
+    SignUpIdentifierRateThrottle,
     SignUpRateThrottle,
 )
 from accounts.utils.token_utils import TokenUtils
@@ -48,15 +53,8 @@ GENERIC_OTP_VERIFY_ERROR_MESSAGE = "Invalid OTP"
 GENERIC_OTP_RESEND_MESSAGE = "If an unverified account exists, an OTP has been sent."
 
 
-def _get_client_ip(request):
-    forwarded = request.META.get("HTTP_X_FORWARDED_FOR")
-    if forwarded:
-        return forwarded.split(",")[0].strip()
-    return request.META.get("REMOTE_ADDR", "")
-
-
 def _log_customer_login_failure(request, email, reason, user=None):
-    ip_address = _get_client_ip(request)
+    ip_address = get_client_ip(request)
     logger.warning(
         "login_failed role=customer reason=%s email=%s ip=%s",
         reason,
@@ -135,6 +133,7 @@ class SignUpView(APIView):
     authentication_classes = ()
     throttle_classes = (
         SignUpRateThrottle,
+        SignUpIdentifierRateThrottle,
     )
 
     def post(self, request):
@@ -237,6 +236,7 @@ class LoginView(APIView):
     authentication_classes = ()
     throttle_classes = (
         LoginRateThrottle,
+        LoginIdentifierRateThrottle,
     )
 
     def post(self, request):
@@ -383,7 +383,7 @@ class LoginView(APIView):
 
             # Record LoginActivity for success
             try:
-                ip_address = _get_client_ip(request)
+                ip_address = get_client_ip(request)
                 device_info = request.META.get("HTTP_USER_AGENT", "")
                 LoginActivity(
                     user_id=str(customer.id),
@@ -451,6 +451,7 @@ class VerifyOTP(APIView):
     authentication_classes = ()
     throttle_classes = (
         OTPVerificationRateThrottle,
+        OTPIdentifierRateThrottle,
     )
 
     def post(self, request):
@@ -509,15 +510,18 @@ class VerifyOTP(APIView):
                 )
                 return APIResponseHelper.error_response("OTP has expired")
 
-            AuthService.increment_otp_attempt(customer)
-
             if customer.verification_token != otp:
+                AuthService.increment_otp_attempt(customer)
                 logger.warning(
                     f"Invalid OTP attempt for {email} from IP {request.META.get('REMOTE_ADDR')}"
                 )
                 return APIResponseHelper.error_response("Invalid OTP")
 
-            customer = AuthService.verify_customer_otp(customer)
+            customer = AuthService.verify_customer_otp(customer, otp)
+            if customer is None:
+                return APIResponseHelper.error_response(
+                    GENERIC_OTP_VERIFY_ERROR_MESSAGE, status.HTTP_400_BAD_REQUEST
+                )
             AuthService.reset_otp_attempts(customer)
             tokens = AuthService.create_customer_tokens(customer)
 
@@ -551,6 +555,7 @@ class ResendOTP(APIView):
     authentication_classes = ()
     throttle_classes = (
         OTPResendRateThrottle,
+        OTPIdentifierRateThrottle,
     )
 
     def post(self, request):
@@ -590,6 +595,11 @@ class ResendOTP(APIView):
 
             customer = AuthService.resend_customer_otp(customer)
 
+            if customer is None:
+                return APIResponseHelper.success_response(
+                    message=GENERIC_OTP_RESEND_MESSAGE
+                )
+
             logger.info(
                 f"OTP resent for {email} from IP {request.META.get('REMOTE_ADDR')}"
             )
@@ -608,6 +618,7 @@ class ResendOTP(APIView):
 class RefreshTokenView(APIView):
     permission_classes = (AllowAny,)
     authentication_classes = ()
+    throttle_classes = (RefreshTokenRateThrottle,)
 
     def post(self, request):
         """Refresh access token and blacklist old refresh token"""
@@ -776,7 +787,7 @@ class RefreshTokenView(APIView):
             try:
                 TokenUtils.revoke_session(customer_id, role, session_id)
 
-                ip_address = _get_client_ip(request)
+                ip_address = get_client_ip(request)
                 device_info = request.META.get("HTTP_USER_AGENT", "")
                 ActiveSession.update_many(
                     {

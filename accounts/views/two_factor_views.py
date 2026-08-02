@@ -7,6 +7,7 @@ Unified views that support both Customer and LoanOfficer authentication.
 import logging
 
 from bson import ObjectId
+from django.contrib.auth.signals import user_logged_in
 from rest_framework import status
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.views import APIView
@@ -19,7 +20,7 @@ from accounts.services.two_factor_service import TwoFactorService
 from accounts.utils.auth_cookies import apply_auth_token_transport
 from accounts.utils.exception_types import NON_FATAL_EXCEPTIONS
 from accounts.utils.response_helpers import APIResponseHelper
-from accounts.utils.throttles import TwoFactorRateThrottle
+from accounts.utils.throttles import TwoFactorRateThrottle, TwoFactorTokenRateThrottle
 from accounts.utils.token_utils import TokenUtils
 from accounts.utils.user_detection import get_authenticated_user
 from accounts.utils.validation_utils import parse_bool
@@ -132,6 +133,7 @@ class Verify2FAView(APIView):
     authentication_classes = ()
     throttle_classes = (
         TwoFactorRateThrottle,
+        TwoFactorTokenRateThrottle,
     )
 
     def post(self, request):
@@ -340,6 +342,8 @@ class Verify2FAView(APIView):
                 )
             else:
                 logger.info(f"2FA verified for {user.email} ({user_type})")
+
+            user_logged_in.send(sender=user.__class__, request=request, user=user)
 
             try:
                 audit_user_type = (
