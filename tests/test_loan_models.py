@@ -321,7 +321,7 @@ class TestRepaymentSchedule:
         )
         inst_total = schedule.installments[0]["total_amount"]
         schedule.record_payment(1, inst_total)
-        assert schedule.installments[0]["paid_amount"] == inst_total
+        assert schedule.installments[0]["paid_amount"] == round(inst_total, 2)
         assert schedule.installments[0]["status"] == "paid"
 
     def test_mark_overdue_installments(self):

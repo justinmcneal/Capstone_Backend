@@ -11,7 +11,7 @@ from rest_framework.views import APIView
 from accounts.authentication import CustomJWTAuthentication
 from accounts.utils.response_helpers import error_response, success_response
 from accounts.utils.validation_utils import sanitize_text
-from analytics.models import AuditLog
+from analytics.models import AuditLog  # noqa: F401 - existing test patch target
 from loans.models import LoanApplication
 from loans.services.disbursement import (
     EXTERNAL_DISBURSEMENT_METHODS,
@@ -126,31 +126,12 @@ class DisburseView(LoanOfficerRequiredMixin, APIView):
                     reference=reference,
                     actor_id=actor_id,
                     idempotency_key=idempotency_key,
+                    actor_type=self._actor_type(user),
                 )
             except ValueError as exc:
                 return error_response(
                     message=str(exc), status_code=status.HTTP_400_BAD_REQUEST
                 )
-
-            if not replayed:
-                try:
-                    AuditLog.log_action(
-                        action="loan_disbursement_pending",
-                        user_id=actor_id,
-                        user_type="loan_officer",
-                        description=f"Loan disbursement pending external confirmation via {method}",
-                        resource_type="loan",
-                        resource_id=application.id,
-                        details={
-                            "amount": amount,
-                            "method": method,
-                            "reference": reference,
-                            "customer_id": application.customer_id,
-                        },
-                        ip_address=request.META.get("REMOTE_ADDR", ""),
-                    )
-                except Exception as exc:  # noqa: BLE001 - audit cannot roll back state
-                    logger.warning("Failed to audit pending disbursement: %s", exc)
 
             if application.disbursement_status == "executed":
                 return success_response(
@@ -188,6 +169,7 @@ class DisburseView(LoanOfficerRequiredMixin, APIView):
                 reference=reference,
                 actor_id=actor_id,
                 idempotency_key=idempotency_key,
+                actor_type=self._actor_type(user),
             )
         except ValueError as exc:
             return error_response(
@@ -201,24 +183,6 @@ class DisburseView(LoanOfficerRequiredMixin, APIView):
             )
 
         if not replayed:
-            try:
-                AuditLog.log_action(
-                    action="loan_disbursed",
-                    user_id=actor_id,
-                    user_type="loan_officer",
-                    description=f"Loan disbursed - PHP{amount:,.2f} via {method}",
-                    resource_type="loan",
-                    resource_id=application.id,
-                    details={
-                        "amount": amount,
-                        "method": method,
-                        "reference": reference,
-                        "customer_id": application.customer_id,
-                    },
-                    ip_address=request.META.get("REMOTE_ADDR", ""),
-                )
-            except Exception as exc:  # noqa: BLE001 - audit cannot roll back state
-                logger.warning("Failed to audit completed disbursement: %s", exc)
             self._send_disbursement_email(application, amount, method, reference)
             try:
                 from loans.blockchain.sync import sync_disbursement

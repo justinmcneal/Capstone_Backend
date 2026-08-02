@@ -1,4 +1,3 @@
-from rest_framework.views import APIView
 from accounts.utils.access_control import AccessControlMixin
 from loans.utils.serialization import serialize_internal_note
 import logging
@@ -36,6 +35,11 @@ class LoanOfficerRequiredMixin(AccessControlMixin):
             or getattr(actor, "_id", None)
         )
         return str(value or "")
+
+    @staticmethod
+    def _actor_type(actor):
+        role = str(getattr(actor, "role", "") or "").strip().lower()
+        return role if role in {"admin", "loan_officer", "customer"} else "system"
 
     def check_application_scope(self, request, application, allow_unassigned=True):
         return self.require_application_scope(

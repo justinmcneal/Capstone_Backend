@@ -8,6 +8,7 @@ from django.conf import settings
 
 from config.field_encryption import decrypt_fields, encrypt_fields
 from loans.utils.time import utcnow
+from loans.utils.money import from_centavos, to_centavos
 
 
 def get_db():
@@ -40,7 +41,10 @@ class LoanPayment:
         self.installment_number = kwargs.get("installment_number")
 
         # Payment details
-        self.amount = kwargs.get("amount", 0)
+        self.amount_centavos = kwargs.get(
+            "amount_centavos", to_centavos(kwargs.get("amount", 0), "amount")
+        )
+        self.amount = from_centavos(self.amount_centavos)
         self.payment_method = kwargs.get("payment_method", "cash")
         self.reference = kwargs.get("reference", "")
         self.reference_fingerprint = kwargs.get("reference_fingerprint", "")
@@ -51,6 +55,7 @@ class LoanPayment:
         self.verification_source = kwargs.get("verification_source", "")
         self.verified_at = kwargs.get("verified_at")
         self.failure_reason = kwargs.get("failure_reason", "")
+        self.allocations = kwargs.get("allocations", [])
 
         # Recording info
         self.recorded_by = kwargs.get("recorded_by")  # Officer ID
@@ -81,6 +86,7 @@ class LoanPayment:
             "customer_id": self.customer_id,
             "installment_number": self.installment_number,
             "amount": self.amount,
+            "amount_centavos": self.amount_centavos,
             "payment_method": self.payment_method,
             "reference": self.reference,
             "reference_fingerprint": self.reference_fingerprint,
@@ -90,6 +96,7 @@ class LoanPayment:
             "verification_source": self.verification_source,
             "verified_at": self.verified_at,
             "failure_reason": self.failure_reason,
+            "allocations": self.allocations,
             "recorded_by": self.recorded_by,
             "recorded_at": self.recorded_at,
             "blockchain_tx_hash": self.blockchain_tx_hash,
@@ -192,6 +199,7 @@ class LoanPayment:
         """Return count and amount across the complete matching result set."""
         db = get_db()
         collection = db[cls.collection_name]
+        count = collection.count_documents(query)
         rows = list(
             collection.aggregate(
                 [
@@ -199,25 +207,31 @@ class LoanPayment:
                     {
                         "$group": {
                             "_id": None,
-                            "count": {"$sum": 1},
-                            "total_amount": {"$sum": "$amount"},
+                            "total_centavos": {"$sum": "$amount_centavos"},
                         }
                     },
                 ]
             )
         )
-        if not rows:
+        if not count:
             return {"count": 0, "total_amount": 0}
+        total_centavos = int(rows[0].get("total_centavos", 0)) if rows else 0
+        legacy_query = {"$and": [query, {"amount_centavos": {"$exists": False}}]}
+        for legacy in collection.find(legacy_query, {"amount": 1}):
+            total_centavos += to_centavos(legacy.get("amount", 0), "amount")
         return {
-            "count": rows[0].get("count", 0),
-            "total_amount": rows[0].get("total_amount", 0),
+            "count": count,
+            "total_amount": from_centavos(total_centavos),
         }
 
     @classmethod
     def get_total_paid(cls, loan_id):
         """Get total amount paid for a loan"""
         payments = cls.find_by_loan(loan_id)
-        return sum(p.amount for p in payments if p.payment_status == "posted")
+        total_centavos = sum(
+            p.amount_centavos for p in payments if p.payment_status == "posted"
+        )
+        return from_centavos(total_centavos)
 
     @classmethod
     def create_indexes(cls):

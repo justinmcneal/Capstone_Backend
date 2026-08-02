@@ -12,7 +12,14 @@ def disbursement_idempotency_key(actor_id, client_key):
 
 
 def begin_disbursement(
-    *, application, amount, method, reference, actor_id, idempotency_key
+    *,
+    application,
+    amount,
+    method,
+    reference,
+    actor_id,
+    idempotency_key,
+    actor_type="system",
 ):
     """Reserve a disbursement without claiming external settlement."""
     return application.begin_disbursement(
@@ -21,11 +28,19 @@ def begin_disbursement(
         reference=reference,
         processed_by=actor_id,
         idempotency_key=idempotency_key,
+        processed_by_type=actor_type,
     )
 
 
 def execute_manual_disbursement(
-    *, application, amount, method, reference, actor_id, idempotency_key
+    *,
+    application,
+    amount,
+    method,
+    reference,
+    actor_id,
+    idempotency_key,
+    actor_type="system",
 ):
     """Execute an officer-confirmed cash/check disbursement exactly once."""
     application, _request_replayed = begin_disbursement(
@@ -35,6 +50,7 @@ def execute_manual_disbursement(
         reference=reference,
         actor_id=actor_id,
         idempotency_key=idempotency_key,
+        actor_type=actor_type,
     )
     if application.disbursement_status == "executed":
         return application, RepaymentSchedule.find_by_loan(application.id), True

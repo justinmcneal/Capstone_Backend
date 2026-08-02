@@ -41,4 +41,5 @@ from .officer_views import (
     ExchangeRateView,
     BulkRepaymentScheduleExportView,
     WalletDisbursementRecoveryView,
+    EarlyPayoffView,
 )

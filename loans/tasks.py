@@ -57,6 +57,29 @@ def check_overdue_installments_task():
     return {"overdue_marked": updated_count}
 
 
+@shared_task(name="loans.reconcile_repayment_lifecycle")
+def reconcile_repayment_lifecycle_task():
+    """Close legacy or interrupted schedules whose exact balance is already zero."""
+    db = getattr(settings, "MONGODB", None)
+    if db is None:
+        return {"paid_off_reconciled": 0}
+
+    from loans.models import LoanApplication, RepaymentSchedule
+
+    reconciled = 0
+    for document in db["repayment_schedules"].find({"status": {"$ne": "paid_off"}}):
+        schedule = RepaymentSchedule.from_dict(document)
+        if not schedule or not schedule.is_paid_off():
+            continue
+        schedule._mark_paid_off_if_complete()
+        schedule.save()
+        application = LoanApplication.find_by_id(schedule.loan_id)
+        if application and application.status == "disbursed":
+            application.mark_paid_off(schedule.paid_off_at)
+        reconciled += 1
+    return {"paid_off_reconciled": reconciled}
+
+
 def _wallet_receipt(w3, tx_hash):
     """Return (state, receipt) without treating node failures as not-found."""
     from web3.exceptions import TransactionNotFound
@@ -88,9 +111,7 @@ def _complete_wallet_disbursement(application, owner):
     w3 = get_web3()
     result = None
     if application.eth_disbursement_tx_hash:
-        chain_state, receipt = _wallet_receipt(
-            w3, application.eth_disbursement_tx_hash
-        )
+        chain_state, receipt = _wallet_receipt(w3, application.eth_disbursement_tx_hash)
         LoanApplication.update_eth_disbursement(
             ObjectId(application.id),
             last_checked_at=utcnow(),
@@ -196,9 +217,7 @@ def _complete_wallet_disbursement(application, owner):
         last_checked_at=utcnow(),
         tx_status="confirmed",
     )
-    LoanApplication.clear_eth_disbursement_fields(
-        application.id, "raw_transaction"
-    )
+    LoanApplication.clear_eth_disbursement_fields(application.id, "raw_transaction")
 
     product = LoanProduct.find_by_id(application.product_id)
     if not product:
@@ -259,7 +278,9 @@ def execute_wallet_disbursement_task(self, application_id):
         now,
     )
     if not claimed:
-        raise self.retry(exc=RuntimeError("Wallet disbursement is claimed by another worker"))
+        raise self.retry(
+            exc=RuntimeError("Wallet disbursement is claimed by another worker")
+        )
 
     try:
         return _complete_wallet_disbursement(claimed, owner)
@@ -279,9 +300,7 @@ def execute_wallet_disbursement_task(self, application_id):
             # Never claim failure merely because a broadcast receipt is uncertain.
             refreshed = LoanApplication.find_by_id(application.id)
             if not refreshed.eth_disbursement_tx_hash:
-                refreshed.fail_disbursement(
-                    refreshed.disbursement_idempotency_key, exc
-                )
+                refreshed.fail_disbursement(refreshed.disbursement_idempotency_key, exc)
             raise
         raise self.retry(exc=exc)
 

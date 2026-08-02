@@ -151,8 +151,9 @@ def test_manual_assignment_passes_admin_and_customer_context(monkeypatch):
         customer_id = "customer-1"
         assigned_officer = None
 
-        def assign_officer(self, officer_id):
+        def assign_officer(self, officer_id, actor_id=None, actor_type="system"):
             self.assigned_officer = officer_id
+            self.assignment_actor = (actor_id, actor_type)
 
     application = Application()
     captured = {}
@@ -174,6 +175,7 @@ def test_manual_assignment_passes_admin_and_customer_context(monkeypatch):
 
     assert result is officer
     assert application.assigned_officer == officer.id
+    assert application.assignment_actor == (admin.id, "admin")
     assert captured["entity_name"] == "Gab Soriano's loan application"
     assert captured["assigned_by"]["id"] == admin.id
     assert captured["assigned_to"]["id"] == officer.id

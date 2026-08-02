@@ -46,6 +46,14 @@ def _assignment_party(account, user_type=None):
     }
 
 
+def _actor_identity(account):
+    if not account:
+        return None, "system"
+    actor_id = getattr(account, "id", None) or getattr(account, "_id", None)
+    actor_type = getattr(account, "role", None) or "admin"
+    return str(actor_id) if actor_id else None, str(actor_type)
+
+
 def _notify_assignment_change(
     application, *, assigned_by, assigned_to=None, previous_assignee=None
 ):
@@ -89,7 +97,7 @@ def auto_assign_application(application):
         if previous_officer and previous_officer.id == officer.id:
             return officer
 
-        application.assign_officer(officer.id)
+        application.assign_officer(officer.id, actor_id=None, actor_type="system")
         logger.info(
             "Auto-assigned application %s to officer %s",
             application.id,
@@ -128,7 +136,10 @@ def manual_assign_application(application, officer_id, assigned_by=None):
     if previous_officer and previous_officer.id == officer.id:
         return officer
 
-    application.assign_officer(officer.id)
+    actor_id, actor_type = _actor_identity(assigned_by)
+    application.assign_officer(
+        officer.id, actor_id=actor_id, actor_type=actor_type
+    )
     logger.info(
         "Manually assigned application %s to officer %s",
         application.id,
@@ -178,7 +189,10 @@ def reassign_application(application, new_officer_id, assigned_by=None):
         return new_officer
 
     # Use the reassign method on the application
-    application.reassign(new_officer.id)
+    actor_id, actor_type = _actor_identity(assigned_by)
+    application.reassign(
+        new_officer.id, actor_id=actor_id, actor_type=actor_type
+    )
 
     logger.info(
         "Reassigned application %s from officer %s to officer %s",

@@ -296,8 +296,63 @@ def _normalize_recommended_amount(raw_amount, eligible, product, requested_amoun
     return round(bounded, 2)
 
 
+def _check_hard_product_requirements(data, product):
+    """
+    Deterministic hard-fail checks for product minimums.
+
+    These requirements cannot be overridden by AI output,
+    score bonuses, or alternative data.  A non-empty return
+    list means the customer is unconditionally ineligible.
+
+    A zero-valued minimum is treated as "no minimum required"
+    and skips the check.
+    """
+    hard_failures = []
+    business = data.get("business")
+
+    # Business age minimum
+    biz_months = (business.business_age_months or 0) if business else 0
+    min_months = product.min_business_months or 0
+    if min_months > 0 and biz_months < min_months:
+        hard_failures.append(
+            f"Insufficient business operation: {biz_months} months "
+            f"(minimum {min_months} months required)"
+        )
+
+    # Monthly income minimum
+    income = (business.estimated_monthly_income or 0) if business else 0
+    min_income = product.min_monthly_income or 0
+    if min_income > 0 and income < min_income:
+        hard_failures.append(
+            f"Insufficient monthly income: \u20b1{income:,.2f} "
+            f"(minimum \u20b1{min_income:,.2f} required)"
+        )
+
+    return hard_failures
+
+
+def _make_hard_fail_result(
+    hard_failures, required_doc_types, scope, ai_used=False
+):
+    """Build a deterministic ineligible result from hard-fail entries."""
+    return {
+        "eligible": False,
+        "eligibility_score": 0,
+        "risk_category": "high",
+        "recommended_amount": 0.0,
+        "reasoning": "Does not meet mandatory product requirements",
+        "strengths": [],
+        "concerns": [],
+        "missing_requirements": list(hard_failures),
+        "can_apply": False,
+        "ai_used": ai_used,
+        "required_documents_resolved": required_doc_types,
+        "requirements_scope": scope,
+    }
+
+
 def _validate_and_normalize_ai_qualification(
-    payload, product, requested_amount, required_doc_types, scope
+    payload, product, requested_amount, required_doc_types, scope, data=None
 ):
     """Strict schema validation + deterministic normalization for AI output."""
     if not isinstance(payload, dict):
@@ -336,6 +391,23 @@ def _validate_and_normalize_ai_qualification(
         payload.get("missing_requirements"),
         "missing_requirements",
     )
+
+    # Defense-in-depth: enforce hard product requirements even if the AI
+    # returned eligible.  The primary gate in qualify_customer should
+    # already prevent reaching here with hard failures, but this protects
+    # against future refactors that might skip the pre-AI gate.
+    if data is not None:
+        hard_failures = _check_hard_product_requirements(data, product)
+        if hard_failures:
+            for hf in hard_failures:
+                if hf not in missing_requirements:
+                    missing_requirements.append(hf)
+            eligible = False
+            logger.info(
+                "[AI ENFORCEMENT] Overriding AI eligibility to False "
+                "due to hard product requirement failures: %s",
+                hard_failures,
+            )
 
     can_apply = eligible and len(missing_requirements) == 0
     if not can_apply:
@@ -547,6 +619,20 @@ def qualify_customer(
     # Get customer data
     data = get_customer_data(customer_id)
 
+    # Hard-fail gate: deterministic product requirements must pass before
+    # any AI call.  This avoids wasting LLM tokens and guarantees the AI
+    # cannot override business-age or income minimums.
+    hard_failures = _check_hard_product_requirements(data, product)
+    if hard_failures:
+        logger.info(
+            "Customer %s fails hard product requirements before AI: %s",
+            customer_id,
+            hard_failures,
+        )
+        return _make_hard_fail_result(
+            hard_failures, required_doc_types, scope, ai_used=False
+        )
+
     # Format for AI
     profile_str, business_str, alt_str, docs_str = format_profile_for_ai(data)
 
@@ -645,6 +731,7 @@ def qualify_customer(
             requested_amount=requested_amount,
             required_doc_types=required_doc_types,
             scope=scope,
+            data=data,
         )
         # Post-AI guard: strip false business-age failures the AI may hallucinate
         business = data.get("business")
@@ -684,9 +771,17 @@ def rule_based_qualification(
     alternative = data.get("alternative")
     docs = data.get("documents", [])
 
-    # Check business profile
+    # Hard product requirements — these are deterministic gates,
+    # not score-based.  They go into `missing` so that `eligible`
+    # is forced False regardless of the accumulated score.
+    hard_failures = _check_hard_product_requirements(
+        {"business": business}, product
+    )
+    missing.extend(hard_failures)
+
+    # Check business profile (score adjustments are informational only;
+    # eligibility is governed by hard_failures above)
     if business:
-        # business_age_months is stored in months (canonical unit)
         logger.info(
             f"[RULE-BASED QUALIFICATION] Checking business age - months: {business.business_age_months}, required: {product.min_business_months}"
         )

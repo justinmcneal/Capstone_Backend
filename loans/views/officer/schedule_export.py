@@ -11,7 +11,7 @@ from accounts.utils.response_helpers import success_response, error_response
 from accounts.utils.validation_utils import sanitize_text
 from rest_framework import status
 from loans.models import LoanApplication, LoanProduct, RepaymentSchedule
-from loans.models.repayment import get_db
+from loans.services.audit import LoanAuditUnavailable, record_loan_audit
 from loans.views.officer.base import LoanOfficerRequiredMixin
 from accounts.models import Customer
 import logging
@@ -38,6 +38,29 @@ class BulkRepaymentScheduleExportView(LoanOfficerRequiredMixin, APIView):
 
     authentication_classes = [CustomJWTAuthentication]
     permission_classes = [IsAuthenticated]
+
+    def _audit_export(self, request, rows, export_format, filters):
+        try:
+            record_loan_audit(
+                required=True,
+                action="repayment_schedule_exported",
+                user_id=self._actor_id(request.user),
+                user_type=self._actor_type(request.user),
+                description="Exported sensitive repayment schedule data",
+                resource_type="repayment_schedule_export",
+                details={
+                    "format": export_format,
+                    "row_count": len(rows),
+                    "filters": filters,
+                },
+                ip_address=request.META.get("REMOTE_ADDR", ""),
+            )
+        except LoanAuditUnavailable:
+            return error_response(
+                message="Export is temporarily unavailable because access could not be audited",
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+        return None
 
     def get(self, request):
         has_permission, result = self.check_officer_permission(request)
@@ -93,9 +116,6 @@ class BulkRepaymentScheduleExportView(LoanOfficerRequiredMixin, APIView):
             query["customer_id"] = customer_id_filter
 
         # Fetch schedules
-        db = get_db()
-        collection = db[RepaymentSchedule.collection_name]
-
         schedules = []
         if customer_id_filter:
             schedule = RepaymentSchedule.find_one({"customer_id": customer_id_filter})
@@ -193,6 +213,19 @@ class BulkRepaymentScheduleExportView(LoanOfficerRequiredMixin, APIView):
                 })
 
         if export_format == "json":
+            audit_error = self._audit_export(
+                request,
+                rows,
+                export_format,
+                {
+                    "customer_id": customer_id_filter,
+                    "status": status_filter,
+                    "start_date": start_date_str,
+                    "end_date": end_date_str,
+                },
+            )
+            if audit_error:
+                return audit_error
             return success_response(
                 data={"schedules": rows, "total": len(rows)},
                 message=f"Exported {len(rows)} installments",
@@ -223,6 +256,20 @@ class BulkRepaymentScheduleExportView(LoanOfficerRequiredMixin, APIView):
 
         csv_content = output.getvalue()
         output.close()
+
+        audit_error = self._audit_export(
+            request,
+            rows,
+            export_format,
+            {
+                "customer_id": customer_id_filter,
+                "status": status_filter,
+                "start_date": start_date_str,
+                "end_date": end_date_str,
+            },
+        )
+        if audit_error:
+            return audit_error
 
         # Return as downloadable file
         from django.http import HttpResponse

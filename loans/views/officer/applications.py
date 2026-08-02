@@ -12,8 +12,7 @@ from loans.serializers import (
     MissingDocumentsRequestSerializer,
     ApplicationInternalNoteSerializer,
 )
-from analytics.models import AuditLog
-from loans.utils.time import utcnow
+from loans.services.audit import record_loan_audit
 from loans.utils.serialization import serialize_internal_note
 from loans.views.officer.base import LoanOfficerRequiredMixin, internal_note_summary
 from datetime import datetime
@@ -110,6 +109,8 @@ class OfficerApplicationListView(LoanOfficerRequiredMixin, APIView):
             "approved",
             "rejected",
             "disbursed",
+            "completed",
+            "written_off",
             "cancelled",
             "all",
         }
@@ -257,14 +258,16 @@ class OfficerApplicationListView(LoanOfficerRequiredMixin, APIView):
                 customer_and_conditions = []
                 for term in search_terms:
                     term_regex = re.compile(f".*{re.escape(term)}.*", re.IGNORECASE)
-                    customer_and_conditions.append({
-                        "$or": [
-                            {"first_name": term_regex},
-                            {"last_name": term_regex},
-                            {"phone": term_regex},
-                            {"email": term_regex},
-                        ]
-                    })
+                    customer_and_conditions.append(
+                        {
+                            "$or": [
+                                {"first_name": term_regex},
+                                {"last_name": term_regex},
+                                {"phone": term_regex},
+                                {"email": term_regex},
+                            ]
+                        }
+                    )
 
                 customers = Customer.find({"$and": customer_and_conditions})
                 customer_ids = [c.id for c in customers if c]
@@ -711,7 +714,7 @@ class OfficerApplicationNotesView(LoanOfficerRequiredMixin, APIView):
             )
 
         latest_note = serialize_internal_note((app.internal_notes or [])[-1])
-        AuditLog.log_action(
+        record_loan_audit(
             action="loan_internal_note_added",
             user_id=self._actor_id(user),
             user_type=getattr(user, "role", "loan_officer"),
@@ -810,10 +813,10 @@ class OfficerRequestMissingDocumentsView(LoanOfficerRequiredMixin, APIView):
             )
 
         # Audit log
-        AuditLog.log_action(
+        record_loan_audit(
             action="loan_missing_documents_requested",
             user_id=officer_id,
-            user_type="loan_officer",
+            user_type=self._actor_type(user),
             description="Requested missing documents for loan application",
             resource_type="loan",
             resource_id=app.id,
@@ -948,11 +951,11 @@ class OfficerReviewView(LoanOfficerRequiredMixin, APIView):
             message = "Application approved"
 
             # Audit log for approval
-            AuditLog.log_action(
+            record_loan_audit(
                 action="loan_approved",
                 user_id=officer_id,
-                user_type="loan_officer",
-                description=f'Loan application approved - PHP{data["approved_amount"]:,.2f}',
+                user_type=self._actor_type(user),
+                description=f"Loan application approved - PHP{data['approved_amount']:,.2f}",
                 resource_type="loan",
                 resource_id=app.id,
                 details={
@@ -996,11 +999,11 @@ class OfficerReviewView(LoanOfficerRequiredMixin, APIView):
             message = "Application rejected"
 
             # Audit log for rejection
-            AuditLog.log_action(
+            record_loan_audit(
                 action="loan_rejected",
                 user_id=officer_id,
-                user_type="loan_officer",
-                description=f'Loan application rejected - {data["rejection_reason"][:50]}',
+                user_type=self._actor_type(user),
+                description=f"Loan application rejected - {data['rejection_reason'][:50]}",
                 resource_type="loan",
                 resource_id=app.id,
                 details={

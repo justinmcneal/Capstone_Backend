@@ -326,7 +326,7 @@ Edit and re-submit a **draft** application.
 
 ### 8. `GET /applications/<application_id>/schedule/`
 
-Repayment schedule for a disbursed loan.
+Repayment schedule for a disbursed, completed, or written-off loan.
 
 **Path params:**
 
@@ -334,7 +334,8 @@ Repayment schedule for a disbursed loan.
 |-------|------|----------|
 | `application_id` | string | yes |
 
-**Precondition:** `status` must be `disbursed`.
+**Precondition:** application `status` must be `disbursed`, `completed`, or
+`written_off`.
 
 **Response fields (`data`):**
 
@@ -347,6 +348,8 @@ Repayment schedule for a disbursed loan.
 | `monthly_payment` | number |
 | `total_amount` | number |
 | `total_interest` | number |
+| `schedule_status` | string (`active`, `paid_off`, `restructured`, `written_off`) |
+| `paid_off_at` | ISO datetime or null |
 | `paid_count` | int |
 | `remaining_balance` | number |
 | `next_payment` | object |
@@ -356,7 +359,7 @@ Repayment schedule for a disbursed loan.
 | `installments[].principal` | number |
 | `installments[].interest` | number |
 | `installments[].total_amount` | number |
-| `installments[].status` | string |
+| `installments[].status` | string (`pending`, `partial`, `overdue`, `partial_overdue`, `paid`) |
 | `installments[].paid_amount` | number |
 | `installments[].penalty_status` | string |
 | `installments[].penalty_amount` | number |
@@ -1380,7 +1383,8 @@ Officer view of repayment schedule (same shape as customer schedule, with dynami
 |-------|------|----------|
 | `application_id` | string | yes |
 
-**Precondition:** `status` must be `disbursed`.
+**Precondition:** application `status` must be `disbursed`, `completed`, or
+`written_off`.
 
 **Response fields:** Same as endpoint 8.
 
@@ -1415,6 +1419,30 @@ Officer payment history for an application.
 `total_paid` includes only records whose `payment_status` is `posted`; pending,
 failed, reversed, or in-progress records remain visible but do not increase the
 financial total.
+
+---
+
+### 36A. `GET|POST /officer/applications/<application_id>/payoff/`
+
+Quote or post an exact early payoff for an assigned loan. `GET` returns the
+current centavo-exact quote. `POST` accepts only officer-verified cash/check and
+atomically allocates the payment across all open installments.
+
+**Required POST header:** `Idempotency-Key` containing 8–128 characters.
+
+**POST body:**
+
+| Field | Type | Required | Validation |
+|-------|------|----------|------------|
+| `amount` | number | **yes** | Must exactly equal the current payoff quote |
+| `payment_method` | string | no | `cash` or `check`; default `cash` |
+| `reference` | string | no | Generated if omitted |
+| `notes` | string | no | |
+
+Successful posting returns application `status: completed`,
+`repayment_status: paid_off`, allocation details, and zero remaining balance.
+Wallet installment payments remain available through the verified wallet-payment
+endpoint; multi-installment wallet payoff is not yet defined.
 
 ---
 
@@ -1515,7 +1543,7 @@ Current ETH/PHP exchange rate.
 
 ---
 
-## Complete URL Index (44 method/endpoint combinations)
+## Complete URL Index (46 method/endpoint combinations)
 
 | # | Method | URL | Role |
 |---|--------|-----|------|
@@ -1562,7 +1590,9 @@ Current ETH/PHP exchange rate.
 | 41 | GET | `/api/loans/officer/payments/recent/` | Officer |
 | 42 | GET | `/api/loans/officer/applications/<application_id>/wallet-disbursement/` | Officer |
 | 43 | POST | `/api/loans/officer/applications/<application_id>/wallet-disbursement/` | Officer |
-| 44 | GET | `/api/loans/officer/schedules/export/` | Officer |
+| 44 | GET | `/api/loans/officer/applications/<application_id>/payoff/` | Officer |
+| 45 | POST | `/api/loans/officer/applications/<application_id>/payoff/` | Officer |
+| 46 | GET | `/api/loans/officer/schedules/export/` | Officer |
 
 ---
 
@@ -1615,7 +1645,7 @@ a second transfer blindly.
 | `403 Forbidden` | Wrong role, missing admin permission, ABAC scope violation (officer accessing unassigned app) |
 | `404 Not Found` | Application/product/payment not found or not owned |
 | `409 Conflict` | Duplicate operations (e.g., double disburse, duplicate tx_hash) |
-| `503 Service Unavailable` | Blockchain disabled or ETH/PHP rate unavailable (`/system-wallet/`, `/exchange-rate/`) |
+| `503 Service Unavailable` | Blockchain/rate dependency unavailable, or a sensitive schedule export cannot record its required access audit |
 
 Standard error shape:
 ```json
@@ -1655,3 +1685,10 @@ Standard error shape:
 5. Disbursement `method` is locked to customer's `preferred_disbursement_method` when set.
 6. For blockchain tests: run local testnet per `smartcontracts/docs/TESTNET_DEPLOYMENT_GUIDE.md` or mock `loans/blockchain/client.py`.
 7. Pre-qualify endpoint is rate-limited (`PreQualifyRateThrottle`).
+8. Every successful schedule export creates a `repayment_schedule_exported` audit
+   record with actor role, filters, format, and row count. The export returns `503`
+   and no file/data if this audit cannot be written.
+9. With `FIELD_ENCRYPTION_KEY` configured, raw MongoDB application
+   `internal_notes` and repayment `installments` values are `encbson::` ciphertext;
+   model reads return their original nested values. Payment tests should exercise
+   the model/service API rather than direct Mongo nested-field updates.

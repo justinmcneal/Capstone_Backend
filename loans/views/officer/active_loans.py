@@ -11,6 +11,7 @@ from loans.views.officer.base import LoanOfficerRequiredMixin
 from accounts.models import Customer
 import re
 
+
 class ActiveLoansView(LoanOfficerRequiredMixin, APIView):
     """
     Loan Officer: Get active (disbursed) loans for payment recording.
@@ -62,19 +63,23 @@ class ActiveLoansView(LoanOfficerRequiredMixin, APIView):
                 word_conditions = []
                 for word in search_words:
                     word_regex = re.compile(f".*{re.escape(word)}.*", re.IGNORECASE)
-                    word_conditions.append({
-                        "$or": [
-                            {"first_name": word_regex},
-                            {"last_name": word_regex},
-                        ]
-                    })
+                    word_conditions.append(
+                        {
+                            "$or": [
+                                {"first_name": word_regex},
+                                {"last_name": word_regex},
+                            ]
+                        }
+                    )
 
                 # Also include phone and email search with the full original query
                 full_regex = re.compile(f".*{re.escape(search)}.*", re.IGNORECASE)
                 customers = Customer.find(
                     {
                         "$or": [
-                            {"$and": word_conditions},  # All words match in first_name or last_name
+                            {
+                                "$and": word_conditions
+                            },  # All words match in first_name or last_name
                             {"phone": full_regex},
                             {"email": full_regex},
                         ]
@@ -92,9 +97,7 @@ class ActiveLoansView(LoanOfficerRequiredMixin, APIView):
                             {"email": regex},
                         ]
                     }
-                )[
-                    :20
-                ]  # Limit to 20 results
+                )[:20]  # Limit to 20 results
 
             # Exact customer ID lookup (MongoDB ObjectId string)
             if ObjectId.is_valid(search):
@@ -122,6 +125,8 @@ class ActiveLoansView(LoanOfficerRequiredMixin, APIView):
 
         def append_schedule(schedule, customer):
             if not schedule or not customer:
+                return
+            if schedule.status != "active" or schedule.is_paid_off():
                 return
             if schedule.id in seen_schedule_ids:
                 return

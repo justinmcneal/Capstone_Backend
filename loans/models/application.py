@@ -4,7 +4,7 @@ LoanApplication Model - Customer loan applications.
 
 from bson import ObjectId
 from django.conf import settings
-from config.field_encryption import decrypt_fields, encrypt_fields
+from config.field_encryption import decrypt_fields, encrypt_fields, encrypt_value
 
 from loans.utils.time import utcnow
 
@@ -21,6 +21,8 @@ APPLICATION_STATUSES = [
     "approved",  # Approved by loan officer
     "rejected",  # Rejected by loan officer
     "disbursed",  # Loan amount transferred
+    "completed",  # Repayment schedule fully settled
+    "written_off",  # Closed under an approved write-off policy
     "cancelled",  # Cancelled by customer
 ]
 
@@ -90,9 +92,14 @@ class LoanApplication:
         )  # bank_transfer, cash, etc.
         self.disbursement_reference = kwargs.get("disbursement_reference", "")
         self.disbursed_by = kwargs.get("disbursed_by")  # Officer/Admin who processed
+        self.disbursed_by_type = kwargs.get("disbursed_by_type", "system")
         self.disbursement_status = kwargs.get(
             "disbursement_status",
-            "executed" if self.status == "disbursed" else "not_started",
+            (
+                "executed"
+                if self.status in {"disbursed", "completed", "written_off"}
+                else "not_started"
+            ),
         )
         self.disbursement_idempotency_key = kwargs.get(
             "disbursement_idempotency_key", ""
@@ -101,33 +108,34 @@ class LoanApplication:
         self.disbursement_completed_at = kwargs.get("disbursement_completed_at")
         self.disbursement_failed_at = kwargs.get("disbursement_failed_at")
         self.disbursement_error = kwargs.get("disbursement_error", "")
+        self.repayment_status = kwargs.get(
+            "repayment_status",
+            "paid_off"
+            if self.status == "completed"
+            else ("active" if self.status == "disbursed" else "not_started"),
+        )
+        self.paid_off_at = kwargs.get("paid_off_at")
 
         # ETH wallet disbursement details
         self.eth_disbursement_tx_hash = kwargs.get("eth_disbursement_tx_hash")
         self.eth_disbursement_amount = kwargs.get("eth_disbursement_amount")
         self.eth_disbursement_amount_wei = kwargs.get("eth_disbursement_amount_wei")
         self.eth_disbursement_rate = kwargs.get("eth_disbursement_rate")
-        self.eth_disbursement_rate_source = kwargs.get("eth_disbursement_rate_source", "")
+        self.eth_disbursement_rate_source = kwargs.get(
+            "eth_disbursement_rate_source", ""
+        )
         self.eth_disbursement_recipient = kwargs.get("eth_disbursement_recipient")
         self.eth_disbursement_nonce = kwargs.get("eth_disbursement_nonce")
-        self.eth_disbursement_broadcast_at = kwargs.get(
-            "eth_disbursement_broadcast_at"
-        )
-        self.eth_disbursement_block_number = kwargs.get(
-            "eth_disbursement_block_number"
-        )
+        self.eth_disbursement_broadcast_at = kwargs.get("eth_disbursement_broadcast_at")
+        self.eth_disbursement_block_number = kwargs.get("eth_disbursement_block_number")
         self.eth_disbursement_raw_transaction = kwargs.get(
             "eth_disbursement_raw_transaction", ""
         )
-        self.eth_disbursement_prepared_at = kwargs.get(
-            "eth_disbursement_prepared_at"
-        )
+        self.eth_disbursement_prepared_at = kwargs.get("eth_disbursement_prepared_at")
         self.eth_disbursement_last_checked_at = kwargs.get(
             "eth_disbursement_last_checked_at"
         )
-        self.eth_disbursement_tx_status = kwargs.get(
-            "eth_disbursement_tx_status", ""
-        )
+        self.eth_disbursement_tx_status = kwargs.get("eth_disbursement_tx_status", "")
         self.eth_disbursement_rebroadcast_count = kwargs.get(
             "eth_disbursement_rebroadcast_count", 0
         )
@@ -180,12 +188,15 @@ class LoanApplication:
             "disbursement_method": self.disbursement_method,
             "disbursement_reference": self.disbursement_reference,
             "disbursed_by": self.disbursed_by,
+            "disbursed_by_type": self.disbursed_by_type,
             "disbursement_status": self.disbursement_status,
             "disbursement_idempotency_key": self.disbursement_idempotency_key,
             "disbursement_requested_at": self.disbursement_requested_at,
             "disbursement_completed_at": self.disbursement_completed_at,
             "disbursement_failed_at": self.disbursement_failed_at,
             "disbursement_error": self.disbursement_error,
+            "repayment_status": self.repayment_status,
+            "paid_off_at": self.paid_off_at,
             "eth_disbursement_tx_hash": self.eth_disbursement_tx_hash,
             "eth_disbursement_amount": self.eth_disbursement_amount,
             "eth_disbursement_amount_wei": self.eth_disbursement_amount_wei,
@@ -234,27 +245,27 @@ class LoanApplication:
             self._id = result.inserted_id
         return self
 
-    def _log_status_transition(self, action, actor_id, actor_type, description, extra_details=None):
+    def _log_status_transition(
+        self, action, actor_id, actor_type, description, extra_details=None
+    ):
         """Log a status transition with structured metadata."""
-        try:
-            from analytics.models.audit_log import AuditLog
-            AuditLog.log_action(
-                action=action,
-                user_id=str(actor_id) if actor_id else None,
-                user_type=actor_type or "system",
-                description=description,
-                resource_type="loan",
-                resource_id=self.id,
-                details={
-                    "loan_id": self.id,
-                    "customer_id": self.customer_id,
-                    "old_status": getattr(self, "_prev_status", None),
-                    "new_status": self.status,
-                    **(extra_details or {}),
-                },
-            )
-        except Exception:
-            pass
+        from loans.services.audit import record_loan_audit
+
+        record_loan_audit(
+            action=action,
+            user_id=str(actor_id) if actor_id else None,
+            user_type=actor_type or "system",
+            description=description,
+            resource_type="loan",
+            resource_id=self.id,
+            details={
+                "loan_id": self.id,
+                "customer_id": self.customer_id,
+                "old_status": getattr(self, "_prev_status", None),
+                "new_status": self.status,
+                **(extra_details or {}),
+            },
+        )
 
     def submit(self):
         """Submit the application for review"""
@@ -262,7 +273,7 @@ class LoanApplication:
         self.submitted_at = utcnow()
         return self.save()
 
-    def assign_officer(self, officer_id):
+    def assign_officer(self, officer_id, actor_id=None, actor_type="loan_officer"):
         """Assign to a loan officer"""
         self._prev_status = self.status
         self.assigned_officer = officer_id
@@ -270,9 +281,14 @@ class LoanApplication:
         self.save()
         self._log_status_transition(
             action="loan_assigned",
-            actor_id=str(officer_id),
-            actor_type="loan_officer",
+            actor_id=(
+                officer_id
+                if actor_id is None and actor_type != "system"
+                else actor_id
+            ),
+            actor_type=actor_type,
             description=f"Loan application assigned to officer {officer_id}",
+            extra_details={"assigned_officer": str(officer_id)},
         )
         return self
 
@@ -372,7 +388,13 @@ class LoanApplication:
         return self
 
     def begin_disbursement(
-        self, amount, method, reference, processed_by, idempotency_key
+        self,
+        amount,
+        method,
+        reference,
+        processed_by,
+        idempotency_key,
+        processed_by_type="system",
     ):
         """Atomically reserve an approved loan for one disbursement attempt."""
         if self.approved_amount is None or float(self.approved_amount) <= 0:
@@ -416,8 +438,9 @@ class LoanApplication:
                 "$set": {
                     "disbursed_amount": amount,
                     "disbursement_method": method,
-                    "disbursement_reference": reference,
+                    "disbursement_reference": encrypt_value(reference),
                     "disbursed_by": str(processed_by),
+                    "disbursed_by_type": processed_by_type or "system",
                     "disbursement_status": "pending",
                     "disbursement_idempotency_key": idempotency_key,
                     "disbursement_requested_at": now,
@@ -433,8 +456,23 @@ class LoanApplication:
             if refreshed and refreshed.disbursement_idempotency_key == idempotency_key:
                 self.__dict__.update(refreshed.__dict__)
                 return self, True
-            raise ValueError("Disbursement could not be started due to a concurrent update")
+            raise ValueError(
+                "Disbursement could not be started due to a concurrent update"
+            )
         self.__dict__.update(refreshed.__dict__)
+        self._prev_status = self.status
+        self._log_status_transition(
+            action="loan_disbursement_pending",
+            actor_id=processed_by,
+            actor_type=processed_by_type,
+            description=f"Loan disbursement reserved via {method}",
+            extra_details={
+                "disbursement_old_status": "not_started",
+                "disbursement_new_status": "pending",
+                "method": method,
+                "amount": amount,
+            },
+        )
         return self, False
 
     def complete_disbursement(self, idempotency_key):
@@ -475,13 +513,26 @@ class LoanApplication:
                 return self, True
             raise ValueError("Disbursement is not pending for this Idempotency-Key")
         self.__dict__.update(refreshed.__dict__)
+        self._prev_status = "approved"
+        self._log_status_transition(
+            action="loan_disbursed",
+            actor_id=self.disbursed_by,
+            actor_type=self.disbursed_by_type,
+            description=f"Loan disbursement completed via {self.disbursement_method}",
+            extra_details={
+                "disbursement_old_status": "pending",
+                "disbursement_new_status": "executed",
+                "method": self.disbursement_method,
+                "amount": self.disbursed_amount,
+            },
+        )
         return self, False
 
     def fail_disbursement(self, idempotency_key, error):
         """Keep the loan approved while recording a failed execution attempt."""
         now = utcnow()
         collection = get_db()[self.collection_name]
-        collection.update_one(
+        result = collection.update_one(
             {
                 "_id": self._id,
                 "status": "approved",
@@ -500,6 +551,20 @@ class LoanApplication:
         refreshed = self.find_by_id(self.id)
         if refreshed:
             self.__dict__.update(refreshed.__dict__)
+        if result.modified_count:
+            self._prev_status = self.status
+            self._log_status_transition(
+                action="loan_disbursement_failed",
+                actor_id=self.disbursed_by,
+                actor_type=self.disbursed_by_type,
+                description="Loan disbursement attempt failed",
+                extra_details={
+                    "disbursement_old_status": "pending",
+                    "disbursement_new_status": "failed",
+                    "method": self.disbursement_method,
+                    "error_type": type(error).__name__,
+                },
+            )
         return self
 
     def set_preferred_disbursement_method(self, method):
@@ -517,6 +582,28 @@ class LoanApplication:
         self.preferred_disbursement_method = method
         self.updated_at = utcnow()
         return self.save()
+
+    def mark_paid_off(
+        self, paid_off_at=None, actor_id=None, actor_type="system", source="settlement"
+    ):
+        """Idempotently close a disbursed loan after exact schedule settlement."""
+        if self.status == "completed" and self.repayment_status == "paid_off":
+            return self
+        if self.status != "disbursed":
+            raise ValueError("Only disbursed loans can be marked paid off")
+        self._prev_status = self.status
+        self.status = "completed"
+        self.repayment_status = "paid_off"
+        self.paid_off_at = paid_off_at or utcnow()
+        self.save()
+        self._log_status_transition(
+            action="loan_paid_off",
+            actor_id=actor_id,
+            actor_type=actor_type,
+            description="Loan repayment completed and application closed",
+            extra_details={"source": source, "paid_off_at": self.paid_off_at},
+        )
+        return self
 
     def can_resubmit(self):
         """Check if application can be resubmitted"""
@@ -780,7 +867,7 @@ class LoanApplication:
             "total_pages": total_pages,
         }
 
-    def reassign(self, new_officer_id):
+    def reassign(self, new_officer_id, actor_id=None, actor_type="system"):
         """
         Reassign application to a different officer.
 
@@ -796,8 +883,24 @@ class LoanApplication:
         if self.status not in ["under_review", "submitted"]:
             raise ValueError(f"Cannot reassign application with status: {self.status}")
 
+        previous_officer_id = str(self.assigned_officer)
         self.assigned_officer = str(new_officer_id)
-        return self.save()
+        self.save()
+        self._prev_status = self.status
+        self._log_status_transition(
+            action="loan_reassigned",
+            actor_id=actor_id,
+            actor_type=actor_type,
+            description=(
+                f"Loan application reassigned from officer {previous_officer_id} "
+                f"to officer {new_officer_id}"
+            ),
+            extra_details={
+                "previous_officer": previous_officer_id,
+                "assigned_officer": str(new_officer_id),
+            },
+        )
+        return self
 
     @classmethod
     def count_by_status(cls, status):
@@ -842,12 +945,14 @@ class LoanApplication:
                 {"eth_disbursement_raw_transaction": fields.pop("raw_transaction")},
                 ("eth_disbursement_raw_transaction",),
             )
-            fields["raw_transaction"] = encrypted[
-                "eth_disbursement_raw_transaction"
-            ]
+            fields["raw_transaction"] = encrypted["eth_disbursement_raw_transaction"]
         collection.update_one(
             {"_id": application_id},
-            {"$set": {f"eth_disbursement_{key}": value for key, value in fields.items()}},
+            {
+                "$set": {
+                    f"eth_disbursement_{key}": value for key, value in fields.items()
+                }
+            },
         )
 
     @classmethod
@@ -858,8 +963,7 @@ class LoanApplication:
             {"_id": ObjectId(str(application_id))},
             {
                 "$unset": {
-                    f"eth_disbursement_{field_name}": ""
-                    for field_name in field_names
+                    f"eth_disbursement_{field_name}": "" for field_name in field_names
                 }
             },
         )

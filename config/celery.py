@@ -22,6 +22,10 @@ app.conf.beat_schedule = {
         "task": "loans.tasks.check_overdue_installments_task",
         "schedule": crontab(hour=0, minute=0),
     },
+    "reconcile-repayment-lifecycle-daily": {
+        "task": "loans.reconcile_repayment_lifecycle",
+        "schedule": crontab(hour=0, minute=15),
+    },
     "reconcile-wallet-disbursements-every-5-minutes": {
         "task": "loans.reconcile_wallet_disbursements_task",
         "schedule": crontab(minute="*/5"),

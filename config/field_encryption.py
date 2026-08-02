@@ -9,11 +9,13 @@ Behavior:
 """
 from functools import lru_cache
 
+from bson import BSON
 from cryptography.fernet import Fernet, InvalidToken
 from django.conf import settings
 from django.core.exceptions import ImproperlyConfigured
 
 ENCRYPTED_PREFIX = "enc::"
+ENCRYPTED_BSON_PREFIX = "encbson::"
 
 
 @lru_cache(maxsize=1)
@@ -32,23 +34,34 @@ def _get_fernet():
 
 
 def is_encrypted_value(value):
-    return isinstance(value, str) and value.startswith(ENCRYPTED_PREFIX)
+    return isinstance(value, str) and value.startswith(
+        (ENCRYPTED_PREFIX, ENCRYPTED_BSON_PREFIX)
+    )
 
 
 def encrypt_value(value):
     if value is None:
         return None
-    if not isinstance(value, str):
-        return value
-    if value == "" or is_encrypted_value(value):
+    if is_encrypted_value(value) or value == "":
         return value
 
     fernet = _get_fernet()
     if fernet is None:
         return value
 
-    token = fernet.encrypt(value.encode("utf-8")).decode("utf-8")
-    return f"{ENCRYPTED_PREFIX}{token}"
+    if isinstance(value, str):
+        payload = value.encode("utf-8")
+        prefix = ENCRYPTED_PREFIX
+    elif isinstance(value, (dict, list, tuple)):
+        # BSON preserves the native values used in Mongo documents (including
+        # datetimes and ObjectIds) without lossy JSON conversion.
+        payload = BSON.encode({"value": value})
+        prefix = ENCRYPTED_BSON_PREFIX
+    else:
+        return value
+
+    token = fernet.encrypt(payload).decode("utf-8")
+    return f"{prefix}{token}"
 
 
 def decrypt_value(value):
@@ -63,10 +76,15 @@ def decrypt_value(value):
     if fernet is None:
         return value
 
-    token = value[len(ENCRYPTED_PREFIX) :]
+    structured = value.startswith(ENCRYPTED_BSON_PREFIX)
+    prefix = ENCRYPTED_BSON_PREFIX if structured else ENCRYPTED_PREFIX
+    token = value[len(prefix) :]
     try:
-        return fernet.decrypt(token.encode("utf-8")).decode("utf-8")
-    except InvalidToken:
+        plaintext = fernet.decrypt(token.encode("utf-8"))
+        if structured:
+            return BSON(plaintext).decode()["value"]
+        return plaintext.decode("utf-8")
+    except (InvalidToken, KeyError, TypeError, ValueError):
         return value
 
 

@@ -41,6 +41,7 @@ from loans.views import (
     ExchangeRateView,
     BulkRepaymentScheduleExportView,
     WalletDisbursementRecoveryView,
+    EarlyPayoffView,
 )
 
 app_name = "loans"
@@ -85,6 +86,7 @@ urlpatterns = [
     path("officer/applications/<str:application_id>/penalties/apply/", ApplyPenaltyView.as_view(), name="officer-penalty-apply"),
     path("officer/applications/<str:application_id>/penalties/waive/", WaivePenaltyView.as_view(), name="officer-penalty-waive"),
     path("officer/applications/<str:application_id>/payments/", OfficerPaymentHistoryView.as_view(), name="officer-payment-history"),
+    path("officer/applications/<str:application_id>/payoff/", EarlyPayoffView.as_view(), name="officer-early-payoff"),
     path("officer/applications/<str:application_id>/blockchain/", BlockchainStatusView.as_view(), name="officer-blockchain"),
     path("officer/exchange-rate/", ExchangeRateView.as_view(), name="officer-exchange-rate"),
     path("officer/schedules/export/", BulkRepaymentScheduleExportView.as_view(), name="officer-schedules-export"),

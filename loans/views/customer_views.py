@@ -9,6 +9,7 @@ from accounts.utils.access_control import AccessControlMixin
 from accounts.utils.response_helpers import success_response, error_response
 from accounts.utils.throttles import PreQualifyRateThrottle
 from accounts.utils.validation_utils import sanitize_text
+from analytics.models import AuditLog  # noqa: F401 - existing test patch target
 from loans.models import LoanProduct, LoanApplication, APPLICATION_STATUSES
 from loans.serializers import LoanApplicationSerializer, PreQualifyRequestSerializer
 from loans.services import (
@@ -17,7 +18,7 @@ from loans.services import (
     resolve_required_document_types,
 )
 
-from analytics.models import AuditLog
+from loans.services.audit import record_loan_audit
 import logging
 
 logger = logging.getLogger("loans")
@@ -66,6 +67,8 @@ def _serialize_customer_application_detail(app, product):
             else None
         ),
         "disbursement_error": app.disbursement_error,
+        "repayment_status": app.repayment_status,
+        "paid_off_at": app.paid_off_at.isoformat() if app.paid_off_at else None,
         "disbursed_at": app.disbursed_at.isoformat() if app.disbursed_at else None,
         "created_at": app.created_at.isoformat(),
     }
@@ -509,7 +512,7 @@ class LoanApplyView(CustomerRoleRequiredMixin, APIView):
                 logger.warning(f"Failed to send loan submitted email: {e}")
 
             # Audit log
-            AuditLog.log_action(
+            record_loan_audit(
                 action="loan_submitted",
                 user_id=customer_id,
                 user_type="customer",
@@ -863,7 +866,7 @@ class ApplicationDetailView(CustomerRoleRequiredMixin, APIView):
             except Exception as e:
                 logger.warning(f"Failed to send loan submitted email: {e}")
 
-            AuditLog.log_action(
+            record_loan_audit(
                 action="loan_draft_updated_and_submitted",
                 user_id=customer_id,
                 user_type="customer",
@@ -918,7 +921,7 @@ class RepaymentScheduleView(CustomerRoleRequiredMixin, APIView):
             )
 
         # Only disbursed loans have schedules
-        if app.status != "disbursed":
+        if app.status not in {"disbursed", "completed", "written_off"}:
             return error_response(
                 message="Repayment schedule is only available for disbursed loans",
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -986,6 +989,12 @@ class RepaymentScheduleView(CustomerRoleRequiredMixin, APIView):
                 "monthly_payment": schedule.monthly_payment,
                 "total_amount": schedule.total_amount,
                 "total_interest": schedule.total_interest,
+                "schedule_status": schedule.status,
+                "paid_off_at": (
+                    schedule.paid_off_at.isoformat()
+                    if schedule.paid_off_at
+                    else None
+                ),
                 "paid_count": schedule.get_paid_count(),
                 "remaining_balance": schedule.get_remaining_balance(),
                 "next_payment": schedule.get_next_payment(),
@@ -1039,7 +1048,7 @@ class PaymentHistoryView(CustomerRoleRequiredMixin, APIView):
             for p in payments
         ]
 
-        total_paid = sum(p.amount for p in payments if p.payment_status == "posted")
+        total_paid = LoanPayment.get_total_paid(application_id)
 
         return success_response(
             data={
@@ -1207,7 +1216,7 @@ class PaymentHistoryView(CustomerRoleRequiredMixin, APIView):
             )
 
         if not replayed:
-            AuditLog.log_action(
+            record_loan_audit(
                 action="customer_payment_submitted",
                 user_id=str(customer_id),
                 user_type="customer",
@@ -1414,8 +1423,8 @@ class SetDisbursementMethodView(CustomerRoleRequiredMixin, APIView):
                 message=str(e), status_code=status.HTTP_400_BAD_REQUEST
             )
 
-        # Audit log
-        AuditLog.log_action(
+        # AuditLog writes go through the observable loan-domain wrapper.
+        record_loan_audit(
             action="disbursement_method_set",
             user_id=customer_id,
             user_type="customer",
@@ -1744,6 +1753,7 @@ class WalletPaymentView(CustomerRoleRequiredMixin, APIView):
                 reference=tx_hash,
                 notes=f"ETH wallet payment: {eth_received:.6f} ETH @ {rate_info['rate']:.2f} PHP/ETH",
                 recorded_by=customer_id,
+                recorded_by_type="customer",
                 idempotency_key=f"wallet:{tx_hash.lower()}",
                 verification_source="ethereum_receipt",
                 extra_fields={
@@ -1773,11 +1783,9 @@ class WalletPaymentView(CustomerRoleRequiredMixin, APIView):
             tx_hash[:18],
         )
 
-        # Audit log
-        from analytics.models import AuditLog
-
+        # AuditLog writes go through the observable loan-domain wrapper.
         if not replayed:
-            AuditLog.log_action(
+            record_loan_audit(
                 action="wallet_payment_verified",
                 user_id=customer_id,
                 user_type="customer",
@@ -1858,7 +1866,7 @@ class SystemWalletInfoView(CustomerRoleRequiredMixin, APIView):
 
         try:
             account = get_account()
-            w3 = get_web3()
+            get_web3()
         except Exception as exc:
             import logging
             logging.getLogger("blockchain").error(f"Blockchain connection failed: {exc}")

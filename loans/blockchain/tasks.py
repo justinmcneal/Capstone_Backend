@@ -511,10 +511,26 @@ def reconcile_blockchain_domain_state():
         task.apply_async(args=list(args), retry=False)
         enqueued += 1
 
-    applications = db["loan_applications"].find(
-        {"status": {"$in": ["submitted", "under_review", "approved", "rejected", "disbursed"]}},
-        {"_id": 1, "status": 1, "blockchain_tx_hashes": 1},
-    ).limit(limit)
+    applications = (
+        db["loan_applications"]
+        .find(
+            {
+                "status": {
+                    "$in": [
+                        "submitted",
+                        "under_review",
+                        "approved",
+                        "rejected",
+                        "disbursed",
+                        "completed",
+                        "written_off",
+                    ]
+                }
+            },
+            {"_id": 1, "status": 1, "blockchain_tx_hashes": 1},
+        )
+        .limit(limit)
+    )
     for application in applications:
         loan_id = str(application["_id"])
         lifecycle_status = application.get("status")
@@ -522,18 +538,29 @@ def reconcile_blockchain_domain_state():
         if not hashes.get("submit"):
             enqueue(sync_application_to_chain, loan_id)
             continue
-        if lifecycle_status in {"approved", "disbursed"} and not hashes.get("approve"):
+        if lifecycle_status in {
+            "approved",
+            "disbursed",
+            "completed",
+            "written_off",
+        } and not hashes.get("approve"):
             enqueue(sync_approval_to_chain, loan_id)
             continue
         if lifecycle_status == "rejected" and not hashes.get("reject"):
             enqueue(sync_rejection_to_chain, loan_id)
             continue
-        if lifecycle_status == "disbursed" and not hashes.get("disburse"):
+        if lifecycle_status in {
+            "disbursed",
+            "completed",
+            "written_off",
+        } and not hashes.get("disburse"):
             enqueue(sync_disbursement_to_chain, loan_id)
 
-    schedules = db["repayment_schedules"].find(
-        {"blockchain_schedule_tx": {"$in": [None, ""]}}, {"loan_id": 1}
-    ).limit(limit)
+    schedules = (
+        db["repayment_schedules"]
+        .find({"blockchain_schedule_tx": {"$in": [None, ""]}}, {"loan_id": 1})
+        .limit(limit)
+    )
     for schedule in schedules:
         loan_id = str(schedule["loan_id"])
         application = db["loan_applications"].find_one(
@@ -543,13 +570,18 @@ def reconcile_blockchain_domain_state():
         if (application or {}).get("blockchain_tx_hashes", {}).get("disburse"):
             enqueue(sync_schedule_to_chain, loan_id)
 
-    payments = db["loan_payments"].find(
-        {
-            "payment_status": "posted",
-            "blockchain_tx_hash": {"$in": [None, ""]},
-        },
-        {"_id": 1, "loan_id": 1},
-    ).limit(limit)
+    payments = (
+        db["loan_payments"]
+        .find(
+            {
+                "payment_status": "posted",
+                "blockchain_tx_hash": {"$in": [None, ""]},
+                "blockchain_sync_status": {"$ne": "not_applicable"},
+            },
+            {"_id": 1, "loan_id": 1},
+        )
+        .limit(limit)
+    )
     for payment in payments:
         schedule = db["repayment_schedules"].find_one(
             {"loan_id": str(payment["loan_id"])}, {"blockchain_schedule_tx": 1}

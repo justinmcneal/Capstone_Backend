@@ -4,12 +4,12 @@ Tests for explicit status-transition audit logging in LoanApplication.
 Coverage:
 - assign_officer logs with structured metadata
 - resubmit logs with structured metadata
-- approve/reject/submit still work (logs are created by views, not models)
+- approval/rejection/submission endpoint audits remain compatible
+- disbursement sub-state transitions are audited at the model boundary
 """
 
 from unittest.mock import MagicMock, patch
 
-import pytest
 from bson import ObjectId
 
 from loans.models.application import LoanApplication
@@ -188,7 +188,7 @@ class TestStatusTransitionAuditLogs:
 
         assert mock_log.called is False
 
-    def test_disburse_does_not_create_duplicate_audit_log_in_model(self, monkeypatch):
+    def test_disburse_audits_pending_and_completed_transitions(self, monkeypatch):
         import mongomock
         from django.conf import settings
 
@@ -196,7 +196,6 @@ class TestStatusTransitionAuditLogs:
         db = client["testdb"]
         monkeypatch.setattr(settings, "MONGODB", db, raising=False)
 
-        product = MagicMock()
         app = _make_application(status="approved")
         app.save()
 
@@ -208,7 +207,14 @@ class TestStatusTransitionAuditLogs:
                 processed_by="officer_001",
             )
 
-        assert mock_log.called is False
+        assert [call.kwargs["action"] for call in mock_log.call_args_list] == [
+            "loan_disbursement_pending",
+            "loan_disbursed",
+        ]
+        assert all(
+            call.kwargs["user_id"] == "officer_001"
+            for call in mock_log.call_args_list
+        )
 
     def test_audit_log_survives_analytics_failure(self, monkeypatch):
         import mongomock

@@ -8,9 +8,10 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 
 from accounts.authentication import CustomJWTAuthentication
+from analytics.models import AuditLog  # noqa: F401 - existing test patch target
 from accounts.utils.response_helpers import error_response, success_response
 from accounts.utils.validation_utils import sanitize_text
-from analytics.models import AuditLog
+from loans.services.audit import record_loan_audit
 from loans.models import LoanApplication
 from loans.tasks import execute_wallet_disbursement_task
 from loans.views.officer.base import LoanOfficerRequiredMixin
@@ -146,10 +147,12 @@ class WalletDisbursementRecoveryView(LoanOfficerRequiredMixin, APIView):
     @staticmethod
     def _audit(application, actor_id, action, request):
         try:
-            AuditLog.log_action(
+            record_loan_audit(
                 action=f"wallet_disbursement_{action}",
                 user_id=actor_id,
-                user_type="loan_officer",
+                user_type=(
+                    str(getattr(request.user, "role", "") or "system").lower()
+                ),
                 description=f"Wallet disbursement {action} requested",
                 resource_type="loan",
                 resource_id=application.id,

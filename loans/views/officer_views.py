@@ -24,6 +24,7 @@ from loans.views.officer.schedule import (
 )
 from loans.views.officer.schedule_export import BulkRepaymentScheduleExportView
 from loans.views.officer.wallet_recovery import WalletDisbursementRecoveryView
+from loans.views.officer.payoff import EarlyPayoffView
 from loans.views.officer.blockchain import (
     BlockchainStatusView,
     ExchangeRateView,

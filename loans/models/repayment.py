@@ -7,7 +7,8 @@ from copy import deepcopy
 from dateutil.relativedelta import relativedelta
 from django.conf import settings
 
-from config.field_encryption import decrypt_fields, encrypt_fields
+from config.field_encryption import decrypt_fields, encrypt_fields, encrypt_value
+from loans.utils.money import from_centavos, rate_amount_centavos, to_centavos
 
 from loans.utils.time import utcnow
 
@@ -16,7 +17,14 @@ def get_db():
     return settings.MONGODB
 
 
-INSTALLMENT_STATUSES = ["pending", "paid", "overdue", "partial"]
+INSTALLMENT_STATUSES = [
+    "pending",
+    "partial",
+    "overdue",
+    "partial_overdue",
+    "paid",
+]
+SCHEDULE_STATUSES = ["active", "paid_off", "restructured", "written_off"]
 
 
 class RepaymentSchedule:
@@ -39,6 +47,22 @@ class RepaymentSchedule:
         self.monthly_payment = kwargs.get("monthly_payment", 0)
         self.total_amount = kwargs.get("total_amount", 0)
         self.total_interest = kwargs.get("total_interest", 0)
+        self.principal_centavos = kwargs.get(
+            "principal_centavos", to_centavos(self.principal, "principal")
+        )
+        self.monthly_payment_centavos = kwargs.get(
+            "monthly_payment_centavos",
+            to_centavos(self.monthly_payment, "monthly_payment"),
+        )
+        self.total_amount_centavos = kwargs.get(
+            "total_amount_centavos", to_centavos(self.total_amount, "total_amount")
+        )
+        self.total_interest_centavos = kwargs.get(
+            "total_interest_centavos",
+            to_centavos(self.total_interest, "total_interest"),
+        )
+        self.status = kwargs.get("status", "active")
+        self.paid_off_at = kwargs.get("paid_off_at")
 
         # Installments list
         self.installments = kwargs.get("installments", [])
@@ -52,6 +76,7 @@ class RepaymentSchedule:
         self.blockchain_overdue_tx = kwargs.get("blockchain_overdue_tx", {})
         self.blockchain_penalty_tx = kwargs.get("blockchain_penalty_tx", {})
         self.applied_payment_tokens = kwargs.get("applied_payment_tokens", [])
+        self.accounting_version = int(kwargs.get("accounting_version", 0) or 0)
 
     @property
     def id(self):
@@ -67,6 +92,12 @@ class RepaymentSchedule:
             "monthly_payment": self.monthly_payment,
             "total_amount": self.total_amount,
             "total_interest": self.total_interest,
+            "principal_centavos": self.principal_centavos,
+            "monthly_payment_centavos": self.monthly_payment_centavos,
+            "total_amount_centavos": self.total_amount_centavos,
+            "total_interest_centavos": self.total_interest_centavos,
+            "status": self.status,
+            "paid_off_at": self.paid_off_at,
             "installments": self.installments,
             "start_date": self.start_date,
             "created_at": self.created_at,
@@ -74,6 +105,7 @@ class RepaymentSchedule:
             "blockchain_overdue_tx": self.blockchain_overdue_tx,
             "blockchain_penalty_tx": self.blockchain_penalty_tx,
             "applied_payment_tokens": self.applied_payment_tokens,
+            "accounting_version": self.accounting_version,
         }
         if self._id:
             data["_id"] = self._id
@@ -99,23 +131,6 @@ class RepaymentSchedule:
             self._id = result.inserted_id
         return self
 
-    def update_blockchain_schedule_tx(self, tx_hash):
-        """Update the blockchain schedule transaction hash."""
-        self.blockchain_schedule_tx = tx_hash
-        return self.save()
-
-    def update_blockchain_overdue_tx(self, installment_number, tx_hash):
-        """Record an overdue marking transaction hash."""
-        self.blockchain_overdue_tx = dict(self.blockchain_overdue_tx or {})
-        self.blockchain_overdue_tx[str(installment_number)] = tx_hash
-        return self.save()
-
-    def update_blockchain_penalty_tx(self, installment_number, action, tx_hash):
-        """Record a penalty apply/waive transaction hash."""
-        self.blockchain_penalty_tx = dict(self.blockchain_penalty_tx or {})
-        self.blockchain_penalty_tx[str(installment_number)][action] = tx_hash
-        return self.save()
-
     @classmethod
     def generate_for_loan(cls, loan_application, product):
         """
@@ -133,17 +148,17 @@ class RepaymentSchedule:
         )
         interest_rate = product.interest_rate  # Monthly rate
         term_months = loan_application.term_months
+        if not isinstance(term_months, int) or term_months < 1:
+            raise ValueError("term_months must be a positive integer")
 
-        # Calculate monthly interest
-        monthly_interest = principal * interest_rate
-        total_interest = monthly_interest * term_months
-
-        # Monthly principal portion
-        monthly_principal = principal / term_months
-
-        # Total monthly payment
-        monthly_payment = monthly_principal + monthly_interest
-        total_amount = principal + total_interest
+        principal_centavos = to_centavos(principal, "principal")
+        monthly_interest_centavos = rate_amount_centavos(
+            principal_centavos, interest_rate
+        )
+        total_interest_centavos = monthly_interest_centavos * term_months
+        regular_principal_centavos, principal_remainder = divmod(
+            principal_centavos, term_months
+        )
 
         # Generate installments
         installments = []
@@ -151,18 +166,29 @@ class RepaymentSchedule:
 
         for i in range(1, term_months + 1):
             due_date = start_date + relativedelta(months=i)
+            principal_part_centavos = regular_principal_centavos
+            if i == term_months:
+                principal_part_centavos += principal_remainder
+            installment_total_centavos = (
+                principal_part_centavos + monthly_interest_centavos
+            )
             installments.append(
                 {
                     "number": i,
                     "due_date": due_date,
-                    "principal": round(monthly_principal, 2),
-                    "interest": round(monthly_interest, 2),
-                    "total_amount": round(monthly_payment, 2),
+                    "principal": from_centavos(principal_part_centavos),
+                    "principal_centavos": principal_part_centavos,
+                    "interest": from_centavos(monthly_interest_centavos),
+                    "interest_centavos": monthly_interest_centavos,
+                    "total_amount": from_centavos(installment_total_centavos),
+                    "total_amount_centavos": installment_total_centavos,
                     "status": "pending",
                     "paid_amount": 0,
+                    "paid_amount_centavos": 0,
                     "paid_at": None,
                     "penalty_status": None,
                     "penalty_amount": 0,
+                    "penalty_amount_centavos": 0,
                     "penalty_reason": "",
                     "penalty_applied_at": None,
                     "penalty_applied_by": None,
@@ -175,21 +201,66 @@ class RepaymentSchedule:
         schedule = cls(
             loan_id=loan_application.id,
             customer_id=loan_application.customer_id,
-            principal=principal,
+            principal=from_centavos(principal_centavos),
+            principal_centavos=principal_centavos,
             interest_rate=interest_rate,
             term_months=term_months,
-            monthly_payment=round(monthly_payment, 2),
-            total_amount=round(total_amount, 2),
-            total_interest=round(total_interest, 2),
+            monthly_payment=from_centavos(installments[0]["total_amount_centavos"]),
+            monthly_payment_centavos=installments[0]["total_amount_centavos"],
+            total_amount=from_centavos(principal_centavos + total_interest_centavos),
+            total_amount_centavos=principal_centavos + total_interest_centavos,
+            total_interest=from_centavos(total_interest_centavos),
+            total_interest_centavos=total_interest_centavos,
             installments=installments,
             start_date=start_date,
         )
         return schedule.save()
 
+    @staticmethod
+    def _centavos(installment, field):
+        centavo_field = f"{field}_centavos"
+        if centavo_field in installment:
+            return int(installment.get(centavo_field) or 0)
+        return to_centavos(installment.get(field, 0) or 0, field)
+
+    @classmethod
+    def _required_centavos(cls, installment):
+        required = cls._centavos(installment, "total_amount")
+        if installment.get("penalty_status") == "applied":
+            required += cls._centavos(installment, "penalty_amount")
+        return required
+
+    @classmethod
+    def _normalized_unpaid_status(cls, installment, as_of=None):
+        paid_centavos = cls._centavos(installment, "paid_amount")
+        partial = paid_centavos > 0
+        due_date = installment.get("due_date")
+        as_of = as_of or utcnow()
+        overdue = bool(
+            due_date and hasattr(due_date, "date") and due_date.date() < as_of.date()
+        )
+        if overdue:
+            return "partial_overdue" if partial else "overdue"
+        return "partial" if partial else "pending"
+
+    @classmethod
+    def _normalize_installment(cls, installment, as_of=None):
+        required = cls._required_centavos(installment)
+        paid = min(cls._centavos(installment, "paid_amount"), required)
+        installment["paid_amount_centavos"] = paid
+        installment["paid_amount"] = from_centavos(paid)
+        if paid >= required:
+            installment["status"] = "paid"
+            installment["paid_at"] = installment.get("paid_at") or utcnow()
+        else:
+            installment["status"] = cls._normalized_unpaid_status(installment, as_of)
+            installment["paid_at"] = None
+        return installment
+
     def get_next_payment(self):
-        """Get next pending installment"""
+        """Get the earliest unpaid installment, including partial/overdue states."""
         for inst in self.installments:
-            if inst["status"] == "pending":
+            if inst.get("status") != "paid":
                 return inst
         return None
 
@@ -198,18 +269,31 @@ class RepaymentSchedule:
         return sum(1 for inst in self.installments if inst["status"] == "paid")
 
     def get_remaining_balance(self):
-        """Calculate remaining balance including unpaid penalties"""
-        paid = sum(inst.get("paid_amount", 0) for inst in self.installments)
-        
-        # Include unpaid penalties in the remaining balance
-        unpaid_penalties = sum(
-            inst.get("penalty_amount", 0) 
-            for inst in self.installments 
-            if inst.get("penalty_status") == "applied" and inst.get("status") != "paid"
+        """Calculate exact remaining balance from per-installment centavos."""
+        remaining = sum(
+            max(
+                self._required_centavos(inst) - self._centavos(inst, "paid_amount"),
+                0,
+            )
+            for inst in self.installments
         )
-        
-        # Never return negative values even if historical overpayments exist.
-        return max(self.total_amount + unpaid_penalties - paid, 0)
+        return from_centavos(remaining)
+
+    def get_remaining_balance_centavos(self):
+        return sum(
+            max(
+                self._required_centavos(inst) - self._centavos(inst, "paid_amount"),
+                0,
+            )
+            for inst in self.installments
+        )
+
+    def is_paid_off(self):
+        return self.get_remaining_balance_centavos() == 0
+
+    def get_early_payoff_amount(self):
+        """Return the exact current payoff amount, including applied penalties."""
+        return self.get_remaining_balance()
 
     def get_installment(self, installment_number):
         """Get a specific installment by number"""
@@ -228,15 +312,12 @@ class RepaymentSchedule:
         inst = self.get_installment(installment_number)
         if not inst:
             return None
-        
-        base_remaining = inst["total_amount"] - inst.get("paid_amount", 0)
-        
-        # Add penalty if applied and not waived
-        penalty_amount = 0
-        if inst.get("penalty_status") == "applied":
-            penalty_amount = inst.get("penalty_amount", 0)
-        
-        return base_remaining + penalty_amount
+
+        remaining = max(
+            self._required_centavos(inst) - self._centavos(inst, "paid_amount"),
+            0,
+        )
+        return from_centavos(remaining)
 
     def count_unpaid_before(self, installment_number):
         """Count unpaid installments before the given number"""
@@ -298,7 +379,9 @@ class RepaymentSchedule:
         )
 
     @classmethod
-    def update_blockchain_penalty_tx(cls, schedule_id, installment_number, action, tx_hash):
+    def update_blockchain_penalty_tx(
+        cls, schedule_id, installment_number, action, tx_hash
+    ):
         db = get_db()
         collection = db[cls.collection_name]
         field = f"blockchain_penalty_tx.{installment_number}.{action}"
@@ -316,26 +399,34 @@ class RepaymentSchedule:
         """
         for i, inst in enumerate(self.installments):
             if inst["number"] == installment_number:
-                new_paid_amount = inst.get("paid_amount", 0) + amount
-
-                # Calculate actual amount required including penalties
-                actual_total_amount = inst["total_amount"]
-                if inst.get("penalty_status") == "applied":
-                    actual_total_amount += inst.get("penalty_amount", 0)
-
-                # Update status based on payment
-                if new_paid_amount >= actual_total_amount:
-                    inst["paid_amount"] = actual_total_amount
-                    inst["status"] = "paid"
-                    inst["paid_at"] = utcnow()
-                elif new_paid_amount > 0:
-                    inst["paid_amount"] = new_paid_amount
-                    inst["status"] = "partial"
+                amount_centavos = to_centavos(amount)
+                if amount_centavos <= 0:
+                    raise ValueError("amount must be greater than 0")
+                required = self._required_centavos(inst)
+                paid = self._centavos(inst, "paid_amount")
+                if amount_centavos > required - paid:
+                    raise ValueError(
+                        "Amount exceeds remaining balance of "
+                        f"PHP{from_centavos(required - paid):.2f}"
+                    )
+                new_paid = paid + amount_centavos
+                inst["paid_amount_centavos"] = new_paid
+                inst["paid_amount"] = from_centavos(new_paid)
+                self._normalize_installment(inst)
 
                 self.installments[i] = inst
+                self._mark_paid_off_if_complete()
                 self.save()
                 return inst
         return None
+
+    def _mark_paid_off_if_complete(self):
+        if self.is_paid_off():
+            self.status = "paid_off"
+            self.paid_off_at = self.paid_off_at or utcnow()
+        elif self.status == "paid_off":
+            self.status = "active"
+            self.paid_off_at = None
 
     def apply_payment_atomic(self, installment_number, amount, payment_token):
         """Apply one payment with optimistic concurrency and replay protection.
@@ -361,40 +452,51 @@ class RepaymentSchedule:
                 return installment, True
 
             if installment.get("status") == "paid":
-                raise ValueError(f"Installment #{installment_number} is already fully paid")
-
-            paid_amount = installment.get("paid_amount", 0) or 0
-            required_amount = installment["total_amount"]
-            if installment.get("penalty_status") == "applied":
-                required_amount += installment.get("penalty_amount", 0)
-            remaining = required_amount - paid_amount
-            if amount - remaining > 0.01:
                 raise ValueError(
-                    f"Amount exceeds remaining balance of PHP{remaining:.2f}"
+                    f"Installment #{installment_number} is already fully paid"
                 )
 
-            new_paid_amount = min(paid_amount + amount, required_amount)
-            new_status = "paid" if new_paid_amount >= required_amount else "partial"
+            amount_centavos = to_centavos(amount)
+            if amount_centavos <= 0:
+                raise ValueError("amount must be greater than 0")
+            paid_centavos = current._centavos(installment, "paid_amount")
+            required_centavos = current._required_centavos(installment)
+            remaining_centavos = required_centavos - paid_centavos
+            if amount_centavos > remaining_centavos:
+                raise ValueError(
+                    "Amount exceeds remaining balance of "
+                    f"PHP{from_centavos(remaining_centavos):.2f}"
+                )
+
+            new_paid_centavos = paid_centavos + amount_centavos
             updated_installments = deepcopy(current.installments)
             updated_installment = next(
                 item
                 for item in updated_installments
                 if item["number"] == installment_number
             )
-            updated_installment["paid_amount"] = new_paid_amount
-            updated_installment["status"] = new_status
-            if new_status == "paid":
-                updated_installment["paid_at"] = utcnow()
+            updated_installment["paid_amount_centavos"] = new_paid_centavos
+            updated_installment["paid_amount"] = from_centavos(new_paid_centavos)
+            current._normalize_installment(updated_installment)
+            paid_off = all(
+                current._centavos(item, "paid_amount")
+                >= current._required_centavos(item)
+                for item in updated_installments
+            )
+            schedule_updates = {"installments": encrypt_value(updated_installments)}
+            if paid_off:
+                schedule_updates.update({"status": "paid_off", "paid_off_at": utcnow()})
 
             result = collection.update_one(
                 {
                     "_id": self._id,
-                    "installments": current.installments,
+                    "accounting_version": current.accounting_version,
                     "applied_payment_tokens": {"$ne": payment_token},
                 },
                 {
-                    "$set": {"installments": updated_installments},
+                    "$set": schedule_updates,
                     "$addToSet": {"applied_payment_tokens": payment_token},
+                    "$inc": {"accounting_version": 1},
                 },
             )
             if result.modified_count:
@@ -418,12 +520,16 @@ class RepaymentSchedule:
         for i, inst in enumerate(self.installments):
             due_date = inst.get("due_date")
             status = inst.get("status", "pending")
-            if status not in {"pending", "partial"}:
+            if status not in {"pending", "partial", "overdue", "partial_overdue"}:
                 continue
             if not due_date or not hasattr(due_date, "date"):
                 continue
-            if due_date.date() < as_of.date():
-                inst["status"] = "overdue"
+            normalized_status = self._normalized_unpaid_status(inst, as_of)
+            if (
+                normalized_status in {"overdue", "partial_overdue"}
+                and status != normalized_status
+            ):
+                inst["status"] = normalized_status
                 inst["overdue_at"] = as_of
                 self.installments[i] = inst
                 updated.append(inst.get("number"))
@@ -432,3 +538,131 @@ class RepaymentSchedule:
             self.save()
 
         return updated
+
+    def apply_penalty(self, installment_number, amount, reason, actor_id):
+        installment = self.get_installment(installment_number)
+        if not installment:
+            raise ValueError(f"Installment #{installment_number} not found")
+        if installment.get("status") == "paid":
+            raise ValueError(f"Installment #{installment_number} is already paid")
+        if installment.get("penalty_status") == "applied":
+            raise ValueError(
+                f"Penalty already applied for installment #{installment_number}"
+            )
+        penalty_centavos = to_centavos(amount, "penalty_amount")
+        if penalty_centavos <= 0:
+            raise ValueError("penalty_amount must be greater than 0")
+        now = utcnow()
+        installment.update(
+            {
+                "penalty_status": "applied",
+                "penalty_amount_centavos": penalty_centavos,
+                "penalty_amount": from_centavos(penalty_centavos),
+                "penalty_reason": reason,
+                "penalty_applied_at": now,
+                "penalty_applied_by": str(actor_id),
+                "penalty_waived_at": None,
+                "penalty_waived_by": None,
+                "penalty_waived_reason": "",
+            }
+        )
+        self._normalize_installment(installment)
+        self._mark_paid_off_if_complete()
+        self.save()
+        return installment
+
+    def waive_penalty(self, installment_number, reason, actor_id):
+        installment = self.get_installment(installment_number)
+        if not installment:
+            raise ValueError(f"Installment #{installment_number} not found")
+        if installment.get("penalty_status") != "applied":
+            raise ValueError(
+                f"No applied penalty found for installment #{installment_number}"
+            )
+        now = utcnow()
+        base_required = self._centavos(installment, "total_amount")
+        paid = self._centavos(installment, "paid_amount")
+        credit = max(paid - base_required, 0)
+        if credit:
+            installment["paid_amount_centavos"] = base_required
+            installment["paid_amount"] = from_centavos(base_required)
+            installment["waiver_credit_centavos"] = credit
+            installment["waiver_credit_amount"] = from_centavos(credit)
+        installment.update(
+            {
+                "penalty_status": "waived",
+                "penalty_waived_at": now,
+                "penalty_waived_by": str(actor_id),
+                "penalty_waived_reason": reason,
+            }
+        )
+        self._normalize_installment(installment)
+        self._mark_paid_off_if_complete()
+        self.save()
+        return installment
+
+    def apply_early_payoff_atomic(self, amount, payment_token):
+        """Apply one exact payoff across every open installment atomically."""
+        collection = get_db()[self.collection_name]
+        for _attempt in range(3):
+            current = self.find_one({"_id": self._id})
+            if not current:
+                raise ValueError("Repayment schedule not found")
+            if payment_token in current.applied_payment_tokens:
+                self.__dict__.update(current.__dict__)
+                return [], True
+
+            amount_centavos = to_centavos(amount)
+            expected_centavos = current.get_remaining_balance_centavos()
+            if amount_centavos != expected_centavos:
+                raise ValueError(
+                    "Early payoff amount must equal the current payoff quote of "
+                    f"PHP{from_centavos(expected_centavos):.2f}"
+                )
+            if expected_centavos <= 0:
+                raise ValueError("Loan is already paid off")
+
+            updated_installments = deepcopy(current.installments)
+            allocations = []
+            for installment in updated_installments:
+                remaining = max(
+                    current._required_centavos(installment)
+                    - current._centavos(installment, "paid_amount"),
+                    0,
+                )
+                if not remaining:
+                    continue
+                new_paid = current._centavos(installment, "paid_amount") + remaining
+                installment["paid_amount_centavos"] = new_paid
+                installment["paid_amount"] = from_centavos(new_paid)
+                current._normalize_installment(installment)
+                allocations.append(
+                    {
+                        "installment_number": installment["number"],
+                        "amount_centavos": remaining,
+                        "amount": from_centavos(remaining),
+                    }
+                )
+
+            now = utcnow()
+            result = collection.update_one(
+                {
+                    "_id": self._id,
+                    "accounting_version": current.accounting_version,
+                    "applied_payment_tokens": {"$ne": payment_token},
+                },
+                {
+                    "$set": {
+                        "installments": encrypt_value(updated_installments),
+                        "status": "paid_off",
+                        "paid_off_at": now,
+                    },
+                    "$addToSet": {"applied_payment_tokens": payment_token},
+                    "$inc": {"accounting_version": 1},
+                },
+            )
+            if result.modified_count:
+                updated = self.find_one({"_id": self._id})
+                self.__dict__.update(updated.__dict__)
+                return allocations, False
+        raise RuntimeError("Payoff could not be applied due to a concurrent update")

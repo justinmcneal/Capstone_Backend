@@ -12,8 +12,6 @@ Coverage:
 """
 
 from datetime import datetime, timezone
-from decimal import Decimal
-from unittest.mock import MagicMock, patch
 
 import pytest
 from bson import ObjectId
@@ -21,6 +19,7 @@ from bson import ObjectId
 from loans.models.application import LoanApplication
 from loans.models.product import LoanProduct
 from loans.models.repayment import RepaymentSchedule
+from loans.utils.money import from_centavos, to_centavos
 from loans.utils.reference_generator import (
     generate_disbursement_reference,
     generate_payment_reference,
@@ -30,6 +29,7 @@ from loans.utils.reference_generator import (
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _make_product(**overrides):
     defaults = {
@@ -67,6 +67,7 @@ def _make_application(**overrides):
 # ---------------------------------------------------------------------------
 # RepaymentSchedule.generate_for_loan
 # ---------------------------------------------------------------------------
+
 
 class TestGenerateForLoan:
     def test_generates_correct_number_of_installments(self, monkeypatch):
@@ -177,7 +178,9 @@ class TestGenerateForLoan:
 
         expected_principal = 45000 / 6
         assert abs(schedule.principal - 45000) < 0.01
-        assert abs(schedule.monthly_payment - (expected_principal + 45000 * 0.01)) < 0.01
+        assert (
+            abs(schedule.monthly_payment - (expected_principal + 45000 * 0.01)) < 0.01
+        )
 
     def test_schedule_links_to_loan_and_customer(self, monkeypatch):
         import mongomock
@@ -235,21 +238,26 @@ class TestGenerateForLoan:
 # RepaymentSchedule installment behavior
 # ---------------------------------------------------------------------------
 
+
 class TestRepaymentInstallments:
-    def _make_schedule(self, loan_id, customer_id, principal=100000, rate=0.015, term=12):
+    def _make_schedule(
+        self, loan_id, customer_id, principal=100000, rate=0.015, term=12
+    ):
         installments = []
         for i in range(1, term + 1):
-            installments.append({
-                "number": i,
-                "due_date": datetime.now(timezone.utc),
-                "principal": round(principal / term, 2),
-                "interest": round(principal * rate, 2),
-                "total_amount": round(principal / term + principal * rate, 2),
-                "status": "pending",
-                "paid_amount": 0,
-                "penalty_status": None,
-                "penalty_amount": 0,
-            })
+            installments.append(
+                {
+                    "number": i,
+                    "due_date": datetime.now(timezone.utc),
+                    "principal": round(principal / term, 2),
+                    "interest": round(principal * rate, 2),
+                    "total_amount": round(principal / term + principal * rate, 2),
+                    "status": "pending",
+                    "paid_amount": 0,
+                    "penalty_status": None,
+                    "penalty_amount": 0,
+                }
+            )
         return RepaymentSchedule(
             loan_id=loan_id,
             customer_id=customer_id,
@@ -294,13 +302,15 @@ class TestRepaymentInstallments:
         partial = total / 2
         schedule.record_payment(1, partial)
         assert schedule.installments[0]["status"] == "partial"
-        assert schedule.installments[0]["paid_amount"] == partial
+        assert schedule.installments[0]["paid_amount"] == from_centavos(
+            to_centavos(partial)
+        )
 
     def test_record_multiple_payments_accumulate(self):
         schedule = self._make_schedule(str(ObjectId()), str(ObjectId()))
         total = schedule.installments[0]["total_amount"]
         schedule.record_payment(1, total / 2)
-        schedule.record_payment(1, total / 2)
+        schedule.record_payment(1, schedule.get_installment_remaining(1))
         assert schedule.installments[0]["status"] == "paid"
         assert schedule.installments[0]["paid_amount"] == total
 
@@ -313,7 +323,9 @@ class TestRepaymentInstallments:
         schedule = self._make_schedule(
             str(ObjectId()), str(ObjectId()), principal=120000, rate=0.01, term=6
         )
-        schedule.installments[0]["paid_amount"] = schedule.installments[0]["total_amount"]
+        schedule.installments[0]["paid_amount"] = schedule.installments[0][
+            "total_amount"
+        ]
         schedule.installments[0]["status"] = "paid"
         remaining = schedule.get_remaining_balance()
         expected = schedule.total_amount - schedule.installments[0]["total_amount"]
@@ -348,9 +360,7 @@ class TestRepaymentInstallments:
         assert abs(remaining - expected) < 0.01
 
     def test_count_unpaid_before(self):
-        schedule = self._make_schedule(
-            str(ObjectId()), str(ObjectId()), term=6
-        )
+        schedule = self._make_schedule(str(ObjectId()), str(ObjectId()), term=6)
         schedule.installments[0]["status"] = "paid"
         schedule.installments[2]["status"] = "paid"
         assert schedule.count_unpaid_before(4) == 1  # installment 3 is unpaid before 4
@@ -359,6 +369,7 @@ class TestRepaymentInstallments:
 # ---------------------------------------------------------------------------
 # LoanApplication.disburse
 # ---------------------------------------------------------------------------
+
 
 class TestLoanDisbursement:
     def test_disburse_changes_status_to_disbursed(self, monkeypatch):
@@ -413,6 +424,7 @@ class TestLoanDisbursement:
 # LoanApplication.set_preferred_disbursement_method
 # ---------------------------------------------------------------------------
 
+
 class TestPreferredDisbursementMethod:
     def test_set_valid_method(self, monkeypatch):
         import mongomock
@@ -442,6 +454,7 @@ class TestPreferredDisbursementMethod:
 # ---------------------------------------------------------------------------
 # Reference generation
 # ---------------------------------------------------------------------------
+
 
 class TestReferenceGeneration:
     def test_generate_disbursement_reference_format(self, monkeypatch):

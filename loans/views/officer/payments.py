@@ -3,14 +3,16 @@ from rest_framework.permissions import IsAuthenticated
 from bson import ObjectId
 
 from accounts.authentication import CustomJWTAuthentication
+from analytics.models import AuditLog  # noqa: F401 - existing test patch target
 from accounts.utils.response_helpers import success_response, error_response
 from accounts.utils.validation_utils import sanitize_text, parse_bool
 from rest_framework import status
 from loans.models import LoanApplication, LoanProduct, LoanPayment, RepaymentSchedule
 from loans.views.officer.base import LoanOfficerRequiredMixin
-from analytics.models import AuditLog
+from loans.services.audit import record_loan_audit
 from datetime import datetime
 import logging
+from loans.utils.money import from_centavos
 
 logger = logging.getLogger("loans")
 
@@ -145,19 +147,24 @@ class RecordPaymentView(LoanOfficerRequiredMixin, APIView):
                 reference=reference,
                 notes=notes,
                 recorded_by=self._actor_id(user),
+                recorded_by_type=self._actor_type(user),
                 idempotency_key=scoped_idempotency_key(
                     "officer", self._actor_id(user), idempotency_key
                 ),
                 verification_source="officer_manual",
             )
         except PaymentConflictError as exc:
-            return error_response(message=str(exc), status_code=status.HTTP_409_CONFLICT)
+            return error_response(
+                message=str(exc), status_code=status.HTTP_409_CONFLICT
+            )
         except PaymentServiceError as exc:
             return error_response(
                 message=str(exc), status_code=status.HTTP_400_BAD_REQUEST
             )
         except (ValueError, RuntimeError) as exc:
-            return error_response(message=str(exc), status_code=status.HTTP_409_CONFLICT)
+            return error_response(
+                message=str(exc), status_code=status.HTTP_409_CONFLICT
+            )
 
         if replayed:
             return success_response(
@@ -180,10 +187,10 @@ class RecordPaymentView(LoanOfficerRequiredMixin, APIView):
         )
 
         # Audit log for payment
-        AuditLog.log_action(
+        record_loan_audit(
             action="payment_recorded",
             user_id=self._actor_id(user),
-            user_type="loan_officer",
+            user_type=self._actor_type(user),
             description=f"Payment recorded - PHP{amount:,.2f} for installment #{installment_number}",
             resource_type="payment",
             resource_id=payment.id,
@@ -297,7 +304,7 @@ class OfficerPaymentHistoryView(LoanOfficerRequiredMixin, APIView):
             for p in payments
         ]
 
-        total_paid = sum(p.amount for p in payments if p.payment_status == "posted")
+        total_paid = LoanPayment.get_total_paid(application_id)
 
         return success_response(
             data={
@@ -517,11 +524,17 @@ class PaymentSearchView(LoanOfficerRequiredMixin, APIView):
         if disbursed_only:
             if loan_id:
                 app = LoanApplication.find_by_id(loan_id)
-                if not app or app.status != "disbursed":
+                if not app or app.status not in {
+                    "disbursed",
+                    "completed",
+                    "written_off",
+                }:
                     return _empty_payment_result()
                 allowed_loan_ids = [loan_id]
             else:
-                disbursed_apps = LoanApplication.find({"status": "disbursed"})
+                disbursed_apps = LoanApplication.find(
+                    {"status": {"$in": ["disbursed", "completed", "written_off"]}}
+                )
                 allowed_loan_ids = [app.id for app in disbursed_apps]
                 if not allowed_loan_ids:
                     return _empty_payment_result()
@@ -718,7 +731,9 @@ class PaymentSearchView(LoanOfficerRequiredMixin, APIView):
 
         # Get filtered + paginated results
         if payment_status:
-            all_payments = LoanPayment.find(final_query, sort=[(sort_field, sort_direction)])
+            all_payments = LoanPayment.find(
+                final_query, sort=[(sort_field, sort_direction)]
+            )
 
             status_filtered = []
             for payment in all_payments:
@@ -730,7 +745,9 @@ class PaymentSearchView(LoanOfficerRequiredMixin, APIView):
 
             total_count = len(status_filtered)
             summary = {
-                "total_amount": sum(payment.amount for payment in status_filtered),
+                "total_amount": from_centavos(
+                    sum(payment.amount_centavos for payment in status_filtered)
+                ),
                 "count": total_count,
             }
             skip = (page - 1) * page_size

@@ -1,14 +1,12 @@
 from rest_framework.views import APIView
 from rest_framework.permissions import IsAuthenticated
-from bson import ObjectId
-
 from accounts.authentication import CustomJWTAuthentication
 from accounts.utils.response_helpers import success_response, error_response
 from accounts.utils.validation_utils import sanitize_text
 from rest_framework import status
 from loans.models import LoanApplication, RepaymentSchedule
 from loans.views.officer.base import LoanOfficerRequiredMixin
-from analytics.models import AuditLog
+from loans.services.audit import record_loan_audit
 from loans.utils.time import utcnow
 import logging
 
@@ -45,7 +43,7 @@ class OfficerScheduleView(LoanOfficerRequiredMixin, APIView):
             return scope_result
 
         # Only disbursed loans have schedules
-        if app.status != "disbursed":
+        if app.status not in {"disbursed", "completed", "written_off"}:
             return error_response(
                 message="Repayment schedule is only available for disbursed loans",
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -121,6 +119,10 @@ class OfficerScheduleView(LoanOfficerRequiredMixin, APIView):
                 "monthly_payment": schedule.monthly_payment,
                 "total_amount": schedule.total_amount,
                 "total_interest": schedule.total_interest,
+                "schedule_status": schedule.status,
+                "paid_off_at": (
+                    schedule.paid_off_at.isoformat() if schedule.paid_off_at else None
+                ),
                 "paid_count": schedule.get_paid_count(),
                 "remaining_balance": schedule.get_remaining_balance(),
                 "next_payment": schedule.get_next_payment(),
@@ -211,43 +213,22 @@ class ApplyPenaltyView(LoanOfficerRequiredMixin, APIView):
                 status_code=status.HTTP_404_NOT_FOUND,
             )
 
-        installment = schedule.get_installment(installment_number)
-        if not installment:
-            return error_response(
-                message=f"Installment #{installment_number} not found",
-                status_code=status.HTTP_404_NOT_FOUND,
-            )
-        if installment.get("status") == "paid":
-            return error_response(
-                message=f"Installment #{installment_number} is already paid",
-                status_code=status.HTTP_400_BAD_REQUEST,
-            )
-        if installment.get("penalty_status") == "applied":
-            return error_response(
-                message=f"Penalty already applied for installment #{installment_number}",
-                status_code=status.HTTP_400_BAD_REQUEST,
-            )
-
         actor_id = self._actor_id(request.user)
-        now = utcnow()
-        for i, inst in enumerate(schedule.installments):
-            if inst.get("number") == installment_number:
-                inst["penalty_status"] = "applied"
-                inst["penalty_amount"] = round(penalty_amount, 2)
-                inst["penalty_reason"] = reason
-                inst["penalty_applied_at"] = now
-                inst["penalty_applied_by"] = actor_id
-                inst["penalty_waived_at"] = None
-                inst["penalty_waived_by"] = None
-                inst["penalty_waived_reason"] = ""
-                schedule.installments[i] = inst
-                break
-        schedule.save()
+        try:
+            installment = schedule.apply_penalty(
+                installment_number, penalty_amount, reason, actor_id
+            )
+        except ValueError as exc:
+            return error_response(
+                message=str(exc), status_code=status.HTTP_400_BAD_REQUEST
+            )
+        penalty_amount = installment["penalty_amount"]
+        now = installment["penalty_applied_at"]
 
-        AuditLog.log_action(
+        record_loan_audit(
             action="penalty_applied",
             user_id=actor_id,
-            user_type="loan_officer",
+            user_type=self._actor_type(request.user),
             description=f"Penalty applied - PHP{penalty_amount:,.2f} for installment #{installment_number}",
             resource_type="penalty",
             resource_id=f"{application_id}:{installment_number}",
@@ -350,34 +331,30 @@ class WaivePenaltyView(LoanOfficerRequiredMixin, APIView):
             )
 
         installment = schedule.get_installment(installment_number)
-        if not installment:
-            return error_response(
-                message=f"Installment #{installment_number} not found",
-                status_code=status.HTTP_404_NOT_FOUND,
-            )
-        if installment.get("penalty_status") != "applied":
-            return error_response(
-                message=f"No applied penalty found for installment #{installment_number}",
-                status_code=status.HTTP_400_BAD_REQUEST,
-            )
-
-        penalty_amount = float(installment.get("penalty_amount", 0) or 0)
+        penalty_amount = (
+            float(installment.get("penalty_amount", 0) or 0) if installment else 0
+        )
         actor_id = self._actor_id(request.user)
-        now = utcnow()
-        for i, inst in enumerate(schedule.installments):
-            if inst.get("number") == installment_number:
-                inst["penalty_status"] = "waived"
-                inst["penalty_waived_at"] = now
-                inst["penalty_waived_by"] = actor_id
-                inst["penalty_waived_reason"] = reason
-                schedule.installments[i] = inst
-                break
-        schedule.save()
+        try:
+            installment = schedule.waive_penalty(installment_number, reason, actor_id)
+        except ValueError as exc:
+            return error_response(
+                message=str(exc), status_code=status.HTTP_400_BAD_REQUEST
+            )
+        penalty_amount = float(installment.get("penalty_amount", 0) or 0)
+        now = installment["penalty_waived_at"]
+        if schedule.is_paid_off():
+            app.mark_paid_off(
+                schedule.paid_off_at,
+                actor_id=actor_id,
+                actor_type=self._actor_type(request.user),
+                source="penalty_waiver",
+            )
 
-        AuditLog.log_action(
+        record_loan_audit(
             action="penalty_waived",
             user_id=actor_id,
-            user_type="loan_officer",
+            user_type=self._actor_type(request.user),
             description=f"Penalty waived - PHP{penalty_amount:,.2f} for installment #{installment_number}",
             resource_type="penalty",
             resource_id=f"{application_id}:{installment_number}",

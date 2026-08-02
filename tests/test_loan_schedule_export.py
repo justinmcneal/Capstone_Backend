@@ -15,20 +15,20 @@ Coverage:
 import csv
 from io import StringIO
 from unittest.mock import patch
-from datetime import datetime, timezone
+from datetime import datetime
 
 import mongomock
-import pytest
 from bson import ObjectId
 from django.conf import settings
 from rest_framework import status
 
-from accounts.utils.response_helpers import success_response, error_response
+from accounts.utils.response_helpers import error_response
 from accounts.models import Customer
 from loans.models.application import LoanApplication
 from loans.models.product import LoanProduct
 from loans.models.repayment import RepaymentSchedule
 from loans.views.officer.schedule_export import BulkRepaymentScheduleExportView
+from loans.services.audit import LoanAuditUnavailable
 
 
 # ---------------------------------------------------------------------------
@@ -125,6 +125,49 @@ def _make_request(query_params=None, user_role="loan_officer"):
 # ---------------------------------------------------------------------------
 # Permission tests
 # ---------------------------------------------------------------------------
+
+
+def _persist_export_data():
+    product = _make_product().save()
+    app = _make_application(product_id=product.id).save()
+    _make_schedule(app.id, app.customer_id).save()
+
+
+def test_successful_export_records_sensitive_access(monkeypatch):
+    _setup_mongo(monkeypatch)
+    _persist_export_data()
+    view = BulkRepaymentScheduleExportView()
+    view.request = _make_request(user_role="admin")
+
+    with (
+        patch.object(view, "check_officer_permission", return_value=(True, None)),
+        patch("loans.views.officer.schedule_export.record_loan_audit") as audit,
+    ):
+        response = view.get(view.request)
+
+    assert response.status_code == status.HTTP_200_OK
+    assert audit.call_args.kwargs["required"] is True
+    assert audit.call_args.kwargs["action"] == "repayment_schedule_exported"
+    assert audit.call_args.kwargs["user_type"] == "admin"
+    assert audit.call_args.kwargs["details"]["row_count"] == 12
+
+
+def test_export_fails_closed_when_access_audit_is_unavailable(monkeypatch):
+    _setup_mongo(monkeypatch)
+    _persist_export_data()
+    view = BulkRepaymentScheduleExportView()
+    view.request = _make_request(user_role="admin")
+
+    with (
+        patch.object(view, "check_officer_permission", return_value=(True, None)),
+        patch(
+            "loans.views.officer.schedule_export.record_loan_audit",
+            side_effect=LoanAuditUnavailable("down"),
+        ),
+    ):
+        response = view.get(view.request)
+
+    assert response.status_code == status.HTTP_503_SERVICE_UNAVAILABLE
 
 class TestPermissions:
     def test_loan_officer_can_export(self, monkeypatch):

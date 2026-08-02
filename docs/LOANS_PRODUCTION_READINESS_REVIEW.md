@@ -44,9 +44,10 @@ Current remediation progress:
 - [x] ~~Stage 4 — Durable blockchain synchronization (code complete for current
   scope)~~ — production deployment/integration validation remains
 - [x] ~~Stage 5 — Runtime/API defects~~
-- [ ] Stage 6 — Qualification enforcement
-- [ ] Stage 7 — Repayment accounting and lifecycle
-- [ ] Stage 8 — Audit, encryption, and compliance
+- [x] ~~Stage 6 — Qualification enforcement~~
+- [ ] Stage 7 — Repayment accounting and lifecycle — **PARTIAL**; institution
+  policy decisions remain
+- [x] ~~Stage 8 — Audit, encryption, and compliance~~
 - [ ] Stage 9 — Schedule export hardening
 - [ ] Stage 10 — Maintainability and documentation
 
@@ -106,7 +107,7 @@ Current remediation progress:
 **Status: Partial**
 
 `GET /api/loans/officer/schedules/export/` supports CSV/JSON and customer,
-installment-status, and date filters. Thirteen export tests currently pass.
+installment-status, and date filters. Fifteen export tests currently pass.
 
 Known gaps:
 
@@ -119,7 +120,10 @@ Known gaps:
 - CSV is assembled in memory instead of streamed or processed asynchronously.
 - Customer/product/free-text fields are not protected against spreadsheet formula
   injection.
-- Export access is not recorded as a dedicated sensitive-data audit event.
+- ~~Export access is not recorded as a dedicated sensitive-data audit event.~~
+  Resolved in Stage 8: successful CSV/JSON exports require a
+  `repayment_schedule_exported` audit record and fail closed with `503` if that
+  access record cannot be written.
 - Empty-result behavior differs between CSV and JSON.
 - Invalid legacy IDs can produce an unhandled error.
 - The response label `schedules` contains flattened installment rows rather than
@@ -129,26 +133,35 @@ Known gaps:
 
 ### Status-transition audit logging
 
-**Status: Partial**
+**Status: Complete for implemented lifecycle operations**
 
-Structured audit calls exist, including model-level assignment and resubmission
-events. They are not yet comprehensive:
+Stage 8 corrected assignment/reassignment attribution so the audit actor is the
+administrator or system that performed the action, while the assignee is retained
+as transition metadata. Officer/admin endpoints now derive the actual request role
+instead of hardcoding `loan_officer`. Submission, assignment/reassignment,
+missing-document review, approval/rejection, disbursement pending/executed/failed,
+resubmission, and paid-off closure all have an audit path. Disbursement sub-state
+auditing is located at the atomic model transition, so background wallet completion
+and failure are covered as well as request-driven cash/check operations.
 
-- Assignment can attribute the action to the assigned officer instead of the
-  administrator or system that performed it.
-- Reassignment lacks complete lifecycle audit coverage.
-- Missing-document state changes lack a complete transition entry.
-- Some view audit calls hardcode `loan_officer` for administrator actions.
-- Audit failures can be swallowed without an operational alert.
+Loan audit writes now use one observable wrapper. A failed primary write produces
+an exception log, increments `loan_audit_write_failures_total`, and is queued
+best-effort in `audit_write_failures` without copying sensitive event details.
+Financial mutations are not falsely rolled back after completion; sensitive export
+reads use the wrapper's fail-closed mode.
 
 ### Field encryption
 
-**Status: Partial**
+**Status: Complete for the declared loan fields**
 
-String fields such as product descriptions and payment notes/references use the
-field-encryption helper. Declaring list-valued fields such as application
-`internal_notes` and schedule `installments` as encrypted does not encrypt their
-nested contents because the helper only encrypts strings.
+The shared helper now encrypts dict/list/tuple values as BSON before Fernet
+encryption, preserving nested datetimes and ObjectIds. Existing plaintext nested
+documents remain readable and are encrypted on their next model save. Application
+`internal_notes` and repayment `installments` are now ciphertext at rest when a
+key is configured. Repayment atomic payment/payoff writes encrypt their payloads
+and use `accounting_version` optimistic concurrency, so encryption does not break
+posting or replay protection. Direct disbursement reservation now also encrypts
+its declared reference field instead of bypassing model serialization.
 
 ### Automated assignment
 
@@ -299,33 +312,70 @@ Operational validation still required before production release:
 - Deploy and validate the dedicated blockchain worker/queue, Beat scheduler,
   MongoDB indexes, nonce contention, and chain-reorg behavior in staging.
 
-### 4. Qualification requirements are not authoritative
+### 4. Qualification requirements enforcement
 
-**Status: Blocked for products that rely on minimum income/business age**
+**Status: Complete**
 
-- Product `min_monthly_income` and `min_business_months` are not hard-fail rules.
-- The fallback scorer can treat violations as score deductions rather than
-  disqualifying requirements.
-- AI output can return eligible despite those product minimums.
-- Existing insufficient-income/business-age tests can pass because another
-  required document is missing, so they do not isolate the intended condition.
+Remediated in Stage 6:
+
+- Product `min_monthly_income` and `min_business_months` are now deterministic
+  hard-fail gates enforced at three points:
+  1. **Pre-AI gate** in `qualify_customer` — short-circuits before the LLM call
+     when the customer fails a hard requirement.
+  2. **Post-AI enforcement** in `_validate_and_normalize_ai_qualification` —
+     defense-in-depth; merges hard failures into `missing_requirements` and
+     forces `eligible=False` even if the AI returned `eligible=True`.
+  3. **Rule-based path** in `rule_based_qualification` — income and business-age
+     violations are added to `missing` as hard-fail entries instead of only
+     reducing the score.
+- A zero-valued minimum (`min_monthly_income=0` or `min_business_months=0`) is
+  treated as "no minimum required" and skips the check.
+- 14 dedicated enforcement tests verify each hard requirement in isolation,
+  boundary values, AI override prevention, rule-based enforcement, and
+  zero-minimum semantics. The additional orchestration test proves a hard failure
+  returns before the LLM service is constructed.
 
 ### 5. Repayment accounting and lifecycle
 
-**Status: Blocked for production hardening**
+**Status: Partial; exact accounting and payoff complete, institutional policies pending**
 
-- Monetary calculations use binary floats rather than integer centavos or
-  `Decimal128`.
-- The final installment is not reconciled against accumulated rounding.
-- `get_next_payment()` ignores partial and overdue installments.
-- Penalty waiver after a partial payment can leave an inconsistent status or
-  negative remaining amount.
-- There is no explicit paid-off/completed state, early payoff, reversal, refund,
-  restructuring, or write-off workflow.
-- Duplicate repayment blockchain updater names cause later classmethods to
-  overwrite earlier instance methods. The previous review's instance-method
-  `KeyError` diagnosis is therefore stale; duplicate definitions and incorrect
-  call identifiers are the active defects.
+Implemented in Stage 7:
+
+- Schedule, installment, penalty, and payment accounting now uses integer
+  centavos as its calculation/persistence source of truth. Existing peso fields
+  remain as two-decimal compatibility/display values, and legacy records without
+  centavo fields are converted on read.
+- Schedule generation distributes indivisible principal centavos into the final
+  installment, so installment principal and total sums reconcile exactly.
+- Payment aggregation and posted totals sum centavos rather than binary floats.
+- Installment states distinguish `partial`, `overdue`, and `partial_overdue`;
+  `get_next_payment()` returns the earliest unpaid installment in any of those
+  states.
+- Penalty application/waiver is centralized in the schedule model. Waiving a
+  partially paid penalty normalizes status and records any amount above base due
+  as an explicit `waiver_credit_amount` instead of producing a negative balance.
+- Exact final payment marks the schedule `paid_off` and the application
+  `completed`/`paid_off`. A daily reconciliation task repairs legacy or
+  interrupted zero-balance schedules.
+- Officers can quote and post idempotent verified cash/check early payoff through
+  `GET`/`POST /officer/applications/<id>/payoff/`; one atomic schedule update
+  allocates the payoff across every open installment and survives an interruption
+  between schedule settlement and payment posting.
+- Duplicate instance/class blockchain updater definitions were removed; the
+  class-level persistence methods remain the single active implementation.
+
+Still requires institution-approved policy before implementation:
+
+- Reversal eligibility/window and whether a reversal reopens delinquency.
+- Refund authorization, evidence, destination rail, and relationship to reversal.
+- Restructuring treatment of accrued interest, penalties, term/rate changes, and
+  required borrower consent.
+- Write-off approval authority, accounting date/reason codes, recovery behavior,
+  and whether written-off balances remain collectible.
+- Dual-control requirements, audit evidence, notifications, and blockchain
+  representation for all four actions. Early-payoff allocation is intentionally
+  excluded from the current whole-peso blockchain payment mirror until its
+  centavo/multi-installment contract is defined.
 
 ## Resolved Runtime and API Defects (Stage 5)
 
@@ -366,10 +416,10 @@ Operational validation still required before production release:
 
 ## Test Status and Coverage Gaps
 
-Full-suite run after remediation Stage 5 on 2026-08-02:
+Full-suite run during Stage 7 remediation on 2026-08-02:
 
-- 757 tests collected
-- 748 passed
+- 780 tests collected
+- 771 passed
 - 0 failed
 - 9 skipped live-blockchain integration tests
 
@@ -564,27 +614,45 @@ Deployment/integration follow-up (no missing application implementation):
 - [x] ~~Correct audit action decoding for current and legacy contract tuple
   layouts.~~
 
-### 6. Qualification enforcement — NOT STARTED
+### 6. Qualification enforcement — COMPLETE
 
-- [ ] Enforce product income and business-age minimums before AI scoring.
-- [ ] Add isolated tests for every hard product requirement.
-- [ ] Ensure AI output cannot override deterministic eligibility requirements.
+- [x] ~~Enforce product income and business-age minimums before AI scoring.~~
+- [x] ~~Add isolated tests for every hard product requirement.~~
+- [x] ~~Ensure AI output cannot override deterministic eligibility requirements.~~
 
-### 7. Repayment accounting and lifecycle — NOT STARTED
+### 7. Repayment accounting and lifecycle — PARTIAL
 
-- [ ] Adopt integer centavos or `Decimal128` for money.
-- [ ] Reconcile final-installment rounding.
-- [ ] Normalize partial, overdue, penalty, and waiver states.
-- [ ] Add completed/paid-off and early-payoff behavior.
+- [x] ~~Adopt integer centavos for repayment and payment accounting while
+  retaining compatible two-decimal peso response fields.~~
+- [x] ~~Reconcile final-installment rounding.~~
+- [x] ~~Normalize partial, overdue, penalty, and waiver states.~~
+- [x] ~~Add completed/paid-off state, daily reconciliation, and idempotent
+  cash/check early-payoff behavior.~~
 - [ ] Add approved reversal, refund, restructuring, and write-off policies.
+  This is awaiting the institution decisions listed in the repayment section;
+  no financial policy was invented in code.
 
-### 8. Audit, encryption, and compliance — NOT STARTED
+### 8. Audit, encryption, and compliance — COMPLETE
 
-- [ ] Correct audit actor attribution.
-- [ ] Cover every lifecycle transition.
-- [ ] Make audit failures observable.
-- [ ] Encrypt intended nested application and schedule data.
-- [ ] Audit sensitive exports.
+- [x] ~~Correct audit actor attribution.~~
+- [x] ~~Cover every implemented lifecycle transition.~~
+- [x] ~~Make audit failures observable.~~
+- [x] ~~Encrypt intended nested application and schedule data.~~
+- [x] ~~Audit sensitive exports and fail closed when the access audit is
+  unavailable.~~
+
+Focused Stage 8 regression coverage includes nested BSON encryption round trips,
+encrypted atomic payment writes, administrator assignment attribution, persistent
+audit-failure visibility, required-audit failure behavior, export event metadata,
+and export fail-closed behavior. Reversal/refund/restructuring/write-off audit
+events remain part of the deferred Stage 7 policy work because those operations do
+not yet exist.
+
+Validation on 2026-08-02: the 74-test focused Stage 7/8, audit, export,
+disbursement, and repayment set passes. The full backend suite collects 786 tests:
+777 pass and 9 live-blockchain integration tests are skipped, with zero failures.
+Targeted Ruff `F`/`E9` checks and `git diff --check` pass. Django's system check
+continues to report the pre-existing django-axes cache configuration warning.
 
 ### 9. Schedule export hardening — NOT STARTED
 
