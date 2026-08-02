@@ -23,6 +23,7 @@ class ConsentCreateSerializer(serializers.Serializer):
 
     data_consent = serializers.BooleanField(required=True)
     ai_consent = serializers.BooleanField(required=True)
+    consent_version = serializers.CharField(required=False, allow_blank=False)
 
     def validate(self, data):
         """Validate that at least one consent is provided"""
@@ -37,10 +38,11 @@ class ConsentUpdateSerializer(serializers.Serializer):
 
     data_consent = serializers.BooleanField(required=False)
     ai_consent = serializers.BooleanField(required=False)
+    consent_version = serializers.CharField(required=False, allow_blank=False)
 
     def validate(self, data):
         """Ensure at least one field is provided for update"""
-        if not data:
+        if not {"data_consent", "ai_consent"}.intersection(data):
             raise serializers.ValidationError(
                 "At least one consent field must be provided"
             )

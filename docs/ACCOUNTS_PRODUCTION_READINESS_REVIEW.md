@@ -55,7 +55,7 @@ Current remediation status:
 - [ ] Stage 4 — Brute-force, OTP, and concurrency hardening
 - [x] **Stage 5 — 2FA lifecycle integrity**
 - [x] **Stage 6 — Privileged administration and audit coverage**
-- [ ] Stage 7 — Consent history and policy lifecycle
+- [x] **Stage 7 — Consent history and policy lifecycle**
 - [ ] Stage 8 — Account lifecycle and recovery capabilities
 - [ ] Stage 9 — Test isolation, dependency reproducibility, and CI
 - [ ] Stage 10 — API contract and documentation alignment
@@ -295,31 +295,21 @@ The product must choose and document one policy:
 
 ### Consent history and revocation
 
-**Status: Partial**
+**Status: Implemented**
 
-The `Consent` collection stores only the current state. Consent history is read
-from blockchain transaction records. If blockchain is disabled, unavailable, or
-fails after the local update, the local system has no complete immutable history.
+The append-only `consent_events` collection is now authoritative. Each decision
+has a stable event ID, per-customer revision, before state, resulting state,
+policy identifier/version/content digest, timestamp, and request IP. The
+`consents` collection is maintained as an atomic current-state projection, while
+history remains available when blockchain synchronization is disabled or fails.
 
-Additional gaps:
-
-- Consent endpoints are documented as customer-only but accept any authenticated
-  role and derive the consent user type from the JWT role.
-- `consent_version` defaults to `1.0` and is not tied to deployed policy content,
-  acceptance text, or a re-consent requirement.
-- AI access requires `ai_consent`; whether `data_consent` must also be true is not
-  enforced as a single policy decision.
-- Revocation cache invalidation is asynchronous; successful task dispatch does
-  not guarantee immediate deletion if workers are unavailable.
-- Consent writes use find-then-insert/update rather than an atomic upsert.
-
-Required direction:
-
-- Add a local append-only `consent_events` collection as the authoritative audit
-  record.
-- Treat blockchain recording as an additional synchronization channel.
-- Version actual policy content and require re-consent when appropriate.
-- Make revocation fail-safe at AI feature entry points.
+Consent ownership is explicitly customer-only. Grant requests must identify the
+currently deployed policy (`2026-08-01`); a version or content change can update
+the configured policy manifest and immediately requires re-consent. AI entry
+points fail closed unless both data and AI consent are active under that current
+version. Revocation is authoritative immediately and does not depend on Redis or
+Celery cache invalidation. Blockchain dispatch remains a best-effort secondary
+audit mirror after the local event is durable.
 
 ### Privileged administration and auditing
 
@@ -628,12 +618,20 @@ notification behavior.
 
 ### Stage 7 — Consent history and policy lifecycle
 
-- [ ] Add append-only local consent events.
-- [ ] Make consent updates/upserts atomic.
-- [ ] Define customer-only versus multi-role consent behavior.
-- [ ] Version deployed policy content and implement re-consent.
-- [ ] Make consent revocation fail-safe when cache/task infrastructure is down.
-- [ ] Keep blockchain consent sync as a secondary audit channel.
+- [x] ~~Add append-only local consent events.~~
+- [x] ~~Make consent updates/upserts atomic.~~
+- [x] ~~Define customer-only versus multi-role consent behavior.~~
+- [x] ~~Version deployed policy content and implement re-consent.~~
+- [x] ~~Make consent revocation fail-safe when cache/task infrastructure is
+  down.~~
+- [x] ~~Keep blockchain consent sync as a secondary audit channel.~~
+
+Implementation note: customer consent decisions are serialized per account and
+written to the append-only event stream before updating the atomic current-state
+projection. The deployed policy manifest includes its repository document path
+and SHA-256 digest. AI checks bypass cached grants and require current-version
+data plus AI consent, so local revocation remains effective through cache, task,
+or blockchain outages.
 
 ### Stage 8 — Account lifecycle and recovery capabilities
 
@@ -694,7 +692,7 @@ notification behavior.
 - [x] ~~Complete 2FA lifecycle/session/audit behavior.~~
 - [x] ~~Complete privileged administration audit and last-super-admin
   protection.~~
-- [ ] Add authoritative local consent history and policy versioning.
+- [x] ~~Add authoritative local consent history and policy versioning.~~
 - [ ] Implement required customer lifecycle and security-recovery operations.
 - [ ] Make test startup isolated and CI reproducible.
 - [ ] Correct the testing guide and API token-transport contract.

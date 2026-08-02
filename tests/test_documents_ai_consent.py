@@ -1,13 +1,12 @@
 import io
 
+from django.core.files.uploadedfile import SimpleUploadedFile
 from PIL import Image
 from rest_framework.test import APIRequestFactory, force_authenticate
-from django.core.files.uploadedfile import SimpleUploadedFile
 
-import accounts.views.consent_views as consent_views
-import documents.views.document_views as document_views
 from accounts.authentication import AuthenticatedUser
-from documents.views import DocumentUploadView
+from accounts.views import consent_views
+from documents.views import DocumentUploadView, document_views
 
 
 class FakeDocument:
@@ -149,25 +148,15 @@ def test_consent_audit_returns_customer_ai_consent_report(monkeypatch):
         def id(self):
             return self.customer_id
 
-    class FakeConsent:
-        def __init__(self, user_id, data_consent, ai_consent):
-            self.user_id = user_id
-            self.data_consent = data_consent
-            self.ai_consent = ai_consent
-            from datetime import datetime, timezone
-
-            self.consent_date = datetime.now(timezone.utc)
-            self.updated_at = datetime.now(timezone.utc)
-
     customers = [
         FakeCustomer("cust-1", "Alice Example", "alice@example.com"),
         FakeCustomer("cust-2", "Bob Example", "bob@example.com"),
         FakeCustomer("cust-3", "No Consent", "noconsent@example.com"),
     ]
-    consents = [
-        FakeConsent("cust-1", True, True),
-        FakeConsent("cust-2", True, False),
-    ]
+    consent_statuses = {
+        "cust-1": (True, True),
+        "cust-2": (True, False),
+    }
 
     # Allow admin access without DB lookup
     monkeypatch.setattr(
@@ -176,7 +165,27 @@ def test_consent_audit_returns_customer_ai_consent_report(monkeypatch):
         lambda self, request, required_permissions=None, super_admin_only=False: (True, object()),
     )
     monkeypatch.setattr(consent_views.Customer, "find", classmethod(lambda cls, query, **kwargs: customers))
-    monkeypatch.setattr(consent_views.Consent, "find", classmethod(lambda cls, query, **kwargs: consents))
+    def _consent_status(user_id, user_type="customer"):
+        data_consent, ai_consent = consent_statuses.get(
+            str(user_id), (False, False)
+        )
+        has_record = str(user_id) in consent_statuses
+        return {
+            "data_consent": data_consent,
+            "ai_consent": ai_consent,
+            "has_consent_record": has_record,
+            "consent_date": None,
+            "updated_at": None,
+            "consent_version": "2026-08-01" if has_record else None,
+            "requires_reconsent": False,
+            "can_access_ai": data_consent and ai_consent,
+        }
+
+    monkeypatch.setattr(
+        consent_views.ConsentService,
+        "get_consent_status",
+        staticmethod(_consent_status),
+    )
 
     factory = APIRequestFactory()
     request = factory.get("/api/accounts/consent/audit/")

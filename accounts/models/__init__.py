@@ -12,7 +12,7 @@ This package contains all database models:
 
 from accounts.models.activity import ActiveSession, LoginActivity
 from accounts.models.admin import ADMIN_PERMISSIONS, Admin
-from accounts.models.consent import Consent
+from accounts.models.consent import Consent, ConsentEvent
 from accounts.models.customer import Customer
 from accounts.models.loan_officer import LoanOfficer
 from accounts.models.tokens import BlacklistedToken, RefreshTokenEntry
@@ -23,6 +23,7 @@ __all__ = [
     "Admin",
     "BlacklistedToken",
     "Consent",
+    "ConsentEvent",
     "Customer",
     "LoanOfficer",
     "LoginActivity",

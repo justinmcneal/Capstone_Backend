@@ -1,7 +1,8 @@
 # MSME Pathways Privacy Policy (Implementation-Aligned Draft)
 
 **Status:** Draft for product-owner and privacy/legal approval
-**Last reviewed against backend source:** 2026-07-21
+**Policy version:** 2026-08-01
+**Last reviewed against backend source:** 2026-08-02
 **Applies to:** MSME Pathways customer mobile and web experiences, staff portals, and the Django API in this repository.
 
 This policy describes the data processing implemented or supported by the current backend. It must be published only after the organisation supplies the controller name, business address, privacy contact, applicable retention periods, and the approved list of production providers. Those details are deliberately not invented here.
@@ -33,7 +34,12 @@ We use the data above to:
 - provide the optional AI chat service after AI consent; and
 - meet applicable legal, regulatory, dispute-resolution, fraud-prevention, and recordkeeping obligations once those obligations and retention periods are formally defined.
 
-The application implements separate `data_consent` and `ai_consent` records. AI chat and history access are blocked without AI consent. Users can view and update consent through `/api/auth/consent/`. Notification preferences are separately stored for loan updates, payment reminders, and promotions.
+The application implements separate `data_consent` and `ai_consent` choices. AI
+processing requires both choices under the currently deployed policy version. A
+policy-version change blocks AI processing until the customer reviews and accepts
+the new version. Users can view and update consent through
+`/api/auth/consent/`. Notification preferences are separately stored for loan
+updates, payment reminders, and promotions.
 
 ## 3. Automated and AI-assisted processing
 
@@ -41,7 +47,12 @@ The service uses stored profile, business, alternative-credit, document, loan, a
 
 The implementation excludes direct contact fields (including email, phone, mobile number, address, emergency-contact details, password, and authentication secrets) from the AI context builder. It does not make the AI result a final lending decision; authorised staff make application decisions. Users should not put passwords, OTPs, or other unnecessary sensitive information in chat messages.
 
-AI processing requires separate opt-in (`ai_consent`). With the default `groq` provider, requests are sent to Groq's hosted API; a deployment can instead use an Ollama endpoint. The organisation must maintain the applicable processor agreement, provider privacy terms, data-location assessment, and approved model list before enabling a hosted provider in production.
+AI processing requires both data-processing and AI opt-in (`data_consent` and
+`ai_consent`) under the current policy version. With the default `groq` provider,
+requests are sent to Groq's hosted API; a deployment can instead use an Ollama
+endpoint. The organisation must maintain the applicable processor agreement,
+provider privacy terms, data-location assessment, and approved model list before
+enabling a hosted provider in production.
 
 ## 4. When we share data
 
@@ -68,7 +79,13 @@ The code has expiry indexes for refresh-token and blacklisted-token records. It 
 
 ## 6. Choices and requests
 
-Users can update profile data, notification preferences, and consent through authenticated application functions. AI consent can be withdrawn; this stops access to AI endpoints, but does not by itself delete historical chat records. The API includes customer-scoped AI-history deletion support, and document removal is limited by application/document status and authorisation rules.
+Users can update profile data, notification preferences, and consent through
+authenticated customer functions. Consent decisions are retained in an
+append-only local history. AI or data consent can be withdrawn; either withdrawal
+stops access to AI endpoints, but does not by itself delete historical chat
+records. The API includes customer-scoped AI-history deletion support, and
+document removal is limited by application/document status and authorisation
+rules.
 
 Subject to applicable law and recordkeeping requirements, users may request access, correction, deletion, restriction/objection, portability where applicable, or information about disclosures. Until the product owner supplies a working privacy contact and verification workflow, send requests through the application's official support channel. The final public policy must replace this sentence with the controller name, contact method, response timeframe, identity-verification process, and regulator/escalation information.
 

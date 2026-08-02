@@ -6,12 +6,17 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 
 from accounts.authentication import CustomJWTAuthentication
-from accounts.models import Consent, Customer
+from accounts.models import Customer
 from accounts.serializers.consent_serializers import (
     ConsentCreateSerializer,
     ConsentUpdateSerializer,
 )
-from accounts.services.consent_service import ConsentService
+from accounts.services.consent_service import (
+    ConsentMutationBusyError,
+    ConsentPolicyError,
+    ConsentRoleError,
+    ConsentService,
+)
 from accounts.utils.access_control import AccessControlMixin
 from accounts.utils.exception_types import NON_FATAL_EXCEPTIONS
 from accounts.utils.response_helpers import error_response, success_response
@@ -37,7 +42,26 @@ def _to_iso(value):
     return str(value)
 
 
-class ConsentView(APIView):
+def _sync_consent_secondary(consent, user_id, user_type):
+    """Dispatch the optional blockchain mirror without affecting local success."""
+    try:
+        from loans.blockchain.sync import sync_consent
+
+        consent_timestamp = consent.updated_at or datetime.now(timezone.utc)
+        sync_consent(
+            user_id=str(user_id),
+            user_type=user_type,
+            data_consent=consent.data_consent,
+            ai_consent=consent.ai_consent,
+            consent_version=consent.consent_version,
+            consent_timestamp=_to_iso(consent_timestamp),
+            previous_state=getattr(consent, "previous_state", None),
+        )
+    except Exception as exc:  # noqa: BLE001 - blockchain is a secondary mirror
+        logger.warning("Blockchain consent sync skipped for %s: %s", user_id, exc)
+
+
+class ConsentView(AccessControlMixin, APIView):
     """
     API view for managing user consent.
 
@@ -67,9 +91,11 @@ class ConsentView(APIView):
             }
         """
         try:
-            user = request.user
-            user_id = user.customer_id
-            user_type = user.role if hasattr(user, "role") else "customer"
+            allowed, result = self.require_customer(request)
+            if not allowed:
+                return result
+            user_id = result.id
+            user_type = "customer"
 
             consent_status = ConsentService.get_consent_status(user_id, user_type)
 
@@ -101,6 +127,9 @@ class ConsentView(APIView):
             }
         """
         try:
+            allowed, result = self.require_customer(request)
+            if not allowed:
+                return result
             serializer = ConsentCreateSerializer(data=request.data)
 
             if not serializer.is_valid():
@@ -110,21 +139,9 @@ class ConsentView(APIView):
                     status_code=status.HTTP_400_BAD_REQUEST,
                 )
 
-            user = request.user
-            user_id = user.customer_id
-            user_type = user.role if hasattr(user, "role") else "customer"
+            user_id = result.id
+            user_type = "customer"
             ip_address = get_client_ip(request)
-
-            from accounts.models.consent import Consent
-
-            previous_state = None
-            existing = Consent.find_by_user(user_id, user_type)
-            if existing:
-                previous_state = {
-                    "data_consent": existing.data_consent,
-                    "ai_consent": existing.ai_consent,
-                    "consent_version": existing.consent_version,
-                }
 
             consent = ConsentService.record_consent(
                 user_id=user_id,
@@ -132,40 +149,35 @@ class ConsentView(APIView):
                 data_consent=serializer.validated_data["data_consent"],
                 ai_consent=serializer.validated_data["ai_consent"],
                 ip_address=ip_address,
+                consent_version=serializer.validated_data.get("consent_version"),
             )
-
-            # Blockchain sync — consent (background thread, no Celery needed)
-            try:
-                from loans.blockchain.sync import sync_consent
-
-                consent_timestamp = (
-                    consent.updated_at
-                    or consent.consent_date
-                    or datetime.now(timezone.utc)
-                )
-                sync_consent(
-                    user_id=str(user_id),
-                    user_type=user_type,
-                    data_consent=consent.data_consent,
-                    ai_consent=consent.ai_consent,
-                    consent_version=consent.consent_version,
-                    consent_timestamp=_to_iso(consent_timestamp),
-                    previous_state=previous_state,
-                )
-            except NON_FATAL_EXCEPTIONS as e:
-                logger.warning(f"Blockchain sync skipped for consent {user_id}: {e}")
+            _sync_consent_secondary(consent, user_id, user_type)
 
             response_data = {
                 "data_consent": consent.data_consent,
                 "ai_consent": consent.ai_consent,
                 "consent_date": consent.consent_date,
                 "can_access_ai": consent.can_access_ai,
+                "consent_version": consent.consent_version,
+                "current_policy": ConsentService.current_policy(),
+                "revision": consent.revision,
             }
 
             return success_response(
                 data=response_data,
                 message="Consent recorded successfully",
                 status_code=status.HTTP_201_CREATED,
+            )
+        except ConsentPolicyError as exc:
+            return error_response(
+                message=str(exc),
+                code="CONSENT_POLICY_REQUIRED",
+                errors={"current_policy": ConsentService.current_policy()},
+                status_code=status.HTTP_409_CONFLICT,
+            )
+        except (ConsentRoleError, ConsentMutationBusyError) as exc:
+            return error_response(
+                message=str(exc), status_code=status.HTTP_409_CONFLICT
             )
         except NON_FATAL_EXCEPTIONS as e:
             logger.error(f"Error recording consent: {e!s}")
@@ -194,6 +206,9 @@ class ConsentView(APIView):
             }
         """
         try:
+            allowed, result = self.require_customer(request)
+            if not allowed:
+                return result
             serializer = ConsentUpdateSerializer(data=request.data)
 
             if not serializer.is_valid():
@@ -203,59 +218,48 @@ class ConsentView(APIView):
                     status_code=status.HTTP_400_BAD_REQUEST,
                 )
 
-            user = request.user
-            user_id = user.customer_id
-            user_type = user.role if hasattr(user, "role") else "customer"
+            user_id = result.id
+            user_type = "customer"
             ip_address = get_client_ip(request)
 
-            from accounts.models.consent import Consent
-
-            previous_state = None
-            existing = Consent.find_by_user(user_id, user_type)
-            if existing:
-                previous_state = {
-                    "data_consent": existing.data_consent,
-                    "ai_consent": existing.ai_consent,
-                    "consent_version": existing.consent_version,
-                }
+            updates = {
+                key: value
+                for key, value in serializer.validated_data.items()
+                if key in {"data_consent", "ai_consent"}
+            }
 
             consent = ConsentService.update_consent(
                 user_id=user_id,
                 user_type=user_type,
-                updates=serializer.validated_data,
+                updates=updates,
                 ip_address=ip_address,
+                consent_version=serializer.validated_data.get("consent_version"),
             )
-
-            # Blockchain sync — consent (background thread, no Celery needed)
-            try:
-                from loans.blockchain.sync import sync_consent
-
-                consent_timestamp = (
-                    consent.updated_at
-                    or consent.consent_date
-                    or datetime.now(timezone.utc)
-                )
-                sync_consent(
-                    user_id=str(user_id),
-                    user_type=user_type,
-                    data_consent=consent.data_consent,
-                    ai_consent=consent.ai_consent,
-                    consent_version=consent.consent_version,
-                    consent_timestamp=_to_iso(consent_timestamp),
-                    previous_state=previous_state,
-                )
-            except NON_FATAL_EXCEPTIONS as e:
-                logger.warning(f"Blockchain sync skipped for consent {user_id}: {e}")
+            _sync_consent_secondary(consent, user_id, user_type)
 
             response_data = {
                 "data_consent": consent.data_consent,
                 "ai_consent": consent.ai_consent,
                 "updated_at": consent.updated_at,
                 "can_access_ai": consent.can_access_ai,
+                "consent_version": consent.consent_version,
+                "current_policy": ConsentService.current_policy(),
+                "revision": consent.revision,
             }
 
             return success_response(
                 data=response_data, message="Consent updated successfully"
+            )
+        except ConsentPolicyError as exc:
+            return error_response(
+                message=str(exc),
+                code="CONSENT_POLICY_REQUIRED",
+                errors={"current_policy": ConsentService.current_policy()},
+                status_code=status.HTTP_409_CONFLICT,
+            )
+        except ConsentMutationBusyError as exc:
+            return error_response(
+                message=str(exc), status_code=status.HTTP_409_CONFLICT
             )
         except ValueError as e:
             return error_response(message=str(e), status_code=status.HTTP_404_NOT_FOUND)
@@ -280,22 +284,17 @@ class ConsentAuditView(AccessControlMixin, APIView):
                 return result
 
             customers = Customer.find({}, sort=[("created_at", -1)])
-            consents = Consent.find({})
-            consent_by_user = {
-                str(consent.user_id): consent
-                for consent in consents
-                if consent and consent.user_id is not None
-            }
-
             ai_consent_true = 0
             ai_consent_false = 0
             rows = []
 
             for customer in customers:
-                consent = consent_by_user.get(str(customer._id))
-                has_record = consent is not None
-                ai_consent = bool(consent.ai_consent) if consent else False
-                data_consent = bool(consent.data_consent) if consent else False
+                consent_status = ConsentService.get_consent_status(
+                    customer.id, "customer"
+                )
+                has_record = consent_status["has_consent_record"]
+                ai_consent = consent_status["ai_consent"]
+                data_consent = consent_status["data_consent"]
 
                 if ai_consent:
                     ai_consent_true += 1
@@ -311,10 +310,11 @@ class ConsentAuditView(AccessControlMixin, APIView):
                         "has_consent_record": has_record,
                         "data_consent": data_consent,
                         "ai_consent": ai_consent,
-                        "consent_date": (
-                            _to_iso(consent.consent_date) if consent else None
-                        ),
-                        "updated_at": _to_iso(consent.updated_at) if consent else None,
+                        "consent_date": _to_iso(consent_status["consent_date"]),
+                        "updated_at": _to_iso(consent_status["updated_at"]),
+                        "consent_version": consent_status["consent_version"],
+                        "requires_reconsent": consent_status["requires_reconsent"],
+                        "can_access_ai": consent_status["can_access_ai"],
                     }
                 )
 
@@ -340,9 +340,9 @@ class ConsentAuditView(AccessControlMixin, APIView):
             )
 
 
-class ConsentHistoryView(APIView):
+class ConsentHistoryView(AccessControlMixin, APIView):
     """
-    Get the consent history for the authenticated user from the blockchain transaction logs.
+    Get authoritative append-only local consent history for the customer.
     """
 
     authentication_classes = (CustomJWTAuthentication,)
@@ -350,14 +350,15 @@ class ConsentHistoryView(APIView):
 
     def get(self, request):
         try:
-            user = request.user
-            user_id = user.customer_id
-
-            from loans.blockchain.models import BlockchainTransaction
-
-            # Fetch transactions where loan_id equals user_id and action is consent
-            transactions = BlockchainTransaction.find_by_loan(str(user_id))
-            history = [tx.to_dict() for tx in transactions if tx.action == "consent"]
+            allowed, result = self.require_customer(request)
+            if not allowed:
+                return result
+            history = [
+                event.to_public_dict()
+                for event in ConsentService.get_consent_history(
+                    result.id, "customer"
+                )
+            ]
 
             return success_response(
                 data={"history": history},
@@ -371,7 +372,7 @@ class ConsentHistoryView(APIView):
             )
 
 
-class ConsentRequiredMixin:
+class ConsentRequiredMixin(AccessControlMixin):
     """
     Mixin to require AI consent for views that use AI features.
 
@@ -393,9 +394,11 @@ class ConsentRequiredMixin:
         Returns:
             tuple: (has_consent: bool, error_response: Response or None)
         """
-        user = request.user
-        user_id = user.customer_id
-        user_type = user.role if hasattr(user, "role") else "customer"
+        has_customer_role, result = self.require_customer(request)
+        if not has_customer_role:
+            return False, result
+        user_id = result.id
+        user_type = "customer"
 
         if self.require_ai_consent and not ConsentService.check_ai_consent(user_id, user_type):
             return False, error_response(
@@ -405,7 +408,12 @@ class ConsentRequiredMixin:
                     "action_required": {
                         "endpoint": "/api/auth/consent/",
                         "method": "POST",
-                        "required_fields": ["ai_consent"],
+                        "required_fields": [
+                            "data_consent",
+                            "ai_consent",
+                            "consent_version",
+                        ],
+                        "current_policy": ConsentService.current_policy(),
                     }
                 },
                 status_code=status.HTTP_403_FORBIDDEN,

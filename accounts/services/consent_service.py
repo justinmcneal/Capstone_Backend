@@ -1,244 +1,386 @@
 import logging
-from datetime import datetime, timezone
+import secrets
+from contextlib import contextmanager
+from datetime import datetime, timedelta, timezone
+from typing import ClassVar
 
 from bson import ObjectId
+from django.conf import settings
+from django.core.cache import cache
+from pymongo import ReturnDocument
+from pymongo.errors import DuplicateKeyError
 
-from accounts.models.consent import Consent
+from accounts.models.consent import Consent, ConsentEvent
 
 logger = logging.getLogger("consent")
 
 
+class ConsentPolicyError(ValueError):
+    """Raised when a consent grant does not identify the deployed policy."""
+
+
+class ConsentRoleError(ValueError):
+    """Raised when a non-customer attempts to own customer consent."""
+
+
+class ConsentMutationBusyError(RuntimeError):
+    """Raised when another consent decision is being recorded for the user."""
+
+
 class ConsentService:
-    """
-    Service for managing user consent for data collection and AI features.
+    """Manage authoritative consent events and the current-state projection."""
 
-    This service handles:
-    - Creating consent records
-    - Updating consent preferences
-    - Checking consent status for AI feature access
-    """
+    SUPPORTED_USER_TYPES: ClassVar[set[str]] = {"customer"}
 
     @staticmethod
-    def get_or_create_consent(user_id, user_type="customer"):
-        """
-        Get existing consent record or create a new one.
-
-        Args:
-            user_id: The user's ObjectId (string or ObjectId)
-            user_type: Type of user ('customer' or 'loan_officer')
-
-        Returns:
-            Consent instance
-        """
-        if isinstance(user_id, str):
-            user_id = ObjectId(user_id)
-
-        consent = Consent.find_by_user(user_id, user_type)
-
-        if not consent:
-            consent = Consent(
-                user_id=user_id,
-                user_type=user_type,
-                data_consent=False,
-                ai_consent=False,
-            )
-            consent.save()
-            logger.info(f"Created new consent record for user {user_id}")
-
-        return consent
-
-    @staticmethod
-    def record_consent(user_id, user_type, data_consent, ai_consent, ip_address=""):
-        """
-        Record initial consent from user.
-
-        Args:
-            user_id: The user's ObjectId
-            user_type: Type of user
-            data_consent: Whether user consents to data collection
-            ai_consent: Whether user consents to AI features
-            ip_address: IP address for audit logging
-
-        Returns:
-            Consent instance
-        """
-        if isinstance(user_id, str):
-            user_id = ObjectId(user_id)
-
-        # Check if consent already exists
-        existing = Consent.find_by_user(user_id, user_type)
-
-        if existing:
-            # Update existing consent
-            existing.data_consent = data_consent
-            existing.ai_consent = ai_consent
-            existing.ip_address = ip_address
-            existing.save()
-            logger.info(
-                f"Updated consent for user {user_id}: data={data_consent}, ai={ai_consent}"
-            )
-            return existing
-
-        # Create new consent
-        consent = Consent(
-            user_id=user_id,
-            user_type=user_type,
-            data_consent=data_consent,
-            ai_consent=ai_consent,
-            ip_address=ip_address,
-            consent_date=(
-                datetime.now(timezone.utc) if (data_consent or ai_consent) else None
+    def current_policy():
+        return {
+            "policy_id": str(
+                getattr(settings, "CONSENT_POLICY_ID", "privacy-and-ai-consent")
             ),
-        )
-        consent.save()
-        logger.info(
-            f"Recorded consent for user {user_id}: data={data_consent}, ai={ai_consent}"
-        )
-
-        return consent
-
-    @staticmethod
-    def update_consent(user_id, user_type, updates, ip_address=""):
-        """
-        Update user's consent preferences.
-
-        Args:
-            user_id: The user's ObjectId
-            user_type: Type of user
-            updates: Dictionary with consent updates
-            ip_address: IP address for audit logging
-
-        Returns:
-            Consent instance
-
-        Raises:
-            ValueError: If no consent record exists
-        """
-        if isinstance(user_id, str):
-            user_id = ObjectId(user_id)
-
-        consent = Consent.find_by_user(user_id, user_type)
-
-        if not consent:
-            raise ValueError("No consent record found for user")
-
-        # Track what changed for logging
-        changes = {}
-
-        if "data_consent" in updates:
-            old_value = consent.data_consent
-            consent.data_consent = updates["data_consent"]
-            if old_value != consent.data_consent:
-                changes["data_consent"] = {
-                    "from": old_value,
-                    "to": consent.data_consent,
-                }
-
-        if "ai_consent" in updates:
-            old_value = consent.ai_consent
-            consent.ai_consent = updates["ai_consent"]
-            if old_value != consent.ai_consent:
-                changes["ai_consent"] = {"from": old_value, "to": consent.ai_consent}
-
-        consent.ip_address = ip_address
-        consent.save()
-
-        if changes:
-            logger.info(f"Consent updated for user {user_id}: {changes}")
-
-        # When ai_consent is revoked, clear any cached consent so the AI
-        # assistant cannot use a stale 'allowed' value.
-        ai_change = changes.get("ai_consent")
-        if ai_change and ai_change["from"] is True and ai_change["to"] is False:
-            try:
-                from accounts.tasks import invalidate_ai_consent_cache
-
-                invalidate_ai_consent_cache.delay(str(user_id))
-            except Exception as exc:  # noqa: BLE001
-                logger.warning(
-                    "Could not dispatch consent revocation task for user %s: %s",
-                    user_id,
-                    exc,
+            "consent_version": str(
+                getattr(settings, "CONSENT_POLICY_VERSION", "2026-08-01")
+            ),
+            "effective_at": str(
+                getattr(
+                    settings,
+                    "CONSENT_POLICY_EFFECTIVE_AT",
+                    "2026-08-01T00:00:00Z",
                 )
+            ),
+            "document_uri": str(
+                getattr(
+                    settings,
+                    "CONSENT_POLICY_DOCUMENT_URI",
+                    "docs/feats/PRIVACY_POLICY.md",
+                )
+            ),
+            "content_sha256": str(
+                getattr(settings, "CONSENT_POLICY_CONTENT_SHA256", "")
+            ),
+        }
 
-        return consent
-
-    @staticmethod
-    def check_ai_consent(user_id, user_type="customer"):
-        """
-        Check if user has given AI consent.
-
-        Args:
-            user_id: The user's ObjectId
-            user_type: Type of user
-
-        Returns:
-            bool: True if AI consent is given, False otherwise
-        """
-        if isinstance(user_id, str):
-            user_id = ObjectId(user_id)
-
-        consent = Consent.find_by_user(user_id, user_type)
-
-        if not consent:
-            return False
-
-        return consent.can_access_ai
-
-    @staticmethod
-    def check_data_consent(user_id, user_type="customer"):
-        """
-        Check if user has given data consent.
-
-        Args:
-            user_id: The user's ObjectId
-            user_type: Type of user
-
-        Returns:
-            bool: True if data consent is given, False otherwise
-        """
-        if isinstance(user_id, str):
-            user_id = ObjectId(user_id)
-
-        consent = Consent.find_by_user(user_id, user_type)
-
-        if not consent:
-            return False
-
-        return consent.can_access_data_features
+    @classmethod
+    def _normalize_identity(cls, user_id, user_type):
+        normalized_type = str(user_type or "").strip().lower()
+        if normalized_type not in cls.SUPPORTED_USER_TYPES:
+            raise ConsentRoleError("Consent preferences are customer-only")
+        if isinstance(user_id, ObjectId):
+            return user_id, normalized_type
+        if not ObjectId.is_valid(str(user_id)):
+            raise ValueError("Invalid consent user identifier")
+        return ObjectId(str(user_id)), normalized_type
 
     @staticmethod
-    def get_consent_status(user_id, user_type="customer"):
-        """
-        Get full consent status for a user.
+    @contextmanager
+    def _mutation_guard(user_id, user_type):
+        collection = settings.MONGODB["account_security_guards"]
+        guard_id = f"consent:{user_type}:{user_id}"
+        owner = secrets.token_urlsafe(24)
+        now = datetime.now(timezone.utc)
+        try:
+            guard = collection.find_one_and_update(
+                {
+                    "_id": guard_id,
+                    "$or": [
+                        {"lease_until": {"$lte": now}},
+                        {"lease_until": {"$exists": False}},
+                    ],
+                },
+                {
+                    "$set": {
+                        "lease_owner": owner,
+                        "lease_until": now + timedelta(seconds=15),
+                    }
+                },
+                upsert=True,
+                return_document=ReturnDocument.AFTER,
+            )
+        except DuplicateKeyError as exc:
+            raise ConsentMutationBusyError from exc
+        if not guard or guard.get("lease_owner") != owner:
+            raise ConsentMutationBusyError
+        try:
+            yield
+        finally:
+            collection.update_one(
+                {"_id": guard_id, "lease_owner": owner},
+                {"$unset": {"lease_owner": ""}, "$set": {"lease_until": now}},
+            )
 
-        Args:
-            user_id: The user's ObjectId
-            user_type: Type of user
-
-        Returns:
-            dict: Consent status information
-        """
-        if isinstance(user_id, str):
-            user_id = ObjectId(user_id)
-
-        consent = Consent.find_by_user(user_id, user_type)
-
-        if not consent:
+    @classmethod
+    def _authoritative_state(cls, user_id, user_type):
+        event = ConsentEvent.latest_for_user(user_id, user_type)
+        if event:
             return {
-                "data_consent": False,
-                "ai_consent": False,
-                "consent_date": None,
-                "updated_at": None,
-                "can_access_ai": False,
-                "has_consent_record": False,
+                "data_consent": bool(event.data_consent),
+                "ai_consent": bool(event.ai_consent),
+                "consent_version": event.consent_version,
+                "revision": int(event.revision),
+                "recorded_at": event.recorded_at,
+                "event_id": event.event_id,
             }
 
+        legacy = Consent.find_by_user(user_id, user_type)
+        if legacy:
+            return {
+                "data_consent": bool(legacy.data_consent),
+                "ai_consent": bool(legacy.ai_consent),
+                "consent_version": legacy.consent_version,
+                "revision": int(getattr(legacy, "revision", 0)),
+                "recorded_at": legacy.updated_at,
+                "event_id": None,
+            }
         return {
-            "data_consent": consent.data_consent,
-            "ai_consent": consent.ai_consent,
-            "consent_date": consent.consent_date,
-            "updated_at": consent.updated_at,
-            "can_access_ai": consent.can_access_ai,
-            "has_consent_record": True,
+            "data_consent": False,
+            "ai_consent": False,
+            "consent_version": None,
+            "revision": 0,
+            "recorded_at": None,
+            "event_id": None,
         }
+
+    @classmethod
+    def _validate_policy_grant(cls, updates, consent_version):
+        if not any(value is True for value in updates.values()):
+            return
+        current_version = cls.current_policy()["consent_version"]
+        if not consent_version:
+            raise ConsentPolicyError(
+                "consent_version is required when granting consent"
+            )
+        if str(consent_version) != current_version:
+            raise ConsentPolicyError(
+                "Consent policy has changed. Review and accept the current version."
+            )
+
+    @classmethod
+    def _record_decision(
+        cls,
+        *,
+        user_id,
+        user_type,
+        updates,
+        consent_version=None,
+        ip_address="",
+        require_existing=False,
+    ):
+        user_id, user_type = cls._normalize_identity(user_id, user_type)
+        updates = {
+            key: bool(value)
+            for key, value in updates.items()
+            if key in {"data_consent", "ai_consent"}
+        }
+        if not updates:
+            raise ValueError("At least one consent field must be provided")
+        cls._validate_policy_grant(updates, consent_version)
+        policy = cls.current_policy()
+
+        with cls._mutation_guard(user_id, user_type):
+            before = cls._authoritative_state(user_id, user_type)
+            if (
+                require_existing
+                and before["revision"] == 0
+                and before["event_id"] is None
+                and not Consent.find_by_user(user_id, user_type)
+            ):
+                raise ValueError("No consent record found for user")
+
+            after = {
+                "data_consent": updates.get(
+                    "data_consent", before["data_consent"]
+                ),
+                "ai_consent": updates.get("ai_consent", before["ai_consent"]),
+            }
+            if after["ai_consent"] and not after["data_consent"]:
+                raise ConsentPolicyError("AI consent requires data consent")
+
+            changed_fields = [
+                field for field in after if after[field] != before[field]
+            ]
+            accepted_version = (
+                policy["consent_version"]
+                if any(value is True for value in updates.values())
+                else before["consent_version"] or policy["consent_version"]
+            )
+            revision = int(before["revision"]) + 1
+            if before["consent_version"] != accepted_version and not changed_fields:
+                action = "consent_reconfirmed"
+            elif any(before[field] and not after[field] for field in after):
+                action = "consent_revoked"
+            elif any(not before[field] and after[field] for field in after):
+                action = "consent_granted"
+            else:
+                action = "consent_updated"
+
+            recorded_at = datetime.now(timezone.utc)
+            event_id = f"{user_type}:{user_id}:{revision}"
+            event = ConsentEvent(
+                event_id=event_id,
+                user_id=user_id,
+                user_type=user_type,
+                revision=revision,
+                action=action,
+                data_consent=after["data_consent"],
+                ai_consent=after["ai_consent"],
+                consent_version=accepted_version,
+                policy_id=policy["policy_id"],
+                policy_effective_at=policy["effective_at"],
+                policy_document_uri=policy["document_uri"],
+                policy_content_sha256=policy["content_sha256"],
+                previous_state={
+                    "data_consent": before["data_consent"],
+                    "ai_consent": before["ai_consent"],
+                    "consent_version": before["consent_version"],
+                    "revision": before["revision"],
+                },
+                changed_fields=changed_fields,
+                ip_address=ip_address or "",
+                recorded_at=recorded_at,
+            ).save()
+
+            consent_date = recorded_at if any(after.values()) else None
+            document = settings.MONGODB[Consent.collection_name].find_one_and_update(
+                {"user_id": user_id, "user_type": user_type},
+                {
+                    "$set": {
+                        **after,
+                        "consent_version": accepted_version,
+                        "revision": revision,
+                        "consent_date": consent_date,
+                        "updated_at": recorded_at,
+                        "ip_address": ip_address or "",
+                    }
+                },
+                upsert=True,
+                return_document=ReturnDocument.AFTER,
+            )
+
+        if before["ai_consent"] and not after["ai_consent"]:
+            try:
+                cache.delete(f"ai_consent:{user_id}")
+            except Exception as exc:  # noqa: BLE001 - checks bypass cache and fail closed
+                logger.warning("Consent cache invalidation failed for %s: %s", user_id, exc)
+
+        consent = Consent.from_dict(document)
+        consent.previous_state = event.previous_state
+        consent.event_id = event.event_id
+        consent.event = event
+        return consent
+
+    @classmethod
+    def get_or_create_consent(cls, user_id, user_type="customer"):
+        user_id, user_type = cls._normalize_identity(user_id, user_type)
+        consent = Consent.find_by_user(user_id, user_type)
+        if consent:
+            return consent
+        return cls._record_decision(
+            user_id=user_id,
+            user_type=user_type,
+            updates={"data_consent": False, "ai_consent": False},
+        )
+
+    @classmethod
+    def record_consent(
+        cls,
+        user_id,
+        user_type,
+        data_consent,
+        ai_consent,
+        ip_address="",
+        consent_version=None,
+    ):
+        return cls._record_decision(
+            user_id=user_id,
+            user_type=user_type,
+            updates={
+                "data_consent": data_consent,
+                "ai_consent": ai_consent,
+            },
+            consent_version=consent_version,
+            ip_address=ip_address,
+        )
+
+    @classmethod
+    def update_consent(
+        cls,
+        user_id,
+        user_type,
+        updates,
+        ip_address="",
+        consent_version=None,
+    ):
+        return cls._record_decision(
+            user_id=user_id,
+            user_type=user_type,
+            updates=updates,
+            consent_version=consent_version,
+            ip_address=ip_address,
+            require_existing=True,
+        )
+
+    @classmethod
+    def check_ai_consent(cls, user_id, user_type="customer"):
+        """Fail closed unless both current-version data and AI consent exist."""
+        try:
+            user_id, user_type = cls._normalize_identity(user_id, user_type)
+            state = cls._authoritative_state(user_id, user_type)
+            return bool(
+                state["data_consent"]
+                and state["ai_consent"]
+                and state["consent_version"]
+                == cls.current_policy()["consent_version"]
+            )
+        except Exception:
+            logger.exception("AI consent check failed closed for user %s", user_id)
+            return False
+
+    @classmethod
+    def check_data_consent(cls, user_id, user_type="customer"):
+        try:
+            user_id, user_type = cls._normalize_identity(user_id, user_type)
+            state = cls._authoritative_state(user_id, user_type)
+            return bool(
+                state["data_consent"]
+                and state["consent_version"]
+                == cls.current_policy()["consent_version"]
+            )
+        except Exception:
+            logger.exception("Data consent check failed closed for user %s", user_id)
+            return False
+
+    @classmethod
+    def get_consent_status(cls, user_id, user_type="customer"):
+        user_id, user_type = cls._normalize_identity(user_id, user_type)
+        state = cls._authoritative_state(user_id, user_type)
+        current_policy = cls.current_policy()
+        version_current = (
+            state["consent_version"] == current_policy["consent_version"]
+        )
+        has_record = state["event_id"] is not None or Consent.find_by_user(
+            user_id, user_type
+        ) is not None
+        return {
+            "data_consent": state["data_consent"],
+            "ai_consent": state["ai_consent"],
+            "consent_date": state["recorded_at"],
+            "updated_at": state["recorded_at"],
+            "consent_version": state["consent_version"],
+            "current_policy": current_policy,
+            "requires_reconsent": bool(
+                has_record and any((state["data_consent"], state["ai_consent"]))
+                and not version_current
+            ),
+            "can_access_ai": bool(
+                state["data_consent"]
+                and state["ai_consent"]
+                and version_current
+            ),
+            "has_consent_record": has_record,
+            "revision": state["revision"],
+        }
+
+    @classmethod
+    def get_consent_history(cls, user_id, user_type="customer", limit=100):
+        user_id, user_type = cls._normalize_identity(user_id, user_type)
+        return ConsentEvent.find_by_user(user_id, user_type, limit=limit)

@@ -20,6 +20,7 @@ from accounts.models import (  # noqa: E402
     Admin,
     BlacklistedToken,
     Consent,
+    ConsentEvent,
     Customer,
     LoanOfficer,
     LoginActivity,
@@ -127,6 +128,7 @@ def create_indexes():
     try:
         print("Creating indexes for Consent collection...")
         Consent.create_indexes()
+        ConsentEvent.create_indexes()
         print("✓ Consent indexes created")
     except (DuplicateKeyError, OperationFailure):
         print("⚠ Consent indexes already exist, skipping")

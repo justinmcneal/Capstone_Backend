@@ -22,6 +22,7 @@ Treat the following as sensitive and do not read, expose, or casually modify the
 - ML training data and uploaded documents;
 - wallet/private keys, Firebase credentials, and cloud credentials.
 
+only read, expose, or modify them when said.
 `dump.rdb` is a security concern requiring separate review. Do not remove it in ordinary work.
 
 ## Validation and operations

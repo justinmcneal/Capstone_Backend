@@ -491,6 +491,21 @@ if not DEBUG:
 GROQ_API_KEY = os.getenv('GROQ_API_KEY', '')
 GROQ_MODEL = os.getenv('GROQ_MODEL', 'llama-3.1-8b-instant')
 GROQ_CHAT_MODEL = os.getenv('GROQ_CHAT_MODEL', GROQ_MODEL)
+
+# Consent policy deployed by this backend. Clients must present this version
+# when granting consent; changing it automatically requires re-consent.
+CONSENT_POLICY_ID = os.getenv('CONSENT_POLICY_ID', 'privacy-and-ai-consent')
+CONSENT_POLICY_VERSION = os.getenv('CONSENT_POLICY_VERSION', '2026-08-01')
+CONSENT_POLICY_EFFECTIVE_AT = os.getenv(
+    'CONSENT_POLICY_EFFECTIVE_AT', '2026-08-01T00:00:00Z'
+)
+CONSENT_POLICY_DOCUMENT_URI = os.getenv(
+    'CONSENT_POLICY_DOCUMENT_URI', 'docs/feats/PRIVACY_POLICY.md'
+)
+CONSENT_POLICY_CONTENT_SHA256 = os.getenv(
+    'CONSENT_POLICY_CONTENT_SHA256',
+    'f996fc9a8ad51a1d7f33b95072333614ddef845dc66daa50088efd4cb6b2aa02',
+)
 GROQ_QUALIFICATION_MODEL = os.getenv('GROQ_QUALIFICATION_MODEL', GROQ_MODEL)
 
 # LLM Provider Configuration

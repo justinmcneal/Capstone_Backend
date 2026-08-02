@@ -63,13 +63,18 @@ class ConsentRequiredMixin(AccessControlMixin):
         
         if not ConsentService.check_ai_consent(customer_id, 'customer'):
             return False, error_response(
-                message="AI consent is required to use this feature",
+                message="Current data and AI consent are required to use this feature",
                 code="CONSENT_REQUIRED",
                 errors={
                     'action_required': {
                         'endpoint': '/api/auth/consent/',
                         'method': 'POST',
-                        'required_fields': ['ai_consent']
+                        'required_fields': [
+                            'data_consent',
+                            'ai_consent',
+                            'consent_version',
+                        ],
+                        'current_policy': ConsentService.current_policy(),
                     }
                 },
                 status_code=status.HTTP_403_FORBIDDEN

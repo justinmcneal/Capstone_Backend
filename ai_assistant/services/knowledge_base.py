@@ -15,6 +15,7 @@ VERSION HISTORY:
 - v1.5 (2026-06-06): Loan alignment update - penalty fields in repayment tools
 - v1.6 (2026-06-06): Analytics alignment - customer dashboard tool, dashboard navigation, AI session awareness
 - v1.7 (2026-06-06): Notifications tool - get unread count and recent notifications
+- v1.8 (2026-08-02): Current-version data + AI consent and local consent history
 
 USAGE:
 - Import KNOWLEDGE_BASE dict for structured access
@@ -71,9 +72,10 @@ ACCOUNTS_INFO = {
             "ai_consent": "Required to use AI chat, AI pre-qualification, and document AI analysis",
         },
         "manage": "GET /api/auth/consent/ to check status; PUT /api/auth/consent/ to update preferences",
-        "ai_chat_requirement": "Customer must set ai_consent=true before POST /api/ai/chat/",
-        "consent_version": "1.0",
-        "blockchain": "Consent changes are synced to the on-chain audit trail when blockchain is enabled",
+        "ai_chat_requirement": "Customer must accept both data_consent and ai_consent under the current policy before using AI features",
+        "consent_version": "2026-08-01",
+        "history": "Local append-only consent events are authoritative",
+        "blockchain": "Consent changes are additionally mirrored on-chain when blockchain is enabled",
     },
     "language": {
         "signup_field": "language (en|tl, default en) on POST /api/auth/signup/",
@@ -454,8 +456,8 @@ Mobile app for microloans. When blockchain is enabled, loan events (application,
 
 === ACCOUNTS & ACCESS ===
 - Customers register at POST /api/auth/signup/ (first_name, last_name, email, password, password_confirm), verify email OTP, then login at POST /api/auth/login/
-- AI chat requires ai_consent=true via POST /api/auth/consent/ (also needed for AI pre-qualification and document AI analysis)
-- data_consent and ai_consent are separate; both are managed at /api/auth/consent/
+- AI features require both data_consent=true and ai_consent=true under the current policy version via POST /api/auth/consent/
+- Consent choices are managed at /api/auth/consent/ and their local append-only history is available at /api/auth/consent/history/
 - Language preference: en or tl — set at signup or PATCH /api/auth/language/; default used when chat language is omitted
 - Password reset: /api/auth/forgot-password/ flow — never collect passwords or OTPs in chat
 - Customer 2FA is optional; admin 2FA is required — direct users to app settings for 2FA, never collect codes in chat

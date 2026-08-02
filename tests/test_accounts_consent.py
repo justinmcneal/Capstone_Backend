@@ -2,12 +2,14 @@
 Tests for Consent endpoints: GET status, POST record, PUT update, history, and audit.
 """
 import os
+
 import pytest
 from django.test import override_settings
 from django.urls import reverse
 from rest_framework.test import APIClient
 
-from accounts.models import Customer, Admin
+from accounts.models import Admin, Customer
+from accounts.services.consent_service import ConsentService
 from accounts.utils.email_utils import EmailUtils
 from accounts.utils.token_utils import TokenUtils
 
@@ -64,7 +66,11 @@ def test_post_consent_records_consent():
     client.credentials(HTTP_AUTHORIZATION=f"Bearer {tokens['access']}")
 
     url = reverse("accounts:consent")
-    payload = {"data_consent": True, "ai_consent": True}
+    payload = {
+        "data_consent": True,
+        "ai_consent": True,
+        "consent_version": ConsentService.current_policy()["consent_version"],
+    }
     response = client.post(url, payload, format="json")
 
     assert response.status_code == 201
@@ -74,16 +80,15 @@ def test_post_consent_records_consent():
 
 
 @override_settings(SECURE_SSL_REDIRECT=False)
-def test_put_consent_updates_consent_and_dispatches_task(monkeypatch):
-    """Updating consent from True to False dispatches task or executes handler."""
-    task_dispatched = False
+def test_put_consent_updates_consent_and_invalidates_cache(monkeypatch):
+    """Revocation clears the cache synchronously without controlling access."""
+    invalidated = False
 
-    def _mock_delay(user_id):
-        nonlocal task_dispatched
-        task_dispatched = True
+    def _mock_delete(cache_key):
+        nonlocal invalidated
+        invalidated = True
 
-    import accounts.tasks as tasks_mod
-    monkeypatch.setattr(tasks_mod.invalidate_ai_consent_cache, "delay", _mock_delay)
+    monkeypatch.setattr("accounts.services.consent_service.cache.delete", _mock_delete)
 
     client = APIClient()
     customer = _make_customer("consent-put@example.com")
@@ -92,7 +97,15 @@ def test_put_consent_updates_consent_and_dispatches_task(monkeypatch):
 
     url = reverse("accounts:consent")
     # First set consent to True
-    client.post(url, {"data_consent": True, "ai_consent": True}, format="json")
+    client.post(
+        url,
+        {
+            "data_consent": True,
+            "ai_consent": True,
+            "consent_version": ConsentService.current_policy()["consent_version"],
+        },
+        format="json",
+    )
 
     # Now revoke ai_consent (True -> False)
     response = client.put(url, {"ai_consent": False}, format="json")
@@ -100,7 +113,7 @@ def test_put_consent_updates_consent_and_dispatches_task(monkeypatch):
     assert response.status_code == 200
     data = response.json()["data"]
     assert data["ai_consent"] is False
-    assert task_dispatched is True
+    assert invalidated is True
 
 
 @override_settings(SECURE_SSL_REDIRECT=False)
@@ -111,7 +124,15 @@ def test_consent_history_and_audit():
     client.credentials(HTTP_AUTHORIZATION=f"Bearer {tokens['access']}")
 
     # Record initial consent
-    client.post(reverse("accounts:consent"), {"data_consent": True, "ai_consent": True}, format="json")
+    client.post(
+        reverse("accounts:consent"),
+        {
+            "data_consent": True,
+            "ai_consent": True,
+            "consent_version": ConsentService.current_policy()["consent_version"],
+        },
+        format="json",
+    )
 
     # Get History
     hist_url = reverse("accounts:consent-history")
