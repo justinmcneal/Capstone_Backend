@@ -1,12 +1,17 @@
 import logging
+import math
+import re
 from typing import ClassVar
 
 from bson import ObjectId
+from bson.errors import InvalidId
+from django.conf import settings
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 
 from accounts.authentication import CustomJWTAuthentication
+from accounts.models import Customer
 from accounts.utils.access_control import AccessControlMixin
 from accounts.utils.response_helpers import error_response, success_response
 from accounts.utils.throttles import ProfileRateThrottle
@@ -22,6 +27,7 @@ from profiles.services.notification_preferences import (
     get_preferences,
     update_preferences,
 )
+from profiles.services.officer_profile import build_officer_customer_profile
 from profiles.services.summary import get_profile_summary
 from profiles.tasks import calculate_risk_score_task
 
@@ -499,11 +505,98 @@ class NotificationPreferencesView(CustomerProfileAccessMixin, APIView):
         )
 
 
+class OfficerCustomerProfilesListView(AccessControlMixin, APIView):
+    """Searchable, read-only customer directory for loan officers."""
+
+    authentication_classes: ClassVar[list] = [CustomJWTAuthentication]
+    permission_classes: ClassVar[list] = [IsAuthenticated]
+    throttle_classes = (ProfileRateThrottle,)
+
+    def get(self, request):
+        has_permission, result = self.require_roles(request, {"loan_officer"})
+        if not has_permission:
+            return result
+
+        try:
+            page = int(request.query_params.get("page", 1))
+            page_size = int(request.query_params.get("page_size", 20))
+        except (TypeError, ValueError):
+            return error_response(
+                message="Invalid pagination parameters",
+                errors={"page": "page and page_size must be integers"},
+                status_code=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if page < 1 or page_size < 1 or page_size > 100:
+            return error_response(
+                message="Invalid pagination parameters",
+                errors={
+                    "page": "page must be at least 1",
+                    "page_size": "page_size must be between 1 and 100",
+                },
+                status_code=status.HTTP_400_BAD_REQUEST,
+            )
+
+        search = request.query_params.get("search", "").strip()
+        query = {"role": "customer"}
+        if search:
+            search_regex = re.compile(re.escape(search), re.IGNORECASE)
+            search_conditions = [
+                {"first_name": search_regex},
+                {"last_name": search_regex},
+                {"email": search_regex},
+                {"phone": search_regex},
+            ]
+            try:
+                search_conditions.append({"_id": ObjectId(search)})
+            except InvalidId:
+                pass
+            query = {"$and": [query, {"$or": search_conditions}]}
+
+        collection = settings.MONGODB[Customer.collection_name]
+        total = collection.count_documents(query)
+        skip = (page - 1) * page_size
+        customers = Customer.find(
+            query,
+            sort=[("created_at", -1)],
+            skip=skip,
+            limit=page_size,
+        )
+        customer_items = []
+        for customer in customers:
+            if not customer:
+                continue
+            personal_profile = CustomerProfile.find_by_customer(customer.id)
+            customer_items.append(
+                {
+                    "customer_id": customer.id,
+                    "full_name": customer.full_name or "Unnamed customer",
+                    "email": customer.email,
+                    "phone": (
+                        personal_profile.mobile_number
+                        if personal_profile and personal_profile.mobile_number
+                        else customer.phone or None
+                    ),
+                }
+            )
+
+        return success_response(
+            data={
+                "customers": customer_items,
+                "total": total,
+                "page": page,
+                "page_size": page_size,
+                "total_pages": math.ceil(total / page_size) if total else 0,
+            },
+            message="Customer profiles retrieved successfully",
+        )
+
+
 class OfficerProfileView(AccessControlMixin, APIView):
     """
-    Read-only profile access for loan officers and admins.
+    Read-only profile access for loan officers.
 
-    GET /api/profile/officer/<customer_id>/
+    GET /api/officer/profiles/<customer_id>/
     """
 
     authentication_classes: ClassVar[list] = [CustomJWTAuthentication]
@@ -511,23 +604,27 @@ class OfficerProfileView(AccessControlMixin, APIView):
     throttle_classes = (ProfileRateThrottle,)
 
     def get(self, request, customer_id):
-        """Return profile summary for the requested customer."""
-        from bson.errors import InvalidId
-
-        has_permission, result = self.require_officer_or_admin(request)
+        """Return the allow-listed profile fields for the requested customer."""
+        has_permission, result = self.require_roles(request, {"loan_officer"})
         if not has_permission:
             return result
 
         try:
-            ObjectId(customer_id)
+            customer_object_id = ObjectId(customer_id)
         except (InvalidId, TypeError):
             return error_response(
                 message="Invalid customer ID",
                 status_code=status.HTTP_400_BAD_REQUEST,
             )
 
-        summary = get_profile_summary(customer_id)
+        customer = Customer.find_one({"_id": customer_object_id})
+        if not customer or customer.role != "customer":
+            return error_response(
+                message="Customer not found",
+                status_code=status.HTTP_404_NOT_FOUND,
+            )
+
         return success_response(
-            data=summary,
-            message="Officer profile retrieved successfully",
+            data=build_officer_customer_profile(customer),
+            message="Customer profile retrieved successfully",
         )

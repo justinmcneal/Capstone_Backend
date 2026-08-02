@@ -15,6 +15,7 @@ Coverage:
 from unittest.mock import MagicMock
 
 from bson import ObjectId
+from django.urls import resolve
 from rest_framework.test import APIRequestFactory, force_authenticate
 
 from accounts.authentication import AuthenticatedUser
@@ -25,6 +26,7 @@ from profiles.views.profile_views import (
     BusinessProfileView,
     CustomerProfileView,
     NotificationPreferencesView,
+    OfficerCustomerProfilesListView,
     OfficerProfileView,
     ProfileSummaryView,
 )
@@ -620,6 +622,10 @@ class TestNotificationPreferencesView:
 
 
 class TestOfficerProfileView:
+    def test_profile_route_uses_officer_namespace(self):
+        match = resolve(f"/api/officer/profiles/{ObjectId()}/")
+        assert match.func.view_class is OfficerProfileView
+
     def test_officer_can_view_customer_profile(self, monkeypatch):
         officer = _create_officer()
         customer = _create_customer()
@@ -633,13 +639,13 @@ class TestOfficerProfileView:
 
         monkeypatch.setattr(
             CustomerProfile,
-            "get_or_create",
+            "find_by_customer",
             staticmethod(lambda customer_id: profile),
             raising=False,
         )
 
         request = _get(
-            f"/api/profile/officer/{customer.id}/",
+            f"/api/officer/profiles/{customer.id}/",
             _auth_officer(officer),
         )
         monkeypatch.setattr(
@@ -651,27 +657,15 @@ class TestOfficerProfileView:
 
         response = OfficerProfileView.as_view()(request, customer_id=str(customer.id))
         assert response.status_code == 200
-        assert response.data["data"]["personal_profile"]["completed"] is True
+        assert response.data["data"]["personal_profile"]["profile_completed"] is True
         assert response.data["data"]["personal_profile"]["completion_percentage"] == 100
 
-    def test_admin_can_view_customer_profile(self, monkeypatch):
+    def test_admin_cannot_view_customer_profile(self, monkeypatch):
         admin = _create_admin(permissions=["manage_loans"])
         customer = _create_customer()
-        profile = CustomerProfile(
-            customer_id=str(customer.id),
-            profile_completed=True,
-            completion_percentage=100,
-        )
-
-        monkeypatch.setattr(
-            CustomerProfile,
-            "get_or_create",
-            staticmethod(lambda customer_id: profile),
-            raising=False,
-        )
 
         request = _get(
-            f"/api/profile/officer/{customer.id}/",
+            f"/api/officer/profiles/{customer.id}/",
             _auth_admin(admin),
         )
         monkeypatch.setattr(
@@ -682,7 +676,7 @@ class TestOfficerProfileView:
         )
 
         response = OfficerProfileView.as_view()(request, customer_id=str(customer.id))
-        assert response.status_code == 200
+        assert response.status_code == 403
 
     def test_customer_returns_403(self, monkeypatch):
         customer = _create_customer()
@@ -716,3 +710,120 @@ class TestOfficerProfileView:
         response = OfficerProfileView.as_view()(request, customer_id="not-a-valid-id")
         assert response.status_code == 400
         assert "Invalid customer ID" in response.data["message"]
+
+    def test_missing_customer_returns_404(self, monkeypatch):
+        officer = _create_officer()
+        customer_id = str(ObjectId())
+        monkeypatch.setattr(
+            Customer,
+            "find_one",
+            staticmethod(lambda query: None),
+            raising=False,
+        )
+
+        request = _get(
+            f"/api/officer/profiles/{customer_id}/",
+            _auth_officer(officer),
+        )
+        monkeypatch.setattr(
+            OfficerProfileView, "authentication_classes", [], raising=False
+        )
+        monkeypatch.setattr(
+            OfficerProfileView, "permission_classes", [], raising=False
+        )
+
+        response = OfficerProfileView.as_view()(request, customer_id=customer_id)
+        assert response.status_code == 404
+        assert response.data["message"] == "Customer not found"
+
+    def test_response_excludes_wallet_and_account_secrets(self, monkeypatch):
+        officer = _create_officer()
+        customer = _create_customer()
+        profile = CustomerProfile(
+            customer_id=str(customer.id),
+            mobile_number="+639171234567",
+            wallet_address="0x1234567890abcdef1234567890abcdef12345678",
+        )
+        monkeypatch.setattr(
+            CustomerProfile,
+            "find_by_customer",
+            staticmethod(lambda customer_id: profile),
+            raising=False,
+        )
+
+        request = _get(
+            f"/api/officer/profiles/{customer.id}/",
+            _auth_officer(officer),
+        )
+        monkeypatch.setattr(
+            OfficerProfileView, "authentication_classes", [], raising=False
+        )
+        monkeypatch.setattr(
+            OfficerProfileView, "permission_classes", [], raising=False
+        )
+
+        response = OfficerProfileView.as_view()(request, customer_id=str(customer.id))
+        data = response.data["data"]
+        assert response.status_code == 200
+        assert data["personal_profile"]["mobile_number"] == "+639171234567"
+        assert "wallet_address" not in data["personal_profile"]
+        assert "password" not in data
+        assert "password_reset_otp" not in data
+
+    def test_customer_directory_is_officer_only(self, monkeypatch):
+        customer = _create_customer()
+        request = _get("/api/officer/profiles/", _auth_customer(customer))
+        monkeypatch.setattr(
+            OfficerCustomerProfilesListView,
+            "authentication_classes",
+            [],
+            raising=False,
+        )
+        monkeypatch.setattr(
+            OfficerCustomerProfilesListView,
+            "permission_classes",
+            [],
+            raising=False,
+        )
+
+        response = OfficerCustomerProfilesListView.as_view()(request)
+        assert response.status_code == 403
+
+    def test_officer_can_search_customer_directory(self, monkeypatch):
+        officer = _create_officer()
+        customer = _create_customer()
+        profile = CustomerProfile(
+            customer_id=str(customer.id),
+            mobile_number="+639196331559",
+        )
+        monkeypatch.setattr(
+            CustomerProfile,
+            "find_by_customer",
+            staticmethod(
+                lambda customer_id: profile
+                if str(customer_id) == str(customer.id)
+                else None
+            ),
+            raising=False,
+        )
+        request = _get("/api/officer/profiles/", _auth_officer(officer))
+        monkeypatch.setattr(
+            OfficerCustomerProfilesListView,
+            "authentication_classes",
+            [],
+            raising=False,
+        )
+        monkeypatch.setattr(
+            OfficerCustomerProfilesListView,
+            "permission_classes",
+            [],
+            raising=False,
+        )
+
+        response = OfficerCustomerProfilesListView.as_view()(request)
+        assert response.status_code == 200
+        assert any(
+            item["customer_id"] == str(customer.id)
+            and item["phone"] == "+639196331559"
+            for item in response.data["data"]["customers"]
+        )
