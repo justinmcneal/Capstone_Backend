@@ -15,10 +15,13 @@ from rest_framework_simplejwt.exceptions import TokenError
 from rest_framework_simplejwt.tokens import RefreshToken
 
 from accounts.models import Admin, LoanOfficer
+from accounts.models.activity import ActiveSession, LoginActivity
 from accounts.services import AuthService
+from accounts.services.security_event_service import SecurityEventService
 from accounts.services.two_factor_service import TwoFactorService
 from accounts.utils.auth_cookies import apply_auth_token_transport
 from accounts.utils.exception_types import NON_FATAL_EXCEPTIONS
+from accounts.utils.request_utils import get_client_ip
 from accounts.utils.response_helpers import APIResponseHelper
 from accounts.utils.throttles import TwoFactorRateThrottle, TwoFactorTokenRateThrottle
 from accounts.utils.token_utils import TokenUtils
@@ -27,6 +30,35 @@ from accounts.utils.validation_utils import parse_bool
 from analytics.models import AuditLog
 
 logger = logging.getLogger("authentication")
+
+
+def _record_successful_2fa_login(user, user_type, tokens, request):
+    """Complete session metadata and activity records after 2FA login."""
+    ip_address = get_client_ip(request)
+    device_info = request.META.get("HTTP_USER_AGENT", "")
+    LoginActivity(
+        user_id=str(user.id),
+        email=user.email,
+        role=user_type,
+        status="SUCCESS",
+        ip_address=ip_address,
+        device_info=device_info,
+    ).save()
+
+    session_id = RefreshToken(tokens["refresh"]).get("session_id")
+    ActiveSession.update_many(
+        {
+            "user_id": str(user.id),
+            "role": user_type,
+            "session_id": session_id,
+        },
+        {
+            "$set": {
+                "ip_address": ip_address,
+                "device_info": device_info,
+            }
+        },
+    )
 
 
 class Setup2FAView(APIView):
@@ -39,6 +71,11 @@ class Setup2FAView(APIView):
     throttle_classes = (TwoFactorRateThrottle,)
 
     def post(self, request):
+        password = request.data.get("password")
+        if not isinstance(password, str) or not password:
+            return APIResponseHelper.validation_error_response(
+                {"password": "Current password is required"}
+            )
         try:
             user, _user_type = get_authenticated_user(request)
             if not user:
@@ -49,7 +86,18 @@ class Setup2FAView(APIView):
                     "2FA is already enabled for this account"
                 )
 
-            setup_data = TwoFactorService.setup_2fa(user)
+            setup_data = TwoFactorService.setup_2fa(user, password=password)
+            if setup_data is None:
+                return APIResponseHelper.error_response(
+                    "Invalid password", status.HTTP_400_BAD_REQUEST
+                )
+
+            SecurityEventService.record(
+                user=user,
+                user_type=_user_type,
+                action="two_factor_setup_started",
+                ip_address=get_client_ip(request),
+            )
 
             logger.info(f"2FA setup initiated for {user.email} ({_user_type})")
 
@@ -106,6 +154,12 @@ class Confirm2FASetupView(APIView):
                 )
 
             logger.info(f"2FA enabled for {user.email}")
+            SecurityEventService.record(
+                user=user,
+                user_type=_user_type,
+                action="two_factor_enabled",
+                ip_address=get_client_ip(request),
+            )
 
             return APIResponseHelper.success_response(
                 data={
@@ -246,14 +300,20 @@ class Verify2FAView(APIView):
                 if use_backup:
                     is_valid = TwoFactorService.use_backup_code(user, code)
                 else:
-                    is_valid = TwoFactorService.verify_totp(
-                        user.two_factor_secret, code
-                    )
+                    is_valid = TwoFactorService.verify_and_consume_totp(user, code)
 
                 if not is_valid:
                     logger.warning(f"Invalid 2FA code for {user.email} ({user_type})")
                     return APIResponseHelper.error_response(
                         "Invalid verification code", status.HTTP_401_UNAUTHORIZED
+                    )
+
+                if use_backup:
+                    SecurityEventService.record(
+                        user=user,
+                        user_type=user_type,
+                        action="two_factor_backup_code_used",
+                        ip_address=get_client_ip(request),
                     )
 
             # Consume the temporary 2FA token so it cannot be replayed.
@@ -342,6 +402,24 @@ class Verify2FAView(APIView):
                 )
             else:
                 logger.info(f"2FA verified for {user.email} ({user_type})")
+
+            if initial_admin_setup:
+                SecurityEventService.record(
+                    user=user,
+                    user_type=user_type,
+                    action="two_factor_enabled",
+                    ip_address=get_client_ip(request),
+                )
+
+            try:
+                _record_successful_2fa_login(user, user_type, tokens, request)
+            except NON_FATAL_EXCEPTIONS as session_error:
+                logger.error(
+                    "Failed to record 2FA session metadata for %s (%s): %s",
+                    user.email,
+                    user_type,
+                    session_error,
+                )
 
             user_logged_in.send(sender=user.__class__, request=request, user=user)
 
@@ -441,6 +519,12 @@ class Disable2FAView(APIView):
                 )
 
             logger.info(f"2FA disabled for {user.email}")
+            SecurityEventService.record(
+                user=user,
+                user_type=_user_type,
+                action="two_factor_disabled",
+                ip_address=get_client_ip(request),
+            )
 
             return APIResponseHelper.success_response(
                 message="2FA disabled successfully"
@@ -489,6 +573,12 @@ class RegenerateBackupCodesView(APIView):
                 )
 
             logger.info(f"Backup codes regenerated for {user.email}")
+            SecurityEventService.record(
+                user=user,
+                user_type=_user_type,
+                action="two_factor_backup_codes_regenerated",
+                ip_address=get_client_ip(request),
+            )
 
             return APIResponseHelper.success_response(
                 data={

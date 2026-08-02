@@ -53,8 +53,8 @@ Current remediation status:
 - [x] **Stage 2 — Temporary-password and live account-state enforcement**
 - [x] **Stage 3 — Cookie authentication and CSRF integrity**
 - [ ] Stage 4 — Brute-force, OTP, and concurrency hardening
-- [ ] Stage 5 — 2FA lifecycle integrity
-- [ ] Stage 6 — Privileged administration and audit coverage
+- [x] **Stage 5 — 2FA lifecycle integrity**
+- [x] **Stage 6 — Privileged administration and audit coverage**
 - [ ] Stage 7 — Consent history and policy lifecycle
 - [ ] Stage 8 — Account lifecycle and recovery capabilities
 - [ ] Stage 9 — Test isolation, dependency reproducibility, and CI
@@ -234,18 +234,13 @@ Remaining work:
 
 **Status: Partial / concurrency hardening required**
 
-Login, OTP, and reset counters are generally read into Python, incremented, and
-saved as full model state. Backup-code consumption similarly verifies a hash,
-removes it from an in-memory list, and saves the account. Concurrent requests can
-race before either save becomes visible.
+Login, OTP, reset, and backup-code state changes now use conditional MongoDB
+updates with `$inc`, `$set`, and `$pull`. Accepted TOTP timesteps are also stored
+through a conditional update, preventing same-window replay.
 
 Remaining work:
 
-- Use conditional MongoDB updates with `$inc`, `$set`, and `$pull`.
-- Make lockout transitions and backup-code consumption single atomic operations.
 - Add real-Mongo concurrency tests; mongomock does not prove these semantics.
-- Track the last accepted TOTP timestep if same-window TOTP replay must be
-  prevented.
 
 ### Password-reset issuance controls
 
@@ -267,21 +262,14 @@ Remaining work:
 
 ### 2FA lifecycle
 
-**Status: Partial**
+**Status: Complete**
 
-TOTP and backup-code fundamentals are present. Important lifecycle gaps remain:
-
-- Customer/officer 2FA enrollment requires an access token but no password or
-  recent-authentication confirmation. A stolen access token can enroll an
-  attacker-controlled authenticator when 2FA is not already enabled.
-- `remember_me` is not carried through temporary 2FA tokens, so successful 2FA
-  always creates a non-remembered session.
-- Final 2FA verification does not recheck officer/admin active state.
-- Successful 2FA login does not consistently create active-session and
-  login-activity records.
-- Backup-code consumption is not atomic.
-- 2FA setup, disablement, and backup-code regeneration do not have complete
-  durable security-audit and notification coverage.
+Voluntary enrollment now requires password confirmation and expires after ten
+minutes. Temporary tokens preserve session type and transport, final verification
+rechecks live account/security state, and successful login records consistent
+session and activity metadata. Backup codes and TOTP timesteps are consumed
+atomically, while every 2FA lifecycle change produces an audit record and in-app
+security notification.
 
 ### Session and activity tracking
 
@@ -293,9 +281,6 @@ a replacement session record and logout deactivates a matching session.
 Coverage is inconsistent:
 
 - Email-verification token issuance does not create a session record.
-- Customer 2FA completion does not create a session record.
-- Officer/admin login and 2FA completion do not consistently create session or
-  login-activity records.
 - New token issuance invalidates refresh membership but does not consistently
   deactivate old `ActiveSession` rows.
 - `last_active` is not updated during normal authenticated use.
@@ -338,25 +323,24 @@ Required direction:
 
 ### Privileged administration and auditing
 
-**Status: Partial**
+**Status: Implemented**
 
-Soft deactivation, permissions, super-administrator checks, validation, and some
-optimistic timestamp checks exist. Audit logging covers officer creation/update
-and selected profile/auth actions.
+Administrator creation, profile/deactivation, privilege, and super-admin changes
+now create dedicated audit entries with allowlisted before/after state. Officer
+updates and deactivation have the same audit treatment. Password changes, 2FA
+changes, and session termination create account-security audit records and
+in-app notifications.
 
-Remaining gaps:
+Super administrators cannot demote or deactivate themselves. Mutations that can
+remove another active super administrator are serialized through a short MongoDB
+lease and verify that another active super administrator remains. Admin/officer
+updates use a conditional `_id` + `updated_at` MongoDB update, so a concurrent
+write returns `409 stale_update` rather than being overwritten.
 
-- Administrator creation, deactivation, super-admin promotion/demotion, and
-  permission changes do not have complete durable audit entries.
-- Officer deletion/deactivation lacks the same audit detail as officer update.
-- Password, 2FA, session-revocation, and security-recovery changes lack complete
-  audit events and user security notifications.
-- A super administrator can demote themselves, and the system does not guarantee
-  at least one active super administrator remains.
-- Optimistic concurrency checks are optional and use check-then-save rather than
-  a conditional atomic MongoDB update.
-- Officer deactivation does not itself coordinate application reassignment or
-  revoke all authentication state.
+Officer deactivation increments the security version and revokes every session.
+It fails with `409 active_officer_workload` while submitted, under-review,
+approved, or disbursed applications remain assigned; those applications must be
+reassigned through the existing loan workflow before deactivation.
 
 ### Field encryption and key lifecycle
 
@@ -529,7 +513,7 @@ Important missing regression tests:
 - Concurrent login/OTP/backup-code requests cannot bypass atomic limits.
 - 2FA preserves remember-me state and creates session/activity records.
 - Logout persistence failures cannot leave unnoticed active membership.
-- Last-super-admin protection and privileged audit events are enforced.
+- [x] Last-super-admin protection and privileged audit events are enforced.
 - Consent history remains complete when blockchain synchronization is disabled or
   fails.
 
@@ -606,24 +590,41 @@ audit/reset observer rather than imposing a second lockout duration.
 
 ### Stage 5 — 2FA lifecycle integrity
 
-- [ ] Require recent authentication/password confirmation for voluntary 2FA
-  enrollment.
-- [ ] Carry remember-me/session type through the temporary token.
-- [ ] Recheck active/security state during final 2FA verification.
-- [ ] Create consistent session/activity records after successful 2FA.
-- [ ] Consume backup codes atomically and decide same-window TOTP replay policy.
-- [ ] Audit and notify on every 2FA security change.
+- [x] ~~Require recent authentication/password confirmation for voluntary 2FA
+  enrollment.~~
+- [x] ~~Carry remember-me/session type through the temporary token.~~
+- [x] ~~Recheck active/security state during final 2FA verification.~~
+- [x] ~~Create consistent session/activity records after successful 2FA.~~
+- [x] ~~Consume backup codes atomically and decide same-window TOTP replay policy.~~
+- [x] ~~Audit and notify on every 2FA security change.~~
+
+Implementation note: voluntary setup requires the current password and expires
+after ten minutes. Administrator bootstrap remains bound to the password-verified
+login request. Accepted TOTP timesteps are stored atomically and cannot be reused,
+including through a second temporary login token. Successful 2FA logins now fill
+the same active-session and login-activity metadata as password-only logins.
+Setup, enablement, disablement, backup-code regeneration, and backup-code use
+produce audit records and in-app security notifications.
 
 ### Stage 6 — Privileged administration and audit coverage
 
-- [ ] Audit administrator creation, deactivation, privilege, and super-admin
-  changes with old/new state.
-- [ ] Audit officer deactivation, password/security changes, and session
-  termination.
-- [ ] Guarantee at least one active super administrator.
-- [ ] Prevent unsafe self-demotion or require a controlled second-admin workflow.
-- [ ] Make optimistic updates conditional and atomic.
-- [ ] Coordinate officer deactivation with assignment/workload handling.
+- [x] ~~Audit administrator creation, deactivation, privilege, and super-admin
+  changes with old/new state.~~
+- [x] ~~Audit officer deactivation, password/security changes, and session
+  termination.~~
+- [x] ~~Guarantee at least one active super administrator.~~
+- [x] ~~Prevent unsafe self-demotion or require a controlled second-admin
+  workflow.~~
+- [x] ~~Make optimistic updates conditional and atomic.~~
+- [x] ~~Coordinate officer deactivation with assignment/workload handling.~~
+
+Implementation note: privileged mutations use allowlisted audit snapshots and
+conditional MongoDB writes. Super-admin removal checks are serialized across
+workers, and self-demotion is rejected. Officer deactivation is fail-safe: active
+loan workload must first be reassigned, then deactivation rotates account
+security state and revokes all sessions. Password changes and user-initiated
+session termination reuse the security-event service for consistent audit and
+notification behavior.
 
 ### Stage 7 — Consent history and policy lifecycle
 
@@ -689,9 +690,10 @@ audit/reset observer rather than imposing a second lockout duration.
   events.~~
 - [x] ~~Enforce live account/security state for every protected endpoint.~~
 - [x] ~~Make logout/session revocation reliable and observable.~~
-- [ ] Deploy reviewed authentication throttle rates and atomic counters.
-- [ ] Complete 2FA lifecycle/session/audit behavior.
-- [ ] Complete privileged administration audit and last-super-admin protection.
+- [ ] Deploy reviewed authentication throttle rates.
+- [x] ~~Complete 2FA lifecycle/session/audit behavior.~~
+- [x] ~~Complete privileged administration audit and last-super-admin
+  protection.~~
 - [ ] Add authoritative local consent history and policy versioning.
 - [ ] Implement required customer lifecycle and security-recovery operations.
 - [ ] Make test startup isolated and CI reproducible.

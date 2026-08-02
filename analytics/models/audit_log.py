@@ -18,6 +18,20 @@ AUDIT_ACTIONS = [
     "user_login_failed",
     "user_logout",
     "user_registered",
+    "two_factor_setup_started",
+    "two_factor_enabled",
+    "two_factor_disabled",
+    "two_factor_backup_codes_regenerated",
+    "two_factor_backup_code_used",
+    "password_changed",
+    "password_reset_completed",
+    "sessions_terminated",
+    "admin_created",
+    "admin_updated",
+    "admin_deactivated",
+    "admin_permissions_changed",
+    "loan_officer_updated",
+    "loan_officer_deactivated",
     # Profile
     "profile_updated",
     # Documents
@@ -44,6 +58,7 @@ ACTION_GROUPS = {
     "login": ["user_login", "user_login_failed", "user_logout"],
     "create": [
         "user_registered",
+        "admin_created",
         "loan_submitted",
         "document_uploaded",
         "payment_recorded",
@@ -59,6 +74,17 @@ ACTION_GROUPS = {
         "penalty_waived",
         "consent_recorded",
         "admin_action",
+        "two_factor_setup_started",
+        "two_factor_enabled",
+        "two_factor_disabled",
+        "two_factor_backup_codes_regenerated",
+        "two_factor_backup_code_used",
+        "password_changed",
+        "password_reset_completed",
+        "sessions_terminated",
+        "admin_updated",
+        "admin_permissions_changed",
+        "loan_officer_updated",
     ],
 }
 
@@ -222,11 +248,23 @@ class AuditLog:
             elif group == "delete":
                 and_conditions.append(
                     {
-                        "action": "admin_action",
-                        "description": {
-                            "$regex": "(delete|deleted|deactivate|deactivated|remove|removed)",
-                            "$options": "i",
-                        },
+                        "$or": [
+                            {
+                                "action": {
+                                    "$in": [
+                                        "admin_deactivated",
+                                        "loan_officer_deactivated",
+                                    ]
+                                }
+                            },
+                            {
+                                "action": "admin_action",
+                                "description": {
+                                    "$regex": "(delete|deleted|deactivate|deactivated|remove|removed)",
+                                    "$options": "i",
+                                },
+                            },
+                        ]
                     }
                 )
 

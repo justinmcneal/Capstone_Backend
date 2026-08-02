@@ -3,7 +3,9 @@ import hashlib
 import io
 import logging
 import secrets
-from datetime import datetime, timezone
+import uuid
+from datetime import datetime, timedelta, timezone
+from hmac import compare_digest
 
 import pyotp
 import qrcode
@@ -25,6 +27,7 @@ class TwoFactorService:
     BACKUP_CODE_COUNT = 10
     BACKUP_CODE_LENGTH = 8
     ISSUER_NAME = "CapstoneApp"
+    SETUP_EXPIRY_MINUTES = 10
 
     @staticmethod
     def generate_secret() -> str:
@@ -68,7 +71,6 @@ class TwoFactorService:
         """
         if not secret or not code:
             return False
-
         try:
             totp = pyotp.TOTP(secret)
             # valid_window=1 allows for slight time drift (30 seconds before/after)
@@ -76,6 +78,56 @@ class TwoFactorService:
         except NON_FATAL_EXCEPTIONS as e:
             logger.error(f"TOTP verification error: {e!s}")
             return False
+
+    @staticmethod
+    def _matching_totp_timestep(secret: str, code: str) -> int | None:
+        """Return the accepted timestep, allowing one interval of clock drift."""
+        if not secret or not code:
+            return None
+        try:
+            totp = pyotp.TOTP(secret)
+            current_timestep = int(totp.timecode(datetime.now(timezone.utc)))
+            for offset in (-1, 0, 1):
+                timestep = current_timestep + offset
+                if timestep >= 0 and compare_digest(
+                    totp.generate_otp(timestep), str(code)
+                ):
+                    return timestep
+        except NON_FATAL_EXCEPTIONS as exc:
+            logger.error("TOTP timestep verification error: %s", exc)
+        return None
+
+    @staticmethod
+    def verify_and_consume_totp(customer, code: str) -> bool:
+        """Accept a valid TOTP timestep at most once for an account."""
+        timestep = TwoFactorService._matching_totp_timestep(
+            customer.two_factor_secret, code
+        )
+        if timestep is None:
+            return False
+
+        now = datetime.now(timezone.utc)
+        result = settings.MONGODB[customer.collection_name].update_one(
+            {
+                "_id": customer._id,
+                "two_factor_enabled": True,
+                "$or": [
+                    {"last_totp_timestep": {"$exists": False}},
+                    {"last_totp_timestep": None},
+                    {"last_totp_timestep": {"$lt": timestep}},
+                ],
+            },
+            {
+                "$set": {
+                    "last_totp_timestep": timestep,
+                    "updated_at": now,
+                }
+            },
+        )
+        if result.modified_count != 1:
+            return False
+        customer.last_totp_timestep = timestep
+        return True
 
     @staticmethod
     def generate_backup_codes(count: int | None = None) -> tuple[list[str], list[str]]:
@@ -137,22 +189,47 @@ class TwoFactorService:
         return (False, None)
 
     @staticmethod
-    def setup_2fa(customer) -> dict:
+    def setup_2fa(customer, password: str | None = None) -> dict | None:
         """
         Initialize 2FA setup for a customer.
 
         Returns:
             dict: Contains secret and provisioning_uri for QR code
         """
+        if password is not None and not customer.check_password(password):
+            return None
+
         secret = TwoFactorService.generate_secret()
+        setup_id = str(uuid.uuid4())
+        setup_expires_at = datetime.now(timezone.utc) + timedelta(
+            minutes=TwoFactorService.SETUP_EXPIRY_MINUTES
+        )
         provisioning_uri = TwoFactorService.get_provisioning_uri(
             email=customer.email, secret=secret
         )
         qr_code_data_url = TwoFactorService.generate_qr_code_data_url(provisioning_uri)
 
-        # Store secret temporarily (not enabled until verified)
+        # Store the pending secret without enabling 2FA. A setup identity and
+        # expiration prevent stale confirmation requests from enabling a newer setup.
         customer.two_factor_secret = secret
-        customer.save()
+        encrypted_secret = customer.to_dict()["two_factor_secret"]
+        result = settings.MONGODB[customer.collection_name].update_one(
+            {"_id": customer._id, "two_factor_enabled": {"$ne": True}},
+            {
+                "$set": {
+                    "two_factor_secret": encrypted_secret,
+                    "two_factor_setup_id": setup_id,
+                    "two_factor_setup_expires_at": setup_expires_at,
+                    "last_totp_timestep": None,
+                    "updated_at": datetime.now(timezone.utc),
+                }
+            },
+        )
+        if result.modified_count != 1:
+            return None
+        customer.two_factor_setup_id = setup_id
+        customer.two_factor_setup_expires_at = setup_expires_at
+        customer.last_totp_timestep = None
 
         logger.info(f"2FA setup initiated for {customer.email}")
 
@@ -208,16 +285,50 @@ class TwoFactorService:
         if not customer.two_factor_secret:
             return (False, None)
 
-        if not TwoFactorService.verify_totp(customer.two_factor_secret, code):
+        setup_expires_at = getattr(customer, "two_factor_setup_expires_at", None)
+        if setup_expires_at is None:
+            return (False, None)
+        if setup_expires_at.tzinfo is None:
+            setup_expires_at = setup_expires_at.replace(tzinfo=timezone.utc)
+        now = datetime.now(timezone.utc)
+        if setup_expires_at <= now:
+            return (False, None)
+
+        timestep = TwoFactorService._matching_totp_timestep(
+            customer.two_factor_secret, code
+        )
+        if timestep is None:
             return (False, None)
 
         # Generate backup codes
         plain_codes, hashed_codes = TwoFactorService.generate_backup_codes()
 
-        # Enable 2FA
+        result = settings.MONGODB[customer.collection_name].update_one(
+            {
+                "_id": customer._id,
+                "two_factor_enabled": {"$ne": True},
+                "two_factor_setup_id": customer.two_factor_setup_id,
+                "two_factor_setup_expires_at": {"$gte": now},
+            },
+            {
+                "$set": {
+                    "two_factor_enabled": True,
+                    "backup_codes": hashed_codes,
+                    "last_totp_timestep": timestep,
+                    "two_factor_setup_id": None,
+                    "two_factor_setup_expires_at": None,
+                    "updated_at": now,
+                }
+            },
+        )
+        if result.modified_count != 1:
+            return (False, None)
+
         customer.two_factor_enabled = True
         customer.backup_codes = hashed_codes
-        customer.save()
+        customer.last_totp_timestep = timestep
+        customer.two_factor_setup_id = None
+        customer.two_factor_setup_expires_at = None
 
         logger.info(f"2FA enabled for {customer.email}")
 
@@ -238,10 +349,28 @@ class TwoFactorService:
         if not customer.check_password(password):
             return False
 
+        result = settings.MONGODB[customer.collection_name].update_one(
+            {"_id": customer._id, "two_factor_enabled": True},
+            {
+                "$set": {
+                    "two_factor_enabled": False,
+                    "two_factor_secret": None,
+                    "backup_codes": [],
+                    "last_totp_timestep": None,
+                    "two_factor_setup_id": None,
+                    "two_factor_setup_expires_at": None,
+                    "updated_at": datetime.now(timezone.utc),
+                }
+            },
+        )
+        if result.modified_count != 1:
+            return False
         customer.two_factor_enabled = False
         customer.two_factor_secret = None
         customer.backup_codes = []
-        customer.save()
+        customer.last_totp_timestep = None
+        customer.two_factor_setup_id = None
+        customer.two_factor_setup_expires_at = None
 
         logger.info(f"2FA disabled for {customer.email}")
         return True

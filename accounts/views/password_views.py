@@ -11,7 +11,9 @@ from accounts.serializers.password_serializers import (
     VerifyResetOTPSerializer,
 )
 from accounts.services.password_service import PasswordService
+from accounts.services.security_event_service import SecurityEventService
 from accounts.utils.exception_types import NON_FATAL_EXCEPTIONS
+from accounts.utils.request_utils import get_client_ip
 from accounts.utils.response_helpers import APIResponseHelper
 from accounts.utils.throttles import (
     ForgotPasswordRateThrottle,
@@ -105,6 +107,15 @@ class ResetPasswordView(APIView):
         )
 
         if success:
+            user, user_type = PasswordService._find_user_by_email(email, role)
+            if user:
+                SecurityEventService.record(
+                    user=user,
+                    user_type=user_type,
+                    action="password_reset_completed",
+                    ip_address=get_client_ip(request),
+                    details={"sessions_revoked": True},
+                )
             logger.info(
                 f"Password reset successful for {email} from IP {request.META.get('REMOTE_ADDR')}"
             )
@@ -147,15 +158,13 @@ class ChangePasswordView(APIView):
             )
 
             if success:
-                # Clear must_change_password flag for loan officers
-                if (
-                    user_type == "loan_officer"
-                    and hasattr(user, "must_change_password")
-                    and user.must_change_password
-                ):
-                    user.must_change_password = False
-                    user.save()
-                    logger.info(f"Cleared must_change_password flag for {user.email}")
+                SecurityEventService.record(
+                    user=user,
+                    user_type=user_type,
+                    action="password_changed",
+                    ip_address=get_client_ip(request),
+                    details={"sessions_revoked": True},
+                )
 
                 logger.info(
                     f"Password changed for {user.email} ({user_type}) from IP {request.META.get('REMOTE_ADDR')}"

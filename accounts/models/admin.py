@@ -69,6 +69,9 @@ class Admin:
         self.two_factor_enabled = kwargs.get("two_factor_enabled", False)
         self.two_factor_secret = kwargs.get("two_factor_secret")
         self.backup_codes = kwargs.get("backup_codes", [])
+        self.last_totp_timestep = kwargs.get("last_totp_timestep")
+        self.two_factor_setup_id = kwargs.get("two_factor_setup_id")
+        self.two_factor_setup_expires_at = kwargs.get("two_factor_setup_expires_at")
 
         # Password Reset OTP
         self.password_reset_otp = kwargs.get("password_reset_otp")
@@ -145,6 +148,9 @@ class Admin:
             "two_factor_enabled": self.two_factor_enabled,
             "two_factor_secret": self.two_factor_secret,
             "backup_codes": self.backup_codes,
+            "last_totp_timestep": self.last_totp_timestep,
+            "two_factor_setup_id": self.two_factor_setup_id,
+            "two_factor_setup_expires_at": self.two_factor_setup_expires_at,
             "password_reset_otp": self.password_reset_otp,
             "password_reset_otp_expires": self.password_reset_otp_expires,
             "password_reset_attempt_count": self.password_reset_attempt_count,

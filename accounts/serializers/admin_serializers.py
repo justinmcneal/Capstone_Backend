@@ -67,6 +67,7 @@ class AdminUpdateSerializer(serializers.Serializer):
     first_name = serializers.CharField(max_length=50, required=False, allow_blank=False)
     last_name = serializers.CharField(max_length=50, required=False, allow_blank=False)
     active = serializers.BooleanField(required=False)
+    last_known_updated_at = serializers.CharField(required=False, write_only=True)
 
     def validate_first_name(self, value):
         is_valid, error_msg, normalized = validate_person_name(
@@ -85,7 +86,7 @@ class AdminUpdateSerializer(serializers.Serializer):
         return normalized
 
     def validate(self, data):
-        if not data:
+        if not {"first_name", "last_name", "active"}.intersection(data):
             raise serializers.ValidationError("At least one field must be provided")
         return data
 
@@ -102,6 +103,7 @@ class AdminPermissionsSerializer(serializers.Serializer):
         required=False,
         help_text="Set to true to grant all permissions, false to use specific permissions list",
     )
+    last_known_updated_at = serializers.CharField(required=False, write_only=True)
 
     def validate_permissions(self, value):
         """Validate that all permissions are valid"""

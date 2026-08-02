@@ -47,6 +47,14 @@ NOTIFICATION_TYPES = [
     'application_unassigned',
     'welcome',
     'password_reset',
+    'two_factor_setup_started',
+    'two_factor_enabled',
+    'two_factor_disabled',
+    'two_factor_backup_codes_regenerated',
+    'two_factor_backup_code_used',
+    'password_changed',
+    'password_reset_completed',
+    'sessions_terminated',
 ]
 
 

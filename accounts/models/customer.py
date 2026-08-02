@@ -69,6 +69,9 @@ class Customer:
         self.two_factor_enabled = kwargs.get("two_factor_enabled", False)
         self.two_factor_secret = kwargs.get("two_factor_secret")
         self.backup_codes = kwargs.get("backup_codes", [])
+        self.last_totp_timestep = kwargs.get("last_totp_timestep")
+        self.two_factor_setup_id = kwargs.get("two_factor_setup_id")
+        self.two_factor_setup_expires_at = kwargs.get("two_factor_setup_expires_at")
 
         # Notification preferences
         self.notification_preferences = kwargs.get(
@@ -139,6 +142,9 @@ class Customer:
             "two_factor_enabled": self.two_factor_enabled,
             "two_factor_secret": self.two_factor_secret,
             "backup_codes": self.backup_codes,
+            "last_totp_timestep": self.last_totp_timestep,
+            "two_factor_setup_id": self.two_factor_setup_id,
+            "two_factor_setup_expires_at": self.two_factor_setup_expires_at,
             "notification_preferences": self.notification_preferences,
         }
         if self._id:

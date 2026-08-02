@@ -1,11 +1,15 @@
 import logging
 import secrets
 import string
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 
 from bson import ObjectId
+from django.conf import settings
 from django.contrib.auth.signals import user_login_failed
 from django.utils.dateparse import parse_datetime
+from pymongo import ReturnDocument
+from pymongo.errors import DuplicateKeyError
 from rest_framework import status
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.views import APIView
@@ -13,6 +17,7 @@ from rest_framework.views import APIView
 from accounts.authentication import CustomJWTAuthentication
 from accounts.models import Admin, LoanOfficer
 from accounts.services.lockout_service import LockoutService
+from accounts.services.security_event_service import SecurityEventService
 from accounts.services.two_factor_service import TwoFactorService
 from accounts.utils.access_control import AccessControlMixin
 from accounts.utils.auth_cookies import (
@@ -38,10 +43,126 @@ from accounts.utils.validation_utils import (
     validate_phone_number,
 )
 from analytics.models import AuditLog
+from config.field_encryption import encrypt_fields
 
 logger = logging.getLogger("admin_auth")
 GENERIC_LOGIN_ERROR_MESSAGE = "Invalid email/username or password."
 DEFAULT_LOAN_OFFICER_DEPARTMENT = "Loans Department"
+ACTIVE_OFFICER_WORKLOAD_STATUSES = [
+    "submitted",
+    "under_review",
+    "approved",
+    "disbursed",
+]
+
+
+class PrivilegedMutationBusyError(RuntimeError):
+    """Raised when another super-admin invariant mutation is in progress."""
+
+
+@contextmanager
+def _super_admin_mutation_guard():
+    """Serialize mutations that can remove an active super administrator."""
+    collection = settings.MONGODB["account_security_guards"]
+    now = datetime.now(timezone.utc)
+    owner = secrets.token_urlsafe(24)
+    try:
+        guard = collection.find_one_and_update(
+            {
+                "_id": "active_super_admin",
+                "$or": [
+                    {"lease_until": {"$lte": now}},
+                    {"lease_until": {"$exists": False}},
+                ],
+            },
+            {
+                "$set": {
+                    "lease_owner": owner,
+                    "lease_until": now + timedelta(seconds=15),
+                }
+            },
+            upsert=True,
+            return_document=ReturnDocument.AFTER,
+        )
+    except DuplicateKeyError as exc:
+        raise PrivilegedMutationBusyError from exc
+
+    if not guard or guard.get("lease_owner") != owner:
+        raise PrivilegedMutationBusyError
+
+    try:
+        yield
+    finally:
+        collection.update_one(
+            {"_id": "active_super_admin", "lease_owner": owner},
+            {"$unset": {"lease_owner": ""}, "$set": {"lease_until": now}},
+        )
+
+
+def _account_state(account, fields):
+    """Return an audit-safe account snapshot containing only approved fields."""
+    return {field: getattr(account, field, None) for field in fields}
+
+
+def _audit_privileged_change(
+    *, request, actor, target, action, description, before, after
+):
+    changed_fields = [field for field in after if before.get(field) != after[field]]
+    AuditLog.log_action(
+        action=action,
+        user_id=actor.id,
+        user_type="super_admin" if actor.super_admin else "admin",
+        user_email=actor.email,
+        description=description,
+        resource_type=target.role,
+        resource_id=target.id,
+        details={
+            "target_email": target.email,
+            "before": before,
+            "after": after,
+            "changed_fields": changed_fields,
+        },
+        ip_address=get_client_ip(request),
+    )
+
+
+def _atomic_account_update(account, changes, *, increment_security_version=False):
+    """Conditionally update the exact version that was read."""
+    now = datetime.now(timezone.utc)
+    stored_changes = encrypt_fields(changes, account.encrypted_fields)
+    update = {"$set": {**stored_changes, "updated_at": now}}
+    if increment_security_version:
+        update["$inc"] = {"security_version": 1}
+    document = settings.MONGODB[account.collection_name].find_one_and_update(
+        {"_id": account._id, "updated_at": account.updated_at},
+        update,
+        return_document=ReturnDocument.AFTER,
+    )
+    return account.__class__.from_dict(document) if document else None
+
+
+def _active_officer_workload_count(officer_id):
+    return settings.MONGODB["loan_applications"].count_documents(
+        {
+            "assigned_officer": str(officer_id),
+            "status": {"$in": ACTIVE_OFFICER_WORKLOAD_STATUSES},
+        }
+    )
+
+
+def _officer_workload_conflict(officer_id):
+    workload_count = _active_officer_workload_count(officer_id)
+    if not workload_count:
+        return None
+    return error_response(
+        message=(
+            "Loan officer has active assigned applications. Reassign them before "
+            "deactivating this account."
+        ),
+        code="active_officer_workload",
+        errors={"active_assignment_count": workload_count},
+        status_code=status.HTTP_409_CONFLICT,
+    )
 
 
 def _log_admin_login_failure(request, login_identifier, reason, admin=None):
@@ -269,6 +390,17 @@ class AdminLoginView(APIView):
             # MFA / 2FA is mandatory for all administrator accounts.
             if not admin.two_factor_enabled:
                 setup_data = TwoFactorService.setup_2fa(admin)
+                if setup_data is None:
+                    return error_response(
+                        message="Unable to initialize 2FA setup",
+                        status_code=status.HTTP_409_CONFLICT,
+                    )
+                SecurityEventService.record(
+                    user=admin,
+                    user_type="admin",
+                    action="two_factor_setup_started",
+                    ip_address=get_client_ip(request),
+                )
                 temp_token = TokenUtils.generate_2fa_temp_token(
                     user_id=admin.id,
                     email=admin.email,
@@ -862,8 +994,15 @@ class LoanOfficerDetailView(AdminRequiredMixin, APIView):
             ) != _normalize_datetime(officer.updated_at):
                 return _build_stale_update_response(officer.updated_at)
 
-            # Track changes for audit log
-            changes = {}
+            audit_fields = [
+                "first_name",
+                "last_name",
+                "phone",
+                "department",
+                "active",
+            ]
+            before = _account_state(officer, audit_fields)
+            updates = {}
 
             # Update allowed fields
             allowed_fields = [
@@ -939,27 +1078,51 @@ class LoanOfficerDetailView(AdminRequiredMixin, APIView):
                         )
 
                     if old_value != new_value:
-                        changes[field] = {"old": old_value, "new": new_value}
-                    setattr(officer, field, new_value)
+                        updates[field] = new_value
 
-            officer.save()
+            is_deactivation = officer.active and updates.get("active") is False
+            if is_deactivation:
+                workload_conflict = _officer_workload_conflict(officer.id)
+                if workload_conflict:
+                    return workload_conflict
+
+            if updates:
+                updated_officer = _atomic_account_update(
+                    officer,
+                    updates,
+                    increment_security_version=is_deactivation,
+                )
+                if not updated_officer:
+                    current = LoanOfficer.find_one({"_id": officer._id})
+                    return _build_stale_update_response(
+                        current.updated_at if current else None
+                    )
+                officer = updated_officer
+
+            if is_deactivation:
+                TokenUtils.revoke_all_sessions(officer.id, "loan_officer")
 
             logger.info(
                 f"Loan officer updated: {officer.email} by admin {admin.username}"
             )
 
-            # Audit log
-            if changes:
-                AuditLog.log_action(
-                    action="admin_action",
-                    user_id=admin.id,
-                    user_type="admin" if not admin.super_admin else "super_admin",
-                    user_email=admin.email,
-                    description=f"Updated loan officer: {officer.email}",
-                    resource_type="loan_officer",
-                    resource_id=officer.id,
-                    details={"officer_email": officer.email, "changes": changes},
-                    ip_address=request.META.get("REMOTE_ADDR", ""),
+            if updates:
+                _audit_privileged_change(
+                    request=request,
+                    actor=admin,
+                    target=officer,
+                    action=(
+                        "loan_officer_deactivated"
+                        if is_deactivation
+                        else "loan_officer_updated"
+                    ),
+                    description=(
+                        f"Deactivated loan officer: {officer.email}"
+                        if is_deactivation
+                        else f"Updated loan officer: {officer.email}"
+                    ),
+                    before=before,
+                    after=_account_state(officer, audit_fields),
                 )
 
             return success_response(
@@ -997,13 +1160,34 @@ class LoanOfficerDetailView(AdminRequiredMixin, APIView):
                     status_code=status.HTTP_404_NOT_FOUND,
                 )
 
-            # Soft delete - just deactivate
-            officer.active = False
-            officer.security_version = int(
-                getattr(officer, "security_version", 1)
-            ) + 1
-            officer.save()
+            workload_conflict = _officer_workload_conflict(officer.id)
+            if workload_conflict:
+                return workload_conflict
+
+            admin = result
+            before = _account_state(officer, ["active"])
+            updated_officer = _atomic_account_update(
+                officer,
+                {"active": False},
+                increment_security_version=officer.active,
+            )
+            if not updated_officer:
+                current = LoanOfficer.find_one({"_id": officer._id})
+                return _build_stale_update_response(
+                    current.updated_at if current else None
+                )
+            officer = updated_officer
             TokenUtils.revoke_all_sessions(officer.id, "loan_officer")
+
+            _audit_privileged_change(
+                request=request,
+                actor=admin,
+                target=officer,
+                action="loan_officer_deactivated",
+                description=f"Deactivated loan officer: {officer.email}",
+                before=before,
+                after=_account_state(officer, ["active"]),
+            )
 
             logger.info(f"Loan officer deactivated: {officer.email}")
 
@@ -1282,6 +1466,19 @@ class AdminManagementView(SuperAdminRequiredMixin, APIView):
             new_admin.set_password(temp_password)
             new_admin.save()
 
+            _audit_privileged_change(
+                request=request,
+                actor=current_admin,
+                target=new_admin,
+                action="admin_created",
+                description=f"Created admin: {new_admin.username}",
+                before={},
+                after=_account_state(
+                    new_admin,
+                    ["username", "email", "active", "super_admin", "permissions"],
+                ),
+            )
+
             logger.info(
                 f"Admin created: {username} by super admin {current_admin.username}"
             )
@@ -1401,16 +1598,6 @@ class AdminDetailView(SuperAdminRequiredMixin, APIView):
             ) != _normalize_datetime(target_admin.updated_at):
                 return _build_stale_update_response(target_admin.updated_at)
 
-            # Prevent self-deactivation
-            if (
-                str(current_admin.id) == str(target_admin.id)
-                and request.data.get("active") is False
-            ):
-                return error_response(
-                    message="Cannot deactivate your own account",
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                )
-
             serializer = AdminUpdateSerializer(data=request.data)
             if not serializer.is_valid():
                 return error_response(
@@ -1420,21 +1607,81 @@ class AdminDetailView(SuperAdminRequiredMixin, APIView):
                 )
 
             data = serializer.validated_data
+            data.pop("last_known_updated_at", None)
+            if (
+                str(current_admin.id) == str(target_admin.id)
+                and data.get("active") is False
+            ):
+                return error_response(
+                    message="Cannot deactivate your own account",
+                    code="self_deactivation_not_allowed",
+                    status_code=status.HTTP_409_CONFLICT,
+                )
+            audit_fields = ["first_name", "last_name", "active", "super_admin"]
+            before = _account_state(target_admin, audit_fields)
+            changes = {
+                field: value
+                for field, value in data.items()
+                if getattr(target_admin, field) != value
+            }
+            is_deactivation = target_admin.active and changes.get("active") is False
 
-            if "first_name" in data:
-                target_admin.first_name = data["first_name"]
-            if "last_name" in data:
-                target_admin.last_name = data["last_name"]
-            if "active" in data:
-                if target_admin.active and not data["active"]:
-                    target_admin.security_version = int(
-                        getattr(target_admin, "security_version", 1)
-                    ) + 1
-                target_admin.active = data["active"]
+            def update_target():
+                return _atomic_account_update(
+                    target_admin,
+                    changes,
+                    increment_security_version=is_deactivation,
+                )
 
-            target_admin.save()
+            if is_deactivation and target_admin.super_admin:
+                try:
+                    with _super_admin_mutation_guard():
+                        remaining = settings.MONGODB[Admin.collection_name].count_documents(
+                            {
+                                "_id": {"$ne": target_admin._id},
+                                "active": True,
+                                "super_admin": True,
+                            }
+                        )
+                        if remaining == 0:
+                            return error_response(
+                                message="Cannot deactivate the last active super administrator",
+                                code="last_active_super_admin",
+                                status_code=status.HTTP_409_CONFLICT,
+                            )
+                        updated_admin = update_target()
+                except PrivilegedMutationBusyError:
+                    return error_response(
+                        message="Another administrator security update is in progress. Try again.",
+                        code="privileged_mutation_busy",
+                        status_code=status.HTTP_409_CONFLICT,
+                    )
+            else:
+                updated_admin = update_target() if changes else target_admin
+
+            if not updated_admin:
+                current = Admin.find_one({"_id": target_admin._id})
+                return _build_stale_update_response(
+                    current.updated_at if current else None
+                )
+            target_admin = updated_admin
             if not target_admin.active:
                 TokenUtils.revoke_all_sessions(target_admin.id, "admin")
+
+            if changes:
+                _audit_privileged_change(
+                    request=request,
+                    actor=current_admin,
+                    target=target_admin,
+                    action=("admin_deactivated" if is_deactivation else "admin_updated"),
+                    description=(
+                        f"Deactivated admin: {target_admin.username}"
+                        if is_deactivation
+                        else f"Updated admin: {target_admin.username}"
+                    ),
+                    before=before,
+                    after=_account_state(target_admin, audit_fields),
+                )
 
             logger.info(
                 f"Admin updated: {target_admin.username} by {current_admin.username}"
@@ -1485,12 +1732,52 @@ class AdminDetailView(SuperAdminRequiredMixin, APIView):
                     status_code=status.HTTP_400_BAD_REQUEST,
                 )
 
-            target_admin.active = False
-            target_admin.security_version = int(
-                getattr(target_admin, "security_version", 1)
-            ) + 1
-            target_admin.save()
+            before = _account_state(target_admin, ["active", "super_admin"])
+            try:
+                with _super_admin_mutation_guard():
+                    if target_admin.super_admin:
+                        remaining = settings.MONGODB[Admin.collection_name].count_documents(
+                            {
+                                "_id": {"$ne": target_admin._id},
+                                "active": True,
+                                "super_admin": True,
+                            }
+                        )
+                        if remaining == 0:
+                            return error_response(
+                                message="Cannot deactivate the last active super administrator",
+                                code="last_active_super_admin",
+                                status_code=status.HTTP_409_CONFLICT,
+                            )
+                    updated_admin = _atomic_account_update(
+                        target_admin,
+                        {"active": False},
+                        increment_security_version=target_admin.active,
+                    )
+            except PrivilegedMutationBusyError:
+                return error_response(
+                    message="Another administrator security update is in progress. Try again.",
+                    code="privileged_mutation_busy",
+                    status_code=status.HTTP_409_CONFLICT,
+                )
+
+            if not updated_admin:
+                current = Admin.find_one({"_id": target_admin._id})
+                return _build_stale_update_response(
+                    current.updated_at if current else None
+                )
+            target_admin = updated_admin
             TokenUtils.revoke_all_sessions(target_admin.id, "admin")
+
+            _audit_privileged_change(
+                request=request,
+                actor=current_admin,
+                target=target_admin,
+                action="admin_deactivated",
+                description=f"Deactivated admin: {target_admin.username}",
+                before=before,
+                after=_account_state(target_admin, ["active", "super_admin"]),
+            )
 
             logger.info(
                 f"Admin deactivated: {target_admin.username} by {current_admin.username}"
@@ -1533,6 +1820,16 @@ class AdminPermissionsView(SuperAdminRequiredMixin, APIView):
                     message="Admin not found", status_code=status.HTTP_404_NOT_FOUND
                 )
 
+            client_updated_at, version_error = _validate_last_known_updated_at(
+                request.data.get("last_known_updated_at")
+            )
+            if version_error:
+                return version_error
+            if client_updated_at is not None and _normalize_datetime(
+                client_updated_at
+            ) != _normalize_datetime(target_admin.updated_at):
+                return _build_stale_update_response(target_admin.updated_at)
+
             serializer = AdminPermissionsSerializer(data=request.data)
             if not serializer.is_valid():
                 return error_response(
@@ -1542,18 +1839,88 @@ class AdminPermissionsView(SuperAdminRequiredMixin, APIView):
                 )
 
             data = serializer.validated_data
+            data.pop("last_known_updated_at", None)
+            requested_super_admin = data.get(
+                "super_admin", target_admin.super_admin
+            )
+            is_demotion = target_admin.super_admin and not requested_super_admin
 
-            # Update super_admin status
-            if "super_admin" in data:
-                target_admin.super_admin = data["super_admin"]
-                if data["super_admin"]:
-                    target_admin.permissions = ["*"]
+            if is_demotion and str(current_admin.id) == str(target_admin.id):
+                return error_response(
+                    message=(
+                        "Cannot remove your own super administrator privileges. "
+                        "A different super administrator must make this change."
+                    ),
+                    code="self_demotion_not_allowed",
+                    status_code=status.HTTP_409_CONFLICT,
+                )
 
-            # Update specific permissions (only if not super_admin)
-            if "permissions" in data and not target_admin.super_admin:
-                target_admin.permissions = data["permissions"]
+            changes = {}
+            if requested_super_admin != target_admin.super_admin:
+                changes["super_admin"] = requested_super_admin
+            if requested_super_admin:
+                if target_admin.permissions != ["*"]:
+                    changes["permissions"] = ["*"]
+            else:
+                requested_permissions = data.get(
+                    "permissions", [] if is_demotion else target_admin.permissions
+                )
+                if requested_permissions != target_admin.permissions:
+                    changes["permissions"] = requested_permissions
 
-            target_admin.save()
+            before = _account_state(target_admin, ["super_admin", "permissions"])
+
+            try:
+                if is_demotion:
+                    with _super_admin_mutation_guard():
+                        remaining = settings.MONGODB[Admin.collection_name].count_documents(
+                            {
+                                "_id": {"$ne": target_admin._id},
+                                "active": True,
+                                "super_admin": True,
+                            }
+                        )
+                        if target_admin.active and remaining == 0:
+                            return error_response(
+                                message="Cannot demote the last active super administrator",
+                                code="last_active_super_admin",
+                                status_code=status.HTTP_409_CONFLICT,
+                            )
+                        updated_admin = _atomic_account_update(target_admin, changes)
+                else:
+                    updated_admin = (
+                        _atomic_account_update(target_admin, changes)
+                        if changes
+                        else target_admin
+                    )
+            except PrivilegedMutationBusyError:
+                return error_response(
+                    message="Another administrator security update is in progress. Try again.",
+                    code="privileged_mutation_busy",
+                    status_code=status.HTTP_409_CONFLICT,
+                )
+
+            if not updated_admin:
+                current = Admin.find_one({"_id": target_admin._id})
+                return _build_stale_update_response(
+                    current.updated_at if current else None
+                )
+            target_admin = updated_admin
+
+            if changes:
+                _audit_privileged_change(
+                    request=request,
+                    actor=current_admin,
+                    target=target_admin,
+                    action="admin_permissions_changed",
+                    description=(
+                        f"Updated permissions for admin: {target_admin.username}"
+                    ),
+                    before=before,
+                    after=_account_state(
+                        target_admin, ["super_admin", "permissions"]
+                    ),
+                )
 
             logger.info(
                 f"Permissions updated for {target_admin.username} by {current_admin.username}"

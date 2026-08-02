@@ -5,7 +5,9 @@ from rest_framework.views import APIView
 
 from accounts.authentication import CustomJWTAuthentication
 from accounts.models.activity import ActiveSession, LoginActivity
+from accounts.services.security_event_service import SecurityEventService
 from accounts.utils.exception_types import NON_FATAL_EXCEPTIONS
+from accounts.utils.request_utils import get_client_ip
 from accounts.utils.response_helpers import APIResponseHelper
 
 logger = logging.getLogger("authentication")
@@ -14,6 +16,20 @@ logger = logging.getLogger("authentication")
 class ActiveSessionsView(APIView):
     authentication_classes = (CustomJWTAuthentication,)
     permission_classes = (IsAuthenticated,)
+
+    @staticmethod
+    def _record_termination(request, details):
+        from accounts.utils.user_detection import get_authenticated_user
+
+        user, user_type = get_authenticated_user(request)
+        if user:
+            SecurityEventService.record(
+                user=user,
+                user_type=user_type,
+                action="sessions_terminated",
+                ip_address=get_client_ip(request),
+                details=details,
+            )
 
     def get(self, request):
         user_id = (
@@ -48,6 +64,10 @@ class ActiveSessionsView(APIView):
                 user_id,
                 request.user.role,
                 except_session_id=current_session_id if keep_current else None,
+            )
+            self._record_termination(
+                request,
+                {"scope": "other_sessions" if keep_current else "all_sessions"},
             )
             return APIResponseHelper.success_response(
                 message=(
@@ -92,6 +112,11 @@ class ActiveSessionsView(APIView):
                 ActiveSession.update_many(
                     {"_id": session._id}, {"$set": {"is_active": False}}
                 )
+
+            self._record_termination(
+                request,
+                {"scope": "single_session", "session_id": str(session_id)},
+            )
 
             return APIResponseHelper.success_response(
                 message="Session terminated successfully"
