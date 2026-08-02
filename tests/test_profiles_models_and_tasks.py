@@ -5,6 +5,7 @@ field encryption, and risk scoring Celery tasks.
 from bson import ObjectId
 from django.conf import settings
 
+from accounts.services.consent_service import ConsentService
 from profiles.models import AlternativeData, BusinessProfile, CustomerProfile
 from profiles.serializers import BusinessProfileSerializer
 from profiles.tasks import calculate_risk_score_task
@@ -132,3 +133,37 @@ def test_calculate_risk_score_task():
     assert reloaded.risk_score is not None
     assert reloaded.risk_category in ["low", "medium", "high"]
     assert reloaded.score_calculated_at is not None
+
+
+def test_risk_score_task_runs_with_or_without_ai_consent():
+    for ai_consent in (False, True):
+        cust_id = str(ObjectId())
+        ConsentService.record_consent(
+            cust_id,
+            user_type="customer",
+            data_consent=True,
+            ai_consent=ai_consent,
+        )
+        AlternativeData(
+            customer_id=cust_id,
+            education_level="college_graduate",
+            employment_status="employed",
+            housing_status="owned",
+            years_at_current_address=5,
+            household_income=40000,
+            has_existing_loans=False,
+            has_bank_account=True,
+            bank_account_duration=3,
+            has_ewallet=True,
+            ewallet_usage="daily",
+            pays_utilities=True,
+            utility_payment_history="on_time",
+        ).save()
+
+        result = calculate_risk_score_task(cust_id)
+        reloaded = AlternativeData.find_by_customer(cust_id)
+
+        assert result["scored"] is True
+        assert reloaded.risk_score is not None
+        assert reloaded.risk_category in ["low", "medium", "high"]
+        assert reloaded.score_calculated_at is not None

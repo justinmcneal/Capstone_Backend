@@ -15,11 +15,13 @@ Coverage:
 from unittest.mock import MagicMock
 
 from bson import ObjectId
+from django.core.cache import cache
 from django.urls import resolve
 from rest_framework.test import APIRequestFactory, force_authenticate
 
 from accounts.authentication import AuthenticatedUser
 from accounts.models import Admin, Customer, LoanOfficer
+from accounts.utils.throttles import ProfileRateThrottle
 from profiles.models import AlternativeData, BusinessProfile, CustomerProfile
 from profiles.views.profile_views import (
     AlternativeDataView,
@@ -111,9 +113,55 @@ def _put(path, payload, user):
     return request
 
 
+def test_all_profile_views_use_profile_rate_throttle():
+    profile_views = (
+        CustomerProfileView,
+        BusinessProfileView,
+        AlternativeDataView,
+        ProfileSummaryView,
+        NotificationPreferencesView,
+        OfficerCustomerProfilesListView,
+        OfficerProfileView,
+    )
+
+    assert all(
+        ProfileRateThrottle in view.throttle_classes for view in profile_views
+    )
+
+
 # ── Customer profile ───────────────────────────────────────────────
 
 class TestCustomerProfileView:
+    def test_profile_rate_throttle_returns_429(self, monkeypatch):
+        customer = _create_customer()
+        profile = CustomerProfile(customer_id=str(customer.id), gender="male")
+
+        monkeypatch.setattr(
+            CustomerProfile,
+            "get_or_create",
+            staticmethod(lambda customer_id: profile),
+            raising=False,
+        )
+        monkeypatch.setattr(
+            CustomerProfileView, "authentication_classes", [], raising=False
+        )
+        monkeypatch.setattr(
+            CustomerProfileView, "permission_classes", [], raising=False
+        )
+        monkeypatch.setattr(ProfileRateThrottle, "rate", "2/hour")
+        cache.clear()
+
+        try:
+            view = CustomerProfileView.as_view()
+            responses = [
+                view(_get("/api/profile/", _auth_customer(customer)))
+                for _ in range(3)
+            ]
+        finally:
+            cache.clear()
+
+        assert [response.status_code for response in responses] == [200, 200, 429]
+
     def test_get_returns_profile_for_customer(self, monkeypatch):
         customer = _create_customer()
         profile = CustomerProfile(
