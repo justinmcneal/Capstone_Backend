@@ -160,7 +160,7 @@ class TestLoanProductListView:
         )
 
         response = LoanProductListView.as_view()(request)
-        assert response.status_code == 200
+        assert response.status_code == 200, response.data
         assert len(response.data["data"]["products"]) == 1
         assert response.data["data"]["products"][0]["name"] == "Micro Loan"
 
@@ -554,9 +554,14 @@ class TestDisburseView:
         monkeypatch.setattr(settings, "MONGODB", db, raising=False)
 
         officer = _create_officer()
+        product = LoanProduct(
+            name="Manual Disbursement Product",
+            code=f"MDP-{ObjectId()}",
+            interest_rate=0.01,
+        ).save()
         app = LoanApplication(
             customer_id=str(ObjectId()),
-            product_id=str(ObjectId()),
+            product_id=product.id,
             requested_amount=20000,
             term_months=12,
             purpose="Working capital",
@@ -577,7 +582,7 @@ class TestDisburseView:
             raising=False,
         )
         monkeypatch.setattr(
-            "loans.blockchain.tasks.sync_disbursement_to_chain.delay",
+            "loans.blockchain.sync.sync_disbursement",
             lambda *args, **kwargs: None,
             raising=False,
         )
@@ -587,12 +592,13 @@ class TestDisburseView:
             raising=False,
         )
 
-        payload = {"method": "bank_transfer"}
+        payload = {"method": "cash"}
         request = _post(
             f"/api/loans/officer/applications/{app.id}/disburse/",
             payload,
             _auth_officer(officer),
         )
+        request.META["HTTP_IDEMPOTENCY_KEY"] = "disbursement-api-test-1"
         monkeypatch.setattr(
             DisburseView, "authentication_classes", [], raising=False
         )
@@ -601,5 +607,6 @@ class TestDisburseView:
         )
 
         response = DisburseView.as_view()(request, application_id=app.id)
-        assert response.status_code == 200
+        assert response.status_code == 200, response.data
         assert response.data["data"]["status"] == "disbursed"
+        assert response.data["data"]["disbursement_status"] == "executed"

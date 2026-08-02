@@ -11,6 +11,7 @@ Tests:
 from unittest.mock import MagicMock, patch
 
 import pytest
+from web3 import Web3
 
 from profiles.models.profile_models import CustomerProfile
 from profiles.serializers.profile_serializers import CustomerProfileSerializer
@@ -179,7 +180,7 @@ class TestSendEthTransfer:
         mock_w3.eth.get_transaction_count.return_value = 5
         mock_w3.eth.gas_price = 20000000000
 
-        mock_tx_hash = b"\x01" * 32
+        mock_tx_hash = bytes(Web3.keccak(b"signed_tx"))
         mock_w3.eth.send_raw_transaction.return_value = mock_tx_hash
 
         # Receipt accessed via dict-style keys

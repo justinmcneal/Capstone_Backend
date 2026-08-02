@@ -2,10 +2,11 @@
 LoanPayment Model - Records customer payments.
 """
 
+import hashlib
+
 from django.conf import settings
 
 from config.field_encryption import decrypt_fields, encrypt_fields
-
 from loans.utils.time import utcnow
 
 
@@ -14,6 +15,13 @@ def get_db():
 
 
 PAYMENT_METHODS = ["cash", "gcash", "bank_transfer", "check", "wallet"]
+PAYMENT_STATUSES = [
+    "pending_verification",
+    "posting",
+    "posted",
+    "failed",
+    "reversed",
+]
 
 
 class LoanPayment:
@@ -35,7 +43,14 @@ class LoanPayment:
         self.amount = kwargs.get("amount", 0)
         self.payment_method = kwargs.get("payment_method", "cash")
         self.reference = kwargs.get("reference", "")
+        self.reference_fingerprint = kwargs.get("reference_fingerprint", "")
         self.notes = kwargs.get("notes", "")
+        # Existing records predate explicit status and are treated as posted.
+        self.payment_status = kwargs.get("payment_status", "posted")
+        self.idempotency_key = kwargs.get("idempotency_key", "")
+        self.verification_source = kwargs.get("verification_source", "")
+        self.verified_at = kwargs.get("verified_at")
+        self.failure_reason = kwargs.get("failure_reason", "")
 
         # Recording info
         self.recorded_by = kwargs.get("recorded_by")  # Officer ID
@@ -68,7 +83,13 @@ class LoanPayment:
             "amount": self.amount,
             "payment_method": self.payment_method,
             "reference": self.reference,
+            "reference_fingerprint": self.reference_fingerprint,
             "notes": self.notes,
+            "payment_status": self.payment_status,
+            "idempotency_key": self.idempotency_key,
+            "verification_source": self.verification_source,
+            "verified_at": self.verified_at,
+            "failure_reason": self.failure_reason,
             "recorded_by": self.recorded_by,
             "recorded_at": self.recorded_at,
             "blockchain_tx_hash": self.blockchain_tx_hash,
@@ -98,11 +119,31 @@ class LoanPayment:
         data = self.to_dict()
 
         if self._id:
+            # MongoDB's _id field is immutable and cannot be included in $set.
+            data.pop("_id", None)
             collection.update_one({"_id": self._id}, {"$set": data})
         else:
             result = collection.insert_one(data)
             self._id = result.inserted_id
         return self
+
+    @staticmethod
+    def fingerprint_reference(payment_method, reference):
+        """Return a non-reversible, normalized external-reference fingerprint."""
+        normalized = f"{payment_method}:{str(reference).strip().lower()}"
+        return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+
+    def mark_posted(self, verification_source):
+        self.payment_status = "posted"
+        self.verification_source = verification_source
+        self.verified_at = utcnow()
+        self.failure_reason = ""
+        return self.save()
+
+    def mark_failed(self, reason):
+        self.payment_status = "failed"
+        self.failure_reason = str(reason)[:500]
+        return self.save()
 
     @classmethod
     def find_by_loan(cls, loan_id):
@@ -121,12 +162,14 @@ class LoanPayment:
         return [cls.from_dict(doc) for doc in docs]
 
     @classmethod
-    def find(cls, query, sort=None, limit=None):
+    def find(cls, query, sort=None, limit=None, skip=None):
         db = get_db()
         collection = db[cls.collection_name]
         cursor = collection.find(query)
         if sort:
             cursor = cursor.sort(sort)
+        if skip:
+            cursor = cursor.skip(skip)
         if limit:
             cursor = cursor.limit(limit)
         return [cls.from_dict(doc) for doc in cursor]
@@ -145,10 +188,36 @@ class LoanPayment:
         return collection.count_documents(query)
 
     @classmethod
+    def summarize(cls, query):
+        """Return count and amount across the complete matching result set."""
+        db = get_db()
+        collection = db[cls.collection_name]
+        rows = list(
+            collection.aggregate(
+                [
+                    {"$match": query},
+                    {
+                        "$group": {
+                            "_id": None,
+                            "count": {"$sum": 1},
+                            "total_amount": {"$sum": "$amount"},
+                        }
+                    },
+                ]
+            )
+        )
+        if not rows:
+            return {"count": 0, "total_amount": 0}
+        return {
+            "count": rows[0].get("count", 0),
+            "total_amount": rows[0].get("total_amount", 0),
+        }
+
+    @classmethod
     def get_total_paid(cls, loan_id):
         """Get total amount paid for a loan"""
         payments = cls.find_by_loan(loan_id)
-        return sum(p.amount for p in payments)
+        return sum(p.amount for p in payments if p.payment_status == "posted")
 
     @classmethod
     def create_indexes(cls):
@@ -158,6 +227,24 @@ class LoanPayment:
         collection.create_index("schedule_id")
         collection.create_index("customer_id")
         collection.create_index("recorded_at")
+        collection.create_index("payment_status")
+        collection.create_index(
+            "idempotency_key",
+            unique=True,
+            partialFilterExpression={"idempotency_key": {"$type": "string", "$gt": ""}},
+        )
+        collection.create_index(
+            "reference_fingerprint",
+            unique=True,
+            partialFilterExpression={
+                "reference_fingerprint": {"$type": "string", "$gt": ""}
+            },
+        )
+        collection.create_index(
+            "eth_tx_hash",
+            unique=True,
+            partialFilterExpression={"eth_tx_hash": {"$type": "string", "$gt": ""}},
+        )
 
     @classmethod
     def set_sync_result(cls, payment_id, tx_hash):

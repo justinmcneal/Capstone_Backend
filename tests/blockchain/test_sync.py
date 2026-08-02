@@ -49,11 +49,11 @@ class TestSyncApplication:
         # Should return immediately without error
         sync_application("fake_id")
 
-    @patch("loans.blockchain.sync._run_in_thread")
-    def test_calls_thread_when_enabled(self, mock_thread, blockchain_settings):
-        from loans.blockchain.sync import sync_application, _sync_application_impl
+    @patch("loans.blockchain.tasks.sync_application_to_chain.delay")
+    def test_enqueues_task_when_enabled(self, mock_delay, blockchain_settings):
+        from loans.blockchain.sync import sync_application
         sync_application("loan123")
-        mock_thread.assert_called_once_with(_sync_application_impl, "loan123")
+        mock_delay.assert_called_once_with("loan123")
 
     @patch("loans.blockchain.services.application_service.submit_application_onchain")
     @patch("loans.blockchain.services.application_service.create_application_onchain")
@@ -120,11 +120,11 @@ class TestSyncApproval:
         from loans.blockchain.sync import sync_approval
         sync_approval("fake_id")
 
-    @patch("loans.blockchain.sync._run_in_thread")
-    def test_calls_thread_when_enabled(self, mock_thread, blockchain_settings):
-        from loans.blockchain.sync import sync_approval, _sync_approval_impl
+    @patch("loans.blockchain.tasks.sync_approval_to_chain.delay")
+    def test_enqueues_task_when_enabled(self, mock_delay, blockchain_settings):
+        from loans.blockchain.sync import sync_approval
         sync_approval("loan123")
-        mock_thread.assert_called_once_with(_sync_approval_impl, "loan123")
+        mock_delay.assert_called_once_with("loan123")
 
     @patch("loans.blockchain.services.approval_service.approve_loan_onchain")
     @patch("loans.blockchain.services.review_service.assign_officer_onchain")
@@ -231,11 +231,11 @@ class TestSyncRejection:
         from loans.blockchain.sync import sync_rejection
         sync_rejection("fake_id")
 
-    @patch("loans.blockchain.sync._run_in_thread")
-    def test_calls_thread_when_enabled(self, mock_thread, blockchain_settings):
-        from loans.blockchain.sync import sync_rejection, _sync_rejection_impl
+    @patch("loans.blockchain.tasks.sync_rejection_to_chain.delay")
+    def test_enqueues_task_when_enabled(self, mock_delay, blockchain_settings):
+        from loans.blockchain.sync import sync_rejection
         sync_rejection("loan123")
-        mock_thread.assert_called_once_with(_sync_rejection_impl, "loan123")
+        mock_delay.assert_called_once_with("loan123")
 
     @patch("loans.blockchain.client.send_transaction")
     @patch("loans.blockchain.client.get_contract")
@@ -423,11 +423,11 @@ class TestSyncOverdue:
         from loans.blockchain.sync import sync_overdue
         sync_overdue("fake_id", 1)
 
-    @patch("loans.blockchain.sync._run_in_thread")
-    def test_calls_thread_when_enabled(self, mock_thread, blockchain_settings):
-        from loans.blockchain.sync import sync_overdue, _sync_overdue_impl
+    @patch("loans.blockchain.tasks.sync_overdue_to_chain.delay")
+    def test_enqueues_task_when_enabled(self, mock_delay, blockchain_settings):
+        from loans.blockchain.sync import sync_overdue
         sync_overdue("loan123", 1)
-        mock_thread.assert_called_once_with(_sync_overdue_impl, "loan123", 1)
+        mock_delay.assert_called_once_with("loan123", 1)
 
     @patch("loans.blockchain.services.repayment_service.mark_overdue_onchain")
     @patch("loans.blockchain.models.BlockchainTransaction.create_pending")
@@ -454,11 +454,11 @@ class TestSyncPenalty:
         from loans.blockchain.sync import sync_penalty
         sync_penalty("fake_id", 1, 100, "apply")
 
-    @patch("loans.blockchain.sync._run_in_thread")
-    def test_calls_thread_when_enabled(self, mock_thread, blockchain_settings):
-        from loans.blockchain.sync import sync_penalty, _sync_penalty_impl
+    @patch("loans.blockchain.tasks.sync_penalty_to_chain.delay")
+    def test_enqueues_task_when_enabled(self, mock_delay, blockchain_settings):
+        from loans.blockchain.sync import sync_penalty
         sync_penalty("loan123", 2, 250, "apply", "late")
-        mock_thread.assert_called_once_with(_sync_penalty_impl, "loan123", 2, 250, "apply", "late")
+        mock_delay.assert_called_once_with("loan123", 2, 250, "apply", "late")
 
     @patch("loans.blockchain.services.audit_service.log_penalty_onchain")
     @patch("loans.blockchain.models.BlockchainTransaction.create_pending")
@@ -485,12 +485,11 @@ class TestSyncConsent:
         from loans.blockchain.sync import sync_consent
         sync_consent("user1", "customer", True, False, "1.0", "2026-05-26T00:00:00Z")
 
-    @patch("loans.blockchain.sync._run_in_thread")
-    def test_calls_thread_when_enabled(self, mock_thread, blockchain_settings):
-        from loans.blockchain.sync import sync_consent, _sync_consent_impl
+    @patch("loans.blockchain.tasks.sync_consent_to_chain.delay")
+    def test_enqueues_task_when_enabled(self, mock_delay, blockchain_settings):
+        from loans.blockchain.sync import sync_consent
         sync_consent("user1", "customer", True, False, "1.0", "2026-05-26T00:00:00Z")
-        mock_thread.assert_called_once_with(
-            _sync_consent_impl,
+        mock_delay.assert_called_once_with(
             "user1",
             "customer",
             True,
@@ -524,30 +523,20 @@ class TestSyncConsent:
 
 
 # ---------------------------------------------------------------------------
-# Thread behavior
+# Durable dispatch behavior
 # ---------------------------------------------------------------------------
 
-class TestThreading:
-    @patch("loans.blockchain.sync._sync_application_impl")
-    def test_run_in_thread_fires(self, mock_impl, blockchain_settings):
+class TestDurableDispatch:
+    @patch("loans.blockchain.tasks.sync_application_to_chain.delay")
+    def test_dispatches_without_running_inline(self, mock_delay, blockchain_settings):
         from loans.blockchain.sync import sync_application
 
-        # Call sync_application which should spawn a thread
         sync_application("loan123")
+        mock_delay.assert_called_once_with("loan123")
 
-        # Give the thread a moment to run
-        import time
-        time.sleep(0.1)
-
-        mock_impl.assert_called_once_with("loan123")
-
-    @patch("loans.blockchain.sync._sync_application_impl", side_effect=RuntimeError("boom"))
-    def test_thread_error_does_not_propagate(self, mock_impl, blockchain_settings):
+    @patch("loans.blockchain.tasks.sync_application_to_chain.delay", side_effect=RuntimeError("broker down"))
+    def test_broker_error_propagates_for_reconciliation_visibility(self, mock_delay, blockchain_settings):
         from loans.blockchain.sync import sync_application
 
-        # Should not raise even though the impl raises
-        sync_application("loan123")
-
-        import time
-        time.sleep(0.1)
-        # No exception = success
+        with pytest.raises(RuntimeError, match="broker down"):
+            sync_application("loan123")

@@ -1,6 +1,6 @@
 from rest_framework.views import APIView
 from rest_framework.permissions import IsAuthenticated
-from datetime import datetime
+from bson import ObjectId
 
 from accounts.authentication import CustomJWTAuthentication
 from accounts.utils.response_helpers import success_response, error_response

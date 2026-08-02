@@ -119,7 +119,6 @@ def complete_disbursement_onchain(loan_id, amount, reference_hash):
     contract_exec = get_contract("disbursementExecution")
     app_contract = get_contract("loanApplication")
     loan_id_bytes = _to_bytes32(loan_id)
-    ref_bytes = _to_bytes32(reference_hash)
 
     if not call_view(app_contract, "exists", loan_id_bytes):
         raise ValueError(
@@ -135,7 +134,22 @@ def complete_disbursement_onchain(loan_id, amount, reference_hash):
         int(amount),
     )
 
-    # Step 2: Get the disbursementId via getDisbursementByLoan
+    complete_result = complete_existing_disbursement_onchain(
+        loan_id, reference_hash
+    )
+
+    return {
+        "initiate_tx": initiate_result,
+        "complete_tx": complete_result,
+    }
+
+
+def complete_existing_disbursement_onchain(loan_id, reference_hash):
+    """Complete a previously initiated disbursement without initiating again."""
+    contract_exec = get_contract("disbursementExecution")
+    loan_id_bytes = _to_bytes32(loan_id)
+    ref_bytes = _to_bytes32(reference_hash)
+
     disbursement_record = call_view(
         contract_exec, "getDisbursementByLoan", loan_id_bytes
     )
@@ -155,10 +169,7 @@ def complete_disbursement_onchain(loan_id, amount, reference_hash):
         complete_result["tx_hash"][:18],
     )
 
-    return {
-        "initiate_tx": initiate_result,
-        "complete_tx": complete_result,
-    }
+    return complete_result
 
 
 def get_disbursement_onchain(disbursement_id):

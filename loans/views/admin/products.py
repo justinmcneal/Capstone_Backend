@@ -1,6 +1,5 @@
 from rest_framework.views import APIView
 from rest_framework.permissions import IsAuthenticated
-from bson import ObjectId
 from django.core.cache import cache
 
 from accounts.authentication import CustomJWTAuthentication
@@ -213,7 +212,9 @@ class AdminProductDetailView(AdminRequiredMixin, APIView):
             )
 
         # Use serializer for validation
-        serializer = LoanProductSerializer(data=request.data, partial=True)
+        serializer = LoanProductSerializer(
+            instance=product, data=request.data, partial=True
+        )
         if not serializer.is_valid():
             logger.error(
                 f"[PUT Product {product_id}] Serializer errors: {serializer.errors}"

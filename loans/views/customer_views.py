@@ -57,6 +57,15 @@ def _serialize_customer_application_detail(app, product):
         "submitted_at": app.submitted_at.isoformat() if app.submitted_at else None,
         "decision_date": app.decision_date.isoformat() if app.decision_date else None,
         "preferred_disbursement_method": app.preferred_disbursement_method,
+        "disbursement_status": app.disbursement_status,
+        "disbursement_method": app.disbursement_method,
+        "disbursed_amount": app.disbursed_amount,
+        "disbursement_requested_at": (
+            app.disbursement_requested_at.isoformat()
+            if app.disbursement_requested_at
+            else None
+        ),
+        "disbursement_error": app.disbursement_error,
         "disbursed_at": app.disbursed_at.isoformat() if app.disbursed_at else None,
         "created_at": app.created_at.isoformat(),
     }
@@ -829,6 +838,10 @@ class ApplicationDetailView(CustomerRoleRequiredMixin, APIView):
             app.eligibility_score = qualification.get("eligibility_score")
             app.ai_recommendation = qualification
             app.risk_category = qualification.get("risk_category")
+            if "preferred_disbursement_method" in data:
+                app.preferred_disbursement_method = (
+                    data["preferred_disbursement_method"] or None
+                )
             app.submit()
 
             logger.info(
@@ -1019,13 +1032,14 @@ class PaymentHistoryView(CustomerRoleRequiredMixin, APIView):
                 "amount": p.amount,
                 "installment_number": p.installment_number,
                 "payment_method": p.payment_method,
+                "payment_status": p.payment_status,
                 "reference": p.reference,
                 "recorded_at": p.recorded_at.isoformat() if p.recorded_at else None,
             }
             for p in payments
         ]
 
-        total_paid = sum(p.amount for p in payments)
+        total_paid = sum(p.amount for p in payments if p.payment_status == "posted")
 
         return success_response(
             data={
@@ -1102,7 +1116,13 @@ class PaymentHistoryView(CustomerRoleRequiredMixin, APIView):
                 status_code=status.HTTP_400_BAD_REQUEST,
             )
 
-        valid_methods = {"gcash", "bank_transfer", "wallet"}
+        if payment_method == "wallet":
+            return error_response(
+                message="Wallet payments must use the verified wallet-payment endpoint",
+                status_code=status.HTTP_400_BAD_REQUEST,
+            )
+
+        valid_methods = {"gcash", "bank_transfer"}
         if payment_method not in valid_methods:
             return error_response(
                 message="Invalid payment_method",
@@ -1110,11 +1130,16 @@ class PaymentHistoryView(CustomerRoleRequiredMixin, APIView):
             )
 
         if not reference:
-            from loans.utils import generate_payment_reference
+            return error_response(
+                message="A provider or bank reference is required for verification",
+                status_code=status.HTTP_400_BAD_REQUEST,
+            )
 
-            reference = generate_payment_reference()
+        idempotency_key = request.headers.get("Idempotency-Key") or request.data.get(
+            "idempotency_key"
+        )
 
-        from loans.models import RepaymentSchedule, LoanPayment
+        from loans.models import RepaymentSchedule
 
         schedule = RepaymentSchedule.find_by_loan(application_id)
         if not schedule:
@@ -1154,53 +1179,58 @@ class PaymentHistoryView(CustomerRoleRequiredMixin, APIView):
                 status_code=status.HTTP_400_BAD_REQUEST,
             )
 
-        unpaid_before = schedule.count_unpaid_before(installment_number)
-        updated_installment = schedule.record_payment(installment_number, amount)
-
-        payment = LoanPayment(
-            loan_id=application_id,
-            schedule_id=schedule.id,
-            customer_id=str(customer_id),
-            installment_number=installment_number,
-            amount=amount,
-            payment_method=payment_method,
-            reference=reference,
-            notes=notes,
-            recorded_by=str(customer_id),
+        from loans.services.payment import (
+            PaymentConflictError,
+            PaymentServiceError,
+            create_pending_submission,
+            scoped_idempotency_key,
         )
-        payment.save()
 
-        AuditLog.log_action(
-            action="customer_payment_recorded",
-            user_id=str(customer_id),
-            user_type="customer",
-            description=f"Customer payment recorded - ₱{amount:,.2f} for installment #{installment_number}",
-            resource_type="payment",
-            resource_id=payment.id,
-            details={
-                "loan_id": application_id,
-                "amount": amount,
-                "installment": installment_number,
-                "method": payment_method,
-            },
-            ip_address=request.META.get("REMOTE_ADDR", ""),
-        )
+        try:
+            payment, replayed = create_pending_submission(
+                schedule=schedule,
+                installment_number=installment_number,
+                amount=amount,
+                payment_method=payment_method,
+                reference=reference,
+                notes=notes,
+                customer_id=customer_id,
+                idempotency_key=scoped_idempotency_key(
+                    "customer", customer_id, idempotency_key
+                ),
+            )
+        except PaymentConflictError as exc:
+            return error_response(message=str(exc), status_code=status.HTTP_409_CONFLICT)
+        except PaymentServiceError as exc:
+            return error_response(
+                message=str(exc), status_code=status.HTTP_400_BAD_REQUEST
+            )
+
+        if not replayed:
+            AuditLog.log_action(
+                action="customer_payment_submitted",
+                user_id=str(customer_id),
+                user_type="customer",
+                description=f"Customer payment submitted for verification - ₱{amount:,.2f} for installment #{installment_number}",
+                resource_type="payment",
+                resource_id=payment.id,
+                details={
+                    "loan_id": application_id,
+                    "amount": amount,
+                    "installment": installment_number,
+                    "method": payment_method,
+                    "payment_status": payment.payment_status,
+                },
+                ip_address=request.META.get("REMOTE_ADDR", ""),
+            )
 
         logger.info(
-            "Customer payment recorded: loan=%s installment=%s amount=%s customer=%s",
+            "Customer payment submitted: loan=%s installment=%s amount=%s customer=%s",
             application_id,
             installment_number,
             amount,
             customer_id,
         )
-
-        # Blockchain sync — payment
-        try:
-            from loans.blockchain.sync import sync_payment
-
-            sync_payment(application_id, payment.id)
-        except Exception as e:
-            logger.warning(f"Blockchain sync skipped for payment {payment.id}: {e}")
 
         return success_response(
             data={
@@ -1209,15 +1239,18 @@ class PaymentHistoryView(CustomerRoleRequiredMixin, APIView):
                 "installment_number": installment_number,
                 "amount": amount,
                 "payment_method": payment_method,
+                "payment_status": payment.payment_status,
                 "reference": reference,
                 "recorded_at": (
                     payment.recorded_at.isoformat() if payment.recorded_at else None
                 ),
-                "installment_status": updated_installment["status"],
+                "installment_status": installment["status"],
                 "remaining_balance": schedule.get_remaining_balance(),
-                "skipped_installments": unpaid_before,
+                "balance_applied": False,
+                "replayed": replayed,
             },
-            message="Payment recorded successfully",
+            message="Payment submitted and pending verification",
+            status_code=status.HTTP_202_ACCEPTED,
         )
 
 
@@ -1533,7 +1566,7 @@ class WalletPaymentView(CustomerRoleRequiredMixin, APIView):
             )
 
         # Find schedule and validate installment
-        from loans.models import RepaymentSchedule, LoanPayment
+        from loans.models import LoanPayment, RepaymentSchedule
 
         schedule = RepaymentSchedule.find_by_loan(application_id)
         if not schedule:
@@ -1549,9 +1582,44 @@ class WalletPaymentView(CustomerRoleRequiredMixin, APIView):
                 status_code=status.HTTP_404_NOT_FOUND,
             )
         if installment.get("status") == "paid":
-            return error_response(
-                message=f"Installment #{installment_number} is already fully paid",
-                status_code=status.HTTP_400_BAD_REQUEST,
+            existing = LoanPayment.find_one({"eth_tx_hash": tx_hash})
+            if not existing:
+                return error_response(
+                    message=f"Installment #{installment_number} is already fully paid",
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                )
+
+        # A verified replay must not be re-priced using a newer exchange rate.
+        existing = LoanPayment.find_one({"eth_tx_hash": tx_hash})
+        if existing:
+            same_payment = (
+                existing.payment_status == "posted"
+                and str(existing.loan_id) == str(application_id)
+                and str(existing.customer_id) == str(customer_id)
+                and existing.installment_number == installment_number
+            )
+            if not same_payment:
+                return error_response(
+                    message="This transaction has already been recorded for another payment",
+                    status_code=status.HTTP_409_CONFLICT,
+                )
+            return success_response(
+                data={
+                    'status': 'verified',
+                    'payment_id': existing.id,
+                    'installment_number': installment_number,
+                    'installment_status': installment['status'],
+                    'amount_php': existing.amount,
+                    'amount_eth': existing.eth_amount,
+                    'eth_rate': existing.eth_rate,
+                    'tx_hash': existing.eth_tx_hash,
+                    'block_number': existing.eth_block_number,
+                    'remaining_balance': schedule.get_remaining_balance(),
+                    'blockchain_sync_status': existing.blockchain_sync_status,
+                    'blockchain_sync_message': 'Payment was already recorded.',
+                    'replayed': True,
+                },
+                message="Wallet payment already recorded",
             )
 
         # Verify the transaction on-chain
@@ -1567,6 +1635,20 @@ class WalletPaymentView(CustomerRoleRequiredMixin, APIView):
                 return error_response(
                     message="Transaction failed on-chain",
                     status_code=status.HTTP_400_BAD_REQUEST,
+                )
+
+            minimum_confirmations = int(
+                getattr(settings, "LOANS_WALLET_MIN_CONFIRMATIONS", 3)
+            )
+            latest_block = int(w3.eth.block_number)
+            confirmations = latest_block - int(receipt["blockNumber"]) + 1
+            if confirmations < minimum_confirmations:
+                return error_response(
+                    message=(
+                        "Transaction does not have enough confirmations "
+                        f"({confirmations}/{minimum_confirmations})"
+                    ),
+                    status_code=status.HTTP_409_CONFLICT,
                 )
 
             # Verify recipient is the system wallet
@@ -1628,16 +1710,15 @@ class WalletPaymentView(CustomerRoleRequiredMixin, APIView):
                     status_code=status.HTTP_400_BAD_REQUEST,
                 )
 
-            # Check for duplicate tx_hash
-            existing = LoanPayment.find_one({"eth_tx_hash": tx_hash})
-            if existing:
+            if php_received > upper_bound:
                 return error_response(
-                    message="This transaction has already been recorded",
+                    message=(
+                        f"Payment exceeds the allowed tolerance of {tolerance*100:.0f}%. "
+                        f"Expected ~₱{expected_php:.2f}, received ₱{php_received:.2f}"
+                    ),
                     status_code=status.HTTP_400_BAD_REQUEST,
                 )
 
-        except error_response.__class__:
-            raise
         except Exception as exc:
             logger.error("Wallet payment verification failed: %s", exc)
             return error_response(
@@ -1645,40 +1726,44 @@ class WalletPaymentView(CustomerRoleRequiredMixin, APIView):
                 status_code=status.HTTP_400_BAD_REQUEST,
             )
 
-        # If payment is within ±2% tolerance of the expected amount,
-        # treat it as exactly the expected amount to prevent dust balances.
-        # Otherwise, record the exact amount received (e.g., for overpayments).
-        if lower_bound <= php_received <= upper_bound:
-            payment_amount = expected_php
-        else:
-            payment_amount = php_received
-        unpaid_before = schedule.count_unpaid_before(installment_number)
-        updated_installment = schedule.record_payment(
-            installment_number, payment_amount
+        # Both tolerance bounds were validated above. Apply exactly the remaining
+        # PHP amount so exchange-rate noise cannot create dust or overpayment.
+        payment_amount = expected_php
+        from loans.services.payment import (
+            PaymentConflictError,
+            PaymentServiceError,
+            post_verified_payment,
         )
 
-        payment = LoanPayment(
-            loan_id=application_id,
-            schedule_id=schedule.id,
-            customer_id=customer_id,
-            installment_number=installment_number,
-            amount=payment_amount,
-            payment_method='wallet',
-            reference=tx_hash[:18],
-            notes=f"ETH wallet payment: {eth_received:.6f} ETH @ {rate_info['rate']:.2f} PHP/ETH",
-            recorded_by=customer_id,
-            blockchain_sync_status="pending",
-        )
-        payment.save()
-
-        # Store ETH-specific details IMMEDIATELY (before blockchain sync starts)
-        payment.eth_tx_hash = tx_hash
-        payment.eth_amount = str(eth_received)
-        payment.eth_rate = rate_info["rate"]
-        payment.eth_rate_source = rate_info["source"]
-        payment.eth_sender = profile.wallet_address
-        payment.eth_block_number = receipt["blockNumber"]
-        payment.save()
+        try:
+            payment, updated_installment, replayed = post_verified_payment(
+                schedule=schedule,
+                installment_number=installment_number,
+                amount=payment_amount,
+                payment_method='wallet',
+                reference=tx_hash,
+                notes=f"ETH wallet payment: {eth_received:.6f} ETH @ {rate_info['rate']:.2f} PHP/ETH",
+                recorded_by=customer_id,
+                idempotency_key=f"wallet:{tx_hash.lower()}",
+                verification_source="ethereum_receipt",
+                extra_fields={
+                    "blockchain_sync_status": "pending",
+                    "eth_tx_hash": tx_hash,
+                    "eth_amount": str(eth_received),
+                    "eth_rate": rate_info["rate"],
+                    "eth_rate_source": rate_info["source"],
+                    "eth_sender": profile.wallet_address,
+                    "eth_block_number": receipt["blockNumber"],
+                },
+            )
+        except PaymentConflictError as exc:
+            return error_response(message=str(exc), status_code=status.HTTP_409_CONFLICT)
+        except PaymentServiceError as exc:
+            return error_response(
+                message=str(exc), status_code=status.HTTP_400_BAD_REQUEST
+            )
+        except (ValueError, RuntimeError) as exc:
+            return error_response(message=str(exc), status_code=status.HTTP_409_CONFLICT)
 
         logger.info(
             "Wallet payment verified: loan=%s installment=%d amount=%.6f ETH tx=%s",
@@ -1691,33 +1776,35 @@ class WalletPaymentView(CustomerRoleRequiredMixin, APIView):
         # Audit log
         from analytics.models import AuditLog
 
-        AuditLog.log_action(
-            action="wallet_payment_verified",
-            user_id=customer_id,
-            user_type="customer",
-            description=f"Wallet payment verified - {eth_received:.6f} ETH for installment #{installment_number}",
-            resource_type="payment",
-            resource_id=payment.id,
-            details={
-                "loan_id": application_id,
-                "installment_number": installment_number,
-                "eth_amount": str(eth_received),
-                "php_amount": payment_amount,
-                "eth_rate": rate_info["rate"],
-                "tx_hash": tx_hash,
-            },
-            ip_address=request.META.get("REMOTE_ADDR", ""),
-        )
+        if not replayed:
+            AuditLog.log_action(
+                action="wallet_payment_verified",
+                user_id=customer_id,
+                user_type="customer",
+                description=f"Wallet payment verified - {eth_received:.6f} ETH for installment #{installment_number}",
+                resource_type="payment",
+                resource_id=payment.id,
+                details={
+                    "loan_id": application_id,
+                    "installment_number": installment_number,
+                    "eth_amount": str(eth_received),
+                    "php_amount": payment_amount,
+                    "eth_rate": rate_info["rate"],
+                    "tx_hash": tx_hash,
+                },
+                ip_address=request.META.get("REMOTE_ADDR", ""),
+            )
 
         # Blockchain audit trail sync
-        try:
-            from loans.blockchain.sync import sync_payment
+        if not replayed:
+            try:
+                from loans.blockchain.sync import sync_payment
 
-            sync_payment(application_id, payment.id)
-        except Exception as e:
-            logger.warning(
-                f"Blockchain sync skipped for wallet payment {payment.id}: {e}"
-            )
+                sync_payment(application_id, payment.id)
+            except Exception as e:
+                logger.warning(
+                    f"Blockchain sync skipped for wallet payment {payment.id}: {e}"
+                )
 
         return success_response(
             data={
@@ -1733,9 +1820,14 @@ class WalletPaymentView(CustomerRoleRequiredMixin, APIView):
                 'remaining_balance': schedule.get_remaining_balance(),
                 'blockchain_sync_status': 'pending',
                 'blockchain_sync_message': 'Payment recorded. Blockchain audit trail sync in progress...',
+                'replayed': replayed,
             },
-            message="Wallet payment verified and recorded",
-            status_code=status.HTTP_201_CREATED,
+            message=(
+                "Wallet payment already recorded"
+                if replayed
+                else "Wallet payment verified and recorded"
+            ),
+            status_code=(status.HTTP_200_OK if replayed else status.HTTP_201_CREATED),
         )
 
 

@@ -38,6 +38,7 @@ class LoanApplication:
         "rejection_reason",
         "missing_documents_reason",
         "disbursement_reference",
+        "eth_disbursement_raw_transaction",
     )
 
     def __init__(self, **kwargs):
@@ -89,6 +90,17 @@ class LoanApplication:
         )  # bank_transfer, cash, etc.
         self.disbursement_reference = kwargs.get("disbursement_reference", "")
         self.disbursed_by = kwargs.get("disbursed_by")  # Officer/Admin who processed
+        self.disbursement_status = kwargs.get(
+            "disbursement_status",
+            "executed" if self.status == "disbursed" else "not_started",
+        )
+        self.disbursement_idempotency_key = kwargs.get(
+            "disbursement_idempotency_key", ""
+        )
+        self.disbursement_requested_at = kwargs.get("disbursement_requested_at")
+        self.disbursement_completed_at = kwargs.get("disbursement_completed_at")
+        self.disbursement_failed_at = kwargs.get("disbursement_failed_at")
+        self.disbursement_error = kwargs.get("disbursement_error", "")
 
         # ETH wallet disbursement details
         self.eth_disbursement_tx_hash = kwargs.get("eth_disbursement_tx_hash")
@@ -97,6 +109,35 @@ class LoanApplication:
         self.eth_disbursement_rate = kwargs.get("eth_disbursement_rate")
         self.eth_disbursement_rate_source = kwargs.get("eth_disbursement_rate_source", "")
         self.eth_disbursement_recipient = kwargs.get("eth_disbursement_recipient")
+        self.eth_disbursement_nonce = kwargs.get("eth_disbursement_nonce")
+        self.eth_disbursement_broadcast_at = kwargs.get(
+            "eth_disbursement_broadcast_at"
+        )
+        self.eth_disbursement_block_number = kwargs.get(
+            "eth_disbursement_block_number"
+        )
+        self.eth_disbursement_raw_transaction = kwargs.get(
+            "eth_disbursement_raw_transaction", ""
+        )
+        self.eth_disbursement_prepared_at = kwargs.get(
+            "eth_disbursement_prepared_at"
+        )
+        self.eth_disbursement_last_checked_at = kwargs.get(
+            "eth_disbursement_last_checked_at"
+        )
+        self.eth_disbursement_tx_status = kwargs.get(
+            "eth_disbursement_tx_status", ""
+        )
+        self.eth_disbursement_rebroadcast_count = kwargs.get(
+            "eth_disbursement_rebroadcast_count", 0
+        )
+        self.eth_disbursement_recovery_history = kwargs.get(
+            "eth_disbursement_recovery_history", []
+        )
+        self.disbursement_worker_owner = kwargs.get("disbursement_worker_owner", "")
+        self.disbursement_worker_lease_expires_at = kwargs.get(
+            "disbursement_worker_lease_expires_at"
+        )
 
         # Timestamps
         self.submitted_at = kwargs.get("submitted_at")
@@ -139,12 +180,29 @@ class LoanApplication:
             "disbursement_method": self.disbursement_method,
             "disbursement_reference": self.disbursement_reference,
             "disbursed_by": self.disbursed_by,
+            "disbursement_status": self.disbursement_status,
+            "disbursement_idempotency_key": self.disbursement_idempotency_key,
+            "disbursement_requested_at": self.disbursement_requested_at,
+            "disbursement_completed_at": self.disbursement_completed_at,
+            "disbursement_failed_at": self.disbursement_failed_at,
+            "disbursement_error": self.disbursement_error,
             "eth_disbursement_tx_hash": self.eth_disbursement_tx_hash,
             "eth_disbursement_amount": self.eth_disbursement_amount,
             "eth_disbursement_amount_wei": self.eth_disbursement_amount_wei,
             "eth_disbursement_rate": self.eth_disbursement_rate,
             "eth_disbursement_rate_source": self.eth_disbursement_rate_source,
             "eth_disbursement_recipient": self.eth_disbursement_recipient,
+            "eth_disbursement_nonce": self.eth_disbursement_nonce,
+            "eth_disbursement_broadcast_at": self.eth_disbursement_broadcast_at,
+            "eth_disbursement_block_number": self.eth_disbursement_block_number,
+            "eth_disbursement_raw_transaction": self.eth_disbursement_raw_transaction,
+            "eth_disbursement_prepared_at": self.eth_disbursement_prepared_at,
+            "eth_disbursement_last_checked_at": self.eth_disbursement_last_checked_at,
+            "eth_disbursement_tx_status": self.eth_disbursement_tx_status,
+            "eth_disbursement_rebroadcast_count": self.eth_disbursement_rebroadcast_count,
+            "eth_disbursement_recovery_history": self.eth_disbursement_recovery_history,
+            "disbursement_worker_owner": self.disbursement_worker_owner,
+            "disbursement_worker_lease_expires_at": self.disbursement_worker_lease_expires_at,
             "submitted_at": self.submitted_at,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
@@ -167,6 +225,9 @@ class LoanApplication:
         data = self.to_dict()
 
         if self._id:
+            # MongoDB's _id field is immutable and cannot be included in $set,
+            # even when the value is unchanged. Keep it only in the selector.
+            data.pop("_id", None)
             collection.update_one({"_id": self._id}, {"$set": data})
         else:
             result = collection.insert_one(data)
@@ -192,7 +253,7 @@ class LoanApplication:
                     **(extra_details or {}),
                 },
             )
-        except Exception as exc:
+        except Exception:
             pass
 
     def submit(self):
@@ -299,17 +360,147 @@ class LoanApplication:
         return self.save()
 
     def disburse(self, amount, method, reference, processed_by):
-        """Mark loan as disbursed"""
+        """Compatibility helper for a synchronously confirmed disbursement."""
+        self.begin_disbursement(
+            amount=amount,
+            method=method,
+            reference=reference,
+            processed_by=processed_by,
+            idempotency_key=f"legacy:{self.id}:{reference}",
+        )
+        self.complete_disbursement(self.disbursement_idempotency_key)
+        return self
+
+    def begin_disbursement(
+        self, amount, method, reference, processed_by, idempotency_key
+    ):
+        """Atomically reserve an approved loan for one disbursement attempt."""
+        if self.approved_amount is None or float(self.approved_amount) <= 0:
+            raise ValueError("Loan does not have a valid approved amount")
+        if abs(float(amount) - float(self.approved_amount)) > 0.01:
+            raise ValueError(
+                f"Disbursement amount must equal approved amount of PHP{float(self.approved_amount):.2f}"
+            )
+        if method not in {"cash", "gcash", "bank_transfer", "check", "wallet"}:
+            raise ValueError("Invalid disbursement method")
+        if not idempotency_key:
+            raise ValueError("Idempotency-Key is required")
+
+        if self.disbursement_idempotency_key == idempotency_key:
+            same_payload = (
+                abs(float(self.disbursed_amount) - float(amount)) <= 0.01
+                and self.disbursement_method == method
+                and self.disbursement_reference == reference
+            )
+            if not same_payload:
+                raise ValueError(
+                    "Idempotency-Key was already used for a different disbursement"
+                )
+            return self, True
         if self.status != "approved":
             raise ValueError("Only approved loans can be disbursed")
+        if not self._id:
+            raise ValueError("Disbursement requires a persisted loan application")
+        if self.disbursement_status in {"pending", "executed"}:
+            raise ValueError("A disbursement is already pending or executed")
 
-        self.status = "disbursed"
-        self.disbursed_amount = amount
-        self.disbursed_at = utcnow()
-        self.disbursement_method = method
-        self.disbursement_reference = reference
-        self.disbursed_by = processed_by
-        return self.save()
+        now = utcnow()
+        collection = get_db()[self.collection_name]
+        result = collection.update_one(
+            {
+                "_id": self._id,
+                "status": "approved",
+                "disbursement_status": {"$in": [None, "not_started", "failed"]},
+            },
+            {
+                "$set": {
+                    "disbursed_amount": amount,
+                    "disbursement_method": method,
+                    "disbursement_reference": reference,
+                    "disbursed_by": str(processed_by),
+                    "disbursement_status": "pending",
+                    "disbursement_idempotency_key": idempotency_key,
+                    "disbursement_requested_at": now,
+                    "disbursement_completed_at": None,
+                    "disbursement_failed_at": None,
+                    "disbursement_error": "",
+                    "updated_at": now,
+                }
+            },
+        )
+        refreshed = self.find_by_id(self.id)
+        if not result.modified_count:
+            if refreshed and refreshed.disbursement_idempotency_key == idempotency_key:
+                self.__dict__.update(refreshed.__dict__)
+                return self, True
+            raise ValueError("Disbursement could not be started due to a concurrent update")
+        self.__dict__.update(refreshed.__dict__)
+        return self, False
+
+    def complete_disbursement(self, idempotency_key):
+        """Mark a pending disbursement executed after its prerequisites succeed."""
+        if (
+            self.disbursement_status == "executed"
+            and self.disbursement_idempotency_key == idempotency_key
+        ):
+            return self, True
+        now = utcnow()
+        collection = get_db()[self.collection_name]
+        result = collection.update_one(
+            {
+                "_id": self._id,
+                "status": "approved",
+                "disbursement_status": "pending",
+                "disbursement_idempotency_key": idempotency_key,
+            },
+            {
+                "$set": {
+                    "status": "disbursed",
+                    "disbursement_status": "executed",
+                    "disbursed_at": now,
+                    "disbursement_completed_at": now,
+                    "disbursement_error": "",
+                    "updated_at": now,
+                }
+            },
+        )
+        refreshed = self.find_by_id(self.id)
+        if not result.modified_count:
+            if (
+                refreshed
+                and refreshed.disbursement_status == "executed"
+                and refreshed.disbursement_idempotency_key == idempotency_key
+            ):
+                self.__dict__.update(refreshed.__dict__)
+                return self, True
+            raise ValueError("Disbursement is not pending for this Idempotency-Key")
+        self.__dict__.update(refreshed.__dict__)
+        return self, False
+
+    def fail_disbursement(self, idempotency_key, error):
+        """Keep the loan approved while recording a failed execution attempt."""
+        now = utcnow()
+        collection = get_db()[self.collection_name]
+        collection.update_one(
+            {
+                "_id": self._id,
+                "status": "approved",
+                "disbursement_status": "pending",
+                "disbursement_idempotency_key": idempotency_key,
+            },
+            {
+                "$set": {
+                    "disbursement_status": "failed",
+                    "disbursement_failed_at": now,
+                    "disbursement_error": str(error)[:500],
+                    "updated_at": now,
+                }
+            },
+        )
+        refreshed = self.find_by_id(self.id)
+        if refreshed:
+            self.__dict__.update(refreshed.__dict__)
+        return self
 
     def set_preferred_disbursement_method(self, method):
         """Set the borrower's preferred disbursement method."""
@@ -412,7 +603,7 @@ class LoanApplication:
     def count_by_product(cls, product_id):
         """
         Count active applications using this product.
-        Active = submitted, under_review, or approved status.
+        Active = submitted, under_review, approved, or disbursed status.
         """
         db = get_db()
         collection = db[cls.collection_name]
@@ -423,7 +614,9 @@ class LoanApplication:
         count = collection.count_documents(
             {
                 "product_id": product_id_str,
-                "status": {"$in": ["submitted", "under_review", "approved"]},
+                "status": {
+                    "$in": ["submitted", "under_review", "approved", "disbursed"]
+                },
             }
         )
         return count
@@ -621,6 +814,14 @@ class LoanApplication:
         collection.create_index("status")
         collection.create_index("assigned_officer")
         collection.create_index("submitted_at")
+        collection.create_index("disbursement_status")
+        collection.create_index(
+            "disbursement_idempotency_key",
+            unique=True,
+            partialFilterExpression={
+                "disbursement_idempotency_key": {"$type": "string", "$gt": ""}
+            },
+        )
 
     @classmethod
     def update_blockchain_tx_hash(cls, application_id, action, tx_hash):
@@ -636,7 +837,148 @@ class LoanApplication:
     def update_eth_disbursement(cls, application_id, **fields):
         db = get_db()
         collection = db[cls.collection_name]
+        if "raw_transaction" in fields:
+            encrypted = encrypt_fields(
+                {"eth_disbursement_raw_transaction": fields.pop("raw_transaction")},
+                ("eth_disbursement_raw_transaction",),
+            )
+            fields["raw_transaction"] = encrypted[
+                "eth_disbursement_raw_transaction"
+            ]
         collection.update_one(
             {"_id": application_id},
             {"$set": {f"eth_disbursement_{key}": value for key, value in fields.items()}},
+        )
+
+    @classmethod
+    def clear_eth_disbursement_fields(cls, application_id, *field_names):
+        if not field_names:
+            return
+        get_db()[cls.collection_name].update_one(
+            {"_id": ObjectId(str(application_id))},
+            {
+                "$unset": {
+                    f"eth_disbursement_{field_name}": ""
+                    for field_name in field_names
+                }
+            },
+        )
+
+    @classmethod
+    def record_eth_rebroadcast(cls, application_id):
+        get_db()[cls.collection_name].update_one(
+            {"_id": ObjectId(str(application_id))},
+            {
+                "$inc": {"eth_disbursement_rebroadcast_count": 1},
+                "$set": {
+                    "eth_disbursement_broadcast_at": utcnow(),
+                    "eth_disbursement_tx_status": "broadcast",
+                },
+            },
+        )
+
+    @classmethod
+    def reopen_wallet_disbursement(cls, application_id, actor_id):
+        """Reopen an explicitly reviewed failed/cancelled wallet attempt."""
+        now = utcnow()
+        collection = get_db()[cls.collection_name]
+        doc = collection.find_one_and_update(
+            {
+                "_id": ObjectId(str(application_id)),
+                "status": "approved",
+                "disbursement_method": "wallet",
+                "disbursement_status": {"$in": ["failed", "cancelled"]},
+            },
+            {
+                "$set": {
+                    "disbursement_status": "pending",
+                    "disbursement_error": "",
+                    "disbursement_failed_at": None,
+                    "updated_at": now,
+                },
+                "$push": {
+                    "eth_disbursement_recovery_history": {
+                        "action": "retry",
+                        "actor_id": str(actor_id),
+                        "at": now,
+                    }
+                },
+            },
+            return_document=__import__("pymongo").ReturnDocument.AFTER,
+        )
+        return cls.from_dict(doc)
+
+    @classmethod
+    def cancel_wallet_disbursement(cls, application_id, actor_id, reason=""):
+        """Cancel only a wallet request that has no prepared transaction."""
+        now = utcnow()
+        doc = get_db()[cls.collection_name].find_one_and_update(
+            {
+                "_id": ObjectId(str(application_id)),
+                "status": "approved",
+                "disbursement_method": "wallet",
+                "disbursement_status": "pending",
+                "eth_disbursement_tx_hash": {"$in": [None, ""]},
+                "eth_disbursement_raw_transaction": {"$in": [None, ""]},
+                "disbursement_worker_owner": {"$in": [None, ""]},
+            },
+            {
+                "$set": {
+                    "disbursement_status": "cancelled",
+                    "disbursement_error": str(reason or "Cancelled by operator")[:500],
+                    "disbursement_failed_at": now,
+                    "updated_at": now,
+                },
+                "$push": {
+                    "eth_disbursement_recovery_history": {
+                        "action": "cancel",
+                        "actor_id": str(actor_id),
+                        "reason": str(reason)[:500],
+                        "at": now,
+                    }
+                },
+            },
+            return_document=__import__("pymongo").ReturnDocument.AFTER,
+        )
+        return cls.from_dict(doc)
+
+    @classmethod
+    def claim_wallet_disbursement(cls, application_id, owner, lease_expires_at, now):
+        """Claim one pending wallet disbursement for a durable worker."""
+        from pymongo import ReturnDocument
+
+        doc = get_db()[cls.collection_name].find_one_and_update(
+            {
+                "_id": ObjectId(str(application_id)),
+                "status": "approved",
+                "disbursement_status": "pending",
+                "disbursement_method": "wallet",
+                "$or": [
+                    {"disbursement_worker_owner": owner},
+                    {"disbursement_worker_owner": {"$in": [None, ""]}},
+                    {"disbursement_worker_lease_expires_at": {"$lte": now}},
+                    {"disbursement_worker_lease_expires_at": {"$exists": False}},
+                ],
+            },
+            {
+                "$set": {
+                    "disbursement_worker_owner": owner,
+                    "disbursement_worker_lease_expires_at": lease_expires_at,
+                    "updated_at": now,
+                }
+            },
+            return_document=ReturnDocument.AFTER,
+        )
+        return cls.from_dict(doc)
+
+    @classmethod
+    def release_wallet_disbursement(cls, application_id, owner):
+        get_db()[cls.collection_name].update_one(
+            {"_id": ObjectId(str(application_id)), "disbursement_worker_owner": owner},
+            {
+                "$unset": {
+                    "disbursement_worker_owner": "",
+                    "disbursement_worker_lease_expires_at": "",
+                }
+            },
         )

@@ -39,6 +39,8 @@ from loans.views import (
     BlockchainStatusView,
     CustomerBlockchainView,
     ExchangeRateView,
+    BulkRepaymentScheduleExportView,
+    WalletDisbursementRecoveryView,
 )
 
 app_name = "loans"
@@ -74,6 +76,7 @@ urlpatterns = [
     path("officer/applications/<str:application_id>/request-missing-documents/", OfficerRequestMissingDocumentsView.as_view(), name="officer-request-missing-documents"),
     path("officer/applications/<str:application_id>/review/", OfficerReviewView.as_view(), name="officer-review"),
     path("officer/applications/<str:application_id>/disburse/", DisburseView.as_view(), name="officer-disburse"),
+    path("officer/applications/<str:application_id>/wallet-disbursement/", WalletDisbursementRecoveryView.as_view(), name="officer-wallet-disbursement"),
     path("officer/payments/", RecordPaymentView.as_view(), name="officer-payments"),
     path("officer/payments/recent/", RecentPaymentsView.as_view(), name="officer-recent-payments"),
     path("officer/payments/search/", PaymentSearchView.as_view(), name="officer-payments-search"),
@@ -84,4 +87,5 @@ urlpatterns = [
     path("officer/applications/<str:application_id>/payments/", OfficerPaymentHistoryView.as_view(), name="officer-payment-history"),
     path("officer/applications/<str:application_id>/blockchain/", BlockchainStatusView.as_view(), name="officer-blockchain"),
     path("officer/exchange-rate/", ExchangeRateView.as_view(), name="officer-exchange-rate"),
+    path("officer/schedules/export/", BulkRepaymentScheduleExportView.as_view(), name="officer-schedules-export"),
 ]

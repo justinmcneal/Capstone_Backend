@@ -33,16 +33,20 @@ class LoanProductSerializer(InputSanitizationMixin, serializers.Serializer):
         errors = {}
 
         # Validate min/max amounts
-        min_amt = data.get("min_amount", 0)
-        max_amt = data.get("max_amount", 0)
+        min_amt = data.get("min_amount", getattr(self.instance, "min_amount", 0))
+        max_amt = data.get("max_amount", getattr(self.instance, "max_amount", 0))
         if min_amt > max_amt:
             errors["max_amount"] = (
                 "Maximum amount must be greater than or equal to minimum amount"
             )
 
         # Validate min/max terms
-        min_term = data.get("min_term_months", 0)
-        max_term = data.get("max_term_months", 0)
+        min_term = data.get(
+            "min_term_months", getattr(self.instance, "min_term_months", 0)
+        )
+        max_term = data.get(
+            "max_term_months", getattr(self.instance, "max_term_months", 0)
+        )
         if min_term > max_term:
             errors["max_term_months"] = (
                 "Maximum term must be greater than or equal to minimum term"

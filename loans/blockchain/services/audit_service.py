@@ -53,6 +53,37 @@ AUDIT_ACTION_ENUM = {
 }
 
 
+def _decode_audit_entry(entry):
+    """Decode current ABI tuples and the legacy pre-state-hash tuple layout."""
+    if len(entry) != 9:
+        raise ValueError(f"Unexpected audit entry field count: {len(entry)}")
+
+    # Current ABI: resource, type, details, previous, new, action, actor, time, block.
+    # Older deployments returned action before the two state hashes.
+    if isinstance(entry[5], int):
+        previous_state, new_state, raw_action = entry[3], entry[4], entry[5]
+    elif isinstance(entry[3], int):
+        raw_action, previous_state, new_state = entry[3], entry[4], entry[5]
+    else:
+        raise ValueError("Audit entry does not contain a decodable action field")
+
+    action_int = int(raw_action)
+    return {
+        "resource_id": entry[0].hex() if isinstance(entry[0], bytes) else entry[0],
+        "resource_type": entry[1].hex() if isinstance(entry[1], bytes) else entry[1],
+        "details_hash": entry[2].hex() if isinstance(entry[2], bytes) else entry[2],
+        "action": action_int,
+        "action_label": AUDIT_ACTION_LABELS.get(action_int, f"Unknown({action_int})"),
+        "previous_state_hash": (
+            previous_state.hex() if isinstance(previous_state, bytes) else previous_state
+        ),
+        "new_state_hash": new_state.hex() if isinstance(new_state, bytes) else new_state,
+        "actor": entry[6],
+        "timestamp": entry[7],
+        "block_number": entry[8],
+    }
+
+
 def log_audit_entry_onchain(
     resource_id,
     resource_type,
@@ -181,39 +212,7 @@ def get_audit_trail(resource_id):
 
     entries = []
     for entry in raw_entries:
-        raw_action = entry[5]
-        if isinstance(raw_action, int):
-            action_int = raw_action
-        elif isinstance(raw_action, bytes):
-            action_int = int.from_bytes(raw_action, byteorder="big")
-        else:
-            action_int = int(raw_action)
-        entries.append(
-            {
-                "resource_id": (
-                    entry[0].hex() if isinstance(entry[0], bytes) else entry[0]
-                ),
-                "resource_type": (
-                    entry[1].hex() if isinstance(entry[1], bytes) else entry[1]
-                ),
-                "details_hash": (
-                    entry[2].hex() if isinstance(entry[2], bytes) else entry[2]
-                ),
-                "action": action_int,
-                "action_label": AUDIT_ACTION_LABELS.get(
-                    action_int, f"Unknown({action_int})"
-                ),
-                "previous_state_hash": (
-                    entry[3].hex() if isinstance(entry[3], bytes) else entry[3]
-                ),
-                "new_state_hash": (
-                    entry[4].hex() if isinstance(entry[4], bytes) else entry[4]
-                ),
-                "actor": entry[6],
-                "timestamp": entry[7],
-                "block_number": entry[8],
-            }
-        )
+        entries.append(_decode_audit_entry(entry))
 
     logger.debug("getFullAuditTrail: resource=%s entries=%d", resource_id, len(entries))
     return entries
@@ -238,24 +237,4 @@ def get_audit_entry(entry_id):
 
     entry = call_view(contract, "getEntry", entry_id_bytes)
 
-    raw_action = entry[5]
-    if isinstance(raw_action, int):
-        action_int = raw_action
-    elif isinstance(raw_action, bytes):
-        action_int = int.from_bytes(raw_action, byteorder="big")
-    else:
-        action_int = int(raw_action)
-    return {
-        "resource_id": entry[0].hex() if isinstance(entry[0], bytes) else entry[0],
-        "resource_type": entry[1].hex() if isinstance(entry[1], bytes) else entry[1],
-        "details_hash": entry[2].hex() if isinstance(entry[2], bytes) else entry[2],
-        "action": action_int,
-        "action_label": AUDIT_ACTION_LABELS.get(action_int, f"Unknown({action_int})"),
-        "previous_state_hash": (
-            entry[3].hex() if isinstance(entry[3], bytes) else entry[3]
-        ),
-        "new_state_hash": entry[4].hex() if isinstance(entry[4], bytes) else entry[4],
-        "actor": entry[6],
-        "timestamp": entry[7],
-        "block_number": entry[8],
-    }
+    return _decode_audit_entry(entry)

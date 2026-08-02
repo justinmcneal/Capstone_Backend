@@ -32,6 +32,7 @@ from loans.models import (  # noqa: E402
     LoanProduct,
     RepaymentSchedule,
 )
+from loans.blockchain.models import BlockchainTransaction  # noqa: E402
 from notifications.models import Notification  # noqa: E402
 from notifications.models.device_token import DeviceToken  # noqa: E402
 from pymongo.errors import DuplicateKeyError, OperationFailure  # noqa: E402
@@ -214,6 +215,15 @@ def create_indexes():
         print("⚠ LoanPayment indexes already exist, skipping")
     except Exception as e:
         print(f"✗ LoanPayment error: {e}")
+
+    try:
+        print("Creating indexes for BlockchainTransaction collection...")
+        BlockchainTransaction.create_indexes()
+        print("✓ BlockchainTransaction indexes created")
+    except (DuplicateKeyError, OperationFailure):
+        print("⚠ BlockchainTransaction indexes already exist, skipping")
+    except Exception as e:
+        print(f"✗ BlockchainTransaction error: {e}")
 
     # Document indexes
     try:

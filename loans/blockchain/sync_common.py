@@ -8,7 +8,6 @@ import logging
 from django.conf import settings
 
 from loans.blockchain.models import BlockchainTransaction
-from loans.utils.time import utcnow
 
 logger = logging.getLogger("blockchain")
 
@@ -134,7 +133,7 @@ def sync_schedule(loan_id):
         )
 
         RepaymentSchedule.update_blockchain_schedule_tx(
-            schedule.id, result["tx_hash"]
+            schedule._id, result["tx_hash"]
         )
 
         logger.info(

@@ -2,6 +2,8 @@
 RepaymentSchedule Model - Loan repayment installments.
 """
 
+from copy import deepcopy
+
 from dateutil.relativedelta import relativedelta
 from django.conf import settings
 
@@ -49,6 +51,7 @@ class RepaymentSchedule:
         self.blockchain_schedule_tx = kwargs.get("blockchain_schedule_tx", "")
         self.blockchain_overdue_tx = kwargs.get("blockchain_overdue_tx", {})
         self.blockchain_penalty_tx = kwargs.get("blockchain_penalty_tx", {})
+        self.applied_payment_tokens = kwargs.get("applied_payment_tokens", [])
 
     @property
     def id(self):
@@ -70,6 +73,7 @@ class RepaymentSchedule:
             "blockchain_schedule_tx": self.blockchain_schedule_tx,
             "blockchain_overdue_tx": self.blockchain_overdue_tx,
             "blockchain_penalty_tx": self.blockchain_penalty_tx,
+            "applied_payment_tokens": self.applied_payment_tokens,
         }
         if self._id:
             data["_id"] = self._id
@@ -87,6 +91,8 @@ class RepaymentSchedule:
         data = self.to_dict()
 
         if self._id:
+            # MongoDB's _id field is immutable and cannot be included in $set.
+            data.pop("_id", None)
             collection.update_one({"_id": self._id}, {"$set": data})
         else:
             result = collection.insert_one(data)
@@ -259,6 +265,13 @@ class RepaymentSchedule:
         return [cls.from_dict(doc) for doc in docs]
 
     @classmethod
+    def find_all(cls):
+        db = get_db()
+        collection = db[cls.collection_name]
+        docs = collection.find({})
+        return [cls.from_dict(doc) for doc in docs]
+
+    @classmethod
     def create_indexes(cls):
         db = get_db()
         collection = db[cls.collection_name]
@@ -323,6 +336,73 @@ class RepaymentSchedule:
                 self.save()
                 return inst
         return None
+
+    def apply_payment_atomic(self, installment_number, amount, payment_token):
+        """Apply one payment with optimistic concurrency and replay protection.
+
+        The payment token is stored on the installment in the same atomic update
+        as the balance mutation. A retry after an interrupted request can therefore
+        detect that the schedule was already updated without applying it twice.
+        """
+        db = get_db()
+        collection = db[self.collection_name]
+
+        for _attempt in range(3):
+            current = self.find_one({"_id": self._id})
+            if not current:
+                raise ValueError("Repayment schedule not found")
+
+            installment = current.get_installment(installment_number)
+            if not installment:
+                raise ValueError(f"Installment #{installment_number} not found")
+
+            if payment_token in current.applied_payment_tokens:
+                self.__dict__.update(current.__dict__)
+                return installment, True
+
+            if installment.get("status") == "paid":
+                raise ValueError(f"Installment #{installment_number} is already fully paid")
+
+            paid_amount = installment.get("paid_amount", 0) or 0
+            required_amount = installment["total_amount"]
+            if installment.get("penalty_status") == "applied":
+                required_amount += installment.get("penalty_amount", 0)
+            remaining = required_amount - paid_amount
+            if amount - remaining > 0.01:
+                raise ValueError(
+                    f"Amount exceeds remaining balance of PHP{remaining:.2f}"
+                )
+
+            new_paid_amount = min(paid_amount + amount, required_amount)
+            new_status = "paid" if new_paid_amount >= required_amount else "partial"
+            updated_installments = deepcopy(current.installments)
+            updated_installment = next(
+                item
+                for item in updated_installments
+                if item["number"] == installment_number
+            )
+            updated_installment["paid_amount"] = new_paid_amount
+            updated_installment["status"] = new_status
+            if new_status == "paid":
+                updated_installment["paid_at"] = utcnow()
+
+            result = collection.update_one(
+                {
+                    "_id": self._id,
+                    "installments": current.installments,
+                    "applied_payment_tokens": {"$ne": payment_token},
+                },
+                {
+                    "$set": {"installments": updated_installments},
+                    "$addToSet": {"applied_payment_tokens": payment_token},
+                },
+            )
+            if result.modified_count:
+                updated = self.find_one({"_id": self._id})
+                self.__dict__.update(updated.__dict__)
+                return updated.get_installment(installment_number), False
+
+        raise RuntimeError("Payment could not be applied due to a concurrent update")
 
     def mark_overdue_installments(self, as_of=None):
         """

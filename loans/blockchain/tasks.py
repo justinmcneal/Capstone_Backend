@@ -17,7 +17,6 @@ from celery import shared_task
 from django.conf import settings
 
 from loans.blockchain.sync_common import (
-    _finalize_tx,
     _is_enabled,
     _monthly_rate_to_annual_bps,
     _risk_category_to_int,
@@ -27,6 +26,16 @@ from loans.blockchain.sync_common import (
 )
 
 logger = logging.getLogger("blockchain")
+
+
+def _confirmed_step_or_run(tx_record, step_name, callback):
+    """Resume a saga from its last durably confirmed step."""
+    existing = tx_record.confirmed_step_result(step_name)
+    if isinstance(existing, dict):
+        return existing
+    result = callback()
+    tx_record.mark_step_confirmed(step_name, result)
+    return result
 
 
 @shared_task(
@@ -51,7 +60,6 @@ def sync_application_to_chain(self, loan_id):
         create_application_onchain,
         submit_application_onchain,
     )
-    from loans.blockchain.client import get_contract, send_transaction
     from loans.models.application import LoanApplication
 
     tx_record = BlockchainTransaction.create_pending(
@@ -60,6 +68,10 @@ def sync_application_to_chain(self, loan_id):
         contract_name="LoanApplication",
         method="createApplication+submitApplication",
     )
+    if tx_record.status == BlockchainTransaction.STATUS_CONFIRMED:
+        return {"tx_hash": tx_record.tx_hash, "status": "confirmed", "replayed": True}
+    if tx_record.status == BlockchainTransaction.STATUS_FAILED:
+        tx_record.reopen_for_reconciliation()
 
     try:
         app = LoanApplication.find_by_id(loan_id)
@@ -73,15 +85,19 @@ def sync_application_to_chain(self, loan_id):
         )
 
         # Step 1: Create application on-chain
-        create_result = create_application_onchain(
-            loan_id=loan_id,
-            borrower_addr=settings.BLOCKCHAIN_CONTRACT_ADDRESSES.get(
-                "accessControl", ""
+        create_result = _confirmed_step_or_run(
+            tx_record,
+            "create_application",
+            lambda: create_application_onchain(
+                loan_id=loan_id,
+                borrower_addr=settings.BLOCKCHAIN_CONTRACT_ADDRESSES.get(
+                    "accessControl", ""
+                ),
+                product_id=str(app.product_id),
+                amount=int(app.requested_amount),
+                term_months=int(app.term_months),
+                interest_rate_bps=interest_bps,
             ),
-            product_id=str(app.product_id),
-            amount=int(app.requested_amount),
-            term_months=int(app.term_months),
-            interest_rate_bps=interest_bps,
         )
 
         # Step 2: Submit application on-chain
@@ -89,11 +105,15 @@ def sync_application_to_chain(self, loan_id):
         risk_category = _risk_category_to_int(app.risk_category)
         ai_hash = str(app.ai_recommendation) if app.ai_recommendation else "none"
 
-        submit_result = submit_application_onchain(
-            loan_id=loan_id,
-            eligibility_score=eligibility_score,
-            risk_category=risk_category,
-            ai_recommendation_hash=ai_hash,
+        submit_result = _confirmed_step_or_run(
+            tx_record,
+            "submit_application",
+            lambda: submit_application_onchain(
+                loan_id=loan_id,
+                eligibility_score=eligibility_score,
+                risk_category=risk_category,
+                ai_recommendation_hash=ai_hash,
+            ),
         )
 
         # Record success
@@ -155,16 +175,24 @@ def sync_approval_to_chain(self, loan_id):
         contract_name="LoanApproval",
         method="approveLoan",
     )
+    if tx_record.status == BlockchainTransaction.STATUS_CONFIRMED:
+        return {"tx_hash": tx_record.tx_hash, "status": "confirmed", "replayed": True}
+    if tx_record.status == BlockchainTransaction.STATUS_FAILED:
+        tx_record.reopen_for_reconciliation()
 
     try:
         app = LoanApplication.find_by_id(loan_id)
         if not app:
             raise ValueError(f"LoanApplication {loan_id} not found")
 
-        result = approve_loan_onchain(
-            loan_id=loan_id,
-            approved_amount=int(app.approved_amount or app.requested_amount),
-            notes_hash=str(app.officer_notes or "approved"),
+        result = _confirmed_step_or_run(
+            tx_record,
+            "approve_loan",
+            lambda: approve_loan_onchain(
+                loan_id=loan_id,
+                approved_amount=int(app.approved_amount or app.requested_amount),
+                notes_hash=str(app.officer_notes or "approved"),
+            ),
         )
 
         mc_kwargs = {
@@ -216,7 +244,8 @@ def sync_disbursement_to_chain(self, loan_id):
 
     from loans.blockchain.models import BlockchainTransaction
     from loans.blockchain.services.disbursement_service import (
-        complete_disbursement_onchain,
+        complete_existing_disbursement_onchain,
+        initiate_disbursement_onchain,
         set_method_onchain,
     )
     from loans.models.application import LoanApplication
@@ -227,6 +256,10 @@ def sync_disbursement_to_chain(self, loan_id):
         contract_name="DisbursementExecution",
         method="completeDisbursement",
     )
+    if tx_record.status == BlockchainTransaction.STATUS_CONFIRMED:
+        return {"tx_hash": tx_record.tx_hash, "status": "confirmed", "replayed": True}
+    if tx_record.status == BlockchainTransaction.STATUS_FAILED:
+        tx_record.reopen_for_reconciliation()
 
     try:
         app = LoanApplication.find_by_id(loan_id)
@@ -237,7 +270,11 @@ def sync_disbursement_to_chain(self, loan_id):
         method_str = (
             app.disbursement_method or app.preferred_disbursement_method or "other"
         )
-        set_method_onchain(loan_id=loan_id, method=method_str)
+        _confirmed_step_or_run(
+            tx_record,
+            "set_method",
+            lambda: set_method_onchain(loan_id=loan_id, method=method_str),
+        )
 
         # Step 2: Initiate + complete disbursement
         amount = int(
@@ -245,13 +282,19 @@ def sync_disbursement_to_chain(self, loan_id):
         )
         ref_str = str(app.disbursement_reference or f"DISB_{loan_id}")
 
-        result = complete_disbursement_onchain(
-            loan_id=loan_id,
-            amount=amount,
-            reference_hash=ref_str,
+        _confirmed_step_or_run(
+            tx_record,
+            "initiate_disbursement",
+            lambda: initiate_disbursement_onchain(loan_id=loan_id, amount=amount),
         )
-
-        complete_tx = result["complete_tx"]
+        complete_tx = _confirmed_step_or_run(
+            tx_record,
+            "complete_disbursement",
+            lambda: complete_existing_disbursement_onchain(
+                loan_id=loan_id,
+                reference_hash=ref_str,
+            ),
+        )
         tx_record.mark_confirmed(
             tx_hash=complete_tx["tx_hash"],
             gas_used=complete_tx["gas_used"],
@@ -350,15 +393,172 @@ def sync_payment_to_chain(self, loan_id, payment_id):
         raise self.retry(exc=exc)
 
 
-def _update_application_tx(loan_id, action, tx_hash):
-    """Helper to store a tx_hash in the application's blockchain_tx_hashes dict."""
+@shared_task(
+    bind=True,
+    max_retries=3,
+    default_retry_delay=10,
+    retry_backoff=True,
+    name="blockchain.sync_rejection_to_chain",
+)
+def sync_rejection_to_chain(self, loan_id):
+    from loans.blockchain.sync import _sync_rejection_impl
+
     try:
-        db = getattr(settings, "MONGODB", None)
-        if db is None:
-            return
-        db["loan_applications"].update_one(
-            {"_id": __import__("bson").ObjectId(loan_id)},
-            {"$set": {f"blockchain_tx_hashes.{action}": tx_hash}},
+        return _sync_rejection_impl(loan_id, raise_errors=True)
+    except Exception as exc:
+        raise self.retry(exc=exc)
+
+
+@shared_task(
+    bind=True,
+    max_retries=3,
+    default_retry_delay=10,
+    retry_backoff=True,
+    name="blockchain.sync_overdue_to_chain",
+)
+def sync_overdue_to_chain(self, loan_id, installment_number):
+    from loans.blockchain.sync import _sync_overdue_impl
+
+    try:
+        return _sync_overdue_impl(loan_id, installment_number, raise_errors=True)
+    except Exception as exc:
+        raise self.retry(exc=exc)
+
+
+@shared_task(
+    bind=True,
+    max_retries=3,
+    default_retry_delay=10,
+    retry_backoff=True,
+    name="blockchain.sync_penalty_to_chain",
+)
+def sync_penalty_to_chain(self, loan_id, installment_number, amount, action, reason=""):
+    from loans.blockchain.sync import _sync_penalty_impl
+
+    try:
+        return _sync_penalty_impl(
+            loan_id,
+            installment_number,
+            amount,
+            action,
+            reason,
+            raise_errors=True,
         )
     except Exception as exc:
-        logger.warning("Failed to store tx_hash for %s.%s: %s", loan_id, action, exc)
+        raise self.retry(exc=exc)
+
+
+@shared_task(
+    bind=True,
+    max_retries=3,
+    default_retry_delay=10,
+    retry_backoff=True,
+    name="blockchain.sync_consent_to_chain",
+)
+def sync_consent_to_chain(
+    self,
+    user_id,
+    user_type,
+    data_consent,
+    ai_consent,
+    consent_version,
+    consent_timestamp,
+    previous_state=None,
+):
+    from loans.blockchain.sync import _sync_consent_impl
+
+    try:
+        return _sync_consent_impl(
+            user_id,
+            user_type,
+            data_consent,
+            ai_consent,
+            consent_version,
+            consent_timestamp,
+            previous_state,
+            raise_errors=True,
+        )
+    except Exception as exc:
+        raise self.retry(exc=exc)
+
+
+@shared_task(name="blockchain.poll_audit_events")
+def poll_audit_events():
+    """Poll once; Celery Beat supplies durable scheduling and crash recovery."""
+    if not _is_enabled():
+        return {"skipped": True, "reason": "blockchain disabled"}
+    from loans.blockchain.event_listener import AuditEventListener
+
+    listener = AuditEventListener()
+    listener._ensure_connection()
+    return listener._poll_events()
+
+
+@shared_task(name="blockchain.reconcile_domain_state")
+def reconcile_blockchain_domain_state():
+    """Derive missing durable sync jobs from authoritative MongoDB state."""
+    if not _is_enabled():
+        return {"skipped": True, "reason": "blockchain disabled"}
+    db = getattr(settings, "MONGODB", None)
+    if db is None:
+        return {"enqueued": 0}
+
+    limit = int(getattr(settings, "BLOCKCHAIN_RECONCILIATION_BATCH_SIZE", 250))
+    enqueued = 0
+
+    def enqueue(task, *args):
+        nonlocal enqueued
+        task.apply_async(args=list(args), retry=False)
+        enqueued += 1
+
+    applications = db["loan_applications"].find(
+        {"status": {"$in": ["submitted", "under_review", "approved", "rejected", "disbursed"]}},
+        {"_id": 1, "status": 1, "blockchain_tx_hashes": 1},
+    ).limit(limit)
+    for application in applications:
+        loan_id = str(application["_id"])
+        lifecycle_status = application.get("status")
+        hashes = application.get("blockchain_tx_hashes") or {}
+        if not hashes.get("submit"):
+            enqueue(sync_application_to_chain, loan_id)
+            continue
+        if lifecycle_status in {"approved", "disbursed"} and not hashes.get("approve"):
+            enqueue(sync_approval_to_chain, loan_id)
+            continue
+        if lifecycle_status == "rejected" and not hashes.get("reject"):
+            enqueue(sync_rejection_to_chain, loan_id)
+            continue
+        if lifecycle_status == "disbursed" and not hashes.get("disburse"):
+            enqueue(sync_disbursement_to_chain, loan_id)
+
+    schedules = db["repayment_schedules"].find(
+        {"blockchain_schedule_tx": {"$in": [None, ""]}}, {"loan_id": 1}
+    ).limit(limit)
+    for schedule in schedules:
+        loan_id = str(schedule["loan_id"])
+        application = db["loan_applications"].find_one(
+            {"_id": __import__("bson").ObjectId(loan_id)},
+            {"blockchain_tx_hashes": 1},
+        )
+        if (application or {}).get("blockchain_tx_hashes", {}).get("disburse"):
+            enqueue(sync_schedule_to_chain, loan_id)
+
+    payments = db["loan_payments"].find(
+        {
+            "payment_status": "posted",
+            "blockchain_tx_hash": {"$in": [None, ""]},
+        },
+        {"_id": 1, "loan_id": 1},
+    ).limit(limit)
+    for payment in payments:
+        schedule = db["repayment_schedules"].find_one(
+            {"loan_id": str(payment["loan_id"])}, {"blockchain_schedule_tx": 1}
+        )
+        if schedule and schedule.get("blockchain_schedule_tx"):
+            enqueue(
+                sync_payment_to_chain,
+                str(payment["loan_id"]),
+                str(payment["_id"]),
+            )
+
+    return {"enqueued": enqueued}

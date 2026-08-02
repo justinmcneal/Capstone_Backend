@@ -617,8 +617,15 @@ class OfficerApplicationDetailView(LoanOfficerRequiredMixin, APIView):
                 ),
                 "disbursed_amount": app.disbursed_amount,
                 "preferred_disbursement_method": app.preferred_disbursement_method,
+                "disbursement_status": app.disbursement_status,
                 "disbursement_method": app.disbursement_method,
                 "disbursement_reference": app.disbursement_reference,
+                "disbursement_requested_at": (
+                    app.disbursement_requested_at.isoformat()
+                    if app.disbursement_requested_at
+                    else None
+                ),
+                "disbursement_error": app.disbursement_error,
                 "disbursed_at": (
                     app.disbursed_at.isoformat() if app.disbursed_at else None
                 ),

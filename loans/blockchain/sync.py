@@ -1,15 +1,6 @@
-"""
-Synchronous blockchain sync — no Celery/Redis required.
-
-Each function is called directly from Django views after a successful
-database operation. Blockchain failures are caught and logged but never
-block the API response.
-
-Common helpers and shared implementations are imported from sync_common.py.
-"""
+"""Blockchain sync implementations and durable Celery dispatch facade."""
 
 import logging
-import threading
 
 from django.conf import settings
 
@@ -19,27 +10,10 @@ from loans.blockchain.sync_common import (
     _finalize_tx,
     _monthly_rate_to_annual_bps,
     _risk_category_to_int,
-    _update_application_tx,
-    sync_payment as _sync_payment_common,
     sync_schedule as _sync_schedule_common,
 )
 
 logger = logging.getLogger("blockchain")
-
-
-def _run_in_thread(fn, *args):
-    """Run blockchain sync in a background thread so the API response isn't delayed."""
-
-    def wrapper():
-        try:
-            fn(*args)
-        except Exception as exc:
-            logger.error(
-                "Blockchain sync error in %s: %s", getattr(fn, "__name__", str(fn)), exc
-            )
-
-    thread = threading.Thread(target=wrapper, daemon=True)
-    thread.start()
 
 
 def _is_enabled():
@@ -55,57 +29,72 @@ def sync_application(loan_id):
     """Sync a submitted loan application to the blockchain."""
     if not _is_enabled():
         return
-    _run_in_thread(_sync_application_impl, loan_id)
+    from loans.blockchain.tasks import sync_application_to_chain
+    return sync_application_to_chain.delay(loan_id)
 
 
 def sync_approval(loan_id):
     """Sync a loan approval to the blockchain."""
     if not _is_enabled():
         return
-    _run_in_thread(_sync_approval_impl, loan_id)
+    from loans.blockchain.tasks import sync_approval_to_chain
+    return sync_approval_to_chain.delay(loan_id)
 
 
 def sync_rejection(loan_id):
     """Sync a loan rejection to the blockchain."""
     if not _is_enabled():
         return
-    _run_in_thread(_sync_rejection_impl, loan_id)
+    from loans.blockchain.tasks import sync_rejection_to_chain
+    return sync_rejection_to_chain.delay(loan_id)
 
 
 def sync_disbursement(loan_id, include_schedule=True):
     """Sync a loan disbursement (and schedule) to the blockchain."""
     if not _is_enabled():
         return
-    _run_in_thread(_sync_disbursement_impl, loan_id, include_schedule)
+    from loans.blockchain.tasks import sync_disbursement_to_chain
+    if include_schedule:
+        from celery import chain
+        from loans.blockchain.tasks import sync_schedule_to_chain
+        return chain(
+            sync_disbursement_to_chain.s(loan_id),
+            sync_schedule_to_chain.si(loan_id),
+        ).apply_async()
+    return sync_disbursement_to_chain.delay(loan_id)
 
 
 def sync_schedule(loan_id):
     """Sync a repayment schedule to the blockchain."""
     if not _is_enabled():
         return
-    _run_in_thread(_sync_schedule_common, loan_id)
+    from loans.blockchain.tasks import sync_schedule_to_chain
+    return sync_schedule_to_chain.delay(loan_id)
 
 
 def sync_payment(loan_id, payment_id):
     """Sync a payment recording to the blockchain."""
     if not _is_enabled():
         return
-    _run_in_thread(_sync_payment_common, loan_id, payment_id)
+    from loans.blockchain.tasks import sync_payment_to_chain
+    return sync_payment_to_chain.delay(loan_id, payment_id)
 
 
 def sync_overdue(loan_id, installment_number):
     """Sync an overdue installment marking to the blockchain."""
     if not _is_enabled():
         return
-    _run_in_thread(_sync_overdue_impl, loan_id, installment_number)
+    from loans.blockchain.tasks import sync_overdue_to_chain
+    return sync_overdue_to_chain.delay(loan_id, installment_number)
 
 
 def sync_penalty(loan_id, installment_number, amount, action, reason=""):
     """Sync a penalty apply/waive audit log to the blockchain."""
     if not _is_enabled():
         return
-    _run_in_thread(
-        _sync_penalty_impl, loan_id, installment_number, amount, action, reason
+    from loans.blockchain.tasks import sync_penalty_to_chain
+    return sync_penalty_to_chain.delay(
+        loan_id, installment_number, amount, action, reason
     )
 
 
@@ -121,8 +110,8 @@ def sync_consent(
     """Sync a consent record to the blockchain."""
     if not _is_enabled():
         return
-    _run_in_thread(
-        _sync_consent_impl,
+    from loans.blockchain.tasks import sync_consent_to_chain
+    return sync_consent_to_chain.delay(
         user_id,
         user_type,
         data_consent,
@@ -178,7 +167,6 @@ def _ensure_application_synced_for_approval(loan_id):
 
 
 def _sync_application_impl(loan_id):
-    from loans.blockchain.models import BlockchainTransaction
     from loans.blockchain.services.application_service import (
         create_application_onchain,
         submit_application_onchain,
@@ -270,7 +258,7 @@ def _sync_application_impl(loan_id):
 def _sync_approval_impl(loan_id):
     from loans.blockchain.services.approval_service import approve_loan_onchain
     from loans.blockchain.services.review_service import assign_officer_onchain
-    from loans.blockchain.client import get_account, get_contract, send_transaction
+    from loans.blockchain.client import call_view, get_account, get_contract, send_transaction
     from loans.models.application import LoanApplication
     from web3 import Web3
 
@@ -363,7 +351,7 @@ def _sync_approval_impl(loan_id):
         _fail_tx(tx_record, exc, loan_id=loan_id)
 
 
-def _sync_rejection_impl(loan_id):
+def _sync_rejection_impl(loan_id, raise_errors=False):
     from loans.blockchain.services.approval_service import reject_loan_onchain
     from loans.blockchain.services.review_service import assign_officer_onchain
     from loans.blockchain.client import get_account, get_contract, send_transaction
@@ -417,6 +405,8 @@ def _sync_rejection_impl(loan_id):
 
     except Exception as exc:
         _fail_tx(tx_record, exc, loan_id=loan_id)
+        if raise_errors:
+            raise
 
 
 def _sync_disbursement_impl(loan_id, include_schedule=True):
@@ -491,7 +481,7 @@ def _sync_disbursement_impl(loan_id, include_schedule=True):
 def _execute_eth_disbursement(loan_id, app):
     """Send actual ETH to the customer's wallet for wallet-based disbursements."""
     from bson import ObjectId
-    from loans.blockchain.client import send_eth_transfer, get_web3
+    from loans.blockchain.client import get_web3, send_eth_transfer
     from loans.blockchain.services.eth_price_service import php_to_eth
     from loans.models.application import LoanApplication
     from profiles.models.profile_models import CustomerProfile
@@ -532,8 +522,9 @@ def _execute_eth_disbursement(loan_id, app):
     )
 
 
-def _sync_overdue_impl(loan_id, installment_number):
+def _sync_overdue_impl(loan_id, installment_number, raise_errors=False):
     from loans.blockchain.services.repayment_service import mark_overdue_onchain
+    from loans.models.repayment import RepaymentSchedule
 
     tx_record = _create_tx_record(
         loan_id=loan_id,
@@ -556,8 +547,11 @@ def _sync_overdue_impl(loan_id, installment_number):
             block_number=result["block_number"],
         )
 
+        schedule = RepaymentSchedule.find_by_loan(loan_id)
+        if not schedule:
+            raise ValueError(f"RepaymentSchedule for loan {loan_id} not found")
         RepaymentSchedule.update_blockchain_overdue_tx(
-            loan_id, installment_number, result["tx_hash"]
+            schedule._id, installment_number, result["tx_hash"]
         )
 
         logger.info(
@@ -568,11 +562,16 @@ def _sync_overdue_impl(loan_id, installment_number):
         )
     except Exception as exc:
         _fail_tx(tx_record, exc, loan_id=loan_id)
+        if raise_errors:
+            raise
 
 
-def _sync_penalty_impl(loan_id, installment_number, amount, action, reason=""):
+def _sync_penalty_impl(
+    loan_id, installment_number, amount, action, reason="", raise_errors=False
+):
     from loans.blockchain.models import BlockchainTransaction
     from loans.blockchain.services.audit_service import log_penalty_onchain
+    from loans.models.repayment import RepaymentSchedule
 
     action_key = "penalty_waived" if action == "waive" else "penalty_applied"
     existing = BlockchainTransaction.find_confirmed(
@@ -619,8 +618,11 @@ def _sync_penalty_impl(loan_id, installment_number, amount, action, reason=""):
             block_number=result["block_number"],
         )
 
+        schedule = RepaymentSchedule.find_by_loan(loan_id)
+        if not schedule:
+            raise ValueError(f"RepaymentSchedule for loan {loan_id} not found")
         RepaymentSchedule.update_blockchain_penalty_tx(
-            loan_id, installment_number, action, result["tx_hash"]
+            schedule._id, installment_number, action, result["tx_hash"]
         )
 
         logger.info(
@@ -632,6 +634,8 @@ def _sync_penalty_impl(loan_id, installment_number, amount, action, reason=""):
         )
     except Exception as exc:
         _fail_tx(tx_record, exc, loan_id=loan_id)
+        if raise_errors:
+            raise
 
 
 def _sync_consent_impl(
@@ -642,6 +646,7 @@ def _sync_consent_impl(
     consent_version,
     consent_timestamp,
     previous_state,
+    raise_errors=False,
 ):
     from loans.blockchain.services.audit_service import log_consent_onchain
 
@@ -679,3 +684,5 @@ def _sync_consent_impl(
         logger.info("sync_consent OK: user=%s tx=%s", user_id, result["tx_hash"][:18])
     except Exception as exc:
         _fail_tx(tx_record, exc, loan_id=user_id)
+        if raise_errors:
+            raise

@@ -216,11 +216,12 @@ class TestSyncDisbursementToChain:
         assert result["skipped"] is True
 
     @patch("loans.blockchain.tasks._update_application_tx")
-    @patch("loans.blockchain.services.disbursement_service.complete_disbursement_onchain")
+    @patch("loans.blockchain.services.disbursement_service.complete_existing_disbursement_onchain")
+    @patch("loans.blockchain.services.disbursement_service.initiate_disbursement_onchain")
     @patch("loans.blockchain.services.disbursement_service.set_method_onchain")
     @patch("loans.models.application.LoanApplication.find_by_id")
     @patch("loans.blockchain.models.BlockchainTransaction.create_pending")
-    def test_success(self, mock_create_pending, mock_find, mock_set, mock_complete, mock_update_tx, blockchain_settings):
+    def test_success(self, mock_create_pending, mock_find, mock_set, mock_initiate, mock_complete, mock_update_tx, blockchain_settings):
         mock_app = MagicMock()
         mock_app.disbursement_method = "gcash"
         mock_app.preferred_disbursement_method = None
@@ -234,10 +235,8 @@ class TestSyncDisbursementToChain:
         mock_create_pending.return_value = mock_tx
 
         mock_set.return_value = {"tx_hash": "0xset", "gas_used": 50000, "block_number": 1, "status": 1}
-        mock_complete.return_value = {
-            "initiate_tx": {"tx_hash": "0xinit", "gas_used": 100000, "block_number": 2, "status": 1},
-            "complete_tx": {"tx_hash": "0xcomplete", "gas_used": 120000, "block_number": 3, "status": 1},
-        }
+        mock_initiate.return_value = {"tx_hash": "0xinit", "gas_used": 100000, "block_number": 2, "status": 1}
+        mock_complete.return_value = {"tx_hash": "0xcomplete", "gas_used": 120000, "block_number": 3, "status": 1}
 
         result = sync_disbursement_to_chain("loan_id_1")
 
@@ -245,11 +244,12 @@ class TestSyncDisbursementToChain:
         mock_set.assert_called_once_with(loan_id="loan_id_1", method="gcash")
 
     @patch("loans.blockchain.tasks._update_application_tx")
-    @patch("loans.blockchain.services.disbursement_service.complete_disbursement_onchain")
+    @patch("loans.blockchain.services.disbursement_service.complete_existing_disbursement_onchain")
+    @patch("loans.blockchain.services.disbursement_service.initiate_disbursement_onchain")
     @patch("loans.blockchain.services.disbursement_service.set_method_onchain")
     @patch("loans.models.application.LoanApplication.find_by_id")
     @patch("loans.blockchain.models.BlockchainTransaction.create_pending")
-    def test_fallback_method_and_amount(self, mock_create_pending, mock_find, mock_set, mock_complete, mock_update_tx, blockchain_settings):
+    def test_fallback_method_and_amount(self, mock_create_pending, mock_find, mock_set, mock_initiate, mock_complete, mock_update_tx, blockchain_settings):
         mock_app = MagicMock()
         mock_app.disbursement_method = None
         mock_app.preferred_disbursement_method = "bank_transfer"
@@ -263,17 +263,14 @@ class TestSyncDisbursementToChain:
         mock_create_pending.return_value = mock_tx
 
         mock_set.return_value = {"tx_hash": "0x1", "gas_used": 1, "block_number": 1, "status": 1}
-        mock_complete.return_value = {
-            "initiate_tx": {"tx_hash": "0x2", "gas_used": 1, "block_number": 1, "status": 1},
-            "complete_tx": {"tx_hash": "0x3", "gas_used": 1, "block_number": 1, "status": 1},
-        }
+        mock_initiate.return_value = {"tx_hash": "0x2", "gas_used": 1, "block_number": 1, "status": 1}
+        mock_complete.return_value = {"tx_hash": "0x3", "gas_used": 1, "block_number": 1, "status": 1}
 
         sync_disbursement_to_chain("loan_id_2")
 
         mock_set.assert_called_once_with(loan_id="loan_id_2", method="bank_transfer")
         mock_complete.assert_called_once_with(
             loan_id="loan_id_2",
-            amount=40000,
             reference_hash="DISB_loan_id_2",
         )
 

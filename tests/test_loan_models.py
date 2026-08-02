@@ -11,11 +11,57 @@ Coverage:
 from datetime import datetime, timezone
 from unittest.mock import MagicMock
 
-from bson import ObjectId
 import pytest
+from bson import ObjectId
 
-from loans.models import LoanApplication, LoanProduct, RepaymentSchedule, LoanPayment
-from loans.utils.time import utcnow
+from loans.blockchain.models import BlockchainTransaction
+from loans.models import LoanApplication, LoanPayment, LoanProduct, RepaymentSchedule
+
+
+@pytest.mark.parametrize(
+    ("module_name", "model"),
+    [
+        ("loans.models.product", LoanProduct),
+        ("loans.models.application", LoanApplication),
+        ("loans.models.repayment", RepaymentSchedule),
+        ("loans.models.payment", LoanPayment),
+    ],
+)
+def test_existing_loan_document_save_excludes_immutable_id(
+    monkeypatch, module_name, model
+):
+    """Existing documents must use _id only as the update selector."""
+    import importlib
+
+    collection = MagicMock()
+    db = MagicMock()
+    db.__getitem__.return_value = collection
+    module = importlib.import_module(module_name)
+    monkeypatch.setattr(module, "get_db", lambda: db)
+
+    document_id = ObjectId()
+    instance = model(_id=document_id)
+    instance.save()
+
+    selector, update = collection.update_one.call_args.args
+    assert selector == {"_id": document_id}
+    assert "_id" not in update["$set"]
+
+
+def test_existing_blockchain_transaction_save_excludes_immutable_id(monkeypatch):
+    """Blockchain transaction updates must also keep _id out of $set."""
+    import loans.blockchain.models as blockchain_models
+
+    collection = MagicMock()
+    monkeypatch.setattr(blockchain_models, "_get_collection", lambda: collection)
+
+    document_id = ObjectId()
+    transaction = BlockchainTransaction(_id=document_id)
+    transaction.save()
+
+    selector, update = collection.update_one.call_args.args
+    assert selector == {"_id": document_id}
+    assert "_id" not in update["$set"]
 
 
 def test_loan_product_active_filter(monkeypatch):

@@ -459,6 +459,32 @@ class TestAuditService:
         result = get_audit_entry(b"\xab" * 32)
         assert result["action_label"] == "LoanCreated"
 
+    @patch("loans.blockchain.services.audit_service.call_view")
+    @patch("loans.blockchain.services.audit_service.get_contract")
+    def test_get_audit_entry_current_abi_layout(
+        self, mock_gc, mock_cv, blockchain_settings
+    ):
+        from loans.blockchain.services.audit_service import get_audit_entry
+
+        mock_gc.return_value = MagicMock()
+        mock_cv.return_value = (
+            b"\x01" * 32,
+            b"\x02" * 32,
+            b"\x03" * 32,
+            b"\x04" * 32,
+            b"\x05" * 32,
+            5,
+            "0xActor",
+            1700000000,
+            10,
+        )
+
+        result = get_audit_entry(b"\xab" * 32)
+
+        assert result["action"] == 5
+        assert result["action_label"] == "LoanDisbursed"
+        assert result["previous_state_hash"] == (b"\x04" * 32).hex()
+
     def test_audit_action_labels_coverage(self):
         from loans.blockchain.services.audit_service import AUDIT_ACTION_LABELS
 

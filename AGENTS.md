@@ -26,8 +26,6 @@ Treat the following as sensitive and do not read, expose, or casually modify the
 
 ## Validation and operations
 
-Run `pytest -q` for normal validation.
-
 Do not run any state-changing command without explicit user approval, including:
 
 - `python init_db.py`;

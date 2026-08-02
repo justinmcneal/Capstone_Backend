@@ -323,6 +323,8 @@ AUTH_COOKIE_SECURE = env_bool('AUTH_COOKIE_SECURE', not DEBUG)
 AUTH_COOKIE_HTTPONLY = env_bool('AUTH_COOKIE_HTTPONLY', True)
 AUTH_COOKIE_SAMESITE = os.getenv('AUTH_COOKIE_SAMESITE', 'Lax')
 AUTH_COOKIE_PATH = os.getenv('AUTH_COOKIE_PATH', '/')
+AUTH_ACCESS_COOKIE_PATH = os.getenv('AUTH_ACCESS_COOKIE_PATH', '/api/')
+AUTH_REFRESH_COOKIE_PATH = os.getenv('AUTH_REFRESH_COOKIE_PATH', '/api/auth/')
 CSRF_TRUSTED_ORIGINS = [
     origin.strip()
     for origin in os.getenv(
@@ -390,6 +392,15 @@ CELERY_ACCEPT_CONTENT = ['json']
 CELERY_TASK_SERIALIZER = 'json'
 CELERY_RESULT_SERIALIZER = 'json'
 CELERY_TIMEZONE = 'UTC'
+CELERY_TASK_ROUTES = {
+    'blockchain.*': {'queue': 'blockchain'},
+    'loans.execute_wallet_disbursement_task': {'queue': 'blockchain'},
+}
+
+# MongoDB-backed leases coordinate the single configured blockchain sender.
+BLOCKCHAIN_NONCE_LOCK_WAIT_SECONDS = 15
+BLOCKCHAIN_NONCE_LEASE_SECONDS = 180
+BLOCKCHAIN_RECONCILIATION_BATCH_SIZE = 250
 
 # Logging Configuration
 LOGGING = {
@@ -511,6 +522,12 @@ BLOCKCHAIN_GAS_PRICE_GWEI = int(float(os.getenv('BLOCKCHAIN_GAS_PRICE_GWEI', '20
 # Block explorer URL (e.g. https://etherscan.io, https://sepolia.etherscan.io)
 # Leave empty for local Ganache (no explorer available)
 BLOCKCHAIN_EXPLORER_URL = os.getenv('BLOCKCHAIN_EXPLORER_URL', '')
+
+# Confirmations required before an incoming ETH transfer can be posted as a loan
+# payment. Production networks should tune this based on their reorg risk.
+LOANS_WALLET_MIN_CONFIRMATIONS = int(
+    os.getenv('LOANS_WALLET_MIN_CONFIRMATIONS', '3')
+)
 
 # Path to ABI files (relative to BASE_DIR)
 BLOCKCHAIN_ABI_DIR = BASE_DIR / 'loans' / 'blockchain' / 'abis'

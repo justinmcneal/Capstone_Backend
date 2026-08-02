@@ -10,10 +10,15 @@ import json
 import logging
 import threading
 import time
+import uuid
+from contextlib import contextmanager
+from datetime import timedelta
 from functools import lru_cache
 from pathlib import Path
 
 from django.conf import settings
+from pymongo import ReturnDocument
+from pymongo.errors import DuplicateKeyError
 from web3 import Web3
 from web3.middleware import ExtraDataToPOAMiddleware
 
@@ -86,6 +91,86 @@ _node_circuit_breaker = _CircuitBreaker(
     failure_threshold=_CB_FAILURE_THRESHOLD,
     recovery_timeout=_CB_RECOVERY_TIMEOUT,
 )
+_local_sender_lock = threading.Lock()
+
+
+@contextmanager
+def _sender_nonce_lock(account_address):
+    """Serialize nonce allocation across workers using a short MongoDB lease."""
+    owner = uuid.uuid4().hex
+    db = getattr(settings, "MONGODB", None)
+    # Unit-test mocks and deployments without MongoDB still get process safety.
+    use_mongo = db is not None and isinstance(getattr(db, "name", None), str)
+
+    with _local_sender_lock:
+        if not use_mongo:
+            yield
+            return
+
+        from loans.utils.time import utcnow
+
+        collection = db["blockchain_sender_locks"]
+        lock_id = (
+            f"{getattr(settings, 'BLOCKCHAIN_CHAIN_ID', 'unknown')}:"
+            f"{str(account_address).lower()}"
+        )
+        deadline = time.monotonic() + float(
+            getattr(settings, "BLOCKCHAIN_NONCE_LOCK_WAIT_SECONDS", 15)
+        )
+        acquired = False
+        while time.monotonic() < deadline:
+            now = utcnow()
+            try:
+                doc = collection.find_one_and_update(
+                    {
+                        "_id": lock_id,
+                        "$or": [
+                            {"owner": owner},
+                            {"lease_expires_at": {"$lte": now}},
+                            {"lease_expires_at": {"$exists": False}},
+                        ],
+                    },
+                    {
+                        "$set": {
+                            "owner": owner,
+                            "lease_expires_at": now
+                            + timedelta(
+                                seconds=float(
+                                    getattr(
+                                        settings,
+                                        "BLOCKCHAIN_NONCE_LEASE_SECONDS",
+                                        30,
+                                    )
+                                )
+                            ),
+                        }
+                    },
+                    upsert=True,
+                    return_document=ReturnDocument.AFTER,
+                )
+                acquired = bool(doc and doc.get("owner") == owner)
+            except DuplicateKeyError:
+                acquired = False
+            if acquired:
+                break
+            time.sleep(0.05)
+
+        if not acquired:
+            raise BlockchainConnectionError(
+                "Timed out waiting for the blockchain sender nonce lock"
+            )
+        try:
+            yield
+        finally:
+            collection.update_one(
+                {"_id": lock_id, "owner": owner},
+                {"$unset": {"owner": "", "lease_expires_at": ""}},
+            )
+
+
+def _positive_base_fee(value):
+    """Return a numeric EIP-1559 base fee, ignoring mock/non-numeric values."""
+    return value if isinstance(value, (int, float)) and value > 0 else None
 
 
 def _check_enabled():
@@ -143,7 +228,7 @@ def _normalize_tx_hash(tx_hash):
         value = tx_hash.hex()
     else:
         value = str(tx_hash)
-    return value[2:] if value.startswith("0x") else value
+    return value.removeprefix("0x")
 
 
 def _format_tx_hash(tx_hash, with_prefix=False):
@@ -286,16 +371,16 @@ def send_transaction(contract, method_name, *args):
 
         tx_params = {
             "from": account.address,
-            "nonce": w3.eth.get_transaction_count(account.address),
+            "nonce": w3.eth.get_transaction_count(account.address, "pending"),
             "gas": gas,
             "chainId": settings.BLOCKCHAIN_CHAIN_ID,
         }
 
-        if base_fee is not None and base_fee > 0:
+        base_fee = _positive_base_fee(base_fee)
+        if base_fee is not None:
             max_priority_fee = Web3.to_wei(2, "gwei")
             max_fee = (base_fee * 2) + max_priority_fee
-            if max_fee < gas_price_fallback:
-                max_fee = gas_price_fallback
+            max_fee = max(max_fee, gas_price_fallback)
             tx_params["maxFeePerGas"] = max_fee
             tx_params["maxPriorityFeePerGas"] = max_priority_fee
         else:
@@ -303,10 +388,10 @@ def send_transaction(contract, method_name, *args):
 
         return fn.build_transaction(tx_params)
 
-    tx = _with_retry(_build_tx)
-
-    signed = account.sign_transaction(tx)
-    tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
+    with _sender_nonce_lock(account.address):
+        tx = _with_retry(_build_tx)
+        signed = account.sign_transaction(tx)
+        tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
     receipt = w3.eth.wait_for_transaction_receipt(tx_hash, timeout=120)
 
     tx_hash_hex = _format_tx_hash(receipt["transactionHash"])
@@ -361,7 +446,60 @@ def call_view(contract, method_name, *args):
     return _with_retry(fn.call)
 
 
-def send_eth_transfer(to_address, amount_wei):
+def _eth_receipt_result(receipt, to_address, amount_wei, gas_price_fallback=0):
+    """Validate and normalize an ETH-transfer receipt."""
+    tx_hash_hex = _format_tx_hash(receipt["transactionHash"], with_prefix=True)
+    if receipt["status"] != 1:
+        raise BlockchainTransactionFailed(
+            f"ETH transfer to {to_address} failed",
+            tx_hash=tx_hash_hex,
+            receipt=receipt,
+        )
+    return {
+        "tx_hash": tx_hash_hex,
+        "gas_used": receipt["gasUsed"],
+        "gas_price": receipt.get("effectiveGasPrice", gas_price_fallback),
+        "block_number": receipt["blockNumber"],
+        "status": receipt["status"],
+        "amount_wei": int(amount_wei),
+    }
+
+
+def send_prepared_eth_transfer(
+    raw_transaction, expected_tx_hash, to_address, amount_wei, on_broadcast=None
+):
+    """Broadcast an already-signed transfer, preserving its original identity."""
+    _check_enabled()
+    w3 = get_web3()
+    raw_bytes = bytes.fromhex(str(raw_transaction).removeprefix("0x"))
+    computed_hash = _format_tx_hash(Web3.keccak(raw_bytes), with_prefix=True)
+    if computed_hash.lower() != str(expected_tx_hash).lower():
+        raise BlockchainTransactionFailed(
+            "Prepared wallet transaction hash does not match its signed payload"
+        )
+    try:
+        sent_hash = w3.eth.send_raw_transaction(raw_bytes)
+        sent_hash = _format_tx_hash(sent_hash, with_prefix=True)
+        if sent_hash.lower() != computed_hash.lower():
+            raise BlockchainTransactionFailed(
+                "Blockchain node returned a different wallet transaction hash"
+            )
+    except ValueError as exc:
+        message = str(exc).lower()
+        if not any(
+            marker in message
+            for marker in ("already known", "known transaction", "already imported")
+        ):
+            raise
+    if on_broadcast:
+        on_broadcast(computed_hash)
+    receipt = w3.eth.wait_for_transaction_receipt(computed_hash, timeout=120)
+    return _eth_receipt_result(receipt, to_address, amount_wei)
+
+
+def send_eth_transfer(
+    to_address, amount_wei, on_broadcast=None, on_prepared=None
+):
     """
     Send ETH from the system wallet to a target address.
 
@@ -396,59 +534,58 @@ def send_eth_transfer(to_address, amount_wei):
     gas_price_fallback = _with_retry(_get_gas_price)
     base_fee = _with_retry(_get_base_fee)
 
-    tx = {
-        "from": account.address,
-        "to": Web3.to_checksum_address(to_address),
-        "value": int(amount_wei),
-        "nonce": w3.eth.get_transaction_count(account.address),
-        "gas": 21000,
-        "chainId": settings.BLOCKCHAIN_CHAIN_ID,
-    }
+    with _sender_nonce_lock(account.address):
+        nonce = w3.eth.get_transaction_count(account.address, "pending")
+        tx = {
+            "from": account.address,
+            "to": Web3.to_checksum_address(to_address),
+            "value": int(amount_wei),
+            "nonce": nonce,
+            "gas": 21000,
+            "chainId": settings.BLOCKCHAIN_CHAIN_ID,
+        }
 
-    if base_fee is not None and base_fee > 0:
-        max_priority_fee = Web3.to_wei(2, "gwei")
-        max_fee = (base_fee * 2) + max_priority_fee
-        tx["maxFeePerGas"] = max_fee
-        tx["maxPriorityFeePerGas"] = max_priority_fee
-    else:
-        tx["gasPrice"] = gas_price_fallback
+        base_fee = _positive_base_fee(base_fee)
+        if base_fee is not None:
+            max_priority_fee = Web3.to_wei(2, "gwei")
+            max_fee = (base_fee * 2) + max_priority_fee
+            tx["maxFeePerGas"] = max_fee
+            tx["maxPriorityFeePerGas"] = max_priority_fee
+        else:
+            tx["gasPrice"] = gas_price_fallback
 
-    signed = account.sign_transaction(tx)
-    tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
+        signed = account.sign_transaction(tx)
+        raw_transaction = signed.raw_transaction
+        prepared_hash = _format_tx_hash(
+            Web3.keccak(bytes(raw_transaction)), with_prefix=True
+        )
+        if on_prepared:
+            on_prepared(
+                prepared_hash,
+                nonce,
+                "0x" + bytes(raw_transaction).hex(),
+            )
+        tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
+        tx_hash_hex = _format_tx_hash(tx_hash, with_prefix=True)
+        if tx_hash_hex.lower() != prepared_hash.lower():
+            raise BlockchainTransactionFailed(
+                "Blockchain node returned a different wallet transaction hash"
+            )
+        if on_broadcast:
+            on_broadcast(tx_hash_hex, nonce)
     receipt = w3.eth.wait_for_transaction_receipt(tx_hash, timeout=120)
-
-    tx_hash_hex = _format_tx_hash(receipt["transactionHash"], with_prefix=True)
-
-    if receipt["status"] != 1:
-        logger.error(
-            "ETH transfer FAILED: to=%s amount=%s tx=%s",
-            to_address,
-            amount_wei,
-            tx_hash_hex,
-        )
-        raise BlockchainTransactionFailed(
-            f"ETH transfer to {to_address} failed",
-            tx_hash=tx_hash_hex,
-            receipt=receipt,
-        )
-
-    effective_gas_price = receipt.get("effectiveGasPrice", gas_price_fallback)
+    result = _eth_receipt_result(
+        receipt, to_address, amount_wei, gas_price_fallback
+    )
 
     logger.info(
         "ETH transfer OK: tx=%s amount=%s wei to=%s",
-        tx_hash_hex[:18],
+        result["tx_hash"][:18],
         amount_wei,
         to_address[:10],
     )
 
-    return {
-        "tx_hash": tx_hash_hex,
-        "gas_used": receipt["gasUsed"],
-        "gas_price": effective_gas_price,
-        "block_number": receipt["blockNumber"],
-        "status": receipt["status"],
-        "amount_wei": int(amount_wei),
-    }
+    return result
 
 
 def clear_cache():

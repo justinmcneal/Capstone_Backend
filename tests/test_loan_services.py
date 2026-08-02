@@ -368,3 +368,4 @@ class TestGetOfficersWorkload:
         assert len(result["officers"]) == 2
         assert result["page"] == 1
         assert result["total_pages"] == 2
+        assert result["officers"][0]["assigned_count"] == 0

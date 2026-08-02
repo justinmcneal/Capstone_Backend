@@ -5,6 +5,7 @@ import logging
 from bson import ObjectId
 
 from accounts.models import Customer, LoanOfficer
+from loans.models import LoanApplication
 
 logger = logging.getLogger("loans")
 
@@ -236,6 +237,19 @@ def get_officers_workload(page=1, page_size=20, search=None):
                 "employee_id": officer.employee_id,
                 "name": officer.full_name,
                 "email": officer.email,
+                "assigned_count": LoanApplication.count(
+                    {
+                        "assigned_officer": officer.id,
+                        "status": {
+                            "$in": [
+                                "submitted",
+                                "under_review",
+                                "approved",
+                                "disbursed",
+                            ]
+                        },
+                    }
+                ),
                 "pending_count": officer.get_pending_count(),
                 "active": officer.active,
             }

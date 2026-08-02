@@ -4,6 +4,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
+from web3 import Web3
 
 from loans.blockchain.client import send_eth_transfer, send_transaction
 from loans.services.qualification import qualify_customer
@@ -62,13 +63,24 @@ def test_blockchain_client_smoke_hash_formats(mock_get_web3, mock_get_account, b
     mock_w3 = MagicMock()
     mock_w3.eth.get_transaction_count.return_value = 5
     mock_w3.eth.gas_price = 123
-    mock_w3.eth.send_raw_transaction.return_value = b"\x01" * 32
-    mock_w3.eth.wait_for_transaction_receipt.return_value = {
+    eth_tx_hash = bytes(Web3.keccak(b"\x00" * 50))
+    mock_w3.eth.send_raw_transaction.side_effect = [b"\x01" * 32, eth_tx_hash]
+    contract_receipt = {
         "transactionHash": b"\xab" * 32,
         "status": 1,
         "gasUsed": 21000,
         "blockNumber": 10,
     }
+    eth_receipt = {
+        "transactionHash": eth_tx_hash,
+        "status": 1,
+        "gasUsed": 21000,
+        "blockNumber": 11,
+    }
+    mock_w3.eth.wait_for_transaction_receipt.side_effect = [
+        contract_receipt,
+        eth_receipt,
+    ]
     mock_w3.eth.contract.return_value = MagicMock()
     mock_w3.middleware_onion = MagicMock()
     mock_get_web3.return_value = mock_w3

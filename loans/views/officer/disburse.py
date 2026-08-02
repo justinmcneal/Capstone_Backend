@@ -1,69 +1,99 @@
-from rest_framework.views import APIView
+"""Officer loan-disbursement endpoint."""
+
+import logging
+from typing import ClassVar
+
+from bson import ObjectId
+from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
+from rest_framework.views import APIView
 
 from accounts.authentication import CustomJWTAuthentication
-from accounts.utils.response_helpers import success_response, error_response
+from accounts.utils.response_helpers import error_response, success_response
 from accounts.utils.validation_utils import sanitize_text
-from rest_framework import status
-from loans.models import LoanApplication, LoanProduct, RepaymentSchedule
-from loans.views.officer.base import LoanOfficerRequiredMixin
 from analytics.models import AuditLog
-import logging
+from loans.models import LoanApplication
+from loans.services.disbursement import (
+    EXTERNAL_DISBURSEMENT_METHODS,
+    MANUAL_DISBURSEMENT_METHODS,
+    begin_disbursement,
+    disbursement_idempotency_key,
+    execute_manual_disbursement,
+)
+from loans.services.payment import PaymentServiceError
+from loans.views.officer.base import LoanOfficerRequiredMixin
 
 logger = logging.getLogger("loans")
 
 
 class DisburseView(LoanOfficerRequiredMixin, APIView):
-    """
-    Loan Officer: Mark approved loan as disbursed.
+    """Reserve or execute an approved loan disbursement."""
 
-    POST /api/loans/officer/applications/<id>/disburse/
-    """
+    authentication_classes: ClassVar[list] = [CustomJWTAuthentication]
+    permission_classes: ClassVar[list] = [IsAuthenticated]
 
-    authentication_classes = [CustomJWTAuthentication]
-    permission_classes = [IsAuthenticated]
+    @staticmethod
+    def _response_data(application, schedule=None, replayed=False):
+        data = {
+            "id": application.id,
+            "status": application.status,
+            "disbursement_status": application.disbursement_status,
+            "disbursed_amount": application.disbursed_amount,
+            "disbursement_method": application.disbursement_method,
+            "disbursement_reference": application.disbursement_reference,
+            "disbursement_requested_at": (
+                application.disbursement_requested_at.isoformat()
+                if application.disbursement_requested_at
+                else None
+            ),
+            "disbursed_at": (
+                application.disbursed_at.isoformat()
+                if application.disbursed_at
+                else None
+            ),
+            "disbursement_error": application.disbursement_error,
+            "replayed": replayed,
+            "eth_disbursement_tx_hash": application.eth_disbursement_tx_hash,
+            "eth_disbursement_amount": application.eth_disbursement_amount,
+            "eth_disbursement_rate": application.eth_disbursement_rate,
+            "eth_disbursement_recipient": application.eth_disbursement_recipient,
+        }
+        if schedule:
+            data["schedule"] = {
+                "monthly_payment": schedule.monthly_payment,
+                "total_amount": schedule.total_amount,
+                "term_months": schedule.term_months,
+            }
+        return data
 
     def post(self, request, application_id):
         has_permission, user = self.check_officer_permission(request)
         if not has_permission:
-            return user  # This is the error response
+            return user
 
-        app = LoanApplication.find_by_id(application_id)
-        if not app:
+        application = LoanApplication.find_by_id(application_id)
+        if not application:
             return error_response(
                 message="Application not found", status_code=status.HTTP_404_NOT_FOUND
             )
         has_scope, scope_result = self.check_application_scope(
-            request,
-            app,
-            allow_unassigned=False,
+            request, application, allow_unassigned=False
         )
         if not has_scope:
             return scope_result
 
-        # Can only disburse approved applications
-        if app.status != "approved":
+        actor_id = self._actor_id(user)
+        client_key = request.headers.get("Idempotency-Key") or request.data.get(
+            "idempotency_key"
+        )
+        try:
+            idempotency_key = disbursement_idempotency_key(actor_id, client_key)
+        except PaymentServiceError as exc:
             return error_response(
-                message=f"Cannot disburse application with status: {app.status}. Must be 'approved'.",
-                status_code=status.HTTP_400_BAD_REQUEST,
+                message=str(exc), status_code=status.HTTP_400_BAD_REQUEST
             )
 
-        # Get disbursement data
-        amount_raw = request.data.get("amount", app.approved_amount)
-        # Prefer the borrower's pre-set method; officer cannot override
-        stored_method = getattr(app, "preferred_disbursement_method", None)
-        if stored_method:
-            method = stored_method
-        else:
-            # Fallback for legacy apps where borrower didn't set a preference
-            method = (
-                sanitize_text(request.data.get("method", "bank_transfer")).lower()
-                or "bank_transfer"
-            )
-        reference = sanitize_text(request.data.get("reference", ""))
-        external_reference = sanitize_text(
-            request.data.get("external_reference", "")
-        )  # Bank/check number
+        amount_raw = request.data.get("amount", application.approved_amount)
         try:
             amount = float(amount_raw)
         except (TypeError, ValueError):
@@ -71,134 +101,161 @@ class DisburseView(LoanOfficerRequiredMixin, APIView):
                 message="amount must be a valid number",
                 status_code=status.HTTP_400_BAD_REQUEST,
             )
-        if amount <= 0:
-            return error_response(
-                message="amount must be greater than 0",
-                status_code=status.HTTP_400_BAD_REQUEST,
-            )
-        allowed_methods = {"cash", "gcash", "bank_transfer", "check", "wallet"}
-        if method not in allowed_methods:
+
+        stored_method = application.preferred_disbursement_method
+        method = stored_method or (
+            sanitize_text(request.data.get("method", "bank_transfer")).lower()
+            or "bank_transfer"
+        )
+        if method not in MANUAL_DISBURSEMENT_METHODS | EXTERNAL_DISBURSEMENT_METHODS:
             return error_response(
                 message="Invalid disbursement method",
                 status_code=status.HTTP_400_BAD_REQUEST,
             )
-        if not reference and external_reference:
-            reference = external_reference
 
-        # Auto-generate system reference if not provided
-        if not reference:
-            from loans.utils import generate_disbursement_reference
+        reference = sanitize_text(request.data.get("reference", ""))
+        external_reference = sanitize_text(request.data.get("external_reference", ""))
+        reference = reference or external_reference or f"DSB-{idempotency_key[-16:].upper()}"
 
-            reference = generate_disbursement_reference()
+        if method in EXTERNAL_DISBURSEMENT_METHODS:
+            try:
+                application, replayed = begin_disbursement(
+                    application=application,
+                    amount=amount,
+                    method=method,
+                    reference=reference,
+                    actor_id=actor_id,
+                    idempotency_key=idempotency_key,
+                )
+            except ValueError as exc:
+                return error_response(
+                    message=str(exc), status_code=status.HTTP_400_BAD_REQUEST
+                )
+
+            if not replayed:
+                try:
+                    AuditLog.log_action(
+                        action="loan_disbursement_pending",
+                        user_id=actor_id,
+                        user_type="loan_officer",
+                        description=f"Loan disbursement pending external confirmation via {method}",
+                        resource_type="loan",
+                        resource_id=application.id,
+                        details={
+                            "amount": amount,
+                            "method": method,
+                            "reference": reference,
+                            "customer_id": application.customer_id,
+                        },
+                        ip_address=request.META.get("REMOTE_ADDR", ""),
+                    )
+                except Exception as exc:  # noqa: BLE001 - audit cannot roll back state
+                    logger.warning("Failed to audit pending disbursement: %s", exc)
+
+            if application.disbursement_status == "executed":
+                return success_response(
+                    data=self._response_data(application, replayed=True),
+                    message="Loan disbursement already completed",
+                )
+
+            if method == "wallet":
+                try:
+                    from loans.tasks import execute_wallet_disbursement_task
+
+                    execute_wallet_disbursement_task.delay(application.id)
+                except Exception as exc:  # reconciliation will enqueue it later
+                    logger.exception(
+                        "Could not enqueue wallet disbursement for loan %s: %s",
+                        application.id,
+                        exc,
+                    )
+
+            return success_response(
+                data=self._response_data(application, replayed=replayed),
+                message=(
+                    "Disbursement is already pending external confirmation"
+                    if replayed
+                    else "Disbursement accepted and pending external confirmation"
+                ),
+                status_code=status.HTTP_202_ACCEPTED,
+            )
 
         try:
-            app.disburse(
+            application, schedule, replayed = execute_manual_disbursement(
+                application=application,
                 amount=amount,
                 method=method,
                 reference=reference,
-                processed_by=self._actor_id(user),
+                actor_id=actor_id,
+                idempotency_key=idempotency_key,
+            )
+        except ValueError as exc:
+            return error_response(
+                message=str(exc), status_code=status.HTTP_400_BAD_REQUEST
+            )
+        except Exception as exc:
+            logger.exception("Manual disbursement failed for loan %s", application.id)
+            return error_response(
+                message=f"Disbursement failed safely: {exc}",
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
-            logger.info(f"Loan disbursed: {app.id} by {self._actor_id(user)}")
-
-            # Audit log for disbursement
-            AuditLog.log_action(
-                action="loan_disbursed",
-                user_id=self._actor_id(user),
-                user_type="loan_officer",
-                description=f"Loan disbursed - PHP{amount:,.2f} via {method}",
-                resource_type="loan",
-                resource_id=app.id,
-                details={
-                    "amount": amount,
-                    "method": method,
-                    "reference": reference,
-                    "customer_id": app.customer_id,
-                },
-                ip_address=request.META.get("REMOTE_ADDR", ""),
-            )
-
-            # Generate repayment schedule
-            schedule = None
+        if not replayed:
             try:
-                product = LoanProduct.find_by_id(app.product_id)
-                if product:
-                    schedule = RepaymentSchedule.generate_for_loan(app, product)
-                    logger.info(f"Repayment schedule generated for loan {app.id}")
-            except Exception as e:
-                logger.warning(f"Failed to generate repayment schedule: {e}")
-
-            # Blockchain sync — disbursement + schedule (background thread, no Celery needed)
+                AuditLog.log_action(
+                    action="loan_disbursed",
+                    user_id=actor_id,
+                    user_type="loan_officer",
+                    description=f"Loan disbursed - PHP{amount:,.2f} via {method}",
+                    resource_type="loan",
+                    resource_id=application.id,
+                    details={
+                        "amount": amount,
+                        "method": method,
+                        "reference": reference,
+                        "customer_id": application.customer_id,
+                    },
+                    ip_address=request.META.get("REMOTE_ADDR", ""),
+                )
+            except Exception as exc:  # noqa: BLE001 - audit cannot roll back state
+                logger.warning("Failed to audit completed disbursement: %s", exc)
+            self._send_disbursement_email(application, amount, method, reference)
             try:
                 from loans.blockchain.sync import sync_disbursement
 
-                sync_disbursement(app.id, include_schedule=bool(schedule))
-                # Reload app to pick up ETH disbursement fields written by sync
-                app = LoanApplication.find_by_id(app.id)
-            except Exception as e:
-                logger.warning(
-                    f"Blockchain sync skipped for disbursement {app.id}: {e}"
-                )
+                sync_disbursement(application.id, include_schedule=True)
+            except Exception as exc:  # durable reconciliation remains available
+                logger.warning("Could not enqueue disbursement sync: %s", exc)
 
-            # Send disbursement email
+        return success_response(
+            data=self._response_data(application, schedule, replayed),
+            message=(
+                "Loan disbursement already completed"
+                if replayed
+                else "Loan disbursed successfully"
+            ),
+        )
+
+    @staticmethod
+    def _send_disbursement_email(application, amount, method, reference):
+        try:
             from accounts.models import Customer
+            from notifications.services import get_email_sender
 
             customer = None
-            if app.customer_id:
-                try:
-                    customer = Customer.find_one({"_id": ObjectId(app.customer_id)})
-                except Exception:
-                    pass
+            if application.customer_id and ObjectId.is_valid(application.customer_id):
+                customer = Customer.find_one(
+                    {"_id": ObjectId(application.customer_id)}
+                )
             if customer and customer.email:
-                try:
-                    from notifications.services import get_email_sender
-
-                    sender = get_email_sender()
-                    sender.send_loan_disbursed(
-                        customer_email=customer.email,
-                        customer_name=f"{customer.first_name} {customer.last_name}",
-                        loan_id=app.id,
-                        amount=amount,
-                        method=method,
-                        reference=reference,
-                        customer_id=app.customer_id,
-                    )
-                except Exception as e:
-                    logger.warning(f"Failed to send disbursement email: {e}")
-
-            response_data = {
-                "id": app.id,
-                "status": app.status,
-                "disbursed_amount": app.disbursed_amount,
-                "disbursement_method": app.disbursement_method,
-                "disbursement_reference": app.disbursement_reference,
-                "disbursed_at": (
-                    app.disbursed_at.isoformat() if app.disbursed_at else None
-                ),
-                "eth_disbursement_tx_hash": getattr(
-                    app, "eth_disbursement_tx_hash", None
-                ),
-                "eth_disbursement_amount": getattr(
-                    app, "eth_disbursement_amount", None
-                ),
-                "eth_disbursement_rate": getattr(app, "eth_disbursement_rate", None),
-                "eth_disbursement_recipient": getattr(
-                    app, "eth_disbursement_recipient", None
-                ),
-            }
-
-            if schedule:
-                response_data["schedule"] = {
-                    "monthly_payment": schedule.monthly_payment,
-                    "total_amount": schedule.total_amount,
-                    "term_months": schedule.term_months,
-                }
-
-            return success_response(
-                data=response_data, message="Loan disbursed successfully"
-            )
-
-        except ValueError as e:
-            return error_response(
-                message=str(e), status_code=status.HTTP_400_BAD_REQUEST
-            )
+                get_email_sender().send_loan_disbursed(
+                    customer_email=customer.email,
+                    customer_name=f"{customer.first_name} {customer.last_name}",
+                    loan_id=application.id,
+                    amount=amount,
+                    method=method,
+                    reference=reference,
+                    customer_id=application.customer_id,
+                )
+        except Exception as exc:  # noqa: BLE001 - notification is best effort
+            logger.warning("Failed to send disbursement email: %s", exc)

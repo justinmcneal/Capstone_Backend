@@ -22,4 +22,16 @@ app.conf.beat_schedule = {
         "task": "loans.tasks.check_overdue_installments_task",
         "schedule": crontab(hour=0, minute=0),
     },
+    "reconcile-wallet-disbursements-every-5-minutes": {
+        "task": "loans.reconcile_wallet_disbursements_task",
+        "schedule": crontab(minute="*/5"),
+    },
+    "poll-blockchain-audit-events-every-minute": {
+        "task": "blockchain.poll_audit_events",
+        "schedule": crontab(minute="*"),
+    },
+    "reconcile-blockchain-domain-state-every-5-minutes": {
+        "task": "blockchain.reconcile_domain_state",
+        "schedule": crontab(minute="*/5"),
+    },
 }

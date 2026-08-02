@@ -127,31 +127,31 @@ class AuditEventListener:
         last_block = self._get_last_block(current_block)
 
         if current_block < last_block:
+            if last_block == current_block + 1:
+                return {"processed": 0, "next_block": last_block}
             logger.warning(
-                "Chain reorg detected: current=%d < last_processed=%d",
+                "Chain reorg detected: current=%d < next_block=%d",
                 current_block,
                 last_block,
             )
             last_block = max(0, current_block - 10)
 
-        if current_block == last_block:
-            return
+        logs = self._contract.events.AuditLogged().get_logs(
+            from_block=last_block,
+            to_block=current_block,
+        )
 
-        try:
-            logs = self._contract.events.AuditLogged().get_logs(
-                from_block=last_block,
-                to_block=current_block,
-            )
-        except Exception as exc:
-            logger.warning("Failed to fetch logs: %s", exc)
-            return
-
+        processed = 0
         for log in logs:
             if self._stop_event.is_set():
                 break
-            self._process_log(log)
+            if not self._process_log(log):
+                raise RuntimeError("Blockchain event could not be persisted")
+            processed += 1
 
-        self._save_last_block(current_block + 1)
+        if not self._stop_event.is_set():
+            self._save_last_block(current_block + 1)
+        return {"processed": processed, "next_block": current_block + 1}
 
     def _get_last_block(self, current_block):
         """Load persisted last_block, falling back to start_block or current."""
@@ -163,10 +163,9 @@ class AuditEventListener:
         if doc and "block_number" in doc:
             return doc["block_number"]
 
-        if self.start_block is not None:
-            return self.start_block
-
-        return current_block
+        initial_block = self.start_block if self.start_block is not None else current_block
+        self._save_last_block(initial_block)
+        return initial_block
 
     def _save_last_block(self, block_number):
         """Persist last processed block to MongoDB."""
@@ -182,7 +181,15 @@ class AuditEventListener:
     def _process_log(self, log):
         """Decode and persist a single AuditLogged event."""
         try:
-            decoded = self._contract.events.AuditLogged().processLog(log)
+            from collections.abc import Mapping
+
+            event = self._contract.events.AuditLogged()
+            decoded = None
+            processor = getattr(event, "process_log", None)
+            if processor:
+                decoded = processor(log)
+            if not isinstance(decoded, Mapping):
+                decoded = event.processLog(log)
             tx_hash = log["transactionHash"].hex()
             entry = {
                 "tx_hash": tx_hash,
@@ -202,18 +209,24 @@ class AuditEventListener:
                 "timestamp": int(time.time()),
             }
             self._persist_event(entry)
+            return True
         except Exception:
-            logger.exception("Failed to decode/process log %s", log.get("transactionHash", "?"))
+            logger.exception(
+                "Failed to decode/process log %s", log.get("transactionHash", "?")
+            )
+            return False
 
     def _persist_event(self, entry):
         """Persist event to MongoDB, skipping duplicates."""
         db = getattr(settings, "MONGODB", None)
         if db is None:
             return
-        try:
-            db[self.EVENTS_COLLECTION].insert_one(entry)
-        except Exception as exc:
-            logger.exception("Failed to persist blockchain event: %s", exc)
+        event_id = f"{entry['tx_hash']}:{entry['log_index']}"
+        db[self.EVENTS_COLLECTION].update_one(
+            {"_id": event_id},
+            {"$setOnInsert": entry},
+            upsert=True,
+        )
 
 
 def start_audit_listener(poll_interval=5, start_block=None):

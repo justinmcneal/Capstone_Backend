@@ -1,7 +1,13 @@
 import json
-from hmac import compare_digest
+from typing import ClassVar
+
 from django.conf import settings
 from django.http import JsonResponse
+from django.middleware.csrf import (
+    InvalidTokenFormat,
+    _check_token_format,
+    _does_token_match,
+)
 
 
 class SecurityHeadersMiddleware:
@@ -91,13 +97,19 @@ class SecurityHeadersMiddleware:
 
 class CSRFSameSiteTokenMiddleware:
     """
-    Enforce CSRF token checks for unsafe API methods when a CSRF cookie exists.
+    Enforce CSRF for unsafe API requests that carry ambient auth credentials.
 
-    This keeps Bearer-token API clients working (no cookie, no CSRF check),
-    while protecting browser cookie-based flows with double-submit token checks.
+    Bearer-only API clients are exempt. Cookie clients must send both the CSRF
+    cookie and matching header; absence of either fails closed.
     """
 
-    SAFE_METHODS = {"GET", "HEAD", "OPTIONS", "TRACE"}
+    SAFE_METHODS: ClassVar[set[str]] = {"GET", "HEAD", "OPTIONS", "TRACE"}
+    COOKIE_CREDENTIAL_PATHS: ClassVar[set[str]] = {
+        "/api/auth/refresh-token/",
+        "/api/auth/logout/",
+        "/api/auth/admin/logout/",
+        "/api/auth/loan-officer/logout/",
+    }
 
     def __init__(self, get_response):
         self.get_response = get_response
@@ -107,39 +119,57 @@ class CSRFSameSiteTokenMiddleware:
             cookie_name = getattr(settings, "CSRF_COOKIE_NAME", "csrftoken")
             csrf_cookie = request.COOKIES.get(cookie_name, "")
 
-            if csrf_cookie:
-                csrf_header = (
-                    request.META.get("HTTP_X_CSRFTOKEN")
-                    or request.META.get("HTTP_X_CSRF_TOKEN")
-                    or request.POST.get("csrfmiddlewaretoken")
-                    or ""
+            csrf_header = (
+                request.META.get("HTTP_X_CSRFTOKEN")
+                or request.META.get("HTTP_X_CSRF_TOKEN")
+                or request.POST.get("csrfmiddlewaretoken")
+                or ""
+            )
+
+            if not csrf_cookie or not csrf_header:
+                return JsonResponse(
+                    {
+                        "status": "error",
+                        "message": "CSRF cookie and token header required",
+                        "code": "csrf_token_missing",
+                    },
+                    status=403,
                 )
 
-                if not csrf_header:
-                    return JsonResponse(
-                        {
-                            "status": "error",
-                            "message": "CSRF token required",
-                            "code": "csrf_token_missing",
-                        },
-                        status=403,
-                    )
-
-                if not compare_digest(csrf_header, csrf_cookie):
-                    return JsonResponse(
-                        {
-                            "status": "error",
-                            "message": "Invalid CSRF token",
-                            "code": "csrf_token_invalid",
-                        },
-                        status=403,
-                    )
+            try:
+                _check_token_format(csrf_cookie)
+                _check_token_format(csrf_header)
+                csrf_matches = _does_token_match(csrf_header, csrf_cookie)
+            except InvalidTokenFormat:
+                csrf_matches = False
+            if not csrf_matches:
+                return JsonResponse(
+                    {
+                        "status": "error",
+                        "message": "Invalid CSRF token",
+                        "code": "csrf_token_invalid",
+                    },
+                    status=403,
+                )
 
         return self.get_response(request)
 
     def _requires_csrf_validation(self, request):
-        return (
-            request.path.startswith("/api/") and request.method not in self.SAFE_METHODS
+        if not request.path.startswith("/api/") or request.method in self.SAFE_METHODS:
+            return False
+
+        access_name = getattr(settings, "AUTH_ACCESS_COOKIE_NAME", "access_token")
+        refresh_name = getattr(settings, "AUTH_REFRESH_COOKIE_NAME", "refresh_token")
+        has_auth_cookie = bool(
+            request.COOKIES.get(access_name) or request.COOKIES.get(refresh_name)
+        )
+        if not has_auth_cookie:
+            return False
+
+        auth_header = request.META.get("HTTP_AUTHORIZATION", "")
+        has_bearer = auth_header.lower().startswith("bearer ")
+        return not (
+            has_bearer and request.path not in self.COOKIE_CREDENTIAL_PATHS
         )
 
 
@@ -153,7 +183,7 @@ class NoSQLInjectionGuardMiddleware:
         {"profile.name": "x"}
     """
 
-    SAFE_METHODS = {"GET", "HEAD", "OPTIONS", "TRACE"}
+    SAFE_METHODS: ClassVar[set[str]] = {"GET", "HEAD", "OPTIONS", "TRACE"}
     API_PREFIX = "/api/"
 
     def __init__(self, get_response):
@@ -253,7 +283,7 @@ class NoSQLInjectionGuardMiddleware:
         return None
 
     def _scan_flat_mapping(self, mapping, root):
-        for key in mapping.keys():
+        for key in mapping:
             key_text = str(key)
             if self._is_disallowed_key(key_text):
                 return f"{root}.{key_text}" if root else key_text

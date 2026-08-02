@@ -1,5 +1,8 @@
 # Loan Lifecycle Implementation and Testing Guide
 
+> Updated 2026-08-02 for idempotent cash/check and durable wallet flows. GCash
+> and bank-transfer settlement remain intentionally deferred pending a provider.
+
 ## Scope
 This guide covers loan lifecycle APIs under `/api/loans/`:
 - product discovery and pre-qualification
@@ -58,6 +61,7 @@ Note: UI/API filters also support `pending` as a derived alias for apps in `subm
 | `POST` | `/officer/applications/<application_id>/request-missing-documents/` | Loan Officer / Admin |
 | `PUT` | `/officer/applications/<application_id>/review/` | Loan Officer / Admin |
 | `POST` | `/officer/applications/<application_id>/disburse/` | Loan Officer / Admin |
+| `GET/POST` | `/officer/applications/<application_id>/wallet-disbursement/` | Loan Officer / Admin |
 | `POST` | `/officer/payments/` | Loan Officer / Admin |
 | `GET` | `/officer/active-loans/` | Loan Officer / Admin |
 | `GET` | `/officer/applications/<application_id>/schedule/` | Loan Officer / Admin |
@@ -120,13 +124,21 @@ or
 ```json
 {
   "amount": 20000,
-  "method": "bank_transfer",
+  "method": "cash",
   "reference": "optional"
 }
 ```
+- Required header: `Idempotency-Key: <8-128 characters>`.
 - Allowed only when application status is `approved`.
-- Generates repayment schedule automatically on success.
-- Accepted methods in view validation: `bank_transfer`, `cash`, `gcash`, `check`, `other`.
+- `cash` and `check` generate the schedule and complete synchronously.
+- `wallet` returns `202 pending`; the durable blockchain Celery worker confirms
+  ETH and then creates the schedule/completes the loan.
+- Wallet recovery is available at
+  `GET|POST /officer/applications/<id>/wallet-disbursement/` with `reconcile`,
+  `retry`, or safe pre-preparation `cancel` actions. The signed payload is never
+  exposed by the API.
+- `gcash` and `bank_transfer` remain pending until a provider workflow is added.
+- Accepted methods: `bank_transfer`, `cash`, `gcash`, `check`, `wallet`.
 
 6. `POST /officer/payments/`
 - Body:
@@ -135,11 +147,14 @@ or
   "loan_id": "<application_id>",
   "installment_number": 1,
   "amount": 2000,
-  "payment_method": "gcash",
+  "payment_method": "cash",
   "reference": "optional",
   "notes": "optional"
 }
 ```
+- Required header: `Idempotency-Key: <8-128 characters>`.
+- Officer posting accepts `cash` and `check`. Customer GCash/bank claims remain
+  pending verification; verified ETH payments use the wallet endpoint.
 - Validates installment exists, is not fully paid, and amount does not exceed remaining installment balance.
 
 7. `POST /officer/applications/<application_id>/request-missing-documents/`
@@ -179,7 +194,8 @@ or
 5. Officer checks queue via `GET /officer/applications/?status=pending`.
 6. Admin assigns app via `POST /admin/applications/<id>/assign/` (or officer picks from scope).
 7. Officer approves via `PUT /officer/applications/<id>/review/`.
-8. Officer disburses via `POST /officer/applications/<id>/disburse/`.
+8. Officer disburses via `POST /officer/applications/<id>/disburse/`; for wallet,
+   wait for `disbursement_status=executed` before reading the schedule.
 9. Customer checks schedule via `GET /applications/<id>/schedule/`.
 10. Officer records payment via `POST /officer/payments/`.
 11. Customer verifies payment history via `GET /applications/<id>/payments/`.

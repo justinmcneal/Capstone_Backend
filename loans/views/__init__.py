@@ -39,4 +39,6 @@ from .officer_views import (
     PaymentSearchView,
     BlockchainStatusView,
     ExchangeRateView,
+    BulkRepaymentScheduleExportView,
+    WalletDisbursementRecoveryView,
 )

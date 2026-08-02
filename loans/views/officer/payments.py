@@ -9,7 +9,6 @@ from rest_framework import status
 from loans.models import LoanApplication, LoanProduct, LoanPayment, RepaymentSchedule
 from loans.views.officer.base import LoanOfficerRequiredMixin
 from analytics.models import AuditLog
-from loans.utils.time import utcnow
 from datetime import datetime
 import logging
 
@@ -43,6 +42,9 @@ class RecordPaymentView(LoanOfficerRequiredMixin, APIView):
             request.data.get("external_reference", "")
         )  # Cash/check reference
         notes = sanitize_text(request.data.get("notes", ""))
+        idempotency_key = request.headers.get("Idempotency-Key") or request.data.get(
+            "idempotency_key"
+        )
 
         # Validation
         if not loan_id:
@@ -123,45 +125,55 @@ class RecordPaymentView(LoanOfficerRequiredMixin, APIView):
                 status_code=status.HTTP_404_NOT_FOUND,
             )
 
-        # VALIDATION 2: Prevent duplicate payment on fully paid installments
-        if installment.get("status") == "paid":
-            return error_response(
-                message=f"Installment #{installment_number} is already fully paid",
-                status_code=status.HTTP_400_BAD_REQUEST,
-            )
-
-        # VALIDATION 3: Prevent overpayment (allow 1 cent tolerance for float noise)
-        remaining = installment["total_amount"] - installment.get("paid_amount", 0)
-
-        # Include penalty in remaining amount if applied
-        if installment.get("penalty_status") == "applied":
-            remaining += installment.get("penalty_amount", 0)
-
-        if amount - remaining > 0.01:
-            return error_response(
-                message=f"Amount exceeds remaining balance of PHP{remaining:.2f}",
-                status_code=status.HTTP_400_BAD_REQUEST,
-            )
-
-        # VALIDATION 4: Warn about skipped installments (don't block, just track)
+        # Balance and paid-state validation happens inside the atomic service so
+        # an identical replay can still return its original completed payment.
         unpaid_before = schedule.count_unpaid_before(installment_number)
 
-        # Record payment in schedule
-        updated_installment = schedule.record_payment(installment_number, amount)
-
-        # Create payment record
-        payment = LoanPayment(
-            loan_id=loan_id,
-            schedule_id=schedule.id,
-            customer_id=schedule.customer_id,
-            installment_number=installment_number,
-            amount=amount,
-            payment_method=payment_method,
-            reference=reference,
-            notes=notes,
-            recorded_by=self._actor_id(user),
+        from loans.services.payment import (
+            PaymentConflictError,
+            PaymentServiceError,
+            post_verified_payment,
+            scoped_idempotency_key,
         )
-        payment.save()
+
+        try:
+            payment, updated_installment, replayed = post_verified_payment(
+                schedule=schedule,
+                installment_number=installment_number,
+                amount=amount,
+                payment_method=payment_method,
+                reference=reference,
+                notes=notes,
+                recorded_by=self._actor_id(user),
+                idempotency_key=scoped_idempotency_key(
+                    "officer", self._actor_id(user), idempotency_key
+                ),
+                verification_source="officer_manual",
+            )
+        except PaymentConflictError as exc:
+            return error_response(message=str(exc), status_code=status.HTTP_409_CONFLICT)
+        except PaymentServiceError as exc:
+            return error_response(
+                message=str(exc), status_code=status.HTTP_400_BAD_REQUEST
+            )
+        except (ValueError, RuntimeError) as exc:
+            return error_response(message=str(exc), status_code=status.HTTP_409_CONFLICT)
+
+        if replayed:
+            return success_response(
+                data={
+                    "payment_id": payment.id,
+                    "loan_id": loan_id,
+                    "installment_number": installment_number,
+                    "amount": amount,
+                    "installment_status": updated_installment["status"],
+                    "remaining_balance": schedule.get_remaining_balance(),
+                    "reference": payment.reference,
+                    "skipped_installments": unpaid_before,
+                    "replayed": True,
+                },
+                message="Payment already recorded",
+            )
 
         logger.info(
             f"Payment recorded: {amount} for loan {loan_id} installment {installment_number}"
@@ -229,6 +241,7 @@ class RecordPaymentView(LoanOfficerRequiredMixin, APIView):
                 "remaining_balance": schedule.get_remaining_balance(),
                 "reference": reference,
                 "skipped_installments": unpaid_before,  # Warning: earlier unpaid installments
+                "replayed": False,
             },
             message=(
                 "Payment recorded successfully"
@@ -275,6 +288,7 @@ class OfficerPaymentHistoryView(LoanOfficerRequiredMixin, APIView):
                 "id": p.id,
                 "amount": p.amount,
                 "payment_method": p.payment_method,
+                "payment_status": p.payment_status,
                 "reference": p.reference,
                 "installment_number": p.installment_number,
                 "notes": p.notes,
@@ -283,7 +297,7 @@ class OfficerPaymentHistoryView(LoanOfficerRequiredMixin, APIView):
             for p in payments
         ]
 
-        total_paid = sum(p.amount for p in payments)
+        total_paid = sum(p.amount for p in payments if p.payment_status == "posted")
 
         return success_response(
             data={
@@ -347,8 +361,7 @@ class RecentPaymentsView(LoanOfficerRequiredMixin, APIView):
         customer_cache = {}
         payments_data = []
 
-        for document in payment_documents:
-            payment = LoanPayment.from_dict(document)
+        for payment in payment_documents:
             if not payment:
                 continue
 
@@ -642,9 +655,6 @@ class PaymentSearchView(LoanOfficerRequiredMixin, APIView):
                 customers = Customer.find({"$and": customer_and_conditions})
             customer_ids = [c.id for c in customers if c]
 
-            # Also search by reference
-            search_regex = re.compile(f".*{re.escape(search_query)}.*", re.IGNORECASE)
-
         # Build final query with search
         if search_query:
             search_conditions = []
@@ -719,10 +729,15 @@ class PaymentSearchView(LoanOfficerRequiredMixin, APIView):
                     status_filtered.append(payment)
 
             total_count = len(status_filtered)
+            summary = {
+                "total_amount": sum(payment.amount for payment in status_filtered),
+                "count": total_count,
+            }
             skip = (page - 1) * page_size
             payments = status_filtered[skip : skip + page_size]
         else:
             total_count = LoanPayment.count(final_query)
+            summary = LoanPayment.summarize(final_query)
             skip = (page - 1) * page_size
             payments = LoanPayment.find(
                 final_query,
@@ -784,9 +799,6 @@ class PaymentSearchView(LoanOfficerRequiredMixin, APIView):
                 }
             )
 
-        # Calculate summary stats
-        total_amount = sum(p["amount"] for p in payments_data)
-
         return success_response(
             data={
                 "payments": payments_data,
@@ -794,7 +806,7 @@ class PaymentSearchView(LoanOfficerRequiredMixin, APIView):
                 "page": page,
                 "page_size": page_size,
                 "total_pages": (total_count + page_size - 1) // page_size,
-                "summary": {"total_amount": total_amount, "count": len(payments_data)},
+                "summary": summary,
             },
             message="Payments retrieved",
         )

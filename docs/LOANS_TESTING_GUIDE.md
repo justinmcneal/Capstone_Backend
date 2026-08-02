@@ -316,7 +316,7 @@ Edit and re-submit a **draft** application.
 | `requested_amount` | number | **yes** | min 1000 |
 | `term_months` | int | **yes** | min 1 |
 | `purpose` | string | no | max 500 |
-| `preferred_disbursement_method` | string | no | disbursement method choices |
+| `preferred_disbursement_method` | string | no | `cash`, `gcash`, `bank_transfer`, `check`, `wallet`; when supplied, the updated preference is persisted |
 
 **Response fields:** Same as endpoint 6 (full application detail).
 
@@ -388,16 +388,19 @@ Payment history.
 | `payments[].amount` | number |
 | `payments[].installment_number` | int |
 | `payments[].payment_method` | string |
+| `payments[].payment_status` | string (`pending_verification`, `posting`, `posted`, `failed`, or `reversed`) |
 | `payments[].reference` | string |
 | `payments[].recorded_at` | ISO datetime |
-| `total_paid` | number |
+| `total_paid` | number (posted payments only) |
 | `count` | int |
 
 ---
 
 ### 10. `POST /applications/<application_id>/payments/`
 
-Record a customer payment (non-cash/check). Triggers blockchain `payment` sync.
+Submit GCash or bank-transfer evidence for verification. The submission is stored
+as `pending_verification`; it does not reduce the repayment balance or trigger
+blockchain payment sync until an authoritative verification workflow posts it.
 
 **Path params:**
 
@@ -405,17 +408,23 @@ Record a customer payment (non-cash/check). Triggers blockchain `payment` sync.
 |-------|------|----------|
 | `application_id` | string | yes |
 
+**Required header:** `Idempotency-Key` containing 8–128 characters. Replaying the
+same key and payload returns the original submission. Reusing it with different
+payment data returns `409`.
+
 **Request body:**
 
 | Field | Type | Required | Validation |
 |-------|------|----------|------------|
 | `installment_number` | int | **yes** | >= 1 |
 | `amount` | number | **yes** | > 0; must not exceed remaining installment balance |
-| `payment_method` | string | **yes** | `gcash`, `bank_transfer`, or `wallet` only (cash/check rejected) |
-| `reference` | string | no | Auto-generated if omitted |
+| `payment_method` | string | **yes** | `gcash` or `bank_transfer`; wallet must use endpoint 15 |
+| `reference` | string | **yes** | Provider/bank reference; duplicate references are rejected |
 | `notes` | string | no | |
 
 **Precondition:** `status` must be `disbursed`.
+
+**Success status:** `202 Accepted`
 
 **Response fields (`data`):**
 
@@ -426,11 +435,13 @@ Record a customer payment (non-cash/check). Triggers blockchain `payment` sync.
 | `installment_number` | int |
 | `amount` | number |
 | `payment_method` | string |
+| `payment_status` | string (`pending_verification`) |
 | `reference` | string |
 | `recorded_at` | ISO datetime |
 | `installment_status` | string |
 | `remaining_balance` | number |
-| `skipped_installments` | int |
+| `balance_applied` | boolean (`false`) |
+| `replayed` | boolean |
 
 ---
 
@@ -565,7 +576,9 @@ Verify on-chain ETH payment and record installment. Triggers blockchain `payment
 - `status` must be `disbursed`
 - Customer profile must have `wallet_address` set
 - ETH tx must be confirmed, sent from customer wallet to system wallet
+- ETH tx must have at least `LOANS_WALLET_MIN_CONFIRMATIONS` confirmations (default 3)
 - PHP equivalent must be within ±2% of installment amount (min ₱100)
+- The full transaction hash is idempotent and protected by a unique index
 
 **Response fields (`data`):**
 
@@ -583,6 +596,7 @@ Verify on-chain ETH payment and record installment. Triggers blockchain `payment
 | `remaining_balance` | number |
 | `blockchain_sync_status` | string |
 | `blockchain_sync_message` | string |
+| `replayed` | boolean |
 
 ---
 
@@ -844,10 +858,12 @@ Officer workload, pending applications, and assigned applications.
 |-------|------|
 | `officers` | array |
 | `officers[].id` | string |
+| `officers[].employee_id` | string |
 | `officers[].name` | string |
 | `officers[].email` | string |
 | `officers[].assigned_count` | int |
 | `officers[].pending_count` | int |
+| `officers[].active` | boolean |
 | `total` | int |
 | `page` | int |
 | `page_size` | int |
@@ -1014,8 +1030,11 @@ Full application detail with customer profiles and documents.
 | `decision_date` | ISO datetime |
 | `disbursed_amount` | number |
 | `preferred_disbursement_method` | string |
+| `disbursement_status` | string |
 | `disbursement_method` | string |
 | `disbursement_reference` | string |
+| `disbursement_requested_at` | ISO datetime |
+| `disbursement_error` | string |
 | `disbursed_at` | ISO datetime |
 | `eth_disbursement_tx_hash` | string |
 | `eth_disbursement_amount` | string |
@@ -1142,7 +1161,10 @@ Approve or reject application. Triggers blockchain `approve` or `reject` sync.
 
 ### 31. `POST /officer/applications/<application_id>/disburse/`
 
-Disburse approved loan. Generates repayment schedule. Triggers blockchain `disburse` + `schedule` sync.
+Reserve or execute an approved-loan disbursement. Cash/check methods create the
+repayment schedule and complete synchronously. Wallet returns `202 pending` and
+is then executed by a durable Celery wallet worker. GCash and bank-transfer stay
+pending because provider confirmation is intentionally deferred.
 
 **Path params:**
 
@@ -1150,16 +1172,38 @@ Disburse approved loan. Generates repayment schedule. Triggers blockchain `disbu
 |-------|------|----------|
 | `application_id` | string | yes |
 
+**Required header:** `Idempotency-Key` containing 8–128 characters. Identical
+replays reuse the existing attempt and schedule. Reusing a key for different
+disbursement data is rejected.
+
 **Request body:**
 
 | Field | Type | Required | Validation |
 |-------|------|----------|------------|
-| `amount` | number | no | Defaults to `approved_amount`; must be > 0 |
+| `amount` | number | no | Defaults to and must equal `approved_amount` |
 | `method` | string | no | `cash`, `gcash`, `bank_transfer`, `check`, `wallet` — **ignored if borrower already set `preferred_disbursement_method`** |
 | `reference` | string | no | Auto-generated if omitted |
 | `external_reference` | string | no | Bank/check number; used as reference if `reference` empty |
 
-**Precondition:** Status must be `approved`.
+**Precondition:** Status must be `approved`, except an identical replay of an
+already completed request.
+
+**Status behavior:**
+
+- `cash`, `check`: `200`, `status=disbursed`, `disbursement_status=executed`, and
+  schedule returned.
+- `wallet`: initial `202`, `status=approved`, `disbursement_status=pending`; after
+  the worker confirms the ETH receipt, status becomes `disbursed`/`executed` and
+  the schedule becomes available.
+- `gcash`, `bank_transfer`: `202`/`pending`; no automatic completion is currently
+  supported.
+
+**Wallet worker prerequisites:** Redis broker, a worker consuming the
+`blockchain` queue, Celery Beat, enabled/configured Web3, funded system wallet,
+and a valid customer wallet address. Beat reconciles pending wallet attempts
+every five minutes. Replays with a stored transaction hash resume receipt lookup
+instead of sending another transfer. A signed transaction is encrypted and saved
+before broadcast; a missing/dropped broadcast is retried with that exact payload.
 
 **Response fields (`data`):**
 
@@ -1167,10 +1211,14 @@ Disburse approved loan. Generates repayment schedule. Triggers blockchain `disbu
 |-------|------|
 | `id` | string |
 | `status` | string |
+| `disbursement_status` | string (`pending`, `executed`, `failed`, or `cancelled`) |
 | `disbursed_amount` | number |
 | `disbursement_method` | string |
 | `disbursement_reference` | string |
 | `disbursed_at` | ISO datetime |
+| `disbursement_requested_at` | ISO datetime |
+| `disbursement_error` | string |
+| `replayed` | boolean |
 | `eth_disbursement_tx_hash` | string |
 | `eth_disbursement_amount` | string |
 | `eth_disbursement_rate` | number |
@@ -1181,9 +1229,31 @@ Disburse approved loan. Generates repayment schedule. Triggers blockchain `disbu
 
 ---
 
+### 31b. `GET|POST /officer/applications/<application_id>/wallet-disbursement/`
+
+Inspect and recover a wallet disbursement. The same officer assignment scope as
+the application endpoint is enforced; the signed raw transaction is never
+returned.
+
+`POST` actions:
+
+- `reconcile`: enqueue receipt/state reconciliation for a pending transfer.
+- `retry`: reopen a reviewed failed/reverted/dropped attempt and enqueue it.
+- `cancel`: allowed only before a transaction is prepared or a worker holds the
+  execution lease. Once a hash/signed payload exists, cancellation returns `409`.
+
+The response exposes `tx_status`, hash, nonce, timestamps, block number,
+rebroadcast count, recipient, amount in Wei, and recovery history.
+
+---
+
 ### 32. `POST /officer/payments/`
 
 Record cash/check payment on behalf of customer. Triggers blockchain `payment` sync.
+
+**Required header:** `Idempotency-Key` containing 8–128 characters. Identical
+replays return the original payment without applying the installment twice.
+Reusing a key for different data returns `409`.
 
 **Request body:**
 
@@ -1209,6 +1279,7 @@ Record cash/check payment on behalf of customer. Triggers blockchain `payment` s
 | `remaining_balance` | number |
 | `reference` | string |
 | `skipped_installments` | int |
+| `replayed` | boolean |
 
 ---
 
@@ -1260,6 +1331,8 @@ Search and filter all payments.
 | `total_pages` | int |
 | `summary.total_amount` | number |
 | `summary.count` | int |
+
+`summary` describes the complete filtered result set, not only the current page.
 
 ---
 
@@ -1331,12 +1404,17 @@ Officer payment history for an application.
 | `payments[].id` | string |
 | `payments[].amount` | number |
 | `payments[].payment_method` | string |
+| `payments[].payment_status` | string |
 | `payments[].reference` | string |
 | `payments[].installment_number` | int |
 | `payments[].notes` | string |
 | `payments[].recorded_at` | ISO datetime |
 | `total_paid` | number |
 | `count` | int |
+
+`total_paid` includes only records whose `payment_status` is `posted`; pending,
+failed, reversed, or in-progress records remain visible but do not increase the
+financial total.
 
 ---
 
@@ -1437,7 +1515,7 @@ Current ETH/PHP exchange rate.
 
 ---
 
-## Complete URL Index (40 endpoints)
+## Complete URL Index (44 method/endpoint combinations)
 
 | # | Method | URL | Role |
 |---|--------|-----|------|
@@ -1481,6 +1559,10 @@ Current ETH/PHP exchange rate.
 | 38 | POST | `/api/loans/officer/applications/<application_id>/penalties/waive/` | Officer |
 | 39 | GET | `/api/loans/officer/applications/<application_id>/blockchain/` | Officer |
 | 40 | GET | `/api/loans/officer/exchange-rate/` | Officer |
+| 41 | GET | `/api/loans/officer/payments/recent/` | Officer |
+| 42 | GET | `/api/loans/officer/applications/<application_id>/wallet-disbursement/` | Officer |
+| 43 | POST | `/api/loans/officer/applications/<application_id>/wallet-disbursement/` | Officer |
+| 44 | GET | `/api/loans/officer/schedules/export/` | Officer |
 
 ---
 
@@ -1504,12 +1586,17 @@ Current ETH/PHP exchange rate.
 | 7 | Officer | `GET /officer/applications/<id>/` | Full customer + docs returned |
 | 8 | Officer | `PUT /officer/applications/<id>/review/` `{action: approve}` | `status: approved` |
 | 9 | Customer | `POST /applications/<id>/set-disbursement-method/` | Method saved |
-| 10 | Officer | `POST /officer/applications/<id>/disburse/` | `status: disbursed`, schedule created |
+| 10 | Officer | `POST /officer/applications/<id>/disburse/` | Cash/check: `disbursed`; wallet: initial `202 pending` |
 | 11 | Customer | `GET /applications/<id>/schedule/` | Installments returned |
 | 12 | Officer | `POST /officer/payments/` | Payment recorded |
 | 13 | Customer | `GET /applications/<id>/payments/` | Payment in history |
 | 14 | Admin | `GET /admin/blockchain/transactions/` | submit/approve/disburse/payment txs (if enabled) |
 | 15 | Customer | `GET /applications/<id>/blockchain/` | On-chain audit trail |
+
+For wallet smoke tests, wait until the application detail reports
+`disbursement_status=executed` before step 11. A permanently failed wallet task
+reports `failed`/`disbursement_error` and requires operator review; do not submit
+a second transfer blindly.
 
 ### Rejection Path
 1. Officer: `PUT /officer/applications/<id>/review/` with `{action: reject, rejection_reason: "..."}`

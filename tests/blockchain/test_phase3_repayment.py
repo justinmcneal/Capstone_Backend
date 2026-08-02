@@ -80,10 +80,10 @@ class TestWalletPaymentViewValidation:
         assert "0.02" in source
 
     def test_view_checks_duplicate_tx_hash(self):
-        """Structural: view checks for existing payment with same tx_hash."""
+        """Structural: the transaction hash is used as the idempotency identity."""
         source = inspect.getsource(WalletPaymentView)
         assert "eth_tx_hash" in source
-        assert "already been recorded" in source
+        assert 'idempotency_key=f"wallet:{tx_hash.lower()}"' in source
 
     def test_view_records_payment_with_wallet_method(self):
         """Structural: payment_method is set to 'wallet'."""
