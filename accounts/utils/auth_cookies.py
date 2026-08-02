@@ -1,6 +1,10 @@
 from django.conf import settings
 from rest_framework_simplejwt.tokens import AccessToken, RefreshToken
 
+TOKEN_TRANSPORT_BODY = "body"
+TOKEN_TRANSPORT_COOKIE = "cookie"
+TOKEN_TRANSPORTS = {TOKEN_TRANSPORT_BODY, TOKEN_TRANSPORT_COOKIE}
+
 
 def _cookie_max_age_from_token(token: str, token_cls) -> int:
     parsed = token_cls(token)
@@ -15,7 +19,8 @@ def set_auth_cookies(response, access_token: str, refresh_token: str):
     secure = getattr(settings, "AUTH_COOKIE_SECURE", not settings.DEBUG)
     httponly = getattr(settings, "AUTH_COOKIE_HTTPONLY", True)
     samesite = getattr(settings, "AUTH_COOKIE_SAMESITE", "Lax")
-    path = getattr(settings, "AUTH_COOKIE_PATH", "/")
+    access_path = getattr(settings, "AUTH_ACCESS_COOKIE_PATH", "/api/")
+    refresh_path = getattr(settings, "AUTH_REFRESH_COOKIE_PATH", "/api/auth/")
 
     access_max_age = _cookie_max_age_from_token(access_token, AccessToken)
     refresh_max_age = _cookie_max_age_from_token(refresh_token, RefreshToken)
@@ -27,7 +32,7 @@ def set_auth_cookies(response, access_token: str, refresh_token: str):
         secure=secure,
         httponly=httponly,
         samesite=samesite,
-        path=path,
+        path=access_path,
     )
     response.set_cookie(
         key=refresh_name,
@@ -36,17 +41,50 @@ def set_auth_cookies(response, access_token: str, refresh_token: str):
         secure=secure,
         httponly=httponly,
         samesite=samesite,
-        path=path,
+        path=refresh_path,
     )
 
 
 def clear_auth_cookies(response):
     access_name = getattr(settings, "AUTH_ACCESS_COOKIE_NAME", "access_token")
     refresh_name = getattr(settings, "AUTH_REFRESH_COOKIE_NAME", "refresh_token")
-    path = getattr(settings, "AUTH_COOKIE_PATH", "/")
+    access_path = getattr(settings, "AUTH_ACCESS_COOKIE_PATH", "/api/")
+    refresh_path = getattr(settings, "AUTH_REFRESH_COOKIE_PATH", "/api/auth/")
 
-    response.delete_cookie(access_name, path=path)
-    response.delete_cookie(refresh_name, path=path)
+    response.delete_cookie(access_name, path=access_path)
+    response.delete_cookie(refresh_name, path=refresh_path)
+
+
+def get_requested_token_transport(request, default=TOKEN_TRANSPORT_BODY):
+    transport = (
+        request.data.get("token_transport")
+        or request.META.get("HTTP_X_TOKEN_TRANSPORT")
+        or default
+    )
+    if not isinstance(transport, str) or transport.lower() not in TOKEN_TRANSPORTS:
+        raise ValueError("token_transport must be either 'body' or 'cookie'")
+    return transport.lower()
+
+
+def apply_auth_token_transport(
+    response, access_token: str, refresh_token: str, transport: str
+):
+    """Deliver credentials through exactly one transport."""
+    if transport == TOKEN_TRANSPORT_COOKIE:
+        set_auth_cookies(response, access_token, refresh_token)
+        payload = getattr(response, "data", None)
+        if isinstance(payload, dict) and isinstance(payload.get("data"), dict):
+            for key in ("access", "refresh", "access_token", "refresh_token"):
+                payload["data"].pop(key, None)
+    return response
+
+
+def refresh_token_uses_cookie(request):
+    explicit = request.data.get("refresh") or request.data.get("refresh_token")
+    if explicit:
+        return False
+    refresh_name = getattr(settings, "AUTH_REFRESH_COOKIE_NAME", "refresh_token")
+    return bool(request.COOKIES.get(refresh_name))
 
 
 def get_refresh_token_from_request(request):

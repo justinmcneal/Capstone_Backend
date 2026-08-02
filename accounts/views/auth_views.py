@@ -21,10 +21,14 @@ from accounts.serializers.auth_serializers import (
 from accounts.services import AuthService
 from accounts.services.lockout_service import LockoutService
 from accounts.utils.auth_cookies import (
+    TOKEN_TRANSPORT_BODY,
+    TOKEN_TRANSPORT_COOKIE,
+    apply_auth_token_transport,
     clear_auth_cookies,
     get_access_token_from_request,
     get_refresh_token_from_request,
-    set_auth_cookies,
+    get_requested_token_transport,
+    refresh_token_uses_cookie,
 )
 from accounts.utils.email_utils import EmailUtils
 from accounts.utils.exception_types import NON_FATAL_EXCEPTIONS
@@ -246,6 +250,9 @@ class LoginView(APIView):
         email = serializer.validated_data["email"]
         password = serializer.validated_data["password"]
         remember_me = serializer.validated_data.get("remember_me", False)
+        token_transport = serializer.validated_data.get(
+            "token_transport", TOKEN_TRANSPORT_BODY
+        )
 
         try:
             customer = AuthService.get_customer_by_email(email)
@@ -339,7 +346,9 @@ class LoginView(APIView):
                 # Create temporary token for 2FA verification
                 token_type = "remember_me" if remember_me else "no_remember_me"
                 temp_token = AuthService.create_temp_token(
-                    customer, token_type=token_type
+                    customer,
+                    token_type=token_type,
+                    token_transport=token_transport,
                 )
                 logger.info(
                     f"2FA required for {email} from IP {request.META.get('REMOTE_ADDR')}"
@@ -426,8 +435,9 @@ class LoginView(APIView):
             response = APIResponseHelper.success_response(
                 data=response_data, message="Login successful"
             )
-            set_auth_cookies(response, tokens["access"], tokens["refresh"])
-            return response
+            return apply_auth_token_transport(
+                response, tokens["access"], tokens["refresh"], token_transport
+            )
 
         except NON_FATAL_EXCEPTIONS as e:
             logger.error(
@@ -456,6 +466,12 @@ class VerifyOTP(APIView):
                     "email": "Email is required",
                     "otp": "OTP is required",
                 }
+            )
+        try:
+            token_transport = get_requested_token_transport(request)
+        except ValueError as exc:
+            return APIResponseHelper.validation_error_response(
+                {"token_transport": str(exc)}
             )
         if not otp.isdigit() or len(otp) != 6:
             return APIResponseHelper.validation_error_response(
@@ -520,8 +536,9 @@ class VerifyOTP(APIView):
             response = APIResponseHelper.success_response(
                 data=response_data, message="Account verified successfully"
             )
-            set_auth_cookies(response, tokens["access"], tokens["refresh"])
-            return response
+            return apply_auth_token_transport(
+                response, tokens["access"], tokens["refresh"], token_transport
+            )
         except NON_FATAL_EXCEPTIONS as e:
             logger.error(
                 f"OTP verification error for {email} from IP {request.META.get('REMOTE_ADDR')}: {e!s}"
@@ -594,6 +611,11 @@ class RefreshTokenView(APIView):
 
     def post(self, request):
         """Refresh access token and blacklist old refresh token"""
+        token_transport = (
+            TOKEN_TRANSPORT_COOKIE
+            if refresh_token_uses_cookie(request)
+            else TOKEN_TRANSPORT_BODY
+        )
         refresh_token = get_refresh_token_from_request(request)
 
         if not refresh_token:
@@ -781,8 +803,12 @@ class RefreshTokenView(APIView):
             response = APIResponseHelper.success_response(
                 data=new_tokens, message="Token refreshed successfully"
             )
-            set_auth_cookies(response, new_tokens["access"], new_tokens["refresh"])
-            return response
+            return apply_auth_token_transport(
+                response,
+                new_tokens["access"],
+                new_tokens["refresh"],
+                token_transport,
+            )
 
         except TokenError:
             logger.warning(

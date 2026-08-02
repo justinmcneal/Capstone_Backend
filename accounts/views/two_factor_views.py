@@ -16,7 +16,7 @@ from rest_framework_simplejwt.tokens import RefreshToken
 from accounts.models import Admin, LoanOfficer
 from accounts.services import AuthService
 from accounts.services.two_factor_service import TwoFactorService
-from accounts.utils.auth_cookies import set_auth_cookies
+from accounts.utils.auth_cookies import apply_auth_token_transport
 from accounts.utils.exception_types import NON_FATAL_EXCEPTIONS
 from accounts.utils.response_helpers import APIResponseHelper
 from accounts.utils.throttles import TwoFactorRateThrottle
@@ -179,6 +179,7 @@ class Verify2FAView(APIView):
             user_id = token.get("customer_id")  # All users store ID in customer_id
             role = token.get("role", "customer")
             token_type = token.get("session_type", "no_remember_me")
+            token_transport = token.get("token_transport", "body")
             token_security_version = token.get("security_version")
 
             if not user_id:
@@ -282,6 +283,7 @@ class Verify2FAView(APIView):
                     must_change_password=getattr(
                         user, "must_change_password", False
                     ),
+                    token_transport=token_transport,
                 )
                 user_data = {
                     "id": user.id,
@@ -312,6 +314,7 @@ class Verify2FAView(APIView):
                     token_type=token_type,
                     security_version=getattr(user, "security_version", 1),
                     must_change_password=user.must_change_password,
+                    token_transport=token_transport,
                 )
                 user_data = {
                     "id": user.id,
@@ -376,8 +379,9 @@ class Verify2FAView(APIView):
                     else "2FA verification successful"
                 ),
             )
-            set_auth_cookies(response, tokens["access"], tokens["refresh"])
-            return response
+            return apply_auth_token_transport(
+                response, tokens["access"], tokens["refresh"], token_transport
+            )
 
         except TokenError:
             return APIResponseHelper.error_response(

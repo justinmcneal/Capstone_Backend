@@ -17,6 +17,7 @@ from accounts.utils.auth_cookies import (
     clear_auth_cookies,
     get_access_token_from_request,
     get_refresh_token_from_request,
+    get_requested_token_transport,
 )
 from accounts.utils.email_utils import EmailUtils
 from accounts.utils.exception_types import NON_FATAL_EXCEPTIONS
@@ -168,6 +169,14 @@ class AdminLoginView(APIView):
                     status_code=status.HTTP_400_BAD_REQUEST,
                 )
             username = normalize_text(raw_username)
+            try:
+                token_transport = get_requested_token_transport(request)
+            except ValueError as exc:
+                return error_response(
+                    message=str(exc),
+                    errors={"token_transport": str(exc)},
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                )
 
             if not username or not password:
                 errors = {}
@@ -272,6 +281,7 @@ class AdminLoginView(APIView):
                     must_change_password=getattr(
                         admin, "must_change_password", False
                     ),
+                    token_transport=token_transport,
                 )
                 logger.info(
                     "Admin 2FA bootstrap required for %s from IP %s",
@@ -299,6 +309,7 @@ class AdminLoginView(APIView):
                 role="admin",
                 security_version=getattr(admin, "security_version", 1),
                 must_change_password=getattr(admin, "must_change_password", False),
+                token_transport=token_transport,
             )
             return success_response(
                 data={

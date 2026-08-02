@@ -7,10 +7,11 @@ from rest_framework.views import APIView
 
 from accounts.models import LoanOfficer
 from accounts.utils.auth_cookies import (
+    apply_auth_token_transport,
     clear_auth_cookies,
     get_access_token_from_request,
     get_refresh_token_from_request,
-    set_auth_cookies,
+    get_requested_token_transport,
 )
 from accounts.utils.email_utils import EmailUtils
 from accounts.utils.exception_types import NON_FATAL_EXCEPTIONS
@@ -95,6 +96,14 @@ class LoanOfficerLoginView(APIView):
                 return error_response(
                     message="Invalid remember_me value",
                     errors={"remember_me": remember_error},
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                )
+            try:
+                token_transport = get_requested_token_transport(request)
+            except ValueError as exc:
+                return error_response(
+                    message=str(exc),
+                    errors={"token_transport": str(exc)},
                     status_code=status.HTTP_400_BAD_REQUEST,
                 )
 
@@ -195,6 +204,7 @@ class LoanOfficerLoginView(APIView):
                     ),
                     security_version=getattr(officer, "security_version", 1),
                     must_change_password=officer.must_change_password,
+                    token_transport=token_transport,
                 )
                 return success_response(
                     data={
@@ -215,6 +225,7 @@ class LoanOfficerLoginView(APIView):
                 token_type=token_type,
                 security_version=getattr(officer, "security_version", 1),
                 must_change_password=officer.must_change_password,
+                token_transport=token_transport,
             )
 
             # Audit log for loan officer login
@@ -251,7 +262,9 @@ class LoanOfficerLoginView(APIView):
                 },
                 message="Login successful",
             )
-            set_auth_cookies(response, tokens["access"], tokens["refresh"])
+            apply_auth_token_transport(
+                response, tokens["access"], tokens["refresh"], token_transport
+            )
             return response
 
         except NON_FATAL_EXCEPTIONS as e:

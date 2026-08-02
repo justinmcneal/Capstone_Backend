@@ -92,6 +92,9 @@ class LoginSerializer(InputSanitizationMixin, serializers.Serializer):
     email = serializers.EmailField()
     password = serializers.CharField(write_only=True)
     remember_me = serializers.BooleanField(default=False)
+    token_transport = serializers.ChoiceField(
+        choices=("body", "cookie"), default="body", required=False
+    )
 
     def validate_email(self, value):
         return EmailUtils.normalize_email(value)

@@ -175,6 +175,7 @@ class TokenUtils:
         token_type: str = "no_remember_me",
         security_version: int = 1,
         must_change_password: bool = False,
+        token_transport: str = "body",
     ) -> dict[str, str]:
         """
         Generate JWT tokens for non-customer users (admin, loan officer).
@@ -215,6 +216,7 @@ class TokenUtils:
         refresh["session_id"] = session_id
         refresh["security_version"] = int(security_version)
         refresh["must_change_password"] = bool(must_change_password)
+        refresh["token_transport"] = token_transport
 
         # Set expiration from centralized lifetime config
         refresh.set_exp(lifetime=lifetimes["refresh"])
@@ -249,6 +251,7 @@ class TokenUtils:
         token_type: str = "no_remember_me",
         security_version: int = 1,
         must_change_password: bool = False,
+        token_transport: str = "body",
     ) -> str:
         """
         Generate a temporary token for 2FA verification.
@@ -271,6 +274,7 @@ class TokenUtils:
         refresh["session_type"] = token_type
         refresh["security_version"] = int(security_version)
         refresh["must_change_password"] = bool(must_change_password)
+        refresh["token_transport"] = token_transport
 
         # Very short expiration - just enough to complete 2FA
         refresh.set_exp(lifetime=timedelta(minutes=5))

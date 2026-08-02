@@ -114,7 +114,9 @@ class AuthService:
         return TokenUtils.generate_jwt_tokens(customer, token_type=token_type)
 
     @staticmethod
-    def create_temp_token(customer, token_type="no_remember_me"):
+    def create_temp_token(
+        customer, token_type="no_remember_me", token_transport="body"
+    ):
         """
         Create a temporary token for 2FA verification.
         This token is short-lived (5 minutes) and only valid for 2FA flow.
@@ -125,6 +127,7 @@ class AuthService:
             role="customer",
             token_type=token_type,
             security_version=getattr(customer, "security_version", 1),
+            token_transport=token_transport,
         )
 
     @staticmethod
