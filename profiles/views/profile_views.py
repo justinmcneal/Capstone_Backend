@@ -562,19 +562,27 @@ class OfficerCustomerProfilesListView(AccessControlMixin, APIView):
             skip=skip,
             limit=page_size,
         )
+        customer_items = []
+        for customer in customers:
+            if not customer:
+                continue
+            personal_profile = CustomerProfile.find_by_customer(customer.id)
+            customer_items.append(
+                {
+                    "customer_id": customer.id,
+                    "full_name": customer.full_name or "Unnamed customer",
+                    "email": customer.email,
+                    "phone": (
+                        personal_profile.mobile_number
+                        if personal_profile and personal_profile.mobile_number
+                        else customer.phone or None
+                    ),
+                }
+            )
 
         return success_response(
             data={
-                "customers": [
-                    {
-                        "customer_id": customer.id,
-                        "full_name": customer.full_name or "Unnamed customer",
-                        "email": customer.email,
-                        "phone": customer.phone or None,
-                    }
-                    for customer in customers
-                    if customer
-                ],
+                "customers": customer_items,
                 "total": total,
                 "page": page,
                 "page_size": page_size,

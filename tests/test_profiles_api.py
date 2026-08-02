@@ -792,6 +792,20 @@ class TestOfficerProfileView:
     def test_officer_can_search_customer_directory(self, monkeypatch):
         officer = _create_officer()
         customer = _create_customer()
+        profile = CustomerProfile(
+            customer_id=str(customer.id),
+            mobile_number="+639196331559",
+        )
+        monkeypatch.setattr(
+            CustomerProfile,
+            "find_by_customer",
+            staticmethod(
+                lambda customer_id: profile
+                if str(customer_id) == str(customer.id)
+                else None
+            ),
+            raising=False,
+        )
         request = _get("/api/officer/profiles/", _auth_officer(officer))
         monkeypatch.setattr(
             OfficerCustomerProfilesListView,
@@ -810,5 +824,6 @@ class TestOfficerProfileView:
         assert response.status_code == 200
         assert any(
             item["customer_id"] == str(customer.id)
+            and item["phone"] == "+639196331559"
             for item in response.data["data"]["customers"]
         )
