@@ -170,6 +170,11 @@ class LoanPayment:
 
     @classmethod
     def find(cls, query, sort=None, limit=None, skip=None):
+        return list(cls.iter_find(query, sort=sort, limit=limit, skip=skip))
+
+    @classmethod
+    def iter_find(cls, query, sort=None, limit=None, skip=None):
+        """Iterate payments lazily for derived filters and large scans."""
         db = get_db()
         collection = db[cls.collection_name]
         cursor = collection.find(query)
@@ -179,7 +184,10 @@ class LoanPayment:
             cursor = cursor.skip(skip)
         if limit:
             cursor = cursor.limit(limit)
-        return [cls.from_dict(doc) for doc in cursor]
+        for document in cursor:
+            payment = cls.from_dict(document)
+            if payment:
+                yield payment
 
     @classmethod
     def find_one(cls, query):

@@ -8,7 +8,11 @@ This guide documents the **Loans service API** under `/api/loans/` for API testi
 - Every request body field, query parameter, and key response field
 - Smart contract / blockchain integration triggered by loan lifecycle actions
 
-**Yes — the loans API is integrated with on-chain smart contracts.** When `BLOCKCHAIN_ENABLED=true`, key lifecycle events (submit, approve, reject, disburse, schedule, payment, penalty) are synced to Ethereum contracts in background threads via `loans/blockchain/sync.py`. Blockchain status can be queried through dedicated endpoints.
+**Yes — the loans API is integrated with on-chain smart contracts.** When
+`BLOCKCHAIN_ENABLED=true`, key lifecycle events (submit, approve, reject,
+disburse, schedule, payment, penalty) are dispatched to durable Celery jobs via
+`loans/blockchain/sync.py`. Blockchain status can be queried through dedicated
+endpoints.
 
 ## Base URL and Auth
 
@@ -66,7 +70,8 @@ Customer list filter alias: `pending` → matches `submitted` + `under_review`
 
 ## Smart Contract Integration Map
 
-When blockchain is enabled, these API actions trigger on-chain sync (non-blocking background thread):
+When blockchain is enabled, these API actions enqueue non-blocking Celery sync
+jobs:
 
 | API Action | On-chain Action | Contract Area |
 |------------|-----------------|---------------|
@@ -1543,6 +1548,47 @@ Current ETH/PHP exchange rate.
 
 ---
 
+### 41. `GET /officer/payments/recent/`
+
+Returns the officer-scoped recent posted-payment feed. Administrators can see
+all records; loan officers see only payments for assigned applications.
+
+**Query params:** `limit` (default 10, maximum 50).
+
+---
+
+### 42–43. `GET|POST /officer/applications/<application_id>/wallet-disbursement/`
+
+`GET` returns wallet execution/recovery state without exposing the encrypted
+signed transaction. `POST` accepts an `action` of `reconcile`, `retry`, or
+`cancel`. Cancellation is accepted only before transaction preparation; never
+retry a transaction blindly after broadcast uncertainty.
+
+---
+
+### 44–45. `GET|POST /officer/applications/<application_id>/payoff/`
+
+`GET` returns the exact current PHP payoff quote. `POST` requires an
+`Idempotency-Key`, the exact quoted amount, and a verified `cash` or `check`
+method. A successful payoff atomically allocates across open installments and
+closes the application as `completed`/`paid_off`.
+
+---
+
+### 46. `GET /officer/schedules/export/`
+
+Streams flattened installment rows as CSV (default) or JSON. Filters are
+`customer_id`, `status`, `start_date`, and `end_date`; dates use strict
+`YYYY-MM-DD`, and status accepts `pending`, `partial`, `overdue`,
+`partial_overdue`, or `paid`. JSON rows are under `data.installments`.
+
+The endpoint exports every matching loan, processes related data in bounded
+batches, protects CSV cells from formula injection, and requires a sensitive
+access audit before returning data. Unsupported formats/reversed ranges return
+`400`, empty results return `404`, and audit unavailability returns `503`.
+
+---
+
 ## Complete URL Index (46 method/endpoint combinations)
 
 | # | Method | URL | Role |
@@ -1592,7 +1638,6 @@ Current ETH/PHP exchange rate.
 | 43 | POST | `/api/loans/officer/applications/<application_id>/wallet-disbursement/` | Officer |
 | 44 | GET | `/api/loans/officer/applications/<application_id>/payoff/` | Officer |
 | 45 | POST | `/api/loans/officer/applications/<application_id>/payoff/` | Officer |
-| 46 | GET | `/api/loans/officer/schedules/export/` | Officer |
 
 ---
 
@@ -1663,9 +1708,9 @@ Standard error shape:
 | Area | Path |
 |------|------|
 | URL routing | `loans/urls.py` |
-| Customer views | `loans/views/customer_views.py` |
-| Admin views | `loans/views/admin_views.py` |
-| Officer views | `loans/views/officer_views.py` |
+| Customer views | `loans/views/customer/` (`customer_views.py` remains a compatibility module) |
+| Admin views | `loans/views/admin/` |
+| Officer views | `loans/views/officer/` |
 | Serializers | `loans/serializers/loan_serializers.py` |
 | Models | `loans/models/` |
 | Blockchain sync | `loans/blockchain/sync.py` |
@@ -1673,6 +1718,7 @@ Standard error shape:
 | Solidity contracts | `smartcontracts/contracts/` |
 | Existing API stub tests | `tests/test_loans_api_stubs.py` |
 | Blockchain smoke tests | `tests/test_loans_smoke.py`, `tests/blockchain/` |
+| Reproducible production dependency pins | `requirements.lock` |
 
 ---
 
@@ -1692,3 +1738,12 @@ Standard error shape:
    `internal_notes` and repayment `installments` values are `encbson::` ciphertext;
    model reads return their original nested values. Payment tests should exercise
    the model/service API rather than direct Mongo nested-field updates.
+10. Schedule CSV and JSON responses are streamed. API tests and clients must consume
+    the response body as a stream; JSON flattened rows are under
+    `data.installments`, with `data.total` and `X-Export-Row-Count` reporting the
+    row count.
+11. Schedule export accepts only `format=csv|json`, strict `YYYY-MM-DD` dates, and
+    the statuses `pending`, `partial`, `overdue`, `partial_overdue`, and `paid`.
+    Reversed ranges return `400`, and empty results return `404` for both formats.
+12. CSV string cells beginning with spreadsheet formula characters are prefixed
+    with an apostrophe. Preserve this protection when adding or renaming columns.

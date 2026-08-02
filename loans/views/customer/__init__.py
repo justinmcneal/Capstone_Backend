@@ -1,25 +1,17 @@
-"""Backward-compatible imports for customer loan views.
+"""Focused customer loan-view import surface."""
 
-Implementations live in the focused loans.views.customer package.
-"""
-
-from loans.views.customer import (
+from .applications import (
     ApplicationDetailView,
-    CustomerBlockchainView,
-    CustomerRoleRequiredMixin,
     LoanApplyView,
-    LoanProductDetailView,
-    LoanProductListView,
     MyApplicationsView,
-    PaymentHistoryView,
-    PreQualifyView,
     RejectionFeedbackView,
-    RepaymentScheduleView,
     ResubmitApplicationView,
     SetDisbursementMethodView,
-    SystemWalletInfoView,
-    WalletPaymentView,
 )
+from .base import CustomerRoleRequiredMixin
+from .blockchain import CustomerBlockchainView, SystemWalletInfoView, WalletPaymentView
+from .products import LoanProductDetailView, LoanProductListView, PreQualifyView
+from .repayment import PaymentHistoryView, RepaymentScheduleView
 
 __all__ = [
     "ApplicationDetailView",

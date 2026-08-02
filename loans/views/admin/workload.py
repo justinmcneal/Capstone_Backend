@@ -1,6 +1,5 @@
 from rest_framework.views import APIView
 from rest_framework.permissions import IsAuthenticated
-from bson import ObjectId
 
 from accounts.authentication import CustomJWTAuthentication
 from accounts.utils.response_helpers import success_response, error_response
@@ -9,6 +8,7 @@ from rest_framework import status
 from accounts.views.admin_views import AdminRequiredMixin
 from loans.models import LoanApplication
 from loans.services import get_officers_workload
+from loans.services.related_data import application_related_maps
 from loans.utils.serialization import serialize_internal_note
 import logging
 
@@ -125,37 +125,18 @@ class OfficerWorkloadView(AdminRequiredMixin, APIView):
             officer_id=None,  # Get all assigned apps, not filtered by officer
         )
 
-        # Resolve customer names and officer names in bulk
-        from accounts.models import Customer
-        from accounts.models.loan_officer import LoanOfficer
-
         all_apps = list(pending_data["applications"]) + list(
             assigned_data["applications"]
         )
-        customer_ids = {app.customer_id for app in all_apps if app.customer_id}
-        officer_ids = {app.assigned_officer for app in all_apps if app.assigned_officer}
-
-        customer_names = {}
-        for cid in customer_ids:
-            try:
-                c = Customer.find_one({"_id": ObjectId(cid)})
-                if c:
-                    customer_names[cid] = (
-                        f"{c.first_name} {c.last_name}".strip() or "Unknown"
-                    )
-            except Exception:
-                pass
-
-        officer_names = {}
-        for oid in officer_ids:
-            try:
-                o = LoanOfficer.find_one({"_id": ObjectId(oid)})
-                if o:
-                    officer_names[oid] = (
-                        f"{o.first_name} {o.last_name}".strip() or "Unknown"
-                    )
-            except Exception:
-                pass
+        related = application_related_maps(all_apps)
+        customer_names = {
+            customer_id: customer.full_name or "Unknown"
+            for customer_id, customer in related["customers"].items()
+        }
+        officer_names = {
+            officer_id: officer.full_name or "Unknown"
+            for officer_id, officer in related["officers"].items()
+        }
 
         # Format pending applications for response
         pending_apps = [

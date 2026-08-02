@@ -29,10 +29,16 @@ transaction behavior, index, or data-type rule.
 
 ## Executive Summary
 
-The loans module is feature-rich but is **not production-ready**. Product
-management, application intake, qualification, officer review, assignment,
-disbursement, repayment schedules, penalties, notifications, audit calls, and
-blockchain services all exist. Role and ownership checks are generally strong.
+The loans module implementation is **complete for the currently approved
+cash, check, and verified ETH wallet scope**. Product management, application
+intake, qualification, officer review, assignment, disbursement, repayment
+schedules, penalties, notifications, auditing, and blockchain services are
+implemented and covered by the backend test suite.
+
+This code-complete milestone is distinct from production deployment approval.
+GCash, bank transfer, and provider-backed card/payment integrations remain future
+work. Reversal, refund, restructuring, and write-off operations also remain
+future work until the institution approves their accounting policies.
 
 Current remediation progress:
 
@@ -45,11 +51,12 @@ Current remediation progress:
   scope)~~ — production deployment/integration validation remains
 - [x] ~~Stage 5 — Runtime/API defects~~
 - [x] ~~Stage 6 — Qualification enforcement~~
-- [ ] Stage 7 — Repayment accounting and lifecycle — **PARTIAL**; institution
-  policy decisions remain
+- [ ] Stage 7 — Repayment accounting and lifecycle — **COMPLETE FOR CURRENT
+  SCOPE / PARTIAL FOR FUTURE EXCEPTION FLOWS**; institution policy decisions
+  remain for reversal, refund, restructuring, and write-off
 - [x] ~~Stage 8 — Audit, encryption, and compliance~~
-- [ ] Stage 9 — Schedule export hardening
-- [ ] Stage 10 — Maintainability and documentation
+- [x] ~~Stage 9 — Schedule export hardening~~
+- [x] ~~Stage 10 — Maintainability and documentation~~
 
 ## Verified Complete
 
@@ -104,32 +111,40 @@ Current remediation progress:
 
 ### Bulk repayment schedule export
 
-**Status: Partial**
+**Status: Complete for the approved export scope**
 
-`GET /api/loans/officer/schedules/export/` supports CSV/JSON and customer,
-installment-status, and date filters. Fifteen export tests currently pass.
+`GET /api/loans/officer/schedules/export/` supports audited CSV/JSON exports with
+customer, complete installment-status, and inclusive date filters. Twenty-one
+dedicated export tests currently pass.
 
-Known gaps:
+Completed in Stage 9:
 
-- Customer filtering uses `find_one`, so only one schedule is exported when a
-  customer has multiple loans.
-- Unsupported formats fall through to CSV instead of returning `400`.
-- Reversed date ranges are not rejected.
-- The export loads every schedule and performs per-schedule application, product,
-  and customer lookups.
-- CSV is assembled in memory instead of streamed or processed asynchronously.
-- Customer/product/free-text fields are not protected against spreadsheet formula
-  injection.
-- ~~Export access is not recorded as a dedicated sensitive-data audit event.~~
-  Resolved in Stage 8: successful CSV/JSON exports require a
-  `repayment_schedule_exported` audit record and fail closed with `503` if that
-  access record cannot be written.
-- Empty-result behavior differs between CSV and JSON.
-- Invalid legacy IDs can produce an unhandled error.
-- The response label `schedules` contains flattened installment rows rather than
-  schedule objects.
-- Bulk import is not implemented and should remain optional until finance
-  operations define a concrete need.
+- [x] ~~Export every repayment schedule when a customer has multiple loans.~~
+- [x] ~~Reject unsupported formats, invalid calendar dates, and reversed ranges.~~
+- [x] ~~Replace unbounded list loading and per-schedule N+1 lookups with lazy
+  schedule cursors and related-record batches capped at 200 schedules.~~
+- [x] ~~Stream CSV and JSON output instead of assembling the complete payload in
+  memory.~~
+- [x] ~~Neutralize formula-leading customer, product, reason, and other string
+  cells before CSV output.~~
+- [x] ~~Require a `repayment_schedule_exported` access audit before returning
+  data, failing closed with `503` when it cannot be written.~~
+- [x] ~~Return `404` consistently for empty CSV and JSON results.~~
+- [x] ~~Treat invalid legacy related IDs as unavailable metadata rather than
+  raising an unhandled ObjectId error.~~
+- [x] ~~Name flattened JSON rows `installments` and expose an exact total and
+  `X-Export-Row-Count` response header.~~
+
+Bulk import remains intentionally unimplemented. It is not required for export
+hardening and should only be added if finance operations approve a concrete input
+schema, validation rules, authorization model, and rollback procedure.
+
+Stage 9 validation on 2026-08-02: all 21 dedicated export tests and the 80-test
+loan repayment/audit/export regression set pass. The full backend suite collects
+792 tests: 783 pass and 9 live-blockchain integration tests are skipped, with zero
+failures. Ruff passes for the production export module, and `git diff --check`
+passes. Django's system check still reports only the pre-existing django-axes
+cache configuration warning.
 
 ### Status-transition audit logging
 
@@ -401,18 +416,29 @@ Still requires institution-approved policy before implementation:
 
 ## Scalability and Maintainability Gaps
 
-- `customer_views.py` remains a very large, multi-responsibility module.
-- Several list/search/export paths load unbounded results or paginate in Python.
-- Customer/product/officer enrichment frequently causes N+1 MongoDB queries.
-- Product validation is concentrated in serializers/views instead of a reusable
-  domain service.
-- Required-document values are not constrained to a shared canonical enum.
+- [x] ~~The former 1,900-line `customer_views.py` implementation is split into
+  product, application, repayment, and blockchain/wallet modules. The old module
+  is now a 39-line compatibility facade.~~
+- [x] ~~High-volume customer, product, officer, payment-history, active-loan, and
+  export paths now use database pagination, bounded searches/streams, and bulk
+  related-record loading instead of whole-collection Python pagination and N+1
+  enrichment. Derived on-time/late payment filtering still requires a lazy scan
+  because that value is computed from schedule installments, but memory use is
+  bounded to the requested page and a 256-schedule LRU cache.~~
+- [x] ~~Shared product-bound, application-term, and recommendation-clamping rules
+  now live in `loans/services/product_rules.py` and are consumed by serializers
+  and customer application/prequalification views.~~
+- [x] ~~Required-document serializer values are constrained to the canonical
+  document-type choices.~~
 - MongoDB index creation depends on deployment initialization rather than an
   explicit verified startup/deployment contract. Blockchain event/transaction
   idempotency is implemented, but its production index deployment is unverified.
-- Import-time MongoDB client creation makes test startup depend on external DNS or
-  network state unless `MONGODB_URI` is overridden.
-- Dependency lower bounds without a lock file allow major framework-version drift.
+- [x] ~~MongoDB client construction is lazy, so importing Django settings no
+  longer performs DNS/network work. The first real database operation still
+  surfaces configuration/connectivity failures normally.~~
+- [x] ~~`requirements.lock` provides the exact production dependency versions
+  validated by this remediation pass; `requirements.txt` remains the flexible
+  development/source manifest.~~
 
 ## Test Status and Coverage Gaps
 
@@ -654,42 +680,57 @@ disbursement, and repayment set passes. The full backend suite collects 786 test
 Targeted Ruff `F`/`E9` checks and `git diff --check` pass. Django's system check
 continues to report the pre-existing django-axes cache configuration warning.
 
-### 9. Schedule export hardening — NOT STARTED
+### 9. Schedule export hardening — COMPLETE
 
-- [ ] Export every loan for a matching customer.
-- [ ] Validate format and date ranges.
-- [ ] Remove unbounded/N+1 query behavior and stream large exports.
-- [ ] Add CSV formula-injection protection.
-- [ ] Correct response semantics and add missing regression tests.
-- [ ] Add bulk import only if operations approve a defined use case.
+- [x] ~~Export every loan for a matching customer.~~
+- [x] ~~Validate format and date ranges.~~
+- [x] ~~Remove unbounded/N+1 query behavior and stream large exports.~~
+- [x] ~~Add CSV formula-injection protection.~~
+- [x] ~~Correct response semantics and add missing regression tests.~~
+- [ ] Add bulk import only if operations approve a defined use case. This is an
+  optional future capability, not a production-readiness blocker for exports.
 
-### 10. Maintainability and documentation — NOT STARTED
+### 10. Maintainability and documentation — COMPLETE
 
-- [ ] Refactor `customer_views.py` into focused modules.
-- [ ] Remove N+1 and unbounded query paths.
-- [ ] Centralize product rules.
-- [ ] Pin/lock production dependencies.
-- [ ] Synchronize both loan testing guides with actual routes and behavior.
+- [x] ~~Refactor `customer_views.py` into focused modules while retaining the
+  legacy import surface.~~
+- [x] ~~Replace the identified N+1 enrichment and unbounded list/export paths
+  with bulk loaders, database pagination, bounded searches, lazy scans, or
+  streaming batches as appropriate.~~
+- [x] ~~Centralize product bounds, requested-term validation, and recommendation
+  normalization.~~
+- [x] ~~Constrain required-document serializer values to the canonical enum.~~
+- [x] ~~Make the MongoDB handle lazy so application import does not require DNS.~~
+- [x] ~~Add an exact production dependency lock file.~~
+- [x] ~~Synchronize both loan testing guides with current routes, lifecycle
+  states, payment/disbursement behavior, assignment scope, and source paths.~~
+
+Stage 10 added focused regressions for the shared rule service, three-query bulk
+application enrichment, focused/compatibility view imports, lazy MongoDB client
+construction, and exact dependency pins. Validation on 2026-08-02: the full
+backend suite collects 797 tests; 788 pass and 9 live-blockchain integration
+tests are skipped, with zero failures. Targeted Ruff undefined-name/import and
+syntax checks plus `git diff --check` pass.
 
 ## Documentation Drift to Correct
 
 ### `docs/LOAN_LIFECYCLE_TESTING_GUIDE.md`
 
-- [ ] Officer payment examples use GCash, while manual officer posting accepts only
-  cash/check.
-- [ ] Disbursement-method examples do not match current accepted methods.
-- [ ] It implies officers can inspect/pick unassigned applications, which current
-  assignment scoping does not allow.
+- [x] ~~Clarify that manual officer posting accepts cash/check and that GCash/bank
+  submissions require a future verified provider workflow.~~
+- [x] ~~Separate accepted customer preference values from currently executable
+  cash/check/wallet disbursement methods.~~
+- [x] ~~Correct the implication that officers can inspect or claim unassigned
+  applications; current assignment scope does not allow it.~~
 - [x] ~~Correct the former implication that schedule failure could still return a
   successful disbursement; cash/check execution now fails safely before completion.~~
-- [ ] It omits many customer, admin, penalty, blockchain, exchange-rate,
-  recent-payment, and export endpoints.
+- [x] ~~Add the omitted customer, admin, penalty, blockchain, exchange-rate,
+  recent-payment, payoff, recovery, and export routes/behavior.~~
 
 ### `docs/LOANS_TESTING_GUIDE.md`
 
-- [x] ~~Expand the URL inventory to 44 method/endpoint combinations, including
-  recent payments and schedule export.~~ Detailed prose for those newer endpoints
-  remains Stage 10 documentation work.
+- [x] ~~Expand the URL inventory to 44 method/endpoint combinations and add
+  detailed recent-payment, payoff, recovery, and export behavior.~~
 - [x] ~~Align workload response fields with the implementation.~~
 - [x] ~~Implement and document preferred disbursement persistence during draft
   update/resubmission.~~
@@ -700,16 +741,23 @@ continues to report the pre-existing django-axes cache configuration warning.
 - [x] ~~Document officer payment idempotency requirements.~~
 - [x] ~~Fix the documented payment-search default pagination path and define its
   summary as the complete filtered result.~~
-- [ ] Several cross-document filenames/paths are stale.
+- [x] ~~Update stale source paths and cross-document route references.~~
 
 ## Release Decision
 
-**Current decision: Not ready for production financial operations.**
+**Current-scope implementation decision: Complete.**
 
-Authentication and the breadth of functionality are strong foundations, but the
-payment, disbursement, repayment, and blockchain consistency blockers above must
-be resolved. Release readiness should be reassessed after remediation stages 1
-through 8 and a clean full-suite plus real-Mongo integration run.
+**Production deployment approval: Pending environment and operational
+validation.**
+
+Code remediation for the approved cash, check, and ETH wallet scope is complete.
+Institution-defined reversal/refund/restructuring/write-off policies and GCash,
+bank, Stripe, or other provider verification/execution are intentionally deferred
+future capabilities and are not part of this completed scope. Production approval
+still requires clean real-Mongo/index validation, live blockchain
+deployment/integration validation, resolution of the django-axes cache warning,
+environment/security review, and finance/accounting acceptance of the supported
+operational scope.
 
 This is a code-level review. It does not include live penetration testing,
 provider certification, blockchain deployment validation, accounting approval, or

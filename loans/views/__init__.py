@@ -1,4 +1,4 @@
-from .customer_views import (
+from .customer import (
     LoanProductListView,
     LoanProductDetailView,
     PreQualifyView,

@@ -1,15 +1,23 @@
+from collections import OrderedDict
 from rest_framework.views import APIView
 from rest_framework.permissions import IsAuthenticated
 from bson import ObjectId
 
 from accounts.authentication import CustomJWTAuthentication
+from accounts.models import Customer
 from analytics.models import AuditLog  # noqa: F401 - existing test patch target
 from accounts.utils.response_helpers import success_response, error_response
 from accounts.utils.validation_utils import sanitize_text, parse_bool
 from rest_framework import status
-from loans.models import LoanApplication, LoanProduct, LoanPayment, RepaymentSchedule
+from loans.models import LoanApplication, LoanPayment, RepaymentSchedule
 from loans.views.officer.base import LoanOfficerRequiredMixin
 from loans.services.audit import record_loan_audit
+from loans.services.related_data import (
+    application_related_maps,
+    find_models,
+    model_map_by_ids,
+)
+from loans.services.payment_queries import payment_history_page
 from datetime import datetime
 import logging
 from loans.utils.money import from_centavos
@@ -288,7 +296,21 @@ class OfficerPaymentHistoryView(LoanOfficerRequiredMixin, APIView):
         if not has_scope:
             return scope_result
 
-        payments = LoanPayment.find_by_loan(application_id)
+        try:
+            page = int(request.query_params.get("page", 1))
+            page_size = min(int(request.query_params.get("page_size", 50)), 100)
+        except (TypeError, ValueError):
+            return error_response(
+                message="Invalid payment-history pagination",
+                status_code=status.HTTP_400_BAD_REQUEST,
+            )
+        if page < 1 or page_size < 1:
+            return error_response(
+                message="Payment-history page and page_size must be positive",
+                status_code=status.HTTP_400_BAD_REQUEST,
+            )
+        history = payment_history_page(application_id, page, page_size)
+        payments = history["payments"]
 
         payments_data = [
             {
@@ -304,13 +326,14 @@ class OfficerPaymentHistoryView(LoanOfficerRequiredMixin, APIView):
             for p in payments
         ]
 
-        total_paid = LoanPayment.get_total_paid(application_id)
-
         return success_response(
             data={
                 "payments": payments_data,
-                "total_paid": total_paid,
-                "count": len(payments_data),
+                "total_paid": history["total_paid"],
+                "count": history["total"],
+                "page": history["page"],
+                "page_size": history["page_size"],
+                "total_pages": history["total_pages"],
             },
             message="Payment history retrieved",
         )
@@ -360,12 +383,12 @@ class RecentPaymentsView(LoanOfficerRequiredMixin, APIView):
                 )
             query["loan_id"] = {"$in": assigned_loan_ids}
 
-        from accounts.models import Customer
-
         payment_documents = LoanPayment.find(
             query, sort=[("recorded_at", -1)], limit=limit
         )
-        customer_cache = {}
+        customer_cache = model_map_by_ids(
+            Customer, [payment.customer_id for payment in payment_documents]
+        )
         payments_data = []
 
         for payment in payment_documents:
@@ -373,13 +396,7 @@ class RecentPaymentsView(LoanOfficerRequiredMixin, APIView):
                 continue
 
             customer_id = payment.customer_id
-            if customer_id not in customer_cache:
-                customer = None
-                if customer_id and ObjectId.is_valid(customer_id):
-                    customer = Customer.find_one({"_id": ObjectId(customer_id)})
-                customer_cache[customer_id] = customer
-
-            customer = customer_cache[customer_id]
+            customer = customer_cache.get(str(customer_id))
             payments_data.append(
                 {
                     "id": payment.id,
@@ -643,14 +660,16 @@ class PaymentSearchView(LoanOfficerRequiredMixin, APIView):
             search_terms = search_query.strip().split()
             if len(search_terms) == 1:
                 regex = re.compile(f".*{re.escape(search_terms[0])}.*", re.IGNORECASE)
-                customers = Customer.find(
+                customers = find_models(
+                    Customer,
                     {
                         "$or": [
                             {"first_name": regex},
                             {"last_name": regex},
                             {"phone": regex},
                         ]
-                    }
+                    },
+                    limit=500,
                 )
             else:
                 customer_and_conditions = []
@@ -665,7 +684,9 @@ class PaymentSearchView(LoanOfficerRequiredMixin, APIView):
                             ]
                         }
                     )
-                customers = Customer.find({"$and": customer_and_conditions})
+                customers = find_models(
+                    Customer, {"$and": customer_and_conditions}, limit=500
+                )
             customer_ids = [c.id for c in customers if c]
 
         # Build final query with search
@@ -702,7 +723,7 @@ class PaymentSearchView(LoanOfficerRequiredMixin, APIView):
             )
         sort_field = sort_by
         sort_direction = 1 if sort_order == "asc" else -1
-        schedule_cache = {}
+        schedule_cache = OrderedDict()
 
         def resolve_payment_status(payment):
             """Classify payment as on_time/late based on installment due date."""
@@ -712,6 +733,10 @@ class PaymentSearchView(LoanOfficerRequiredMixin, APIView):
             loan_key = payment.loan_id
             if loan_key not in schedule_cache:
                 schedule_cache[loan_key] = RepaymentSchedule.find_by_loan(loan_key)
+                if len(schedule_cache) > 256:
+                    schedule_cache.popitem(last=False)
+            else:
+                schedule_cache.move_to_end(loan_key)
             schedule = schedule_cache.get(loan_key)
             if not schedule:
                 return "unknown", None
@@ -731,27 +756,24 @@ class PaymentSearchView(LoanOfficerRequiredMixin, APIView):
 
         # Get filtered + paginated results
         if payment_status:
-            all_payments = LoanPayment.find(
+            all_payments = LoanPayment.iter_find(
                 final_query, sort=[(sort_field, sort_direction)]
             )
-
-            status_filtered = []
+            skip = (page - 1) * page_size
+            payments = []
+            total_count = 0
+            total_centavos = 0
             for payment in all_payments:
-                if not payment:
-                    continue
                 status_value, _ = resolve_payment_status(payment)
                 if status_value == payment_status:
-                    status_filtered.append(payment)
-
-            total_count = len(status_filtered)
+                    if skip <= total_count < skip + page_size:
+                        payments.append(payment)
+                    total_count += 1
+                    total_centavos += payment.amount_centavos
             summary = {
-                "total_amount": from_centavos(
-                    sum(payment.amount_centavos for payment in status_filtered)
-                ),
+                "total_amount": from_centavos(total_centavos),
                 "count": total_count,
             }
-            skip = (page - 1) * page_size
-            payments = status_filtered[skip : skip + page_size]
         else:
             total_count = LoanPayment.count(final_query)
             summary = LoanPayment.summarize(final_query)
@@ -763,35 +785,30 @@ class PaymentSearchView(LoanOfficerRequiredMixin, APIView):
                 skip=skip,
             )
 
-        # Build response with customer names
+        applications = model_map_by_ids(
+            LoanApplication, [payment.loan_id for payment in payments]
+        )
+        related = application_related_maps(applications.values())
+        customers = model_map_by_ids(
+            Customer, [payment.customer_id for payment in payments]
+        )
         payments_data = []
-        customer_cache = {}
 
         for payment in payments:
             if not payment:
                 continue
 
-            # Cache customer lookups
             cust_id = payment.customer_id
-            if cust_id not in customer_cache:
-                customer = None
-                if cust_id:
-                    try:
-                        customer = Customer.find_one({"_id": ObjectId(cust_id)})
-                    except Exception:
-                        pass
-                customer_cache[cust_id] = customer
-
-            customer = customer_cache.get(cust_id)
+            customer = customers.get(str(cust_id))
             customer_name = (
                 f"{customer.first_name} {customer.last_name}" if customer else "Unknown"
             )
 
             # Get loan application for product info
-            app = LoanApplication.find_by_id(payment.loan_id)
+            app = applications.get(str(payment.loan_id))
             product_name = "Unknown"
             if app:
-                product = LoanProduct.find_by_id(app.product_id)
+                product = related["products"].get(str(app.product_id))
                 product_name = product.name if product else "Unknown"
             status_value, due_date = resolve_payment_status(payment)
 

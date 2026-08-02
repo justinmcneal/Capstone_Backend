@@ -6,8 +6,13 @@ from accounts.authentication import CustomJWTAuthentication
 from accounts.utils.response_helpers import success_response, error_response
 from accounts.utils.validation_utils import sanitize_text
 from rest_framework import status
-from loans.models import LoanApplication, RepaymentSchedule, LoanProduct
+from loans.models import LoanApplication, RepaymentSchedule
 from loans.views.officer.base import LoanOfficerRequiredMixin
+from loans.services.related_data import (
+    application_related_maps,
+    find_models,
+    model_map_by_ids,
+)
 from accounts.models import Customer
 import re
 
@@ -74,7 +79,8 @@ class ActiveLoansView(LoanOfficerRequiredMixin, APIView):
 
                 # Also include phone and email search with the full original query
                 full_regex = re.compile(f".*{re.escape(search)}.*", re.IGNORECASE)
-                customers = Customer.find(
+                customers = find_models(
+                    Customer,
                     {
                         "$or": [
                             {
@@ -83,12 +89,14 @@ class ActiveLoansView(LoanOfficerRequiredMixin, APIView):
                             {"phone": full_regex},
                             {"email": full_regex},
                         ]
-                    }
-                )[:20]  # Limit to 20 results
+                    },
+                    limit=20,
+                )
             else:
                 # Single word search: use original logic
                 regex = re.compile(f".*{re.escape(search)}.*", re.IGNORECASE)
-                customers = Customer.find(
+                customers = find_models(
+                    Customer,
                     {
                         "$or": [
                             {"first_name": regex},
@@ -96,8 +104,9 @@ class ActiveLoansView(LoanOfficerRequiredMixin, APIView):
                             {"phone": regex},
                             {"email": regex},
                         ]
-                    }
-                )[:20]  # Limit to 20 results
+                    },
+                    limit=20,
+                )
 
             # Exact customer ID lookup (MongoDB ObjectId string)
             if ObjectId.is_valid(search):
@@ -118,9 +127,32 @@ class ActiveLoansView(LoanOfficerRequiredMixin, APIView):
                 message="Provide search term or customer_id",
             )
 
-        # Get loans for these customers + directly matched loan IDs
-        loans_data = []
         customer_cache = {c.id: c for c in customers if c and c.id}
+        customer_ids = list(customer_cache)
+        schedules = find_models(
+            RepaymentSchedule,
+            {"customer_id": {"$in": customer_ids}},
+            limit=500,
+            sort=[("created_at", -1)],
+        )
+        schedules_by_id = {schedule.id: schedule for schedule in schedules if schedule}
+        for schedule in direct_schedules:
+            if schedule and schedule.id:
+                schedules_by_id[schedule.id] = schedule
+        schedules = list(schedules_by_id.values())
+
+        missing_customer_ids = [
+            schedule.customer_id
+            for schedule in schedules
+            if schedule.customer_id not in customer_cache
+        ]
+        customer_cache.update(model_map_by_ids(Customer, missing_customer_ids))
+        applications = model_map_by_ids(
+            LoanApplication, [schedule.loan_id for schedule in schedules]
+        )
+        related = application_related_maps(applications.values())
+
+        loans_data = []
         seen_schedule_ids = set()
 
         def append_schedule(schedule, customer):
@@ -132,17 +164,14 @@ class ActiveLoansView(LoanOfficerRequiredMixin, APIView):
                 return
             seen_schedule_ids.add(schedule.id)
 
-            # Get application for product info
-            app = LoanApplication.find_by_id(schedule.loan_id)
+            app = applications.get(str(schedule.loan_id))
             if not app:
                 return
             if user_role == "loan_officer":
                 assigned_officer = str(getattr(app, "assigned_officer", "") or "")
-                if assigned_officer and assigned_officer != user_id:
+                if assigned_officer != user_id:
                     return
-            product = None
-            if app:
-                product = LoanProduct.find_by_id(app.product_id)
+            product = related["products"].get(str(app.product_id))
 
             # Get next payment due
             next_payment = schedule.get_next_payment()
@@ -179,30 +208,10 @@ class ActiveLoansView(LoanOfficerRequiredMixin, APIView):
                 }
             )
 
-        for customer in customers:
-            if not customer:
-                continue
-
-            # Get repayment schedules (active loans)
-            schedules = RepaymentSchedule.find_by_customer(customer.id)
-
-            for schedule in schedules:
-                append_schedule(schedule, customer)
-
-        # Add schedules found via direct loan/application ID lookup
-        for schedule in direct_schedules:
+        for schedule in schedules:
             if not schedule or not schedule.customer_id:
                 continue
             customer = customer_cache.get(schedule.customer_id)
-            if not customer:
-                try:
-                    customer = Customer.find_one(
-                        {"_id": ObjectId(schedule.customer_id)}
-                    )
-                except Exception:
-                    customer = None
-                if customer:
-                    customer_cache[schedule.customer_id] = customer
             append_schedule(schedule, customer)
 
         return success_response(

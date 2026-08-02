@@ -126,11 +126,11 @@ def test_draft_update_persists_preferred_disbursement_method(monkeypatch):
     monkeypatch.setattr(LoanApplication, "find_by_id", lambda app_id: app)
     monkeypatch.setattr(LoanProduct, "find_by_id", lambda product_id: product)
     monkeypatch.setattr(
-        "loans.views.customer_views.check_basic_eligibility",
+        "loans.views.customer.applications.check_basic_eligibility",
         lambda *args, **kwargs: {"can_apply": True, "missing_requirements": []},
     )
     monkeypatch.setattr(
-        "loans.views.customer_views.qualify_customer",
+        "loans.views.customer.applications.qualify_customer",
         lambda **kwargs: {
             "can_apply": True,
             "eligible": True,
@@ -139,7 +139,7 @@ def test_draft_update_persists_preferred_disbursement_method(monkeypatch):
     )
     monkeypatch.setattr(app, "submit", lambda: setattr(app, "status", "submitted"))
     monkeypatch.setattr(
-        "loans.views.customer_views.AuditLog.log_action", lambda **kwargs: None
+        "loans.views.customer.applications.AuditLog.log_action", lambda **kwargs: None
     )
     monkeypatch.setattr(
         ApplicationDetailView,
@@ -248,7 +248,17 @@ def test_officer_payment_history_total_excludes_unposted(monkeypatch):
         LoanPayment(amount=250, payment_status="pending_verification"),
     ]
     monkeypatch.setattr(LoanApplication, "find_by_id", lambda app_id: app)
-    monkeypatch.setattr(LoanPayment, "find_by_loan", lambda loan_id: payments)
+    monkeypatch.setattr(
+        "loans.views.officer.payments.payment_history_page",
+        lambda loan_id, page, page_size: {
+            "payments": payments,
+            "total": 2,
+            "page": page,
+            "page_size": page_size,
+            "total_pages": 1,
+            "total_paid": 100,
+        },
+    )
     monkeypatch.setattr(
         OfficerPaymentHistoryView,
         "check_officer_permission",

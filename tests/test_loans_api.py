@@ -142,11 +142,11 @@ class TestLoanProductListView:
         monkeypatch.setattr(
             LoanProduct,
             "find",
-            staticmethod(lambda query=None, active_only=True: [product]),
+            staticmethod(lambda query=None, active_only=True, **kwargs: [product]),
             raising=False,
         )
         monkeypatch.setattr(
-            "loans.views.customer_views.resolve_required_document_types",
+            "loans.views.customer.products.resolve_required_document_types",
             lambda *args, **kwargs: ["valid_id"],
             raising=False,
         )
@@ -187,7 +187,7 @@ class TestLoanProductDetailView:
             raising=False,
         )
         monkeypatch.setattr(
-            "loans.views.customer_views.resolve_required_document_types",
+            "loans.views.customer.products.resolve_required_document_types",
             lambda *args, **kwargs: ["valid_id"],
             raising=False,
         )
@@ -229,7 +229,7 @@ class TestPreQualifyView:
             raising=False,
         )
         monkeypatch.setattr(
-            "loans.views.customer_views.check_basic_eligibility",
+            "loans.views.customer.products.check_basic_eligibility",
             lambda *args, **kwargs: {
                 "can_apply": True,
                 "missing_requirements": [],
@@ -238,7 +238,7 @@ class TestPreQualifyView:
             raising=False,
         )
         monkeypatch.setattr(
-            "loans.views.customer_views.qualify_customer",
+            "loans.views.customer.products.qualify_customer",
             lambda *args, **kwargs: {
                 "eligible": True,
                 "recommended_amount": 20000,
@@ -248,7 +248,7 @@ class TestPreQualifyView:
             raising=False,
         )
         monkeypatch.setattr(
-            "loans.views.customer_views.resolve_required_document_types",
+            "loans.views.customer.products.resolve_required_document_types",
             lambda *args, **kwargs: ["valid_id", "proof_of_income"],
             raising=False,
         )
@@ -294,7 +294,7 @@ class TestLoanApplyView:
             raising=False,
         )
         monkeypatch.setattr(
-            "loans.views.customer_views.check_basic_eligibility",
+            "loans.views.customer.applications.check_basic_eligibility",
             lambda *args, **kwargs: {
                 "can_apply": True,
                 "missing_requirements": [],
@@ -303,7 +303,7 @@ class TestLoanApplyView:
             raising=False,
         )
         monkeypatch.setattr(
-            "loans.views.customer_views.qualify_customer",
+            "loans.views.customer.applications.qualify_customer",
             lambda *args, **kwargs: {
                 "eligible": True,
                 "recommended_amount": 20000,
@@ -313,7 +313,7 @@ class TestLoanApplyView:
             raising=False,
         )
         monkeypatch.setattr(
-            "loans.views.customer_views.resolve_required_document_types",
+            "loans.views.customer.applications.resolve_required_document_types",
             lambda *args, **kwargs: ["valid_id"],
             raising=False,
         )
@@ -378,15 +378,20 @@ class TestMyApplicationsView:
 
         monkeypatch.setattr(
             LoanApplication,
-            "find_by_customer",
-            staticmethod(lambda customer_id: [app]),
+            "count",
+            staticmethod(lambda query: 1),
             raising=False,
         )
         monkeypatch.setattr(
-            LoanProduct,
-            "find_by_id",
-            staticmethod(lambda product_id: LoanProduct(name="Micro Loan")),
+            LoanApplication,
+            "find",
+            staticmethod(lambda query, **kwargs: [app]),
             raising=False,
+        )
+        product = LoanProduct(_id=ObjectId(app.product_id), name="Micro Loan")
+        monkeypatch.setattr(
+            "loans.views.customer.applications.model_map_by_ids",
+            lambda model, values: {app.product_id: product},
         )
 
         request = _get("/api/loans/applications/", _auth_customer(customer))

@@ -13,6 +13,7 @@ from loans.serializers import (
     ApplicationInternalNoteSerializer,
 )
 from loans.services.audit import record_loan_audit
+from loans.services.related_data import application_related_maps, find_models
 from loans.utils.serialization import serialize_internal_note
 from loans.views.officer.base import LoanOfficerRequiredMixin, internal_note_summary
 from datetime import datetime
@@ -238,7 +239,8 @@ class OfficerApplicationListView(LoanOfficerRequiredMixin, APIView):
             if len(search_terms) == 1:
                 # Single term - simple regex search
                 regex = re.compile(f".*{re.escape(search_terms[0])}.*", re.IGNORECASE)
-                customers = Customer.find(
+                customers = find_models(
+                    Customer,
                     {
                         "$or": [
                             {"first_name": regex},
@@ -246,12 +248,15 @@ class OfficerApplicationListView(LoanOfficerRequiredMixin, APIView):
                             {"phone": regex},
                             {"email": regex},
                         ]
-                    }
+                    },
+                    limit=500,
                 )
                 customer_ids = [c.id for c in customers if c]
 
                 # Search products
-                products = LoanProduct.find({"name": regex})
+                products = find_models(
+                    LoanProduct, {"name": regex}, limit=500
+                )
                 product_ids = [p.id for p in products if p]
             else:
                 # Multiple terms - match all terms across customer fields
@@ -269,7 +274,9 @@ class OfficerApplicationListView(LoanOfficerRequiredMixin, APIView):
                         }
                     )
 
-                customers = Customer.find({"$and": customer_and_conditions})
+                customers = find_models(
+                    Customer, {"$and": customer_and_conditions}, limit=500
+                )
                 customer_ids = [c.id for c in customers if c]
 
                 # For products with multi-word search, all terms must appear in product name
@@ -278,7 +285,9 @@ class OfficerApplicationListView(LoanOfficerRequiredMixin, APIView):
                     term_regex = re.compile(f".*{re.escape(term)}.*", re.IGNORECASE)
                     product_and_conditions.append({"name": term_regex})
 
-                products = LoanProduct.find({"$and": product_and_conditions})
+                products = find_models(
+                    LoanProduct, {"$and": product_and_conditions}, limit=500
+                )
                 product_ids = [p.id for p in products if p]
 
         # Build final query with customer and product search
@@ -326,24 +335,18 @@ class OfficerApplicationListView(LoanOfficerRequiredMixin, APIView):
             limit=page_size,
         )
 
-        # Build response with product names and customer names
+        related = application_related_maps(applications)
         apps_data = []
         for app in applications:
             if not app:
                 continue
-            product = LoanProduct.find_by_id(app.product_id)
+            product = related["products"].get(str(app.product_id))
             product_name = product.name if product else "Unknown"
-
-            # Get customer name for display
-            customer = None
-            if app.customer_id:
-                try:
-                    customer = Customer.find_one({"_id": ObjectId(app.customer_id)})
-                except Exception:
-                    pass
+            customer = related["customers"].get(str(app.customer_id))
             customer_name = (
                 f"{customer.first_name} {customer.last_name}" if customer else "Unknown"
             )
+            officer = related["officers"].get(str(app.assigned_officer))
 
             apps_data.append(
                 {
@@ -359,7 +362,9 @@ class OfficerApplicationListView(LoanOfficerRequiredMixin, APIView):
                     "eligibility_score": app.eligibility_score,
                     "risk_category": app.risk_category,
                     "assigned_officer": app.assigned_officer,
-                    "assigned_officer_name": None,
+                    "assigned_officer_name": (
+                        officer.full_name or "Unknown" if officer else None
+                    ),
                     "submitted_at": (
                         app.submitted_at.isoformat() if app.submitted_at else None
                     ),
@@ -369,26 +374,6 @@ class OfficerApplicationListView(LoanOfficerRequiredMixin, APIView):
                     **internal_note_summary(app),
                 }
             )
-
-        # Resolve assigned officer names
-        from accounts.models.loan_officer import LoanOfficer as LO
-
-        officer_ids = {
-            a["assigned_officer"] for a in apps_data if a.get("assigned_officer")
-        }
-        officer_name_map = {}
-        for oid in officer_ids:
-            try:
-                o = LO.find_one({"_id": ObjectId(oid)})
-                if o:
-                    officer_name_map[oid] = (
-                        f"{o.first_name} {o.last_name}".strip() or "Unknown"
-                    )
-            except Exception:
-                pass
-        for a in apps_data:
-            if a.get("assigned_officer"):
-                a["assigned_officer_name"] = officer_name_map.get(a["assigned_officer"])
 
         return success_response(
             data={

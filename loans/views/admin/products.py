@@ -53,16 +53,30 @@ class AdminProductListView(AdminRequiredMixin, APIView):
             )
         search = sanitize_text(request.query_params.get("search", ""))
 
-        products = LoanProduct.find(active_only=active_only)
-
-        # Filter by search term (name or code)
+        try:
+            page = int(request.query_params.get("page", 1))
+            page_size = min(int(request.query_params.get("page_size", 50)), 100)
+        except (TypeError, ValueError):
+            return error_response(
+                message="Invalid product pagination",
+                status_code=status.HTTP_400_BAD_REQUEST,
+            )
+        if page < 1 or page_size < 1:
+            return error_response(
+                message="Product page and page_size must be positive",
+                status_code=status.HTTP_400_BAD_REQUEST,
+            )
+        query = {}
         if search:
             search_regex = re.compile(re.escape(search), re.IGNORECASE)
-            products = [
-                p
-                for p in products
-                if search_regex.search(p.name) or search_regex.search(p.code)
-            ]
+            query["$or"] = [{"name": search_regex}, {"code": search_regex}]
+        total = LoanProduct.count(query, active_only=active_only)
+        products = LoanProduct.find(
+            query,
+            active_only=active_only,
+            skip=(page - 1) * page_size,
+            limit=page_size,
+        )
 
         products_data = [
             {
@@ -87,7 +101,13 @@ class AdminProductListView(AdminRequiredMixin, APIView):
         ]
 
         return success_response(
-            data={"products": products_data, "total": len(products_data)},
+            data={
+                "products": products_data,
+                "total": total,
+                "page": page,
+                "page_size": page_size,
+                "total_pages": (total + page_size - 1) // page_size,
+            },
             message="Products retrieved",
         )
 

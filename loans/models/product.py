@@ -119,14 +119,25 @@ class LoanProduct:
         return cls.from_dict(doc)
 
     @classmethod
-    def find(cls, query=None, active_only=True):
+    def find(cls, query=None, active_only=True, skip=None, limit=None):
         db = get_db()
         collection = db[cls.collection_name]
         query = query or {}
         if active_only:
             query["active"] = True
         cursor = collection.find(query).sort("name", 1)
+        if skip:
+            cursor = cursor.skip(skip)
+        if limit:
+            cursor = cursor.limit(limit)
         return [cls.from_dict(doc) for doc in cursor]
+
+    @classmethod
+    def count(cls, query=None, active_only=True):
+        query = dict(query or {})
+        if active_only:
+            query["active"] = True
+        return get_db()[cls.collection_name].count_documents(query)
 
     @classmethod
     def find_by_id(cls, product_id):

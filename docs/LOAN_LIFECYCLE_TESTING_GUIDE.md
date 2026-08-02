@@ -27,13 +27,20 @@ Application statuses (`loans/models/application.py`):
 - `approved`
 - `rejected`
 - `disbursed`
+- `completed`
+- `written_off` (reserved for an approved future write-off policy)
 - `cancelled`
 
 Installment statuses (`loans/models/repayment.py`):
 - `pending`
-- `paid`
-- `overdue`
 - `partial`
+- `overdue`
+- `partial_overdue`
+- `paid`
+
+Schedule statuses are `active`, `paid_off`, `restructured`, and `written_off`.
+The latter two are reserved states; no restructuring/write-off operation is
+available until the institution approves those policies.
 
 Note: UI/API filters also support `pending` as a derived alias for apps in `submitted` or `under_review`.
 
@@ -48,6 +55,7 @@ Note: UI/API filters also support `pending` as a derived alias for apps in `subm
 | `GET` | `/applications/<application_id>/` | Customer (owner) |
 | `GET` | `/applications/<application_id>/schedule/` | Customer (owner, disbursed only) |
 | `GET` | `/applications/<application_id>/payments/` | Customer (owner) |
+| `POST` | `/applications/<application_id>/payments/` | Customer (owner; pending provider claim only) |
 | `POST` | `/applications/<application_id>/resubmit/` | Customer (owner, rejected only) |
 | `GET` | `/applications/<application_id>/feedback/` | Customer (owner, rejected only) |
 | `GET/POST` | `/admin/products/` | Admin + `manage_system` |
@@ -67,6 +75,14 @@ Note: UI/API filters also support `pending` as a derived alias for apps in `subm
 | `GET` | `/officer/applications/<application_id>/schedule/` | Loan Officer / Admin |
 | `GET` | `/officer/applications/<application_id>/payments/` | Loan Officer / Admin |
 | `GET` | `/officer/payments/search/` | Loan Officer / Admin |
+| `GET` | `/officer/payments/recent/` | Loan Officer / Admin |
+| `POST` | `/officer/applications/<application_id>/penalties/apply/` | Loan Officer / Admin |
+| `POST` | `/officer/applications/<application_id>/penalties/waive/` | Loan Officer / Admin |
+| `GET/POST` | `/officer/applications/<application_id>/payoff/` | Loan Officer / Admin |
+| `GET` | `/officer/applications/<application_id>/blockchain/` | Loan Officer / Admin |
+| `GET` | `/officer/exchange-rate/` | Loan Officer / Admin |
+| `GET` | `/officer/schedules/export/` | Loan Officer / Admin |
+| `GET` | `/admin/blockchain/transactions/` | Admin |
 
 ## Key Endpoint Contracts
 1. `POST /pre-qualify/`
@@ -138,7 +154,8 @@ or
   `retry`, or safe pre-preparation `cancel` actions. The signed payload is never
   exposed by the API.
 - `gcash` and `bank_transfer` remain pending until a provider workflow is added.
-- Accepted methods: `bank_transfer`, `cash`, `gcash`, `check`, `wallet`.
+- Accepted method values are `bank_transfer`, `cash`, `gcash`, `check`, and
+  `wallet`; only cash/check and wallet have completed settlement implementations.
 
 6. `POST /officer/payments/`
 - Body:
@@ -191,8 +208,9 @@ or
 2. Customer confirms products via `GET /products/`.
 3. Customer runs `POST /pre-qualify/`.
 4. Customer submits `POST /apply/`.
-5. Officer checks queue via `GET /officer/applications/?status=pending`.
-6. Admin assigns app via `POST /admin/applications/<id>/assign/` (or officer picks from scope).
+5. Admin assigns the application via `POST /admin/applications/<id>/assign/`.
+6. The assigned officer checks `GET /officer/applications/?status=pending`;
+   officers cannot inspect or claim unassigned applications.
 7. Officer approves via `PUT /officer/applications/<id>/review/`.
 8. Officer disburses via `POST /officer/applications/<id>/disburse/`; for wallet,
    wait for `disbursement_status=executed` before reading the schedule.
@@ -218,8 +236,8 @@ or
 - `loans/urls.py`
 - `loans/models/application.py`
 - `loans/models/repayment.py`
-- `loans/views/customer_views.py`
-- `loans/views/admin_views.py`
-- `loans/views/officer_views.py`
+- `loans/views/customer/` (`customer_views.py` is an import compatibility facade)
+- `loans/views/admin/`
+- `loans/views/officer/`
 - `loans/services/qualification.py`
 - `loans/services/assignment.py`

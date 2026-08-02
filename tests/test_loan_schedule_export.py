@@ -13,23 +13,23 @@ Coverage:
 """
 
 import csv
+import json
+from datetime import datetime
 from io import StringIO
 from unittest.mock import patch
-from datetime import datetime
 
 import mongomock
 from bson import ObjectId
 from django.conf import settings
 from rest_framework import status
 
-from accounts.utils.response_helpers import error_response
 from accounts.models import Customer
+from accounts.utils.response_helpers import error_response
 from loans.models.application import LoanApplication
 from loans.models.product import LoanProduct
 from loans.models.repayment import RepaymentSchedule
-from loans.views.officer.schedule_export import BulkRepaymentScheduleExportView
 from loans.services.audit import LoanAuditUnavailable
-
+from loans.views.officer.schedule_export import BulkRepaymentScheduleExportView
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -122,6 +122,10 @@ def _make_request(query_params=None, user_role="loan_officer"):
     return MockRequest()
 
 
+def _streamed_text(response):
+    return b"".join(response.streaming_content).decode()
+
+
 # ---------------------------------------------------------------------------
 # Permission tests
 # ---------------------------------------------------------------------------
@@ -171,7 +175,7 @@ def test_export_fails_closed_when_access_audit_is_unavailable(monkeypatch):
 
 class TestPermissions:
     def test_loan_officer_can_export(self, monkeypatch):
-        db = _setup_mongo(monkeypatch)
+        _setup_mongo(monkeypatch)
         product = _make_product()
         product.save()
         app = _make_application()
@@ -190,7 +194,7 @@ class TestPermissions:
         assert response.status_code == status.HTTP_200_OK
 
     def test_admin_can_export(self, monkeypatch):
-        db = _setup_mongo(monkeypatch)
+        _setup_mongo(monkeypatch)
         product = _make_product()
         product.save()
         app = _make_application()
@@ -227,7 +231,7 @@ class TestPermissions:
 
 class TestFilters:
     def test_filter_by_customer_id(self, monkeypatch):
-        db = _setup_mongo(monkeypatch)
+        _setup_mongo(monkeypatch)
         product = _make_product()
         product.save()
 
@@ -255,14 +259,14 @@ class TestFilters:
         assert response["Content-Type"] == "text/csv"
         assert "attachment" in response["Content-Disposition"]
 
-        content = response.content.decode()
+        content = _streamed_text(response)
         reader = csv.DictReader(StringIO(content))
         rows = list(reader)
         assert len(rows) == 12  # 12 installments
         assert all(row["customer_id"] == customer_id_1 for row in rows)
 
     def test_filter_by_status(self, monkeypatch):
-        db = _setup_mongo(monkeypatch)
+        _setup_mongo(monkeypatch)
         product = _make_product()
         product.save()
 
@@ -281,14 +285,14 @@ class TestFilters:
             response = view.get(view.request)
 
         assert response.status_code == status.HTTP_200_OK
-        content = response.content.decode()
+        content = _streamed_text(response)
         reader = csv.DictReader(StringIO(content))
         rows = list(reader)
         assert len(rows) == 2
         assert all(row["status"] == "paid" for row in rows)
 
     def test_filter_by_date_range(self, monkeypatch):
-        db = _setup_mongo(monkeypatch)
+        _setup_mongo(monkeypatch)
         product = _make_product()
         product.save()
 
@@ -308,7 +312,7 @@ class TestFilters:
             response = view.get(view.request)
 
         assert response.status_code == status.HTTP_200_OK
-        content = response.content.decode()
+        content = _streamed_text(response)
         reader = csv.DictReader(StringIO(content))
         rows = list(reader)
         assert len(rows) == 12
@@ -353,7 +357,7 @@ class TestFilters:
 
 class TestExportFormats:
     def test_csv_export_headers(self, monkeypatch):
-        db = _setup_mongo(monkeypatch)
+        _setup_mongo(monkeypatch)
         product = _make_product()
         product.save()
 
@@ -374,7 +378,7 @@ class TestExportFormats:
         assert "attachment" in response["Content-Disposition"]
         assert ".csv" in response["Content-Disposition"]
 
-        content = response.content.decode()
+        content = _streamed_text(response)
         reader = csv.DictReader(StringIO(content))
         expected_fields = [
             "loan_id", "schedule_id", "customer_id", "customer_name", "product_name",
@@ -387,7 +391,7 @@ class TestExportFormats:
         assert reader.fieldnames == expected_fields
 
     def test_json_export(self, monkeypatch):
-        db = _setup_mongo(monkeypatch)
+        _setup_mongo(monkeypatch)
         product = _make_product()
         product.save()
 
@@ -404,15 +408,16 @@ class TestExportFormats:
             response = view.get(view.request)
 
         assert response.status_code == status.HTTP_200_OK
-        data = response.data["data"]
-        assert "schedules" in data
+        data = json.loads(_streamed_text(response))["data"]
+        assert "installments" in data
+        assert "schedules" not in data
         assert data["total"] == 12
-        assert len(data["schedules"]) == 12
-        assert data["schedules"][0]["installment_number"] == 1
-        assert data["schedules"][11]["installment_number"] == 12
+        assert len(data["installments"]) == 12
+        assert data["installments"][0]["installment_number"] == 1
+        assert data["installments"][11]["installment_number"] == 12
 
     def test_csv_includes_penalty_in_total(self, monkeypatch):
-        db = _setup_mongo(monkeypatch)
+        _setup_mongo(monkeypatch)
         product = _make_product()
         product.save()
 
@@ -432,7 +437,7 @@ class TestExportFormats:
             response = view.get(view.request)
 
         assert response.status_code == status.HTTP_200_OK
-        content = response.content.decode()
+        content = _streamed_text(response)
         reader = csv.DictReader(StringIO(content))
         rows = list(reader)
         assert rows[0]["installment_total_amount"] == "11500"
@@ -440,7 +445,7 @@ class TestExportFormats:
         assert rows[0]["penalty_amount"] == "500"
 
     def test_csv_includes_customer_name(self, monkeypatch):
-        db = _setup_mongo(monkeypatch)
+        _setup_mongo(monkeypatch)
         product = _make_product()
         product.save()
 
@@ -464,7 +469,146 @@ class TestExportFormats:
             response = view.get(view.request)
 
         assert response.status_code == status.HTTP_200_OK
-        content = response.content.decode()
+        content = _streamed_text(response)
         reader = csv.DictReader(StringIO(content))
         rows = list(reader)
         assert rows[0]["customer_name"] == "John Doe"
+
+
+class TestStage9Hardening:
+    def test_customer_filter_exports_every_matching_loan(self, monkeypatch):
+        _setup_mongo(monkeypatch)
+        product = _make_product().save()
+        customer_id = str(ObjectId())
+        for _ in range(2):
+            app = _make_application(
+                customer_id=customer_id, product_id=product.id
+            ).save()
+            _make_schedule(app.id, customer_id).save()
+
+        view = BulkRepaymentScheduleExportView()
+        view.request = _make_request(
+            {"customer_id": customer_id, "format": "json"}, "admin"
+        )
+        with patch.object(
+            view, "check_officer_permission", return_value=(True, None)
+        ):
+            response = view.get(view.request)
+
+        data = json.loads(_streamed_text(response))["data"]
+        assert response.status_code == status.HTTP_200_OK
+        assert data["total"] == 24
+        assert len({row["loan_id"] for row in data["installments"]}) == 2
+
+    def test_invalid_format_and_reversed_dates_are_rejected(self, monkeypatch):
+        _setup_mongo(monkeypatch)
+        view = BulkRepaymentScheduleExportView()
+
+        for query_params in (
+            {"format": "xlsx"},
+            {"start_date": "2026-02-02", "end_date": "2026-02-01"},
+            {"start_date": "2026-02-30"},
+        ):
+            view.request = _make_request(query_params, "admin")
+            with patch.object(
+                view, "check_officer_permission", return_value=(True, None)
+            ):
+                response = view.get(view.request)
+            assert response.status_code == status.HTTP_400_BAD_REQUEST
+
+    def test_partial_overdue_is_a_supported_filter(self, monkeypatch):
+        _setup_mongo(monkeypatch)
+        product = _make_product().save()
+        app = _make_application(product_id=product.id).save()
+        schedule = _make_schedule(app.id, app.customer_id)
+        schedule.installments[0]["status"] = "partial_overdue"
+        schedule.save()
+        view = BulkRepaymentScheduleExportView()
+        view.request = _make_request({"status": "partial_overdue"}, "admin")
+
+        with patch.object(
+            view, "check_officer_permission", return_value=(True, None)
+        ):
+            response = view.get(view.request)
+
+        rows = list(csv.DictReader(StringIO(_streamed_text(response))))
+        assert response.status_code == status.HTTP_200_OK
+        assert [row["status"] for row in rows] == ["partial_overdue"]
+
+    def test_csv_neutralizes_spreadsheet_formulas(self, monkeypatch):
+        _setup_mongo(monkeypatch)
+        product = _make_product(name="=HYPERLINK(\"https://bad.test\")").save()
+        customer = Customer(
+            first_name="@SUM(1+1)", last_name="User", email="safe@example.test"
+        ).save()
+        app = _make_application(
+            customer_id=customer.id, product_id=product.id
+        ).save()
+        schedule = _make_schedule(app.id, customer.id)
+        schedule.installments[0]["penalty_reason"] = "+malicious"
+        schedule.save()
+        view = BulkRepaymentScheduleExportView()
+        view.request = _make_request(user_role="admin")
+
+        with patch.object(
+            view, "check_officer_permission", return_value=(True, None)
+        ):
+            response = view.get(view.request)
+
+        row = next(csv.DictReader(StringIO(_streamed_text(response))))
+        assert row["product_name"].startswith("'=")
+        assert row["customer_name"].startswith("'@")
+        assert row["penalty_reason"].startswith("'+")
+
+    def test_invalid_legacy_related_ids_do_not_crash_export(self, monkeypatch):
+        _setup_mongo(monkeypatch)
+        schedule = _make_schedule("legacy-loan-id", "legacy-customer-id")
+        schedule.save()
+        view = BulkRepaymentScheduleExportView()
+        view.request = _make_request({"format": "json"}, "admin")
+
+        with patch.object(
+            view, "check_officer_permission", return_value=(True, None)
+        ):
+            response = view.get(view.request)
+
+        data = json.loads(_streamed_text(response))["data"]
+        assert response.status_code == status.HTTP_200_OK
+        assert data["installments"][0]["loan_id"] == "legacy-loan-id"
+        assert data["installments"][0]["product_name"] == "Unknown"
+
+    def test_large_exports_are_processed_in_bounded_batches(self, monkeypatch):
+        _setup_mongo(monkeypatch)
+        for index in range(201):
+            _make_schedule(
+                f"legacy-loan-{index}",
+                f"legacy-customer-{index}",
+                installments=[
+                    {
+                        "number": 1,
+                        "due_date": datetime(2026, 1, 1),
+                        "principal": 1,
+                        "interest": 0,
+                        "total_amount": 1,
+                        "status": "pending",
+                        "paid_amount": 0,
+                    }
+                ],
+            ).save()
+        view = BulkRepaymentScheduleExportView()
+        view.request = _make_request(user_role="admin")
+
+        with (
+            patch.object(
+                view, "check_officer_permission", return_value=(True, None)
+            ),
+            patch.object(
+                view, "_related_maps", wraps=view._related_maps
+            ) as related_maps,
+        ):
+            response = view.get(view.request)
+            rows = list(csv.DictReader(StringIO(_streamed_text(response))))
+
+        observed_batch_sizes = [len(call.args[1]) for call in related_maps.call_args_list]
+        assert len(rows) == 201
+        assert observed_batch_sizes == [200, 1, 200, 1]

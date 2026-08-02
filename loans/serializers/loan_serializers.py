@@ -1,6 +1,7 @@
 from rest_framework import serializers
 from documents.models import DOCUMENT_TYPES
 from accounts.serializers.base_serializers import InputSanitizationMixin
+from loans.services.product_rules import validate_product_bounds
 
 
 class LoanProductSerializer(InputSanitizationMixin, serializers.Serializer):
@@ -18,7 +19,7 @@ class LoanProductSerializer(InputSanitizationMixin, serializers.Serializer):
     min_term_months = serializers.IntegerField(min_value=1)
     max_term_months = serializers.IntegerField(min_value=1)
     required_documents = serializers.ListField(
-        child=serializers.CharField(), required=False
+        child=serializers.ChoiceField(choices=DOCUMENT_TYPES), required=False
     )
     min_business_months = serializers.IntegerField(min_value=0, required=False)
     min_monthly_income = serializers.FloatField(min_value=0, required=False)
@@ -30,27 +31,7 @@ class LoanProductSerializer(InputSanitizationMixin, serializers.Serializer):
 
     def validate(self, data):
         """Validate product data with clear error messages"""
-        errors = {}
-
-        # Validate min/max amounts
-        min_amt = data.get("min_amount", getattr(self.instance, "min_amount", 0))
-        max_amt = data.get("max_amount", getattr(self.instance, "max_amount", 0))
-        if min_amt > max_amt:
-            errors["max_amount"] = (
-                "Maximum amount must be greater than or equal to minimum amount"
-            )
-
-        # Validate min/max terms
-        min_term = data.get(
-            "min_term_months", getattr(self.instance, "min_term_months", 0)
-        )
-        max_term = data.get(
-            "max_term_months", getattr(self.instance, "max_term_months", 0)
-        )
-        if min_term > max_term:
-            errors["max_term_months"] = (
-                "Maximum term must be greater than or equal to minimum term"
-            )
+        errors = validate_product_bounds(data, self.instance)
 
         if errors:
             raise serializers.ValidationError(errors)

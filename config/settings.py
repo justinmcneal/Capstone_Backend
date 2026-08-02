@@ -14,10 +14,10 @@ from pathlib import Path
 import os
 import json
 from dotenv import load_dotenv
-from pymongo import MongoClient
 from cryptography.fernet import Fernet
 from django.core.exceptions import ImproperlyConfigured
 from django.core.management.utils import get_random_secret_key
+from config.mongodb import LazyMongoDatabase
 
 load_dotenv()
 
@@ -151,10 +151,11 @@ if not DEBUG:
             'python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"'
         ) from exc
 
-# Initialize PyMongo client
+# Configure a lazy PyMongo handle. This deliberately performs no DNS lookup or
+# socket work while Django settings, management commands, or tests are importing.
 if MONGODB_URI:
-    MONGO_CLIENT = MongoClient(MONGODB_URI)
-    MONGODB = MONGO_CLIENT[MONGODB_NAME]
+    MONGODB = LazyMongoDatabase(MONGODB_URI, MONGODB_NAME)
+    MONGO_CLIENT = None  # client is available lazily as MONGODB.client
 else:
     MONGO_CLIENT = None
     MONGODB = None

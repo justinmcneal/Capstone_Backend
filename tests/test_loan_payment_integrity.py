@@ -249,7 +249,7 @@ def test_atomic_update_retries_stale_schedule_write(schedule, monkeypatch):
 def test_customer_payment_endpoint_creates_pending_submission(schedule, monkeypatch):
     app = SimpleNamespace(customer_id=schedule.customer_id, status="disbursed")
     monkeypatch.setattr(
-        "loans.views.customer_views.LoanApplication.find_by_id", lambda _id: app
+        "loans.views.customer.repayment.LoanApplication.find_by_id", lambda _id: app
     )
     monkeypatch.setattr(
         PaymentHistoryView,
@@ -257,7 +257,7 @@ def test_customer_payment_endpoint_creates_pending_submission(schedule, monkeypa
         lambda self, request: (True, None),
     )
     monkeypatch.setattr(
-        "loans.views.customer_views.AuditLog.log_action", lambda **kwargs: None
+        "loans.views.customer.repayment.AuditLog.log_action", lambda **kwargs: None
     )
     request = MagicMock(
         data={
@@ -283,7 +283,7 @@ def test_customer_payment_endpoint_creates_pending_submission(schedule, monkeypa
 def test_customer_payment_endpoint_rejects_wallet_bypass(schedule, monkeypatch):
     app = SimpleNamespace(customer_id=schedule.customer_id, status="disbursed")
     monkeypatch.setattr(
-        "loans.views.customer_views.LoanApplication.find_by_id", lambda _id: app
+        "loans.views.customer.repayment.LoanApplication.find_by_id", lambda _id: app
     )
     monkeypatch.setattr(
         PaymentHistoryView,
@@ -374,7 +374,7 @@ def test_wallet_replay_returns_stored_rate_without_blockchain_lookup(
     payment.save()
     app = SimpleNamespace(customer_id=schedule.customer_id, status="disbursed")
     monkeypatch.setattr(
-        "loans.views.customer_views.LoanApplication.find_by_id", lambda _id: app
+        "loans.views.customer.blockchain.LoanApplication.find_by_id", lambda _id: app
     )
     monkeypatch.setattr(
         WalletPaymentView,

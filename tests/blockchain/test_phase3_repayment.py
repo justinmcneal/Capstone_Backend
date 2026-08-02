@@ -8,10 +8,7 @@ Tests:
 """
 
 import inspect
-from datetime import datetime
-from unittest.mock import MagicMock, patch, PropertyMock
-
-import pytest
+from unittest.mock import MagicMock, patch
 
 from loans.views.customer_views import WalletPaymentView, SystemWalletInfoView
 
@@ -47,13 +44,12 @@ class TestWalletPaymentViewValidation:
         assert 'application_id' in params
 
     def test_view_requires_authentication(self):
-        from rest_framework.authentication import BaseAuthentication
         assert len(WalletPaymentView.authentication_classes) > 0
 
     def test_view_verifies_tx_hash_format(self):
         """Structural: view code checks tx_hash starts with 0x and is 66 chars."""
         source = inspect.getsource(WalletPaymentView)
-        assert "startswith('0x')" in source
+        assert "startswith('0x')" in source or 'startswith("0x")' in source
         assert "len(tx_hash)" in source
 
     def test_view_verifies_receipt_status(self):
@@ -88,7 +84,7 @@ class TestWalletPaymentViewValidation:
     def test_view_records_payment_with_wallet_method(self):
         """Structural: payment_method is set to 'wallet'."""
         source = inspect.getsource(WalletPaymentView)
-        assert "payment_method='wallet'" in source
+        assert "payment_method='wallet'" in source or 'payment_method="wallet"' in source
 
     def test_view_triggers_blockchain_sync(self):
         """Structural: sync_payment is called after recording."""
@@ -117,7 +113,9 @@ class TestWalletPaymentViewValidation:
         for field in ['status', 'payment_id', 'installment_number',
                       'amount_php', 'amount_eth', 'eth_rate',
                       'tx_hash', 'block_number']:
-            assert f"'{field}'" in source, f"Missing field: {field}"
+            assert f"'{field}'" in source or f'"{field}"' in source, (
+                f"Missing field: {field}"
+            )
 
 
 # ── 3.2  SystemWalletInfoView ─────────────────────────────────────
@@ -134,7 +132,9 @@ class TestSystemWalletInfoView:
         source = inspect.getsource(SystemWalletInfoView)
         for field in ['wallet_address', 'chain_id', 'rpc_url',
                       'eth_php_rate', 'rate_source']:
-            assert f"'{field}'" in source, f"Missing field: {field}"
+            assert f"'{field}'" in source or f'"{field}"' in source, (
+                f"Missing field: {field}"
+            )
 
     def test_view_handles_blockchain_disabled(self):
         """Structural: returns 503 when blockchain is not enabled."""
@@ -155,8 +155,8 @@ class TestSystemWalletInfoView:
     def test_view_uses_cryptocompare_rate(self):
         """Structural: rate_info dict with rate and source keys."""
         source = inspect.getsource(SystemWalletInfoView)
-        assert "rate_info['rate']" in source
-        assert "rate_info['source']" in source
+        assert "rate_info['rate']" in source or 'rate_info["rate"]' in source
+        assert "rate_info['source']" in source or 'rate_info["source"]' in source
 
 
 # ── Integration-style tests (mocked dependencies) ─────────────────
@@ -260,7 +260,7 @@ class TestSystemWalletInfoFlow:
         request = MagicMock()
         request.user = MagicMock()
 
-        with patch("loans.views.customer_views.settings") as mock_settings:
+        with patch("loans.views.customer.blockchain.settings") as mock_settings:
             mock_settings.BLOCKCHAIN_ENABLED = True
             mock_settings.BLOCKCHAIN_CHAIN_ID = 1337
             mock_settings.BLOCKCHAIN_RPC_URL = "http://127.0.0.1:7545"
@@ -279,7 +279,7 @@ class TestSystemWalletInfoFlow:
         request = MagicMock()
         request.user = MagicMock()
 
-        with patch("loans.views.customer_views.settings") as mock_settings:
+        with patch("loans.views.customer.blockchain.settings") as mock_settings:
             mock_settings.BLOCKCHAIN_ENABLED = False
             response = view.get(request)
 
