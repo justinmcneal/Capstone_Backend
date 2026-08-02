@@ -178,6 +178,8 @@ class Verify2FAView(APIView):
                 )
             user_id = token.get("customer_id")  # All users store ID in customer_id
             role = token.get("role", "customer")
+            token_type = token.get("session_type", "no_remember_me")
+            token_security_version = token.get("security_version")
 
             if not user_id:
                 return APIResponseHelper.error_response(
@@ -200,6 +202,19 @@ class Verify2FAView(APIView):
             if not user:
                 return APIResponseHelper.error_response(
                     "Invalid temporary token", status.HTTP_401_UNAUTHORIZED
+                )
+            if (
+                not getattr(user, "active", True)
+                or getattr(user, "deleted_at", None)
+                or not getattr(user, "verified", True)
+                or token_security_version is None
+                or int(token_security_version)
+                != int(getattr(user, "security_version", 1))
+            ):
+                TokenUtils.blacklist_token(temp_token, token_type="refresh")
+                return APIResponseHelper.error_response(
+                    "Account is no longer eligible to sign in",
+                    status.HTTP_401_UNAUTHORIZED,
                 )
 
             initial_admin_setup = role == "admin" and not user.two_factor_enabled
@@ -250,7 +265,7 @@ class Verify2FAView(APIView):
             # Generate full tokens after successful 2FA
             if user_type == "customer":
                 tokens = AuthService.create_customer_tokens(
-                    user, token_type="no_remember_me"
+                    user, token_type=token_type
                 )
                 user_data = AuthService.serialize_customer_data(
                     user, include_last_name=True
@@ -262,7 +277,11 @@ class Verify2FAView(APIView):
                     email=user.email,
                     verified=True,
                     role="admin",
-                    token_type="no_remember_me",
+                    token_type=token_type,
+                    security_version=getattr(user, "security_version", 1),
+                    must_change_password=getattr(
+                        user, "must_change_password", False
+                    ),
                 )
                 user_data = {
                     "id": user.id,
@@ -274,6 +293,9 @@ class Verify2FAView(APIView):
                     "role": "admin",
                     "permissions": user.permissions if not user.super_admin else ["*"],
                     "super_admin": user.super_admin,
+                    "must_change_password": getattr(
+                        user, "must_change_password", False
+                    ),
                     "last_login_attempt": (
                         user.last_login_attempt.isoformat()
                         if getattr(user, "last_login_attempt", None)
@@ -287,7 +309,9 @@ class Verify2FAView(APIView):
                     email=user.email,
                     verified=user.verified,
                     role="loan_officer",
-                    token_type="no_remember_me",
+                    token_type=token_type,
+                    security_version=getattr(user, "security_version", 1),
+                    must_change_password=user.must_change_password,
                 )
                 user_data = {
                     "id": user.id,
@@ -299,6 +323,7 @@ class Verify2FAView(APIView):
                     "department": user.department,
                     "employee_id": user.employee_id,
                     "role": "loan_officer",
+                    "must_change_password": user.must_change_password,
                     "last_login_attempt": (
                         user.last_login_attempt.isoformat()
                         if getattr(user, "last_login_attempt", None)
@@ -336,6 +361,9 @@ class Verify2FAView(APIView):
                 "user": user_data,
                 "access": tokens["access"],
                 "refresh": tokens["refresh"],
+                "must_change_password": bool(
+                    getattr(user, "must_change_password", False)
+                ),
             }
             if initial_admin_setup and setup_backup_codes:
                 response_payload["backup_codes"] = setup_backup_codes

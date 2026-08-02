@@ -51,6 +51,9 @@ class Admin:
         self.permissions = kwargs.get("permissions", [])  # List of permission strings
         self.super_admin = kwargs.get("super_admin", False)  # Full system access
         self.active = kwargs.get("active", True)
+        self.deleted_at = kwargs.get("deleted_at")
+        self.security_version = kwargs.get("security_version", 1)
+        self.must_change_password = kwargs.get("must_change_password", False)
         self.created_at = kwargs.get("created_at", datetime.now(timezone.utc))
         self.updated_at = kwargs.get("updated_at", datetime.now(timezone.utc))
 
@@ -125,6 +128,9 @@ class Admin:
             "permissions": self.permissions,
             "super_admin": self.super_admin,
             "active": self.active,
+            "deleted_at": self.deleted_at,
+            "security_version": self.security_version,
+            "must_change_password": self.must_change_password,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
             "last_login_attempt": self.last_login_attempt,

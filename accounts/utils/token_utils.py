@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import uuid
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any
 
@@ -56,6 +57,8 @@ class TokenUtils:
         refresh_token: str,
         role: str = "customer",
         expires_at: datetime | None = None,
+        session_id: str | None = None,
+        security_version: int = 1,
     ) -> None:
         if expires_at is None:
             parsed_refresh = RefreshToken(refresh_token)  # type: ignore[arg-type]
@@ -65,12 +68,22 @@ class TokenUtils:
             customer=str(customer_id),
             role=role,
             token_hash=TokenUtils._hash_token(refresh_token),
+            session_id=session_id,
+            security_version=security_version,
             issued_at=datetime.now(timezone.utc),
             expires_at=expires_at,
             is_active=True,
             revoked_at=None,
         )
         refresh_entry.save()
+
+        from accounts.models.activity import ActiveSession
+
+        ActiveSession.from_refresh_token(
+            user_id=str(customer_id),
+            role=role,
+            refresh_token=refresh_token,
+        ).save()
 
     @staticmethod
     def _get_token_lifetimes(
@@ -102,6 +115,8 @@ class TokenUtils:
             dict with access and refresh tokens
         """
         lifetimes = TokenUtils._get_token_lifetimes(token_type)
+        session_id = str(uuid.uuid4())
+        security_version = int(getattr(customer, "security_version", 1))
 
         # Single-device enforcement: Invalidate all existing refresh tokens for this customer.
         customer_query = TokenUtils._token_membership_query(
@@ -110,7 +125,7 @@ class TokenUtils:
         existing_tokens = RefreshTokenEntry.find(customer_query)
         invalidated_count = len(existing_tokens)
         if invalidated_count > 0:
-            RefreshTokenEntry.delete_many(customer_query)
+            TokenUtils.revoke_all_sessions(customer.id, "customer")
             logger.info(
                 f"Invalidated {invalidated_count} existing refresh token(s) for {customer.email}"
             )
@@ -124,6 +139,8 @@ class TokenUtils:
         # Do not override SimpleJWT's reserved "token_type" claim ("refresh"/"access").
         # Store remember-me/signup semantics in a custom claim instead.
         refresh["session_type"] = token_type
+        refresh["session_id"] = session_id
+        refresh["security_version"] = security_version
 
         refresh.set_exp(lifetime=lifetimes["refresh"])
 
@@ -133,6 +150,8 @@ class TokenUtils:
         access["verified"] = customer.verified
         access["role"] = customer.role
         access["session_type"] = token_type
+        access["session_id"] = session_id
+        access["security_version"] = security_version
         access.set_exp(lifetime=lifetimes["access"])
 
         # Store new refresh token hash in DB
@@ -141,6 +160,8 @@ class TokenUtils:
             refresh_token=str(refresh),
             role="customer",
             expires_at=datetime.fromtimestamp(refresh["exp"], tz=timezone.utc),
+            session_id=session_id,
+            security_version=security_version,
         )
 
         return {"access": str(access), "refresh": str(refresh)}
@@ -152,6 +173,8 @@ class TokenUtils:
         verified: bool = True,
         role: str = "customer",
         token_type: str = "no_remember_me",
+        security_version: int = 1,
+        must_change_password: bool = False,
     ) -> dict[str, str]:
         """
         Generate JWT tokens for non-customer users (admin, loan officer).
@@ -167,6 +190,7 @@ class TokenUtils:
             dict with access and refresh tokens
         """
         lifetimes = TokenUtils._get_token_lifetimes(token_type)
+        session_id = str(uuid.uuid4())
 
         user_query = TokenUtils._token_membership_query(
             user_id, role=role, active_only=True
@@ -174,7 +198,7 @@ class TokenUtils:
         existing_tokens = RefreshTokenEntry.find(user_query)
         invalidated_count = len(existing_tokens)
         if invalidated_count > 0:
-            RefreshTokenEntry.delete_many(user_query)
+            TokenUtils.revoke_all_sessions(user_id, role)
             logger.info(
                 f"Invalidated {invalidated_count} existing refresh token(s) for {email} ({role})"
             )
@@ -188,6 +212,9 @@ class TokenUtils:
         # Do not override SimpleJWT's reserved "token_type" claim ("refresh"/"access").
         # Store remember-me/signup semantics in a custom claim instead.
         refresh["session_type"] = token_type
+        refresh["session_id"] = session_id
+        refresh["security_version"] = int(security_version)
+        refresh["must_change_password"] = bool(must_change_password)
 
         # Set expiration from centralized lifetime config
         refresh.set_exp(lifetime=lifetimes["refresh"])
@@ -198,6 +225,9 @@ class TokenUtils:
         access["verified"] = verified
         access["role"] = role
         access["session_type"] = token_type
+        access["session_id"] = session_id
+        access["security_version"] = int(security_version)
+        access["must_change_password"] = bool(must_change_password)
         access.set_exp(lifetime=lifetimes["access"])
 
         TokenUtils._store_refresh_token_entry(
@@ -205,13 +235,20 @@ class TokenUtils:
             refresh_token=str(refresh),
             role=role,
             expires_at=datetime.fromtimestamp(refresh["exp"], tz=timezone.utc),
+            session_id=session_id,
+            security_version=int(security_version),
         )
 
         return {"access": str(access), "refresh": str(refresh)}
 
     @staticmethod
     def generate_2fa_temp_token(
-        user_id: str, email: str, role: str = "customer"
+        user_id: str,
+        email: str,
+        role: str = "customer",
+        token_type: str = "no_remember_me",
+        security_version: int = 1,
+        must_change_password: bool = False,
     ) -> str:
         """
         Generate a temporary token for 2FA verification.
@@ -231,6 +268,9 @@ class TokenUtils:
         refresh["email"] = email
         refresh["role"] = role
         refresh["is_2fa_temp"] = True  # Flag to identify this as a temp 2FA token
+        refresh["session_type"] = token_type
+        refresh["security_version"] = int(security_version)
+        refresh["must_change_password"] = bool(must_change_password)
 
         # Very short expiration - just enough to complete 2FA
         refresh.set_exp(lifetime=timedelta(minutes=5))
@@ -249,6 +289,23 @@ class TokenUtils:
         """
         try:
             token_hash = TokenUtils._hash_token(token)
+
+            # Repeated logout/termination calls are successful even after the
+            # JWT expires, because the durable hash already proves revocation.
+            if BlacklistedToken.find_one(
+                {"token": token_hash, "token_type": token_type}
+            ):
+                if token_type == "refresh":
+                    RefreshTokenEntry.update_many(
+                        {"token_hash": token_hash},
+                        {
+                            "$set": {
+                                "is_active": False,
+                                "revoked_at": datetime.now(timezone.utc),
+                            }
+                        },
+                    )
+                return True
 
             if token_type == "refresh":
                 parsed_token = RefreshToken(token)  # type: ignore[arg-type]
@@ -293,11 +350,16 @@ class TokenUtils:
             refresh_token: The refresh token string
         """
         try:
+            results = []
             if access_token:
-                TokenUtils.blacklist_token(access_token, token_type="access")
+                results.append(
+                    TokenUtils.blacklist_token(access_token, token_type="access")
+                )
             if refresh_token:
-                TokenUtils.blacklist_token(refresh_token, token_type="refresh")
-            return True
+                results.append(
+                    TokenUtils.blacklist_token(refresh_token, token_type="refresh")
+                )
+            return bool(results) and all(results)
         except NON_FATAL_EXCEPTIONS as e:
             logger.error(f"Failed to blacklist tokens on logout: {e!s}")
             return False
@@ -340,3 +402,56 @@ class TokenUtils:
             if expires_at <= datetime.now(timezone.utc):
                 return False
         return not TokenUtils.is_token_blacklisted(token, token_type="refresh")
+
+    @staticmethod
+    def revoke_session(user_id: str, role: str, session_id: str) -> bool:
+        """Idempotently revoke one session without retaining its credential."""
+        now = datetime.now(timezone.utc)
+        query = TokenUtils._token_membership_query(user_id, role=role)
+        query["session_id"] = session_id
+        RefreshTokenEntry.update_many(
+            query, {"$set": {"is_active": False, "revoked_at": now}}
+        )
+
+        from accounts.models.activity import ActiveSession
+
+        ActiveSession.update_many(
+            {"user_id": str(user_id), "role": role, "session_id": session_id},
+            {"$set": {"is_active": False}},
+        )
+        return True
+
+    @staticmethod
+    def revoke_all_sessions(
+        user_id: str, role: str, except_session_id: str | None = None
+    ) -> bool:
+        """Idempotently revoke all membership, optionally preserving one session."""
+        now = datetime.now(timezone.utc)
+        token_query = TokenUtils._token_membership_query(user_id, role=role)
+        session_query: dict[str, Any] = {"user_id": str(user_id), "role": role}
+        if except_session_id:
+            token_query["session_id"] = {"$ne": except_session_id}
+            session_query["session_id"] = {"$ne": except_session_id}
+        RefreshTokenEntry.update_many(
+            token_query, {"$set": {"is_active": False, "revoked_at": now}}
+        )
+
+        from accounts.models.activity import ActiveSession
+
+        ActiveSession.update_many(session_query, {"$set": {"is_active": False}})
+        return True
+
+    @staticmethod
+    def is_session_active(
+        user_id: str, role: str, session_id: str, security_version: int
+    ) -> bool:
+        query = TokenUtils._token_membership_query(
+            user_id, role=role, active_only=True
+        )
+        query.update(
+            {
+                "session_id": session_id,
+                "security_version": int(security_version),
+            }
+        )
+        return RefreshTokenEntry.find_one(query) is not None

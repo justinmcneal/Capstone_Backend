@@ -1,6 +1,9 @@
+import hashlib
+import uuid
 from datetime import datetime, timezone
 
 from django.conf import settings
+from rest_framework_simplejwt.tokens import RefreshToken
 
 
 def get_db():
@@ -16,7 +19,15 @@ class ActiveSession:
         self._id = kwargs.get("_id")
         self.user_id = kwargs.get("user_id")
         self.role = kwargs.get("role", "customer")
-        self.session_token = kwargs.get("session_token")
+        self.session_id = kwargs.get("session_id")
+        if not self.session_id and not kwargs.get("_id"):
+            self.session_id = str(uuid.uuid4())
+        self.refresh_token_hash = kwargs.get("refresh_token_hash")
+        legacy_token = kwargs.get("session_token")
+        if legacy_token and not self.refresh_token_hash:
+            self.refresh_token_hash = hashlib.sha256(
+                legacy_token.encode("utf-8")
+            ).hexdigest()
         self.device_info = kwargs.get("device_info", "")
         self.ip_address = kwargs.get("ip_address", "")
         self.last_active = kwargs.get("last_active", datetime.now(timezone.utc))
@@ -31,7 +42,7 @@ class ActiveSession:
         data = {
             "user_id": self.user_id,
             "role": self.role,
-            "session_token": self.session_token,
+            "session_id": self.session_id,
             "device_info": self.device_info,
             "ip_address": self.ip_address,
             "last_active": self.last_active,
@@ -43,6 +54,29 @@ class ActiveSession:
             data["_id"] = str(self._id)
         return data
 
+    def to_storage_dict(self):
+        """Return persistence fields; credential hashes never enter API output."""
+        data = self.to_dict()
+        data["refresh_token_hash"] = self.refresh_token_hash
+        return data
+
+    @classmethod
+    def from_refresh_token(cls, *, user_id, role, refresh_token, **kwargs):
+        """Build a session record from JWT identity without retaining the JWT."""
+        parsed = RefreshToken(refresh_token)
+        session_id = parsed.get("session_id")
+        if not session_id:
+            raise ValueError("Refresh token has no session identity")
+        return cls(
+            user_id=str(user_id),
+            role=role,
+            session_id=session_id,
+            refresh_token_hash=hashlib.sha256(
+                refresh_token.encode("utf-8")
+            ).hexdigest(),
+            **kwargs,
+        )
+
     @classmethod
     def from_dict(cls, data):
         if not data:
@@ -52,7 +86,7 @@ class ActiveSession:
     def save(self):
         db = get_db()
         collection = db[self.collection_name]
-        data = self.to_dict()
+        data = self.to_storage_dict()
 
         if self._id:
             collection.update_one({"_id": self._id}, {"$set": data})
@@ -94,7 +128,8 @@ class ActiveSession:
         db = get_db()
         collection = db[cls.collection_name]
         collection.create_index("user_id")
-        collection.create_index("session_token", unique=True)
+        collection.create_index("session_id", unique=True, sparse=True)
+        collection.create_index("refresh_token_hash", sparse=True)
         collection.create_index("is_active")
         # Automatically remove session records after 30 days of inactivity.
         collection.create_index("last_active", expireAfterSeconds=2592000)

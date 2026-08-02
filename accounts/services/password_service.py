@@ -5,6 +5,7 @@ from accounts.models import Admin, LoanOfficer
 from accounts.services.auth_service import AuthService
 from accounts.services.otp_service import OTPService
 from accounts.utils.email_utils import EmailUtils
+from accounts.utils.token_utils import TokenUtils
 
 logger = logging.getLogger("authentication")
 
@@ -191,6 +192,7 @@ class PasswordService:
             return (False, "New password must be different from the old password")
 
         user.set_password(new_password)
+        user.security_version = int(getattr(user, "security_version", 1)) + 1
 
         # A verified password reset proves control of the account's email and
         # should allow the user to sign in with the new password immediately.
@@ -199,11 +201,13 @@ class PasswordService:
         if hasattr(user, "locked_until"):
             user.locked_until = None
 
-        # Clear must_change_password flag for loan officers
-        if user_type == "loan_officer" and hasattr(user, "must_change_password"):
+        # A successful reset satisfies mandatory first-password change.
+        if hasattr(user, "must_change_password"):
             user.must_change_password = False
 
         OTPService.clear_otp(user, "password_reset_otp", "password_reset_otp_expires")
+        if getattr(user, "id", None):
+            TokenUtils.revoke_all_sessions(user.id, user_type)
 
         logger.info(f"Password reset successful for {email} ({user_type})")
         return (True, "Password has been reset successfully")
@@ -217,5 +221,12 @@ class PasswordService:
             return (False, "New password must be different from the old password")
 
         customer.set_password(new_password)
+        customer.security_version = int(getattr(customer, "security_version", 1)) + 1
+        if hasattr(customer, "must_change_password"):
+            customer.must_change_password = False
         customer.save()
+        if getattr(customer, "id", None):
+            TokenUtils.revoke_all_sessions(
+                customer.id, getattr(customer, "role", "customer")
+            )
         return (True, "Password has been changed successfully")

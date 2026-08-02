@@ -91,6 +91,8 @@ class RefreshTokenEntry:
         self.customer = kwargs.get("customer")
         self.role = kwargs.get("role", "customer")
         self.token_hash = kwargs.get("token_hash")
+        self.session_id = kwargs.get("session_id")
+        self.security_version = kwargs.get("security_version", 1)
         self.issued_at = kwargs.get("issued_at", datetime.now(timezone.utc))
         self.expires_at = kwargs.get("expires_at")
         self.is_active = kwargs.get("is_active", True)
@@ -105,6 +107,8 @@ class RefreshTokenEntry:
             "customer": self.customer,
             "role": self.role,
             "token_hash": self.token_hash,
+            "session_id": self.session_id,
+            "security_version": self.security_version,
             "issued_at": self.issued_at,
             "expires_at": self.expires_at,
             "is_active": self.is_active,
@@ -176,5 +180,6 @@ class RefreshTokenEntry:
         collection.create_index("customer")
         collection.create_index("role")
         collection.create_index("token_hash")
+        collection.create_index("session_id", unique=True, sparse=True)
         collection.create_index("is_active")
         collection.create_index("expires_at", expireAfterSeconds=0)

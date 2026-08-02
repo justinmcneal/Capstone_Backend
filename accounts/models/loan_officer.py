@@ -45,6 +45,8 @@ class LoanOfficer:
             "verified", True
         )  # Admin-created, so verified by default
         self.active = kwargs.get("active", True)  # Can be deactivated by admin
+        self.deleted_at = kwargs.get("deleted_at")
+        self.security_version = kwargs.get("security_version", 1)
         self.created_at = kwargs.get("created_at", datetime.now(timezone.utc))
         self.updated_at = kwargs.get("updated_at", datetime.now(timezone.utc))
         self.created_by = kwargs.get(
@@ -107,6 +109,8 @@ class LoanOfficer:
             "role": self.role,
             "verified": self.verified,
             "active": self.active,
+            "deleted_at": self.deleted_at,
+            "security_version": self.security_version,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
             "created_by": self.created_by,

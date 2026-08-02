@@ -255,6 +255,16 @@ class LoginView(APIView):
                     GENERIC_LOGIN_ERROR_MESSAGE, status.HTTP_401_UNAUTHORIZED
                 )
 
+            if not getattr(customer, "active", True) or getattr(
+                customer, "deleted_at", None
+            ):
+                _log_customer_login_failure(
+                    request, email, "account_deactivated", user=customer
+                )
+                return APIResponseHelper.error_response(
+                    GENERIC_LOGIN_ERROR_MESSAGE, status.HTTP_401_UNAUTHORIZED
+                )
+
             # Check account lockout
             is_locked, lockout_seconds = LockoutService.is_account_locked(customer)
             if is_locked:
@@ -327,7 +337,10 @@ class LoginView(APIView):
             # Check if 2FA is enabled
             if customer.two_factor_enabled:
                 # Create temporary token for 2FA verification
-                temp_token = AuthService.create_temp_token(customer)
+                token_type = "remember_me" if remember_me else "no_remember_me"
+                temp_token = AuthService.create_temp_token(
+                    customer, token_type=token_type
+                )
                 logger.info(
                     f"2FA required for {email} from IP {request.META.get('REMOTE_ADDR')}"
                 )
@@ -376,13 +389,21 @@ class LoginView(APIView):
 
             # Create ActiveSession
             try:
-                ActiveSession(
-                    user_id=str(customer.id),
-                    role="customer",
-                    session_token=tokens["refresh"],
-                    ip_address=ip_address,
-                    device_info=device_info,
-                ).save()
+                ActiveSession.update_many(
+                    {
+                        "user_id": str(customer.id),
+                        "role": "customer",
+                        "session_id": RefreshToken(tokens["refresh"]).get(
+                            "session_id"
+                        ),
+                    },
+                    {
+                        "$set": {
+                            "ip_address": ip_address,
+                            "device_info": device_info,
+                        }
+                    },
+                )
             except NON_FATAL_EXCEPTIONS as e:
                 logger.error("Failed to save ActiveSession: %s", e)
 
@@ -593,6 +614,8 @@ class RefreshTokenView(APIView):
 
             customer_id = token.get("customer_id")
             role = token.get("role", "customer")
+            session_id = token.get("session_id")
+            token_security_version = token.get("security_version")
             token_type = token.get("session_type")
             if token_type not in {"remember_me", "no_remember_me", "signup"}:
                 # Backward compatibility: older tokens may have used token_type
@@ -605,7 +628,7 @@ class RefreshTokenView(APIView):
                     token_type = (
                         "remember_me" if role == "loan_officer" else "no_remember_me"
                     )
-            if not customer_id:
+            if not customer_id or not session_id or token_security_version is None:
                 logger.warning(
                     f"Token refresh missing customer_id claim from IP {request.META.get('REMOTE_ADDR')}"
                 )
@@ -647,6 +670,16 @@ class RefreshTokenView(APIView):
                     return APIResponseHelper.error_response(
                         "Account is inactive", status.HTTP_401_UNAUTHORIZED
                     )
+                if (
+                    not customer.verified
+                    or getattr(customer, "deleted_at", None)
+                    or int(token_security_version)
+                    != int(getattr(customer, "security_version", 1))
+                ):
+                    TokenUtils.revoke_session(customer_id, role, session_id)
+                    return APIResponseHelper.error_response(
+                        "Account state has changed", status.HTTP_401_UNAUTHORIZED
+                    )
                 new_tokens = AuthService.create_customer_tokens(
                     customer, token_type=token_type
                 )
@@ -687,6 +720,15 @@ class RefreshTokenView(APIView):
                     return APIResponseHelper.error_response(
                         "Account is inactive", status.HTTP_401_UNAUTHORIZED
                     )
+                if (
+                    getattr(user, "deleted_at", None)
+                    or int(token_security_version)
+                    != int(getattr(user, "security_version", 1))
+                ):
+                    TokenUtils.revoke_session(customer_id, role, session_id)
+                    return APIResponseHelper.error_response(
+                        "Account state has changed", status.HTTP_401_UNAUTHORIZED
+                    )
 
                 new_tokens = TokenUtils.generate_tokens(
                     user_id=user.id,
@@ -694,6 +736,10 @@ class RefreshTokenView(APIView):
                     verified=getattr(user, "verified", True),
                     role=role,
                     token_type=token_type,
+                    security_version=getattr(user, "security_version", 1),
+                    must_change_password=getattr(
+                        user, "must_change_password", False
+                    ),
                 )
                 user_email = user.email
 
@@ -706,19 +752,25 @@ class RefreshTokenView(APIView):
 
             # Manage ActiveSession during refresh
             try:
-                ActiveSession.update_many(
-                    {"session_token": refresh_token}, {"$set": {"is_active": False}}
-                )
+                TokenUtils.revoke_session(customer_id, role, session_id)
 
                 ip_address = _get_client_ip(request)
                 device_info = request.META.get("HTTP_USER_AGENT", "")
-                ActiveSession(
-                    user_id=str(customer_id),
-                    role=role,
-                    session_token=new_tokens["refresh"],
-                    ip_address=ip_address,
-                    device_info=device_info,
-                ).save()
+                ActiveSession.update_many(
+                    {
+                        "user_id": str(customer_id),
+                        "role": role,
+                        "session_id": RefreshToken(new_tokens["refresh"]).get(
+                            "session_id"
+                        ),
+                    },
+                    {
+                        "$set": {
+                            "ip_address": ip_address,
+                            "device_info": device_info,
+                        }
+                    },
+                )
             except NON_FATAL_EXCEPTIONS as e:
                 logger.error("Failed to manage ActiveSession during refresh: %s", e)
 
@@ -767,6 +819,8 @@ class LogoutView(APIView):
             # Extract user info from token before blacklisting
             user_id = None
             user_email = ""
+            role = "customer"
+            session_id = None
             try:
                 import jwt as pyjwt
 
@@ -778,6 +832,8 @@ class LogoutView(APIView):
                     )
                     user_id = payload.get("customer_id")
                     user_email = payload.get("email", "")
+                    role = payload.get("role", "customer")
+                    session_id = payload.get("session_id")
             except NON_FATAL_EXCEPTIONS:
                 logger.warning(
                     "Could not decode token for audit log user info during logout"
@@ -785,6 +841,8 @@ class LogoutView(APIView):
 
             # Blacklist both tokens
             if TokenUtils.blacklist_tokens_on_logout(access_token, refresh_token):
+                if user_id and session_id:
+                    TokenUtils.revoke_session(user_id, role, session_id)
                 logger.info(
                     f"User logged out from IP {request.META.get('REMOTE_ADDR')}"
                 )
@@ -798,16 +856,6 @@ class LogoutView(APIView):
                     description="User logged out",
                     ip_address=request.META.get("REMOTE_ADDR", ""),
                 )
-
-                # Deactivate ActiveSession
-                if refresh_token:
-                    try:
-                        ActiveSession.update_many(
-                            {"session_token": refresh_token},
-                            {"$set": {"is_active": False}},
-                        )
-                    except NON_FATAL_EXCEPTIONS as e:
-                        logger.error("Failed to deactivate ActiveSession: %s", e)
 
                 response = APIResponseHelper.success_response(
                     message="Logged out successfully"

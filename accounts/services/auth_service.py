@@ -1,8 +1,7 @@
 import re
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
 from pymongo.errors import DuplicateKeyError
-from rest_framework_simplejwt.tokens import RefreshToken
 
 from accounts.models import Customer
 from accounts.services.otp_service import OTPService
@@ -115,17 +114,18 @@ class AuthService:
         return TokenUtils.generate_jwt_tokens(customer, token_type=token_type)
 
     @staticmethod
-    def create_temp_token(customer):
+    def create_temp_token(customer, token_type="no_remember_me"):
         """
         Create a temporary token for 2FA verification.
         This token is short-lived (5 minutes) and only valid for 2FA flow.
         """
-        refresh = RefreshToken()
-        refresh["customer_id"] = str(customer.id)
-        refresh["email"] = customer.email
-        refresh["temp_2fa"] = True  # Mark as temporary 2FA token
-        refresh.set_exp(lifetime=timedelta(minutes=5))
-        return str(refresh)
+        return TokenUtils.generate_2fa_temp_token(
+            user_id=customer.id,
+            email=customer.email,
+            role="customer",
+            token_type=token_type,
+            security_version=getattr(customer, "security_version", 1),
+        )
 
     @staticmethod
     def update_language(customer, language_code):

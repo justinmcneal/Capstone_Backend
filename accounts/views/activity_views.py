@@ -37,30 +37,61 @@ class ActiveSessionsView(APIView):
             else str(request.user.id)
         )
 
+        revoke_all = request.data.get("revoke_all") is True
+        keep_current = request.data.get("keep_current") is True
+        current_session_id = getattr(request.user, "session_id", None)
+
+        if revoke_all:
+            from accounts.utils.token_utils import TokenUtils
+
+            TokenUtils.revoke_all_sessions(
+                user_id,
+                request.user.role,
+                except_session_id=current_session_id if keep_current else None,
+            )
+            return APIResponseHelper.success_response(
+                message=(
+                    "Other sessions terminated successfully"
+                    if keep_current
+                    else "All sessions terminated successfully"
+                )
+            )
+
         if not session_id:
-            return APIResponseHelper.error_response("session_id is required")
+            return APIResponseHelper.error_response(
+                "session_id is required unless revoke_all is true"
+            )
 
         try:
             from bson import ObjectId
 
             from accounts.utils.token_utils import TokenUtils
 
-            # Ensure the session belongs to the user
+            # Prefer the public opaque session ID. ObjectId lookup remains only
+            # for records created by the previous API contract.
             session = ActiveSession.find_one(
-                {"_id": ObjectId(session_id), "user_id": user_id}
+                {"session_id": str(session_id), "user_id": user_id}
             )
+            if not session:
+                try:
+                    session = ActiveSession.find_one(
+                        {"_id": ObjectId(session_id), "user_id": user_id}
+                    )
+                except (TypeError, ValueError):
+                    session = None
             if not session:
                 return APIResponseHelper.error_response(
                     "Session not found or not authorized", 404
                 )
 
-            ActiveSession.update_many(
-                {"_id": ObjectId(session_id)}, {"$set": {"is_active": False}}
-            )
-
-            # Blacklist the refresh token associated with the session
-            if session.session_token:
-                TokenUtils.blacklist_token(session.session_token)
+            if session.session_id:
+                TokenUtils.revoke_session(
+                    user_id, request.user.role, session.session_id
+                )
+            else:
+                ActiveSession.update_many(
+                    {"_id": session._id}, {"$set": {"is_active": False}}
+                )
 
             return APIResponseHelper.success_response(
                 message="Session terminated successfully"

@@ -265,7 +265,13 @@ class AdminLoginView(APIView):
             if not admin.two_factor_enabled:
                 setup_data = TwoFactorService.setup_2fa(admin)
                 temp_token = TokenUtils.generate_2fa_temp_token(
-                    user_id=admin.id, email=admin.email, role="admin"
+                    user_id=admin.id,
+                    email=admin.email,
+                    role="admin",
+                    security_version=getattr(admin, "security_version", 1),
+                    must_change_password=getattr(
+                        admin, "must_change_password", False
+                    ),
                 )
                 logger.info(
                     "Admin 2FA bootstrap required for %s from IP %s",
@@ -277,6 +283,9 @@ class AdminLoginView(APIView):
                         "requires_2fa": True,
                         "requires_2fa_setup": True,
                         "temp_token": temp_token,
+                        "must_change_password": getattr(
+                            admin, "must_change_password", False
+                        ),
                         "provisioning_uri": setup_data["provisioning_uri"],
                         "manual_entry_key": setup_data["manual_entry_key"],
                         "qr_code_data_url": setup_data.get("qr_code_data_url", ""),
@@ -285,10 +294,20 @@ class AdminLoginView(APIView):
                 )
 
             temp_token = TokenUtils.generate_2fa_temp_token(
-                user_id=admin.id, email=admin.email, role="admin"
+                user_id=admin.id,
+                email=admin.email,
+                role="admin",
+                security_version=getattr(admin, "security_version", 1),
+                must_change_password=getattr(admin, "must_change_password", False),
             )
             return success_response(
-                data={"requires_2fa": True, "temp_token": temp_token},
+                data={
+                    "requires_2fa": True,
+                    "temp_token": temp_token,
+                    "must_change_password": getattr(
+                        admin, "must_change_password", False
+                    ),
+                },
                 message="2FA verification required",
             )
 
@@ -316,6 +335,7 @@ class AdminLogoutView(APIView):
             # Extract user info from token before blacklisting
             user_id = None
             user_email = ""
+            session_id = None
             try:
                 import jwt as pyjwt
 
@@ -327,16 +347,21 @@ class AdminLogoutView(APIView):
                     )
                     user_id = payload.get("customer_id")
                     user_email = payload.get("email", "")
+                    session_id = payload.get("session_id")
             except NON_FATAL_EXCEPTIONS:
                 logger.warning(
                     "Could not decode token for audit log user info during admin logout"
                 )
 
-            if refresh_token:
-                TokenUtils.blacklist_token(refresh_token, token_type="refresh")
-
-            if access_token:
-                TokenUtils.blacklist_token(access_token, token_type="access")
+            if not TokenUtils.blacklist_tokens_on_logout(
+                access_token, refresh_token
+            ):
+                return error_response(
+                    message="Logout failed",
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                )
+            if user_id and session_id:
+                TokenUtils.revoke_session(user_id, "admin", session_id)
 
             # Audit log for admin logout
             AuditLog.log_action(
@@ -967,7 +992,11 @@ class LoanOfficerDetailView(AdminRequiredMixin, APIView):
 
             # Soft delete - just deactivate
             officer.active = False
+            officer.security_version = int(
+                getattr(officer, "security_version", 1)
+            ) + 1
             officer.save()
+            TokenUtils.revoke_all_sessions(officer.id, "loan_officer")
 
             logger.info(f"Loan officer deactivated: {officer.email}")
 
@@ -1241,6 +1270,7 @@ class AdminManagementView(SuperAdminRequiredMixin, APIView):
                     if not data.get("super_admin")
                     else ["*"]
                 ),
+                must_change_password=True,
             )
             new_admin.set_password(temp_password)
             new_admin.save()
@@ -1389,9 +1419,15 @@ class AdminDetailView(SuperAdminRequiredMixin, APIView):
             if "last_name" in data:
                 target_admin.last_name = data["last_name"]
             if "active" in data:
+                if target_admin.active and not data["active"]:
+                    target_admin.security_version = int(
+                        getattr(target_admin, "security_version", 1)
+                    ) + 1
                 target_admin.active = data["active"]
 
             target_admin.save()
+            if not target_admin.active:
+                TokenUtils.revoke_all_sessions(target_admin.id, "admin")
 
             logger.info(
                 f"Admin updated: {target_admin.username} by {current_admin.username}"
@@ -1443,7 +1479,11 @@ class AdminDetailView(SuperAdminRequiredMixin, APIView):
                 )
 
             target_admin.active = False
+            target_admin.security_version = int(
+                getattr(target_admin, "security_version", 1)
+            ) + 1
             target_admin.save()
+            TokenUtils.revoke_all_sessions(target_admin.id, "admin")
 
             logger.info(
                 f"Admin deactivated: {target_admin.username} by {current_admin.username}"

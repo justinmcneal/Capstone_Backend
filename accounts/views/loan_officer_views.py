@@ -187,7 +187,14 @@ class LoanOfficerLoginView(APIView):
             if officer.two_factor_enabled:
                 # Generate temporary token for 2FA verification
                 temp_token = TokenUtils.generate_2fa_temp_token(
-                    user_id=officer.id, email=officer.email, role="loan_officer"
+                    user_id=officer.id,
+                    email=officer.email,
+                    role="loan_officer",
+                    token_type=(
+                        "remember_me" if remember_me else "no_remember_me"
+                    ),
+                    security_version=getattr(officer, "security_version", 1),
+                    must_change_password=officer.must_change_password,
                 )
                 return success_response(
                     data={
@@ -206,6 +213,8 @@ class LoanOfficerLoginView(APIView):
                 verified=officer.verified,
                 role="loan_officer",
                 token_type=token_type,
+                security_version=getattr(officer, "security_version", 1),
+                must_change_password=officer.must_change_password,
             )
 
             # Audit log for loan officer login
@@ -274,6 +283,7 @@ class LoanOfficerLogoutView(APIView):
             # Extract user info from token before blacklisting
             user_id = None
             user_email = ""
+            session_id = None
             try:
                 import jwt as pyjwt
 
@@ -285,16 +295,21 @@ class LoanOfficerLogoutView(APIView):
                     )
                     user_id = payload.get("customer_id")
                     user_email = payload.get("email", "")
+                    session_id = payload.get("session_id")
             except NON_FATAL_EXCEPTIONS:
                 logger.warning(
                     "Could not decode token for audit log user info during logout"
                 )
 
-            if refresh_token:
-                TokenUtils.blacklist_token(refresh_token, token_type="refresh")
-
-            if access_token:
-                TokenUtils.blacklist_token(access_token, token_type="access")
+            if not TokenUtils.blacklist_tokens_on_logout(
+                access_token, refresh_token
+            ):
+                return error_response(
+                    message="Logout failed",
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                )
+            if user_id and session_id:
+                TokenUtils.revoke_session(user_id, "loan_officer", session_id)
 
             # Audit log for loan officer logout
             AuditLog.log_action(

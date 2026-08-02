@@ -29,6 +29,9 @@ class Customer:
         self.password = kwargs.get("password")
         self.role = kwargs.get("role", "customer")
         self.verified = kwargs.get("verified", False)
+        self.active = kwargs.get("active", True)
+        self.deleted_at = kwargs.get("deleted_at")
+        self.security_version = kwargs.get("security_version", 1)
         self.created_at = kwargs.get("created_at", datetime.now(timezone.utc))
         self.updated_at = kwargs.get("updated_at", datetime.now(timezone.utc))
         self.phone = kwargs.get("phone", "")  # Phone number (records only)
@@ -105,6 +108,9 @@ class Customer:
             "password": self.password,
             "role": self.role,
             "verified": self.verified,
+            "active": self.active,
+            "deleted_at": self.deleted_at,
+            "security_version": self.security_version,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
             "phone": self.phone,
