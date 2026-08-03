@@ -1,3 +1,12 @@
+from .account_lifecycle_serializers import (
+    AccountDeletionRequestSerializer,
+    CustomerStateUpdateSerializer,
+    EmailChangeConfirmSerializer,
+    EmailChangeRequestSerializer,
+    TwoFactorRecoveryDecisionSerializer,
+    TwoFactorRecoveryRequestSerializer,
+    TwoFactorRecoveryVerifySerializer,
+)
 from .auth_serializers import LoginSerializer, SignUpSerializer
 from .base_serializers import (
     OTPValidationMixin,
@@ -18,6 +27,7 @@ from .password_serializers import (
 )
 
 __all__ = [
+    "AccountDeletionRequestSerializer",
     "ChangePasswordSerializer",
     "ConsentCreateSerializer",
     "ConsentResponseSerializer",
@@ -30,5 +40,11 @@ __all__ = [
     "PasswordValidationMixin",
     "ResetPasswordSerializer",
     "SignUpSerializer",
+    "TwoFactorRecoveryDecisionSerializer",
+    "TwoFactorRecoveryRequestSerializer",
+    "TwoFactorRecoveryVerifySerializer",
     "VerifyResetOTPSerializer",
 ]
+    "CustomerStateUpdateSerializer",
+    "EmailChangeConfirmSerializer",
+    "EmailChangeRequestSerializer",

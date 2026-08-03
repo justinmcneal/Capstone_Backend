@@ -32,6 +32,22 @@ from accounts.views.auth_views import (
     UpdateLanguageView,
 )
 from accounts.views.contact_views import ContactSupportView
+from accounts.views.customer_admin_views import (
+    CustomerDeletionFinalizeView,
+    CustomerDetailView,
+    CustomerManagementView,
+    CustomerUnlockView,
+    TwoFactorRecoveryAdminView,
+)
+from accounts.views.account_lifecycle_views import (
+    AccountDeletionCancelView,
+    AccountDeletionRequestView,
+    AccountExportView,
+    EmailChangeConfirmView,
+    EmailChangeRequestView,
+    TwoFactorRecoveryRequestView,
+    TwoFactorRecoveryVerifyView,
+)
 from accounts.views.loan_officer_views import (
     LoanOfficerLoginView,
     LoanOfficerLogoutView,
@@ -81,6 +97,30 @@ urlpatterns = [
     # Activity & Session Management
     path("sessions/", ActiveSessionsView.as_view(), name="active-sessions"),
     path("login-activity/", LoginActivityView.as_view(), name="login-activity"),
+    # Account Lifecycle and Recovery
+    path("email-change/request/", EmailChangeRequestView.as_view(), name="email-change-request"),
+    path("email-change/confirm/", EmailChangeConfirmView.as_view(), name="email-change-confirm"),
+    path("account/export/", AccountExportView.as_view(), name="account-export"),
+    path(
+        "account/deletion-request/",
+        AccountDeletionRequestView.as_view(),
+        name="account-deletion-request",
+    ),
+    path(
+        "account/deletion-cancel/",
+        AccountDeletionCancelView.as_view(),
+        name="account-deletion-cancel",
+    ),
+    path(
+        "2fa/recovery/request/",
+        TwoFactorRecoveryRequestView.as_view(),
+        name="2fa-recovery-request",
+    ),
+    path(
+        "2fa/recovery/verify/",
+        TwoFactorRecoveryVerifyView.as_view(),
+        name="2fa-recovery-verify",
+    ),
     # Loan Officer Authentication
     path(
         "loan-officer/login/", LoanOfficerLoginView.as_view(), name="loan-officer-login"
@@ -105,6 +145,37 @@ urlpatterns = [
         "admin/loan-officers/<str:officer_id>/",
         LoanOfficerDetailView.as_view(),
         name="admin-loan-officer-detail",
+    ),
+    # Admin - Customer Management (manage_users permission)
+    path(
+        "admin/customers/",
+        CustomerManagementView.as_view(),
+        name="admin-customers",
+    ),
+    path(
+        "admin/customers/<str:customer_id>/",
+        CustomerDetailView.as_view(),
+        name="admin-customer-detail",
+    ),
+    path(
+        "admin/customers/<str:customer_id>/unlock/",
+        CustomerUnlockView.as_view(),
+        name="admin-customer-unlock",
+    ),
+    path(
+        "admin/customers/<str:customer_id>/deletion/finalize/",
+        CustomerDeletionFinalizeView.as_view(),
+        name="admin-customer-deletion-finalize",
+    ),
+    path(
+        "admin/customers/2fa-recovery/",
+        TwoFactorRecoveryAdminView.as_view(),
+        name="admin-customer-2fa-recovery-list",
+    ),
+    path(
+        "admin/customers/<str:customer_id>/2fa-recovery/",
+        TwoFactorRecoveryAdminView.as_view(),
+        name="admin-customer-2fa-recovery-decision",
     ),
     # Admin - Admin Management (Super Admin Only)
     path("admin/admins/", AdminManagementView.as_view(), name="admin-admins"),

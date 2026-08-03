@@ -32,6 +32,7 @@ from accounts.utils.request_utils import get_client_ip
 from accounts.utils.response_helpers import error_response, success_response
 from accounts.utils.throttles import AdminLoginRateThrottle, LoginIdentifierRateThrottle
 from accounts.utils.token_utils import TokenUtils
+from accounts.utils.identity_policy import assert_email_available_globally
 from accounts.utils.validation_utils import (
     normalize_text,
     parse_bool,
@@ -819,10 +820,12 @@ class LoanOfficerManagementView(AdminRequiredMixin, APIView):
                     status_code=status.HTTP_400_BAD_REQUEST,
                 )
 
-            # Check if email already exists
-            if LoanOfficer.find_one({"email": email_normalized}):
+            try:
+                email_normalized = assert_email_available_globally(email_normalized)
+            except ValueError as exc:
                 return error_response(
-                    message="A loan officer with this email already exists",
+                    message=str(exc),
+                    errors={"email": str(exc)},
                     status_code=status.HTTP_400_BAD_REQUEST,
                 )
 
@@ -1439,10 +1442,12 @@ class AdminManagementView(SuperAdminRequiredMixin, APIView):
                     status_code=status.HTTP_400_BAD_REQUEST,
                 )
 
-            # Check if email already exists
-            if Admin.find_one({"email": email_normalized}):
+            try:
+                email_normalized = assert_email_available_globally(email_normalized)
+            except ValueError as exc:
                 return error_response(
-                    message="An admin with this email already exists",
+                    message=str(exc),
+                    errors={"email": str(exc)},
                     status_code=status.HTTP_400_BAD_REQUEST,
                 )
 

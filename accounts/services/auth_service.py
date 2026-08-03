@@ -9,6 +9,7 @@ from accounts.models import Customer
 from accounts.services.otp_service import OTPService
 from accounts.utils.email_utils import EmailUtils
 from accounts.utils.exception_types import NON_FATAL_EXCEPTIONS
+from accounts.utils.identity_policy import assert_email_available_globally
 from accounts.utils.token_utils import TokenUtils
 
 
@@ -104,15 +105,13 @@ class AuthService:
     @staticmethod
     def register_customer(validated_data):
         try:
-            # Use centralized customer lookup
-            if AuthService.get_customer_by_email(validated_data["email"]):
-                raise ValueError("An account with this email already exists")
+            normalized_email = assert_email_available_globally(validated_data["email"])
 
             customer = Customer(
                 first_name=validated_data["first_name"],
                 middle_name=validated_data.get("middle_name", ""),
                 last_name=validated_data["last_name"],
-                email=validated_data["email"],
+                email=normalized_email,
                 phone=validated_data.get("phone", ""),
                 language=validated_data.get("language", "en"),
                 verified=False,

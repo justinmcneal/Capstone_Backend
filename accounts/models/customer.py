@@ -17,6 +17,8 @@ class Customer:
     encrypted_fields = (
         "verification_token",
         "password_reset_otp",
+        "pending_email_otp",
+        "two_factor_recovery_otp",
         "two_factor_secret",
     )
 
@@ -30,7 +32,13 @@ class Customer:
         self.role = kwargs.get("role", "customer")
         self.verified = kwargs.get("verified", False)
         self.active = kwargs.get("active", True)
+        self.account_state = kwargs.get("account_state", "active")
+        self.account_state_reason = kwargs.get("account_state_reason", "")
+        self.account_state_changed_at = kwargs.get("account_state_changed_at")
         self.deleted_at = kwargs.get("deleted_at")
+        self.deletion_requested_at = kwargs.get("deletion_requested_at")
+        self.deletion_scheduled_for = kwargs.get("deletion_scheduled_for")
+        self.anonymized_at = kwargs.get("anonymized_at")
         self.security_version = kwargs.get("security_version", 1)
         self.created_at = kwargs.get("created_at", datetime.now(timezone.utc))
         self.updated_at = kwargs.get("updated_at", datetime.now(timezone.utc))
@@ -64,6 +72,28 @@ class Customer:
             "password_reset_window_started_at"
         )
         self.password_reset_issue_count = kwargs.get("password_reset_issue_count", 0)
+
+        # Email change verification
+        self.pending_email = kwargs.get("pending_email")
+        self.pending_email_otp = kwargs.get("pending_email_otp")
+        self.pending_email_otp_expires = kwargs.get("pending_email_otp_expires")
+        self.pending_email_requested_at = kwargs.get("pending_email_requested_at")
+        self.pending_email_attempt_count = kwargs.get("pending_email_attempt_count", 0)
+        self.pending_email_last_attempt = kwargs.get("pending_email_last_attempt")
+
+        # 2FA recovery workflow
+        self.two_factor_recovery_requested_at = kwargs.get(
+            "two_factor_recovery_requested_at"
+        )
+        self.two_factor_recovery_verified_at = kwargs.get("two_factor_recovery_verified_at")
+        self.two_factor_recovery_otp = kwargs.get("two_factor_recovery_otp")
+        self.two_factor_recovery_otp_expires = kwargs.get("two_factor_recovery_otp_expires")
+        self.two_factor_recovery_attempt_count = kwargs.get(
+            "two_factor_recovery_attempt_count", 0
+        )
+        self.two_factor_recovery_last_attempt = kwargs.get(
+            "two_factor_recovery_last_attempt"
+        )
 
         # Two-Factor Authentication (2FA)
         self.two_factor_enabled = kwargs.get("two_factor_enabled", False)
@@ -117,7 +147,13 @@ class Customer:
             "role": self.role,
             "verified": self.verified,
             "active": self.active,
+            "account_state": self.account_state,
+            "account_state_reason": self.account_state_reason,
+            "account_state_changed_at": self.account_state_changed_at,
             "deleted_at": self.deleted_at,
+            "deletion_requested_at": self.deletion_requested_at,
+            "deletion_scheduled_for": self.deletion_scheduled_for,
+            "anonymized_at": self.anonymized_at,
             "security_version": self.security_version,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
@@ -139,6 +175,18 @@ class Customer:
             "password_reset_last_sent_at": self.password_reset_last_sent_at,
             "password_reset_window_started_at": self.password_reset_window_started_at,
             "password_reset_issue_count": self.password_reset_issue_count,
+            "pending_email": self.pending_email,
+            "pending_email_otp": self.pending_email_otp,
+            "pending_email_otp_expires": self.pending_email_otp_expires,
+            "pending_email_requested_at": self.pending_email_requested_at,
+            "pending_email_attempt_count": self.pending_email_attempt_count,
+            "pending_email_last_attempt": self.pending_email_last_attempt,
+            "two_factor_recovery_requested_at": self.two_factor_recovery_requested_at,
+            "two_factor_recovery_verified_at": self.two_factor_recovery_verified_at,
+            "two_factor_recovery_otp": self.two_factor_recovery_otp,
+            "two_factor_recovery_otp_expires": self.two_factor_recovery_otp_expires,
+            "two_factor_recovery_attempt_count": self.two_factor_recovery_attempt_count,
+            "two_factor_recovery_last_attempt": self.two_factor_recovery_last_attempt,
             "two_factor_enabled": self.two_factor_enabled,
             "two_factor_secret": self.two_factor_secret,
             "backup_codes": self.backup_codes,
@@ -220,3 +268,5 @@ class Customer:
         db = get_db()
         collection = db[cls.collection_name]
         collection.create_index("email", unique=True)
+        collection.create_index("account_state")
+        collection.create_index("deletion_scheduled_for")

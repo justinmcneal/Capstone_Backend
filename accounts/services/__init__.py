@@ -1,3 +1,4 @@
+from .account_lifecycle_service import AccountLifecycleService
 from .auth_service import AuthService
 from .consent_service import ConsentService
 from .email_service import CentralizedEmailService, email_service
@@ -9,6 +10,7 @@ from .two_factor_service import TwoFactorService
 
 __all__ = [
     "AuthService",
+    "AccountLifecycleService",
     "CentralizedEmailService",
     "ConsentService",
     "LockoutService",

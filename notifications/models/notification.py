@@ -55,6 +55,18 @@ NOTIFICATION_TYPES = [
     'password_changed',
     'password_reset_completed',
     'sessions_terminated',
+    'email_change_requested',
+    'email_changed',
+    'account_suspended',
+    'account_deactivated',
+    'account_deletion_requested',
+    'account_deletion_cancelled',
+    'account_deleted',
+    'two_factor_recovery_requested',
+    'two_factor_recovery_approved',
+    'two_factor_recovery_rejected',
+    'admin_customer_unlock',
+    'new_device_login',
 ]
 
 
