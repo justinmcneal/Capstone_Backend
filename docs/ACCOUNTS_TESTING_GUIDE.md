@@ -182,13 +182,72 @@ Accounts handles authentication, OTP, password reset, consent, 2FA, loan officer
 23. `DELETE /sessions/`
 - Auth: authenticated customer
 - Request fields:
-  - `session_id`
+  - `session_id` for one session; or
+  - `revoke_all` and optional `keep_current` for bulk revocation
 - Key response fields: `message`
 
 24. `GET /login-activity/`
 - Auth: authenticated customer
 - Request fields: none
 - Key response fields: list of login activity objects
+
+### Account Lifecycle and Recovery
+
+- `POST /email-change/request/`
+  - Auth: authenticated customer
+  - Request fields: `new_email`, `password`
+  - Sends a verification OTP to the new address.
+- `POST /email-change/confirm/`
+  - Auth: authenticated customer
+  - Request fields: `otp`
+  - Consumes the OTP, changes the email, and revokes existing sessions.
+- `GET /account/export/`
+  - Auth: authenticated customer
+  - Returns account, consent, session, login-activity, audit, and notification data.
+- `POST /account/deletion-request/`
+  - Auth: authenticated customer
+  - Request fields: `reason` optional
+  - Moves the account to `pending_deletion`, revokes sessions, and returns
+    `deletion_scheduled_for`.
+- `POST /account/deletion-cancel/`
+  - Auth: none
+  - Request fields: `email`, `password`
+  - Credentialed cancellation is available until the retention date. The
+    response is generic when the account or credentials are not eligible.
+- `GET /admin/customers/`
+  - Auth: admin with `manage_users`
+  - Query fields: `search`, `active`, `account_state`
+- `GET /admin/customers/<customer_id>/`
+  - Auth: admin with `manage_users`
+  - Returns customer lifecycle and deletion metadata.
+- `PATCH /admin/customers/<customer_id>/`
+  - Auth: admin with `manage_users`
+  - Request fields: `account_state` (`active`, `suspended`, or `deactivated`),
+    `reason` optional
+  - State changes revoke sessions; restoring an account also clears lockout state.
+- `POST /admin/customers/<customer_id>/unlock/`
+  - Auth: admin with `manage_users`
+  - Clears login lockout counters and records an audit/security event.
+- `POST /admin/customers/<customer_id>/deletion/finalize/`
+  - Auth: admin with `manage_users`
+  - Request fields: `reason` optional
+  - Finalization is accepted only after `deletion_scheduled_for` and anonymizes
+    customer identity fields.
+- `POST /2fa/recovery/request/`
+  - Auth: none
+  - Request fields: customer `email`, current `password`
+  - Sends a generic recovery OTP when the account is eligible.
+- `POST /2fa/recovery/verify/`
+  - Auth: none
+  - Request fields: customer `email`, `otp`
+  - Verifies the OTP and queues the request for administrator review.
+- `GET /admin/customers/2fa-recovery/`
+  - Auth: admin with `manage_users`
+  - Returns verified recovery requests awaiting a decision.
+- `POST /admin/customers/<customer_id>/2fa-recovery/`
+  - Auth: admin with `manage_users`
+  - Request fields: `approve`, `reason` optional
+  - Approval disables 2FA, revokes sessions, and records the decision.
 
 ### Loan Officer Authentication
 
@@ -364,9 +423,13 @@ Accounts handles authentication, OTP, password reset, consent, 2FA, loan officer
 8. Test password reset: `POST /forgot-password/`, `POST /verify-reset-otp/`, `POST /reset-password/`
 9. Test `POST /refresh-token/` and `POST /logout/`
 10. Test activity endpoints: `GET /sessions/` and `GET /login-activity/`
-11. Test `POST /contact/`
-12. If you have loan-officer credentials, test `POST /loan-officer/login/`, `GET /loan-officer/me/`, and `POST /loan-officer/logout/`
-13. If you have super-admin credentials, test `POST /admin/login/`, `POST /admin/admins/`, and the admin management routes.
+11. Test customer lifecycle endpoints: email change, export, deletion request,
+    and credentialed deletion cancellation.
+12. If you have `manage_users` credentials, test customer state management,
+    lockout unlock, deletion finalization after retention, and 2FA recovery review.
+13. Test `POST /contact/`
+14. If you have loan-officer credentials, test `POST /loan-officer/login/`, `GET /loan-officer/me/`, and `POST /loan-officer/logout/`
+15. If you have super-admin credentials, test `POST /admin/login/`, `POST /admin/admins/`, and the admin management routes.
 
 ## Common Errors
 
@@ -386,7 +449,11 @@ Accounts handles authentication, OTP, password reset, consent, 2FA, loan officer
 4. `429 Too Many Requests`
 - OTP or login rate limit exceeded. Wait for cooldown.
 
-5. `500 Internal Server Error`
+5. `409 Conflict`
+- Customer deletion is not yet due for administrative finalization.
+- A verified 2FA recovery request has expired or was already processed.
+
+6. `500 Internal Server Error`
 - Unexpected server error. Check logs for details.
 
 ## Notes
@@ -399,3 +466,7 @@ Accounts handles authentication, OTP, password reset, consent, 2FA, loan officer
 - 2FA is mandatory for admin accounts. If an admin has not enrolled in 2FA, login returns `requires_2fa_setup: true` plus QR provisioning data.
 - Consent GET returns `has_consent_record` to distinguish between no record and explicit false consent.
 - `remember_me` defaults to `false` on customer login and affects refresh token lifetime.
+- `ACCOUNT_DELETION_RETENTION_DAYS` defaults to 30 days; scheduled finalization is
+  handled by `accounts.tasks.finalize_scheduled_customer_deletions_task`.
+- If legacy data contains the same email in multiple roles, password recovery
+  requires the explicit `role` field and never selects a role by search order.

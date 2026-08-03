@@ -1,6 +1,6 @@
 # Accounts Production Readiness Review
 
-Last updated: 2026-08-02
+Last updated: 2026-08-03
 
 Scope: `accounts/` plus the Django/DRF authentication settings, middleware,
 MongoDB collections, Redis/Celery paths, audit logging, email delivery, consent
@@ -56,7 +56,7 @@ Current remediation status:
 - [x] **Stage 5 — 2FA lifecycle integrity**
 - [x] **Stage 6 — Privileged administration and audit coverage**
 - [x] **Stage 7 — Consent history and policy lifecycle**
-- [ ] Stage 8 — Account lifecycle and recovery capabilities
+- [x] **Stage 8 — Account lifecycle and recovery capabilities**
 - [ ] Stage 9 — Test isolation, dependency reproducibility, and CI
 - [ ] Stage 10 — API contract and documentation alignment
 
@@ -349,46 +349,50 @@ still needed:
 - The encryption migration command does not by itself provide online key
   rotation, rollback, or rotation verification.
 
-## Missing Account Capabilities
+## Stage 8 Implementation Status
 
 ### Customer lifecycle administration
 
-**Status: Not implemented**
+**Status: Implemented and covered by focused regression tests**
 
-- The `manage_users` administrator permission is declared but is not used by an
-  account-management endpoint.
-- `LockoutService.admin_unlock()` exists but has no exposed, audited admin
-  workflow.
-- Customer active/suspended/deactivated state is not modeled consistently.
-- Customer account closure, deletion, anonymization, export, retention, and
-  restoration workflows are not implemented.
-- Email-change verification is not implemented.
+- `manage_users` now protects customer list/detail/state, lockout-unlock,
+  retention-finalization, and 2FA-recovery administration endpoints. Mutations
+  write audit records and security notifications.
+- Customer state transitions are persisted as active, suspended, or deactivated,
+  increment security version on change, revoke sessions, and reset lockout state
+  when an account is restored.
+- Email changes require the current password, deliver an OTP to the new address,
+  consume it atomically, enforce the global availability policy, and revoke
+  existing sessions after confirmation.
+- Customer export includes account, consent, session, login-activity, audit, and
+  in-app notification records without credential hashes.
+- Deletion uses a pending-deletion state, configurable retention period,
+  credentialed cancellation, scheduled finalization, anonymization, and session
+  revocation. Admin finalization cannot bypass the retention date.
 
 ### Recovery and security operations
 
-**Status: Not implemented / incomplete**
+**Status: Implemented and covered by focused regression tests**
 
-- There is no controlled recovery workflow for loss of both TOTP access and all
-  backup codes.
-- There is no user-facing revoke-all-sessions endpoint.
-- There is no revoke-all-except-current-session endpoint.
-- There are no security alerts for new device, password change/reset, email
-  change, 2FA change, privilege change, or mass session revocation.
-- There is no central authentication-risk or suspicious-session service.
+- 2FA-loss recovery requires the account password, a short-lived email OTP,
+  per-account issuance/attempt limits, and an explicit administrator decision.
+- Existing session management supports single-session, revoke-all, and
+  revoke-all-except-current operations.
+- Security events cover new-device sign-in, password changes/resets, email
+  changes, 2FA changes, customer lifecycle changes, privilege changes, and
+  session termination. Notifications remain best-effort secondary delivery.
+- A central authentication-risk or suspicious-session scoring service remains
+  outside Stage 8.
 
 ### Global identity policy
 
-**Status: Not implemented**
+**Status: Implemented with an explicit-role fallback for legacy ambiguity**
 
-Customer, officer, and administrator accounts live in separate collections. The
-same email can exist in more than one role. Password reset without an explicit
-role searches customer first, then officer, then administrator.
-
-The project needs an explicit policy:
-
-- enforce global normalized-email uniqueness across roles; or
-- require role selection for ambiguous privileged recovery and clearly support
-  multi-role identities.
+Customer, officer, and administrator accounts live in separate collections.
+Normal account creation and verified email changes reject an email already used
+by another role. If legacy data still contains the same email in more than one
+collection, password recovery requires an explicit role and never selects a
+role by search order.
 
 MongoDB unique email indexes are case-sensitive by default. Application-level
 normalization handles normal writes, but legacy/import/script writes can still
@@ -635,13 +639,16 @@ or blockchain outages.
 
 ### Stage 8 — Account lifecycle and recovery capabilities
 
-- [ ] Implement audited `manage_users` customer administration and unlock flows.
-- [ ] Add customer suspension/deactivation state.
-- [ ] Add verified email change.
-- [ ] Define account deletion, anonymization, export, and retention workflows.
-- [ ] Add controlled 2FA-loss recovery.
-- [ ] Add security event notifications.
-- [ ] Decide and enforce the global cross-role email identity policy.
+- [x] ~~Implement audited `manage_users` customer administration and unlock flows.~~
+- [x] ~~Add customer suspension/deactivation state.~~
+- [x] ~~Add verified email change.~~
+- [x] ~~Define account deletion, anonymization, export, and retention workflows.~~
+- [x] ~~Add controlled 2FA-loss recovery.~~
+- [x] ~~Add security event notifications.~~
+- [x] ~~Decide and enforce the global cross-role email identity policy.~~
+
+Implementation note: the Stage 8 regression module contains nine focused tests;
+all 58 account tests passed on 2026-08-03 using the isolated test settings.
 
 ### Stage 9 — Test isolation, dependency reproducibility, and CI
 
@@ -693,7 +700,7 @@ or blockchain outages.
 - [x] ~~Complete privileged administration audit and last-super-admin
   protection.~~
 - [x] ~~Add authoritative local consent history and policy versioning.~~
-- [ ] Implement required customer lifecycle and security-recovery operations.
+- [x] ~~Implement required customer lifecycle and security-recovery operations.~~
 - [ ] Make test startup isolated and CI reproducible.
 - [ ] Correct the testing guide and API token-transport contract.
 

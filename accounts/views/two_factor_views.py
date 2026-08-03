@@ -59,6 +59,13 @@ def _record_successful_2fa_login(user, user_type, tokens, request):
             }
         },
     )
+    SecurityEventService.record_new_device_login_if_first(
+        user=user,
+        user_type=user_type,
+        session_id=session_id,
+        ip_address=ip_address,
+        device_info=device_info,
+    )
 
 
 class Setup2FAView(APIView):

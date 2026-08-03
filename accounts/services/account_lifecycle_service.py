@@ -7,11 +7,13 @@ from pymongo import ReturnDocument
 
 from accounts.models import Consent, Customer
 from accounts.models.activity import ActiveSession, LoginActivity
+from accounts.services.lockout_service import LockoutService
 from accounts.services.otp_service import OTPService
 from accounts.utils.email_utils import EmailUtils
 from accounts.utils.identity_policy import assert_email_available_globally
 from accounts.utils.token_utils import TokenUtils
 from analytics.models import AuditLog
+from notifications.models.notification import Notification
 
 
 ACCOUNT_STATES = {
@@ -22,8 +24,19 @@ ACCOUNT_STATES = {
     "deleted",
 }
 
+MANAGEABLE_ACCOUNT_STATES = {"active", "suspended", "deactivated"}
+DELETION_CANCELLATION_MESSAGE = (
+    "If the account has a pending deletion request and the credentials are valid, "
+    "the request has been cancelled."
+)
+ACCOUNT_RECOVERY_ISSUE_COOLDOWN_SECONDS = 60
+TWO_FACTOR_RECOVERY_WINDOW_SECONDS = 3600
+TWO_FACTOR_RECOVERY_MAX_ISSUES_PER_WINDOW = 3
+
 
 class AccountLifecycleService:
+    DELETION_CANCELLATION_GENERIC_MESSAGE = DELETION_CANCELLATION_MESSAGE
+
     @staticmethod
     def _now():
         return datetime.now(timezone.utc)
@@ -38,6 +51,8 @@ class AccountLifecycleService:
 
     @staticmethod
     def _serialize_document(value):
+        if isinstance(value, ObjectId):
+            return str(value)
         if isinstance(value, dict):
             return {
                 key: AccountLifecycleService._serialize_document(item)
@@ -70,10 +85,12 @@ class AccountLifecycleService:
     @staticmethod
     def set_customer_state(customer, account_state, *, reason=""):
         state = str(account_state or "").strip().lower()
-        if state not in ACCOUNT_STATES:
+        if state not in MANAGEABLE_ACCOUNT_STATES:
             raise ValueError("Invalid account_state")
 
         now = AccountLifecycleService._now()
+        current_state = getattr(customer, "account_state", "active") or "active"
+        state_changed = current_state != state
         update = {
             "account_state": state,
             "account_state_reason": str(reason or "").strip(),
@@ -81,21 +98,39 @@ class AccountLifecycleService:
             "active": state == "active",
             "updated_at": now,
         }
-        increment_security = state in {"suspended", "deactivated", "deleted"}
+        if state == "active" and current_state == "pending_deletion":
+            update.update(
+                {
+                    "deletion_requested_at": None,
+                    "deletion_scheduled_for": None,
+                }
+            )
+
         operation = {"$set": update}
-        if increment_security:
+        if state_changed:
             operation["$inc"] = {"security_version": 1}
 
+        state_query = {"_id": customer._id}
+        if current_state == "active":
+            state_query["$or"] = [
+                {"account_state": "active"},
+                {"account_state": {"$exists": False}},
+            ]
+        else:
+            state_query["account_state"] = current_state
+
         document = settings.MONGODB[Customer.collection_name].find_one_and_update(
-            {"_id": customer._id},
+            state_query,
             operation,
             return_document=ReturnDocument.AFTER,
         )
         if not document:
             return None
         updated = Customer.from_dict(document)
-        if increment_security:
+        if state_changed:
             TokenUtils.revoke_all_sessions(updated.id, "customer")
+        if state == "active":
+            LockoutService.reset_lockout(updated)
         return updated
 
     @staticmethod
@@ -103,12 +138,22 @@ class AccountLifecycleService:
         if not customer.check_password(password):
             return (False, "Invalid password")
 
+        requested_at = getattr(customer, "pending_email_requested_at", None)
+        requested_at = EmailUtils.to_aware_utc(requested_at)
+        if requested_at:
+            elapsed = (AccountLifecycleService._now() - requested_at).total_seconds()
+            if elapsed < ACCOUNT_RECOVERY_ISSUE_COOLDOWN_SECONDS:
+                return (
+                    False,
+                    "Please wait before requesting another email change verification code.",
+                )
+
         normalized_email = assert_email_available_globally(
             new_email,
             exclude_role="customer",
             exclude_id=customer._id,
         )
-        if normalized_email == customer.email:
+        if normalized_email == EmailUtils.normalize_email(customer.email):
             return (False, "New email must be different from current email")
 
         now = AccountLifecycleService._now()
@@ -209,9 +254,20 @@ class AccountLifecycleService:
     def request_deletion(customer, *, reason=""):
         now = AccountLifecycleService._now()
         retention_days = int(getattr(settings, "ACCOUNT_DELETION_RETENTION_DAYS", 30))
+        if retention_days < 0:
+            raise ValueError("ACCOUNT_DELETION_RETENTION_DAYS cannot be negative")
         scheduled_for = now + timedelta(days=retention_days)
+        current_state = getattr(customer, "account_state", "active") or "active"
+        state_query = {"_id": customer._id}
+        if current_state == "active":
+            state_query["$or"] = [
+                {"account_state": "active"},
+                {"account_state": {"$exists": False}},
+            ]
+        else:
+            return None
         document = settings.MONGODB[Customer.collection_name].find_one_and_update(
-            {"_id": customer._id, "account_state": {"$nin": ["deleted"]}},
+            state_query,
             {
                 "$set": {
                     "account_state": "pending_deletion",
@@ -258,11 +314,36 @@ class AccountLifecycleService:
         return updated
 
     @staticmethod
+    def cancel_deletion_with_password(email, password):
+        """Restore a pending customer deletion after credential verification."""
+        customer = AccountLifecycleService.get_customer_by_email(email)
+        if not customer or not customer.check_password(password):
+            return None
+        if getattr(customer, "account_state", "active") != "pending_deletion":
+            return None
+        return AccountLifecycleService.cancel_deletion(customer)
+
+    @staticmethod
+    def is_deletion_due(customer):
+        scheduled_for = EmailUtils.to_aware_utc(
+            getattr(customer, "deletion_scheduled_for", None)
+        )
+        return (
+            getattr(customer, "account_state", "active") == "pending_deletion"
+            and scheduled_for is not None
+            and scheduled_for <= AccountLifecycleService._now()
+        )
+
+    @staticmethod
     def finalize_deletion(customer, *, reason=""):
         now = AccountLifecycleService._now()
         placeholder_email = f"deleted-{customer.id}-{uuid.uuid4().hex[:8]}@deleted.local"
         document = settings.MONGODB[Customer.collection_name].find_one_and_update(
-            {"_id": customer._id, "account_state": {"$ne": "deleted"}},
+            {
+                "_id": customer._id,
+                "account_state": "pending_deletion",
+                "deletion_scheduled_for": {"$lte": now},
+            },
             {
                 "$set": {
                     "first_name": "Deleted",
@@ -275,16 +356,33 @@ class AccountLifecycleService:
                     "verification_token_expires": None,
                     "password_reset_otp": None,
                     "password_reset_otp_expires": None,
+                    "password_reset_attempt_count": 0,
+                    "password_reset_last_attempt": None,
+                    "password_reset_last_sent_at": None,
+                    "password_reset_window_started_at": None,
+                    "password_reset_issue_count": 0,
                     "pending_email": None,
                     "pending_email_otp": None,
                     "pending_email_otp_expires": None,
                     "pending_email_requested_at": None,
+                    "pending_email_attempt_count": 0,
+                    "pending_email_last_attempt": None,
+                    "two_factor_recovery_requested_at": None,
+                    "two_factor_recovery_verified_at": None,
+                    "two_factor_recovery_otp": None,
+                    "two_factor_recovery_otp_expires": None,
+                    "two_factor_recovery_attempt_count": 0,
+                    "two_factor_recovery_last_attempt": None,
+                    "two_factor_recovery_issue_count": 0,
+                    "two_factor_recovery_window_started_at": None,
                     "two_factor_enabled": False,
                     "two_factor_secret": None,
                     "backup_codes": [],
                     "last_totp_timestep": None,
                     "two_factor_setup_id": None,
                     "two_factor_setup_expires_at": None,
+                    "failed_login_attempts": 0,
+                    "locked_until": None,
                     "account_state": "deleted",
                     "account_state_reason": str(reason or "").strip(),
                     "account_state_changed_at": now,
@@ -308,16 +406,41 @@ class AccountLifecycleService:
         customer = AccountLifecycleService.get_customer_by_email(email)
         if not customer or not customer.check_password(password):
             return (True, None, "If the account is eligible, a recovery OTP has been sent.")
-        if not customer.two_factor_enabled:
-            return (False, customer, "Two-factor authentication is not enabled")
+        if (
+            getattr(customer, "account_state", "active") != "active"
+            or not getattr(customer, "active", True)
+            or not getattr(customer, "verified", True)
+            or not customer.two_factor_enabled
+        ):
+            return (True, None, "If the account is eligible, a recovery OTP has been sent.")
 
         now = AccountLifecycleService._now()
         otp = OTPService.generate_otp()
         expires_at = OTPService.get_otp_expiry(minutes=15)
         customer.two_factor_recovery_otp = otp
         encrypted_otp = customer.to_dict()["two_factor_recovery_otp"]
-        settings.MONGODB[Customer.collection_name].update_one(
-            {"_id": customer._id},
+
+        collection = settings.MONGODB[Customer.collection_name]
+        cooldown_cutoff = now - timedelta(
+            seconds=ACCOUNT_RECOVERY_ISSUE_COOLDOWN_SECONDS
+        )
+        window_cutoff = now - timedelta(seconds=TWO_FACTOR_RECOVERY_WINDOW_SECONDS)
+        active_window = collection.find_one_and_update(
+            {
+                "_id": customer._id,
+                "account_state": "active",
+                "active": True,
+                "two_factor_enabled": True,
+                "$or": [
+                    {"two_factor_recovery_requested_at": None},
+                    {"two_factor_recovery_requested_at": {"$exists": False}},
+                    {"two_factor_recovery_requested_at": {"$lte": cooldown_cutoff}},
+                ],
+                "two_factor_recovery_window_started_at": {"$gt": window_cutoff},
+                "two_factor_recovery_issue_count": {
+                    "$lt": TWO_FACTOR_RECOVERY_MAX_ISSUES_PER_WINDOW
+                },
+            },
             {
                 "$set": {
                     "two_factor_recovery_requested_at": now,
@@ -327,16 +450,66 @@ class AccountLifecycleService:
                     "two_factor_recovery_attempt_count": 0,
                     "two_factor_recovery_last_attempt": None,
                     "updated_at": now,
-                }
+                },
+                "$inc": {"two_factor_recovery_issue_count": 1},
             },
+            return_document=ReturnDocument.AFTER,
         )
+
+        if not active_window:
+            active_window = collection.find_one_and_update(
+                {
+                    "_id": customer._id,
+                    "account_state": "active",
+                    "active": True,
+                    "two_factor_enabled": True,
+                    "$or": [
+                        {"two_factor_recovery_window_started_at": None},
+                        {"two_factor_recovery_window_started_at": {"$exists": False}},
+                        {"two_factor_recovery_window_started_at": {"$lte": window_cutoff}},
+                    ],
+                    "$and": [
+                        {
+                            "$or": [
+                                {"two_factor_recovery_requested_at": None},
+                                {"two_factor_recovery_requested_at": {"$exists": False}},
+                                {"two_factor_recovery_requested_at": {"$lte": cooldown_cutoff}},
+                            ]
+                        }
+                    ],
+                },
+                {
+                    "$set": {
+                        "two_factor_recovery_requested_at": now,
+                        "two_factor_recovery_verified_at": None,
+                        "two_factor_recovery_otp": encrypted_otp,
+                        "two_factor_recovery_otp_expires": expires_at,
+                        "two_factor_recovery_attempt_count": 0,
+                        "two_factor_recovery_last_attempt": None,
+                        "two_factor_recovery_issue_count": 1,
+                        "two_factor_recovery_window_started_at": now,
+                        "updated_at": now,
+                    }
+                },
+                return_document=ReturnDocument.AFTER,
+            )
+
+        if not active_window:
+            return (True, None, "If the account is eligible, a recovery OTP has been sent.")
+
         EmailUtils.send_verification_email(customer.email, customer.first_name, otp)
         return (True, customer, "If the account is eligible, a recovery OTP has been sent.")
 
     @staticmethod
     def verify_two_factor_recovery(email, otp):
         customer = AccountLifecycleService.get_customer_by_email(email)
-        if not customer:
+        if (
+            not customer
+            or getattr(customer, "account_state", "active") != "active"
+            or not getattr(customer, "active", True)
+            or not getattr(customer, "verified", True)
+            or not customer.two_factor_enabled
+        ):
             return (False, None, "Invalid email or OTP")
 
         allowed, seconds_remaining = OTPService.check_otp_rate_limit(
@@ -366,31 +539,41 @@ class AccountLifecycleService:
             return (False, customer, "Invalid email or OTP")
 
         now = AccountLifecycleService._now()
-        document = settings.MONGODB[Customer.collection_name].find_one_and_update(
-            {
-                "_id": customer._id,
-                "two_factor_recovery_otp": {"$ne": None},
-                "two_factor_recovery_otp_expires": customer.two_factor_recovery_otp_expires,
+        if not OTPService.consume_otp(
+            customer,
+            otp,
+            "two_factor_recovery_otp",
+            "two_factor_recovery_otp_expires",
+            success_updates={
+                "two_factor_recovery_attempt_count": 0,
+                "two_factor_recovery_last_attempt": None,
+                "two_factor_recovery_verified_at": now,
             },
-            {
-                "$set": {
-                    "two_factor_recovery_otp": None,
-                    "two_factor_recovery_otp_expires": None,
-                    "two_factor_recovery_attempt_count": 0,
-                    "two_factor_recovery_last_attempt": None,
-                    "two_factor_recovery_verified_at": now,
-                    "updated_at": now,
-                }
-            },
-            return_document=ReturnDocument.AFTER,
-        )
-        if not document:
+        ):
             return (False, customer, "Invalid email or OTP")
-        return (True, Customer.from_dict(document), "Recovery request verified and queued")
+        return (
+            True,
+            AccountLifecycleService.get_customer_by_id(customer.id),
+            "Recovery request verified and queued",
+        )
+
+    @staticmethod
+    def is_two_factor_recovery_request_valid(customer):
+        verified_at = EmailUtils.to_aware_utc(
+            getattr(customer, "two_factor_recovery_verified_at", None)
+        )
+        if not verified_at:
+            return False
+        approval_hours = int(
+            getattr(settings, "TWO_FACTOR_RECOVERY_APPROVAL_HOURS", 24)
+        )
+        return verified_at + timedelta(hours=approval_hours) > AccountLifecycleService._now()
 
     @staticmethod
     def decide_two_factor_recovery(customer, *, approve):
         now = AccountLifecycleService._now()
+        if not AccountLifecycleService.is_two_factor_recovery_request_valid(customer):
+            return None
         if approve:
             operation = {
                 "$set": {
@@ -406,6 +589,8 @@ class AccountLifecycleService:
                     "two_factor_recovery_otp_expires": None,
                     "two_factor_recovery_attempt_count": 0,
                     "two_factor_recovery_last_attempt": None,
+                    "two_factor_recovery_issue_count": 0,
+                    "two_factor_recovery_window_started_at": None,
                     "updated_at": now,
                 },
                 "$inc": {"security_version": 1},
@@ -419,12 +604,17 @@ class AccountLifecycleService:
                     "two_factor_recovery_otp_expires": None,
                     "two_factor_recovery_attempt_count": 0,
                     "two_factor_recovery_last_attempt": None,
+                    "two_factor_recovery_issue_count": 0,
+                    "two_factor_recovery_window_started_at": None,
                     "updated_at": now,
                 }
             }
 
         document = settings.MONGODB[Customer.collection_name].find_one_and_update(
-            {"_id": customer._id},
+            {
+                "_id": customer._id,
+                "two_factor_recovery_verified_at": customer.two_factor_recovery_verified_at,
+            },
             operation,
             return_document=ReturnDocument.AFTER,
         )
@@ -478,6 +668,7 @@ class AccountLifecycleService:
         sessions = ActiveSession.find({"user_id": customer.id}, sort=[("created_at", -1)])
         login_activity = LoginActivity.find({"user_id": customer.id}, limit=200)
         audit_entries = AuditLog.find_by_user(customer.id, limit=200)
+        notifications = Notification.find_by_user(customer.id, limit=200)
 
         payload = {
             "generated_at": AccountLifecycleService._serialize_datetime(
@@ -500,5 +691,6 @@ class AccountLifecycleService:
             "active_sessions": [session.to_dict() for session in sessions],
             "login_activity": [entry.to_dict() for entry in login_activity],
             "audit_logs": [entry.to_dict() for entry in audit_entries],
+            "notifications": [item.to_dict() for item in notifications],
         }
         return AccountLifecycleService._serialize_document(payload)

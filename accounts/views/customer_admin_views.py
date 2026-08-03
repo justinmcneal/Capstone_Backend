@@ -278,6 +278,13 @@ class CustomerDeletionFinalizeView(ManageUsersRequiredMixin, APIView):
                 status_code=status.HTTP_404_NOT_FOUND,
             )
 
+        if not AccountLifecycleService.is_deletion_due(customer):
+            return error_response(
+                message="Customer deletion is not yet due",
+                code="deletion_not_due",
+                status_code=status.HTTP_409_CONFLICT,
+            )
+
         reason = sanitize_text(request.data.get("reason", ""))
         updated = AccountLifecycleService.finalize_deletion(customer, reason=reason)
         if not updated:
@@ -346,9 +353,10 @@ class TwoFactorRecoveryAdminView(ManageUsersRequiredMixin, APIView):
                 message="Customer not found",
                 status_code=status.HTTP_404_NOT_FOUND,
             )
-        if not getattr(customer, "two_factor_recovery_verified_at", None):
+        if not AccountLifecycleService.is_two_factor_recovery_request_valid(customer):
             return error_response(
-                message="No verified 2FA recovery request for this customer",
+                message="No current verified 2FA recovery request for this customer",
+                code="recovery_request_expired",
                 status_code=status.HTTP_409_CONFLICT,
             )
 

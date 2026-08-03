@@ -153,6 +153,11 @@ urlpatterns = [
         name="admin-customers",
     ),
     path(
+        "admin/customers/2fa-recovery/",
+        TwoFactorRecoveryAdminView.as_view(),
+        name="admin-customer-2fa-recovery-list",
+    ),
+    path(
         "admin/customers/<str:customer_id>/",
         CustomerDetailView.as_view(),
         name="admin-customer-detail",
@@ -166,11 +171,6 @@ urlpatterns = [
         "admin/customers/<str:customer_id>/deletion/finalize/",
         CustomerDeletionFinalizeView.as_view(),
         name="admin-customer-deletion-finalize",
-    ),
-    path(
-        "admin/customers/2fa-recovery/",
-        TwoFactorRecoveryAdminView.as_view(),
-        name="admin-customer-2fa-recovery-list",
     ),
     path(
         "admin/customers/<str:customer_id>/2fa-recovery/",

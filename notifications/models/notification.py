@@ -67,6 +67,7 @@ NOTIFICATION_TYPES = [
     'two_factor_recovery_rejected',
     'admin_customer_unlock',
     'new_device_login',
+    'admin_permissions_changed',
 ]
 
 

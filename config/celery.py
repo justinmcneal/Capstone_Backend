@@ -18,6 +18,10 @@ app.conf.beat_schedule = {
         "task": "accounts.tasks.cleanup_unverified_accounts_task",
         "schedule": crontab(minute="*/30"),
     },
+    "finalize-scheduled-customer-deletions-every-30-minutes": {
+        "task": "accounts.tasks.finalize_scheduled_customer_deletions_task",
+        "schedule": crontab(minute="*/30"),
+    },
     "check-overdue-daily": {
         "task": "loans.tasks.check_overdue_installments_task",
         "schedule": crontab(hour=0, minute=0),

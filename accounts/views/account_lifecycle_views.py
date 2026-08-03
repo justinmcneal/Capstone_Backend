@@ -6,6 +6,7 @@ from rest_framework.views import APIView
 
 from accounts.authentication import CustomJWTAuthentication
 from accounts.serializers.account_lifecycle_serializers import (
+    AccountDeletionCancelSerializer,
     AccountDeletionRequestSerializer,
     EmailChangeConfirmSerializer,
     EmailChangeRequestSerializer,
@@ -17,6 +18,12 @@ from accounts.services.security_event_service import SecurityEventService
 from accounts.utils.exception_types import NON_FATAL_EXCEPTIONS
 from accounts.utils.request_utils import get_client_ip
 from accounts.utils.response_helpers import APIResponseHelper
+from accounts.utils.throttles import (
+    ForgotPasswordRateThrottle,
+    LoginRateThrottle,
+    OTPIdentifierRateThrottle,
+    OTPVerificationRateThrottle,
+)
 from accounts.utils.user_detection import get_authenticated_user
 from analytics.models import AuditLog
 
@@ -26,6 +33,7 @@ logger = logging.getLogger("authentication")
 class EmailChangeRequestView(APIView):
     authentication_classes = (CustomJWTAuthentication,)
     permission_classes = (IsAuthenticated,)
+    throttle_classes = (LoginRateThrottle,)
 
     def post(self, request):
         serializer = EmailChangeRequestSerializer(data=request.data)
@@ -75,6 +83,7 @@ class EmailChangeRequestView(APIView):
 class EmailChangeConfirmView(APIView):
     authentication_classes = (CustomJWTAuthentication,)
     permission_classes = (IsAuthenticated,)
+    throttle_classes = (OTPVerificationRateThrottle,)
 
     def post(self, request):
         serializer = EmailChangeConfirmSerializer(data=request.data)
@@ -157,6 +166,7 @@ class AccountExportView(APIView):
 class AccountDeletionRequestView(APIView):
     authentication_classes = (CustomJWTAuthentication,)
     permission_classes = (IsAuthenticated,)
+    throttle_classes = (LoginRateThrottle,)
 
     def post(self, request):
         serializer = AccountDeletionRequestSerializer(data=request.data)
@@ -222,21 +232,22 @@ class AccountDeletionRequestView(APIView):
 
 
 class AccountDeletionCancelView(APIView):
-    authentication_classes = (CustomJWTAuthentication,)
-    permission_classes = (IsAuthenticated,)
+    authentication_classes = ()
+    permission_classes = (AllowAny,)
+    throttle_classes = (ForgotPasswordRateThrottle, OTPIdentifierRateThrottle)
 
     def post(self, request):
-        user, user_type = get_authenticated_user(request)
-        if not user or user_type != "customer":
-            return APIResponseHelper.error_response(
-                "Customer account not found",
-                status.HTTP_404_NOT_FOUND,
-            )
-        updated = AccountLifecycleService.cancel_deletion(user)
+        serializer = AccountDeletionCancelSerializer(data=request.data)
+        if not serializer.is_valid():
+            return APIResponseHelper.validation_error_response(serializer.errors)
+
+        updated = AccountLifecycleService.cancel_deletion_with_password(
+            serializer.validated_data["email"],
+            serializer.validated_data["password"],
+        )
         if not updated:
-            return APIResponseHelper.error_response(
-                "No pending account deletion request found",
-                status.HTTP_400_BAD_REQUEST,
+            return APIResponseHelper.success_response(
+                message=AccountLifecycleService.DELETION_CANCELLATION_GENERIC_MESSAGE
             )
 
         SecurityEventService.record(
@@ -263,6 +274,7 @@ class AccountDeletionCancelView(APIView):
 class TwoFactorRecoveryRequestView(APIView):
     permission_classes = (AllowAny,)
     authentication_classes = ()
+    throttle_classes = (ForgotPasswordRateThrottle, OTPIdentifierRateThrottle)
 
     def post(self, request):
         serializer = TwoFactorRecoveryRequestSerializer(data=request.data)
@@ -296,6 +308,7 @@ class TwoFactorRecoveryRequestView(APIView):
 class TwoFactorRecoveryVerifyView(APIView):
     permission_classes = (AllowAny,)
     authentication_classes = ()
+    throttle_classes = (OTPVerificationRateThrottle, OTPIdentifierRateThrottle)
 
     def post(self, request):
         serializer = TwoFactorRecoveryVerifySerializer(data=request.data)

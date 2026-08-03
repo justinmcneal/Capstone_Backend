@@ -90,6 +90,10 @@ class SecurityEventService:
             "New device sign-in",
             "A sign-in from a new device or network location was detected.",
         ),
+        "admin_permissions_changed": (
+            "Administrator privileges changed",
+            "Your administrator permissions or privilege level was changed.",
+        ),
     }
 
     @classmethod
@@ -136,22 +140,24 @@ class SecurityEventService:
         action: str,
         ip_address: str = "",
         details: dict | None = None,
+        record_audit: bool = True,
     ) -> None:
         subject, message = cls.EVENT_MESSAGES[action]
-        try:
-            AuditLog.log_action(
-                action=action,
-                user_id=user.id,
-                user_type=user_type,
-                user_email=user.email,
-                description=message,
-                resource_type="account_security",
-                resource_id=user.id,
-                details=details or {},
-                ip_address=ip_address,
-            )
-        except Exception as exc:  # noqa: BLE001 - audit failure must not undo security state
-            logger.error("Failed to audit security event %s: %s", action, exc)
+        if record_audit:
+            try:
+                AuditLog.log_action(
+                    action=action,
+                    user_id=user.id,
+                    user_type=user_type,
+                    user_email=user.email,
+                    description=message,
+                    resource_type="account_security",
+                    resource_id=user.id,
+                    details=details or {},
+                    ip_address=ip_address,
+                )
+            except Exception as exc:  # noqa: BLE001 - audit failure must not undo security state
+                logger.error("Failed to audit security event %s: %s", action, exc)
 
         try:
             from notifications.services.notification_creator import (

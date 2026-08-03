@@ -94,6 +94,12 @@ class Customer:
         self.two_factor_recovery_last_attempt = kwargs.get(
             "two_factor_recovery_last_attempt"
         )
+        self.two_factor_recovery_issue_count = kwargs.get(
+            "two_factor_recovery_issue_count", 0
+        )
+        self.two_factor_recovery_window_started_at = kwargs.get(
+            "two_factor_recovery_window_started_at"
+        )
 
         # Two-Factor Authentication (2FA)
         self.two_factor_enabled = kwargs.get("two_factor_enabled", False)
@@ -187,6 +193,8 @@ class Customer:
             "two_factor_recovery_otp_expires": self.two_factor_recovery_otp_expires,
             "two_factor_recovery_attempt_count": self.two_factor_recovery_attempt_count,
             "two_factor_recovery_last_attempt": self.two_factor_recovery_last_attempt,
+            "two_factor_recovery_issue_count": self.two_factor_recovery_issue_count,
+            "two_factor_recovery_window_started_at": self.two_factor_recovery_window_started_at,
             "two_factor_enabled": self.two_factor_enabled,
             "two_factor_secret": self.two_factor_secret,
             "backup_codes": self.backup_codes,

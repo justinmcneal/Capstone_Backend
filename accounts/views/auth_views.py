@@ -20,6 +20,7 @@ from accounts.serializers.auth_serializers import (
 )
 from accounts.services import AuthService
 from accounts.services.lockout_service import LockoutService
+from accounts.services.security_event_service import SecurityEventService
 from accounts.utils.auth_cookies import (
     TOKEN_TRANSPORT_BODY,
     TOKEN_TRANSPORT_COOKIE,
@@ -262,8 +263,10 @@ class LoginView(APIView):
                     GENERIC_LOGIN_ERROR_MESSAGE, status.HTTP_401_UNAUTHORIZED
                 )
 
-            if not getattr(customer, "active", True) or getattr(
-                customer, "deleted_at", None
+            if (
+                not getattr(customer, "active", True)
+                or getattr(customer, "deleted_at", None)
+                or getattr(customer, "account_state", "active") != "active"
             ):
                 _log_customer_login_failure(
                     request, email, "account_deactivated", user=customer
@@ -415,6 +418,14 @@ class LoginView(APIView):
                 )
             except NON_FATAL_EXCEPTIONS as e:
                 logger.error("Failed to save ActiveSession: %s", e)
+
+            SecurityEventService.record_new_device_login_if_first(
+                user=customer,
+                user_type="customer",
+                session_id=RefreshToken(tokens["refresh"]).get("session_id"),
+                ip_address=ip_address,
+                device_info=device_info,
+            )
 
             # Dispatch signal for django-axes
             user_logged_in.send(
@@ -695,7 +706,10 @@ class RefreshTokenView(APIView):
                         f"Token refresh for non-existent customer {customer_id} from IP {request.META.get('REMOTE_ADDR')}"
                     )
                     return APIResponseHelper.error_response("User not found")
-                if not getattr(customer, "active", True):
+                if (
+                    not getattr(customer, "active", True)
+                    or getattr(customer, "account_state", "active") != "active"
+                ):
                     logger.warning(
                         f"Token refresh for inactive customer {customer_id} from IP {request.META.get('REMOTE_ADDR')}"
                     )

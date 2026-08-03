@@ -33,6 +33,9 @@ __all__ = [
     "ConsentResponseSerializer",
     "ConsentSerializer",
     "ConsentUpdateSerializer",
+    "CustomerStateUpdateSerializer",
+    "EmailChangeConfirmSerializer",
+    "EmailChangeRequestSerializer",
     "ForgotPasswordSerializer",
     "LoginSerializer",
     "OTPValidationMixin",
@@ -45,6 +48,3 @@ __all__ = [
     "TwoFactorRecoveryVerifySerializer",
     "VerifyResetOTPSerializer",
 ]
-    "CustomerStateUpdateSerializer",
-    "EmailChangeConfirmSerializer",
-    "EmailChangeRequestSerializer",

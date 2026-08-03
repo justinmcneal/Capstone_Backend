@@ -9,6 +9,7 @@ from accounts.models import Admin, LoanOfficer
 from accounts.services.auth_service import AuthService
 from accounts.services.otp_service import OTPService
 from accounts.utils.email_utils import EmailUtils
+from accounts.utils.identity_policy import find_accounts_by_email
 from accounts.utils.token_utils import TokenUtils
 
 logger = logging.getLogger("authentication")
@@ -51,22 +52,14 @@ class PasswordService:
         if requested_user_type == "admin":
             return PasswordService._find_by_email(Admin, email), "admin"
 
-        # Check Customer first
-        customer = AuthService.get_customer_by_email(email)
-        if customer:
-            return customer, "customer"
+        matches = find_accounts_by_email(email)
+        if len(matches) != 1:
+            # A role is mandatory when legacy data contains the same email in
+            # more than one account collection. Never choose a role by order.
+            return None, None
 
-        # Check LoanOfficer
-        officer = PasswordService._find_by_email(LoanOfficer, email)
-        if officer:
-            return officer, "loan_officer"
-
-        # Check Admin (by email)
-        admin = PasswordService._find_by_email(Admin, email)
-        if admin:
-            return admin, "admin"
-
-        return None, None
+        user_type, user = next(iter(matches.items()))
+        return user, user_type
 
     @staticmethod
     def initiate_password_reset(email, requested_user_type=None):

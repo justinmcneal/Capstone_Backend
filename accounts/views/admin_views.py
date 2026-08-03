@@ -1926,6 +1926,20 @@ class AdminPermissionsView(SuperAdminRequiredMixin, APIView):
                         target_admin, ["super_admin", "permissions"]
                     ),
                 )
+                SecurityEventService.record(
+                    user=target_admin,
+                    user_type="admin",
+                    action="admin_permissions_changed",
+                    ip_address=get_client_ip(request),
+                    details={
+                        "changed_by": current_admin.id,
+                        "before": before,
+                        "after": _account_state(
+                            target_admin, ["super_admin", "permissions"]
+                        ),
+                    },
+                    record_audit=False,
+                )
 
             logger.info(
                 f"Permissions updated for {target_admin.username} by {current_admin.username}"

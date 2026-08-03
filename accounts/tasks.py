@@ -4,6 +4,8 @@ from datetime import datetime, timedelta, timezone
 from celery import shared_task
 
 from accounts.models import Customer
+from accounts.services.account_lifecycle_service import AccountLifecycleService
+from analytics.models import AuditLog
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +35,47 @@ def cleanup_unverified_accounts_task():
         f'Cleanup task: Deleted {count} unverified accounts: {", ".join(deleted_emails)}'
     )
     return f"Successfully deleted {count} unverified accounts"
+
+
+@shared_task
+def finalize_scheduled_customer_deletions_task():
+    """Finalize customer deletion requests whose retention period has elapsed."""
+    now = datetime.now(timezone.utc)
+    customers = Customer.find(
+        {
+            "account_state": "pending_deletion",
+            "deletion_scheduled_for": {"$lte": now},
+        }
+    )
+
+    finalized = 0
+    for customer in customers:
+        original_email = customer.email
+        try:
+            updated = AccountLifecycleService.finalize_deletion(
+                customer,
+                reason="Retention period elapsed",
+            )
+            if not updated:
+                continue
+
+            AuditLog.log_action(
+                action="account_deleted",
+                user_id=updated.id,
+                user_type="system",
+                user_email=original_email,
+                description="Finalized scheduled customer account deletion",
+                resource_type="customer",
+                resource_id=updated.id,
+                details={"automated": True, "retention_period_elapsed": True},
+                ip_address="",
+            )
+            finalized += 1
+        except Exception as exc:  # noqa: BLE001 - one record must not stop the batch
+            logger.error("Scheduled customer deletion failed for %s: %s", customer.id, exc)
+
+    logger.info("Scheduled customer deletion task finalized %s account(s)", finalized)
+    return f"Finalized {finalized} scheduled customer deletion(s)"
 
 
 @shared_task

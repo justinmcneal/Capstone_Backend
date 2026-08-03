@@ -184,8 +184,13 @@ class CustomJWTAuthentication(JWTAuthentication):
             active = bool(getattr(live_user, "active", True))
             deleted = getattr(live_user, "deleted_at", None) is not None
             live_verified = bool(getattr(live_user, "verified", True))
+            account_state = getattr(live_user, "account_state", "active")
             live_security_version = int(getattr(live_user, "security_version", 1))
-            if not active or deleted:
+            if (
+                not active
+                or deleted
+                or (role == "customer" and account_state != "active")
+            ):
                 raise AuthenticationFailed("Account is inactive")
             if not live_verified:
                 raise AuthenticationFailed("Account is not verified")
