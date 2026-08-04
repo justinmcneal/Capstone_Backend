@@ -1,6 +1,6 @@
 # Accounts Production Readiness Review
 
-Last updated: 2026-08-03
+Last updated: 2026-08-04
 
 Scope: `accounts/` plus the Django/DRF authentication settings, middleware,
 MongoDB collections, Redis/Celery paths, audit logging, email delivery, consent
@@ -43,9 +43,11 @@ Stages 1 and 2 removed raw refresh-token persistence from new session records,
 bound access and refresh JWTs to revocable session membership, added live account
 state/security-version enforcement, and centralized mandatory first-password
 change enforcement. Stage 3 now fails closed for cookie-backed unsafe requests
-and separates cookie and response-body credential delivery. Production release
-remains blocked by materially weak throttles and authentication counters that
-remain vulnerable to concurrent-request races.
+and separates cookie and response-body credential delivery. Stage 10 documentation
+has been rechecked against the current views, token helpers, middleware, routes,
+and account tests. Production release remains blocked by the intentionally
+unchanged authentication throttle policy and by unresolved API token-name
+standardization.
 
 Current remediation status:
 
@@ -57,7 +59,7 @@ Current remediation status:
 - [x] **Stage 6 — Privileged administration and audit coverage**
 - [x] **Stage 7 — Consent history and policy lifecycle**
 - [x] **Stage 8 — Account lifecycle and recovery capabilities**
-- [x] **Stage 9 — Test isolation, dependency reproducibility, and CI**
+- [ ] Stage 9 — Test isolation, dependency reproducibility, and CI
 - [ ] Stage 10 — API contract and documentation alignment
 
 ## Verified Complete
@@ -273,10 +275,12 @@ security notification.
 
 ### Session and activity tracking
 
-**Status: Partial / blocked by credential exposure**
+**Status: Partial / session-policy and activity semantics remain**
 
-Customer non-2FA login creates `LoginActivity` and `ActiveSession`. Refresh creates
-a replacement session record and logout deactivates a matching session.
+Customer non-2FA login creates `LoginActivity` and `ActiveSession`. New session
+records store an opaque `session_id` and a refresh-token hash; public session
+serialization omits credential material. Refresh rotates the refresh membership
+and logout deactivates the matching session.
 
 Coverage is inconsistent:
 
@@ -340,7 +344,9 @@ Production startup correctly requires a valid field-encryption key. DEBUG mode
 allows plaintext pass-through by design. Additional production-hardening work is
 still needed:
 
-- Raw `ActiveSession.session_token` is not encrypted or hashed.
+- Legacy `session_token` input is converted to a hash for compatibility, but
+  legacy-record cleanup and the long-term session metadata retention policy still
+  require operational validation.
 - Session IP/device information, consent IPs, and activity metadata remain
   plaintext operational data and require an explicit retention/access policy.
 - Invalid encrypted values are returned unchanged rather than raising a clear
@@ -398,51 +404,81 @@ MongoDB unique email indexes are case-sensitive by default. Application-level
 normalization handles normal writes, but legacy/import/script writes can still
 produce case variants unless normalized storage or index collation is enforced.
 
-## API Contract and Documentation Defects
+## API Contract and Documentation Status
 
 ### Refresh and logout token transport
 
-`docs/ACCOUNTS_TESTING_GUIDE.md` says refresh/logout accept a refresh token through
-`Authorization: Bearer <refresh_token>` and later says the token is not accepted
-in JSON. The implementation does the opposite: it reads `refresh` or
-`refresh_token` from JSON first, then the refresh cookie, and does not inspect the
-Authorization header for a refresh token.
+The verified refresh-token input order is:
 
-The API must choose and document a single supported contract. Browser clients
-should normally use an HttpOnly refresh cookie plus CSRF; non-browser clients can
-use an explicit body/header contract.
+1. JSON `refresh` or `refresh_token`.
+2. The configured refresh cookie (`refresh_token` by default).
 
-### Mixed token-delivery strategy
+The refresh view does not read a refresh token from the `Authorization` header.
+The header is an access-token source for protected requests and for the optional
+access token used by logout. Customer logout requires a refresh token from JSON
+or the refresh cookie and accepts an optional access token from JSON `access`, the
+Bearer header, or the access cookie. Loan-officer and administrator logout use
+the same sources but currently do not reject a request when both tokens are absent;
+clients should still send the refresh token so revocation is real and auditable.
 
-Credential delivery is now explicitly selected with `token_transport` (request
-body or `X-Token-Transport` header):
+### Token delivery and cookie-CSRF behavior
 
-- `body` is the default for explicit API clients. Tokens remain in JSON and no
-  auth cookies are set.
-- `cookie` is for browser clients. Access/refresh values are removed from JSON and
-  delivered only through HttpOnly cookies.
-- The access cookie defaults to path `/api/`; the refresh cookie defaults to
-  `/api/auth/`. Deployments may override `AUTH_ACCESS_COOKIE_PATH` and
-  `AUTH_REFRESH_COOKIE_PATH`.
-- `AUTH_COOKIE_SECURE` must remain enabled outside local development. SameSite
-  defaults to `Lax`; cross-site deployments require a reviewed `None` + Secure
-  policy, exact credentialed CORS origins, trusted CSRF origins, and HTTPS.
+Credential delivery is selected with JSON `token_transport` or the
+`X-Token-Transport` header:
 
-Token response-name standardization (`access`/`refresh` versus
-`access_token`/`refresh_token`) remains open for Stage 10.
+- `body` is the default for explicit API clients. Tokens remain in JSON and auth
+  cookies are not set.
+- `cookie` is for browser clients. Tokens are removed from JSON and delivered in
+  HttpOnly access and refresh cookies.
+- The access cookie defaults to `/api/`; the refresh cookie defaults to
+  `/api/auth/`. `AUTH_ACCESS_COOKIE_PATH` and `AUTH_REFRESH_COOKIE_PATH` may
+  override these paths.
+- `AUTH_COOKIE_SECURE` must be enabled outside local development. SameSite defaults
+  to `Lax`; a cross-site deployment needs reviewed `None` + Secure, credentialed
+  CORS, trusted CSRF origins, and HTTPS settings.
 
-### Endpoint documentation mismatches
+Before using cookie authentication, call `GET /api/auth/csrf-token/`. The response
+returns `data.csrf_token` and sets the `csrftoken` cookie. For every unsafe API
+request authenticated by an access or refresh cookie, send the same value in
+`X-CSRFToken`. Missing or mismatched values return `403`. A pure Bearer request
+does not need this CSRF pair, except refresh/logout paths remain CSRF-protected
+when a refresh cookie is present.
 
-- `PUT /api/auth/loan-officer/me/` is implemented but not documented.
-- `PUT /api/auth/admin/me/` is implemented but not documented.
-- Password and 2FA views can load administrator accounts even where the guide says
-  customer or officer only.
-- Consent and session endpoints are described as customer-only but do not enforce
-  that role in the view.
-- Officer/admin logout is documented as requiring a refresh token, but the views
-  can return success without one.
-- The guide does not document cookie-CSRF requirements, security-state
-  transitions, temporary-password restrictions, or session-revocation behavior.
+### Token response field names
+
+The implementation is not fully standardized yet:
+
+- Customer login, email verification, refresh, and 2FA completion use
+  `access` and `refresh` in body mode.
+- Loan-officer login uses `access_token` and `refresh_token` in body mode.
+- Admin login always starts or continues 2FA; admin 2FA completion uses `access`
+  and `refresh`.
+- Cookie mode removes all four token fields from JSON.
+
+The underlying token helper consistently returns `access` and `refresh`, but
+changing the loan-officer public aliases requires coordinated client changes.
+This remains an open Stage 10 contract item rather than being falsely marked
+complete by documentation alone.
+
+### Endpoint roles and profile updates
+
+- `PUT /api/auth/loan-officer/me/` is implemented. Only a loan officer may update
+  `first_name`, `last_name`, and `phone`; department and employee ID are returned
+  as read-only profile data. `must_change_password` blocks this protected view
+  with HTTP 423 until `POST /api/auth/change-password/` succeeds.
+- `PUT /api/auth/admin/me/` is implemented. An authenticated administrator,
+  including a super administrator, may update `first_name` and `last_name` only.
+  Username, email, permissions, and super-admin state use separate rules.
+- `POST /api/auth/change-password/` accepts authenticated customer, loan officer,
+  and administrator accounts. Password reset remains public and uses the optional
+  explicit `role` when legacy email ambiguity exists.
+- 2FA setup, confirmation, status, and backup-code regeneration are authenticated
+  account operations for supported account types; administrator 2FA cannot be
+  disabled. Administrator first-login setup is completed through the admin login
+  and 2FA verification flow.
+- Consent, language, email-change, export, deletion, and recovery self-service
+  routes are customer-only where their views explicitly require a customer.
+  Active-session and login-activity views currently accept any authenticated role.
 
 ## Scalability and Maintainability Gaps
 
@@ -464,52 +500,36 @@ Token response-name standardization (`access`/`refresh` versus
 
 ## Test Status and Coverage Gaps
 
-Validation performed on 2026-08-01 used `config.settings_test` with
-`MONGODB_URI` explicitly disabled so test collection could not initialize the
-externally configured MongoDB URI.
+Validation performed on 2026-08-04 used `config.settings_test` with
+`MONGODB_URI` explicitly disabled. This kept account test collection isolated
+from external MongoDB, Redis, SMTP, and blockchain services.
 
 Focused account validation:
 
-- 49 account/auth/consent/session/document-consent tests passed.
-- `python -m compileall -q accounts` passed.
-- `ruff check accounts` passed.
-- `black --check accounts` failed: 11 account files would be reformatted.
+- 45 focused account/auth/security tests passed, including cookie-CSRF,
+  session, 2FA, privileged-administration, lifecycle, and role-auth tests.
+- The real-Mongo tests were skipped because `REAL_MONGO_TEST_URI` was not set.
 
 Full-suite validation:
 
-- 734 tests collected.
-- 717 passed.
-- 8 failed.
-- 9 live-blockchain integration tests skipped.
-- The eight failures were outside the accounts module: seven blockchain/client or
-  audit-service tests and one recent-payments test.
+- 866 tests collected.
+- 851 passed and 12 skipped.
+- Two blockchain client tests errored while creating pytest temporary paths, and
+  one Prometheus command test failed while creating a temporary flag file; all
+  three were Windows temporary-directory permission failures outside accounts.
 
-Default test-startup gap:
+Current validation gaps:
 
-- `pytest.ini` selects `config.settings`, not `config.settings_test`.
-- `config.settings_test` imports production/base settings before applying its test
-  overrides.
-- When a real MongoDB SRV URI is present in the environment, plain `pytest -q`
-  can perform DNS resolution before mongomock fixtures run.
-- The main CI workflow runs plain `pytest -q` without defining safe test settings
-  or required production settings, so clean-environment behavior needs correction
-  and verification.
-
-Important missing regression tests:
-
-- Session responses and persistence never contain raw refresh tokens.
-- Password reset/change revokes existing refresh and access sessions.
-- Deactivation immediately blocks every protected account/domain endpoint.
-- `must_change_password` blocks all officer domain access, including after 2FA.
-- Cookie authentication cannot bypass CSRF when the CSRF cookie/header is absent.
-- Bearer authentication remains independent of cookie-CSRF state.
-- Production throttle values and identifier-based limits are enforced.
-- Concurrent login/OTP/backup-code requests cannot bypass atomic limits.
-- 2FA preserves remember-me state and creates session/activity records.
-- Logout persistence failures cannot leave unnoticed active membership.
-- [x] Last-super-admin protection and privileged audit events are enforced.
-- Consent history remains complete when blockchain synchronization is disabled or
-  fails.
+- Production authentication throttle values remain `100/hour` and need a reviewed
+  deployment policy.
+- Real-Mongo concurrency and hosted CI evidence remain pending in this run.
+- Real browser cookie/CORS behavior, multi-worker rate limits, and operational
+  recovery still need staging validation.
+- Public token field names remain inconsistent between customer/2FA and
+  loan-officer login, and officer/admin logout still accepts an empty credential
+  set.
+- Session `last_active` updates and the single-device versus multi-device policy
+  remain product decisions.
 
 ## Remediation Plan
 
@@ -648,40 +668,42 @@ or blockchain outages.
 - [x] ~~Decide and enforce the global cross-role email identity policy.~~
 
 Implementation note: the Stage 8 regression module contains nine focused tests;
-all 58 account tests passed on 2026-08-03 using the isolated test settings.
+the current Stage 8/security/account validation passed 45 tests using the
+isolated test settings.
 
 ### Stage 9 — Test isolation, dependency reproducibility, and CI
 
 - [x] ~~Make plain `pytest -q` select an isolated test configuration before base
   settings initialize external services.~~
-- [x] ~~Ensure CI supplies safe deterministic settings and verify it from a clean
-  environment.~~
+- [ ] Ensure CI supplies safe deterministic settings and verify it from a clean
+  environment.
 - [x] ~~Add real-Mongo index/concurrency tests for auth-critical operations.~~
 - [x] ~~Pin supported framework/runtime versions or introduce a reviewed lock file.~~
 - [x] ~~Restore `black --check accounts` compliance.~~
 - [x] ~~Add dependency and static security scanning to CI.~~
 
-Implementation note: `pytest.ini` now selects `config.settings_test`, which sets
-safe values before importing base settings; the root fixtures use mongomock and
-force AnyIO tests onto asyncio. `requirements.lock` pins application and test
+Implementation note: `pytest.ini` selects `config.settings_test`, which sets safe
+values before importing base settings; the root fixtures use mongomock and force
+AnyIO tests onto asyncio. `requirements.lock` pins application and test
 dependencies, while `requirements-ci.lock` pins Black, Ruff, Bandit, and
-pip-audit. CI uses the repository's `runtime.txt` Python 3.13.5 pin, safe test
-environment variables, a dedicated real-Mongo service job, `pip check`, and
-security gates. The lockfile resolved cleanly and `pip-audit` reported no known
-vulnerabilities on 2026-08-03. Local validation completed with 854 passed and 12
-skipped tests; real-Mongo tests intentionally skip without
-`REAL_MONGO_TEST_URI` and run in the CI Mongo service. The hosted workflow still
-needs to execute on the repository's CI provider as deployment evidence.
+pip-audit. CI defines a dedicated real-Mongo service job and security gates.
+The current local full run collected 866 tests and reached 851 passed and 12
+skipped, but also hit two Windows temporary-directory errors and one unrelated
+Prometheus temporary-file failure. The focused account/security run passed 45
+tests. Real-Mongo tests intentionally skip without `REAL_MONGO_TEST_URI`; the
+hosted workflow and a clean dependency environment remain pending evidence.
 
 ### Stage 10 — API contract and documentation alignment
 
-- [ ] Correct refresh/logout token transport documentation.
-- [ ] Document cookie-CSRF behavior and client transport modes.
-- [ ] Standardize token response field names.
-- [ ] Document profile update endpoints and actual role restrictions.
-- [ ] Expand `ACCOUNTS_TESTING_GUIDE.md` with automated setup, negative tests,
+- [x] Correct refresh/logout token transport documentation.
+- [x] Document cookie-CSRF behavior and client transport modes.
+- [ ] Standardize token response field names; the public loan-officer aliases
+  still differ from the customer/admin/refresh contract.
+- [x] Document profile update endpoints and actual role restrictions.
+- [x] Expand `ACCOUNTS_TESTING_GUIDE.md` with automated setup, negative tests,
   revocation checks, and security-state transitions.
-- [ ] Re-run this review after stages 1–9 and update every status from evidence.
+- [x] Re-run this review after stages 1-9 and update statuses from current source
+  and test evidence.
 
 ## Production Readiness Checklist
 
@@ -713,8 +735,10 @@ needs to execute on the repository's CI provider as deployment evidence.
   protection.~~
 - [x] ~~Add authoritative local consent history and policy versioning.~~
 - [x] ~~Implement required customer lifecycle and security-recovery operations.~~
-- [x] ~~Make test startup isolated and CI reproducible.~~
-- [ ] Correct the testing guide and API token-transport contract.
+- [ ] Make test startup isolated and CI reproducible; isolated account tests pass,
+  but the current full local run and hosted CI still need clean evidence.
+- [ ] Standardize public token response field names and close the remaining
+  officer/admin logout contract gap.
 
 ## Review Limits
 
@@ -726,5 +750,6 @@ needs to execute on the repository's CI provider as deployment evidence.
 - No sensitive `.env`, media, backup, log, credential, wallet, or uploaded-data
   contents were read.
 - Real browser CSRF/CORS behavior, real-Mongo concurrency, email deliverability,
-  rate-limit behavior across multiple workers, key rotation, and operational
-  recovery still require staging validation.
+  rate-limit behavior across multiple workers, key rotation, clean dependency
+  reproducibility, hosted CI, and operational recovery still require staging or
+  CI validation.

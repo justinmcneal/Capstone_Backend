@@ -3,7 +3,7 @@
 ## Scope
 Accounts handles authentication, OTP, password reset, consent, 2FA, loan officer auth, admin management, activity tracking, and support contact.
 
-## Stage 9 Automated Verification
+## Automated Setup and Stage 9 Verification
 
 Run these commands from `Capstone_Backend`:
 
@@ -35,6 +35,19 @@ MongoDB service for this job. CI installs `requirements.lock` and
 `requirements-ci.lock`, runs `pip check`, then runs the full test, dependency
 audit, and Bandit gates with deterministic non-production settings.
 
+For a focused account/security run, use:
+
+```powershell
+.\venv\Scripts\python.exe -m pytest -q accounts/tests/test_csrf_transport.py accounts/tests/test_session_security.py accounts/tests/test_stage4_hardening.py accounts/tests/test_stage5_2fa_lifecycle.py accounts/tests/test_stage6_privileged_administration.py accounts/tests/test_stage7_consent_lifecycle.py accounts/tests/test_stage8_account_lifecycle.py tests/test_auth_smoke.py tests/test_accounts_password.py tests/test_accounts_sessions.py tests/test_accounts_loan_officer.py tests/test_accounts_admin.py
+```
+
+This setup is offline-safe: it uses `config.settings_test`, SQLite in memory,
+mongomock, local email, in-memory cache/channel layers, eager in-memory Celery,
+and disabled blockchain integration. Do not point `REAL_MONGO_TEST_URI` at a
+production database. Record full-suite failures separately from account-focused
+results when a local Windows temporary directory or another unrelated test
+dependency is unavailable.
+
 ## Base URL and Auth
 - Base URL: `http://localhost:8000/api/auth`
 - Protected endpoints require:
@@ -44,7 +57,30 @@ audit, and Bandit gates with deterministic non-production settings.
   ```
 - Customer-only endpoints require a customer token.
 - Admin endpoints require admin or super-admin tokens depending on the route.
-- Some endpoints accept tokens via cookies instead of the `Authorization` header.
+- Body token transport is the default. A client may request `token_transport:
+  "cookie"` in a login/verification request or send `X-Token-Transport: cookie`.
+- Cookie mode sets HttpOnly access and refresh cookies and removes token fields
+  from JSON. The default access-cookie path is `/api/`; the refresh-cookie path is
+  `/api/auth/`.
+- Cookie clients must first call `GET /csrf-token/`, keep the `csrftoken` cookie,
+  and send `X-CSRFToken` with the returned `data.csrf_token` on every unsafe API
+  request that uses an auth cookie. Missing or mismatched values return `403`.
+- A pure Bearer request does not need the CSRF pair. Refresh/logout still require
+  the pair when a refresh cookie is present.
+
+### Token input and response contract
+
+- Refresh input is JSON `refresh` or `refresh_token`, otherwise the configured
+  refresh cookie. `Authorization: Bearer <refresh_token>` is not a refresh input.
+- Customer logout requires a refresh token from JSON or the refresh cookie. Its
+  optional access token may be JSON `access`, a Bearer header, or the access cookie.
+- Loan-officer and administrator logout read the same sources but currently do not
+  reject missing tokens; send the refresh token to ensure session revocation.
+- Customer login, email verification, refresh, and 2FA completion return
+  `access` and `refresh` in body mode. Loan-officer login currently returns
+  `access_token` and `refresh_token`. Cookie mode returns neither in JSON.
+- Public token response names are not fully standardized yet. Do not silently
+  rename fields in a client until the API and web/mobile clients are coordinated.
 
 ## URL Reference
 
@@ -92,12 +128,13 @@ audit, and Bandit gates with deterministic non-production settings.
   - Otherwise: `user`, `access`, `refresh`, `remember_me`
 
 6. `POST /refresh-token/`
-- Auth: refresh token via cookie or `Authorization: Bearer <refresh_token>`
-- Request body: none required
+- Auth: refresh token in JSON `refresh`/`refresh_token` or the refresh cookie
+- Request body: optional JSON refresh token; no `Authorization` refresh token
 - Key response fields: new `access` and `refresh` tokens
 
 7. `POST /logout/`
-- Auth: refresh token via cookie; access token optional via cookie or request body
+- Auth: customer refresh token in JSON `refresh`/`refresh_token` or cookie; access
+  token optional via JSON `access`, Bearer header, or access cookie
 - Request fields:
   - `access` optional in body
 - Key response fields: `message`
@@ -130,7 +167,7 @@ audit, and Bandit gates with deterministic non-production settings.
 - Key response fields: `message` only
 
 11. `POST /change-password/`
-- Auth: authenticated customer or loan officer
+- Auth: authenticated customer, loan officer, or administrator
 - Request fields:
   - `old_password`
   - `new_password`
@@ -140,12 +177,12 @@ audit, and Bandit gates with deterministic non-production settings.
 ### Two-Factor Authentication
 
 12. `POST /2fa/setup/`
-- Auth: authenticated customer or loan officer
+- Auth: authenticated customer, loan officer, or administrator
 - Request fields: none
 - Key response fields: `provisioning_uri`, `manual_entry_key`, `qr_code_data_url`, `message`
 
 13. `POST /2fa/confirm/`
-- Auth: authenticated customer or loan officer
+- Auth: authenticated customer, loan officer, or administrator
 - Request fields:
   - `code`
 - Key response fields: `backup_codes`, `message`
@@ -159,19 +196,20 @@ audit, and Bandit gates with deterministic non-production settings.
 - Key response fields: `user`, `access`, `refresh`
 
 15. `POST /2fa/disable/`
-- Auth: authenticated customer or loan officer
+- Auth: authenticated customer, loan officer, or administrator; administrator
+  2FA cannot be disabled
 - Request fields:
   - `password`
 - Key response fields: `message`
 
 16. `POST /2fa/backup-codes/`
-- Auth: authenticated customer or loan officer
+- Auth: authenticated customer, loan officer, or administrator
 - Request fields:
   - `password`
 - Key response fields: `backup_codes`
 
 17. `GET /2fa/status/`
-- Auth: authenticated customer or loan officer
+- Auth: authenticated customer, loan officer, or administrator
 - Request fields: none
 - Key response fields: `two_factor_enabled`, `backup_codes_remaining`
 
@@ -207,19 +245,19 @@ audit, and Bandit gates with deterministic non-production settings.
 ### Activity & Session Management
 
 22. `GET /sessions/`
-- Auth: authenticated customer
+- Auth: authenticated customer, loan officer, or administrator
 - Request fields: none
 - Key response fields: list of active session objects
 
 23. `DELETE /sessions/`
-- Auth: authenticated customer
+- Auth: authenticated customer, loan officer, or administrator
 - Request fields:
   - `session_id` for one session; or
   - `revoke_all` and optional `keep_current` for bulk revocation
 - Key response fields: `message`
 
 24. `GET /login-activity/`
-- Auth: authenticated customer
+- Auth: authenticated customer, loan officer, or administrator
 - Request fields: none
 - Key response fields: list of login activity objects
 
@@ -294,7 +332,8 @@ audit, and Bandit gates with deterministic non-production settings.
   - Otherwise: `access_token`, `refresh_token`, `user`, `must_change_password`
 
 26. `POST /loan-officer/logout/`
-- Auth: refresh token required
+- Auth: refresh token recommended from JSON `refresh`/`refresh_token` or cookie;
+  access token may be sent by Bearer header or access cookie
 - Request fields: none required in body
 - Key response fields: `message`
 
@@ -302,6 +341,14 @@ audit, and Bandit gates with deterministic non-production settings.
 - Auth: authenticated loan officer
 - Request fields: none
 - Key response fields: `id`, `email`, `first_name`, `last_name`, `full_name`, `phone`, `department`, `employee_id`, `role`, `last_login_attempt`
+
+27a. `PUT /loan-officer/me/`
+- Auth: authenticated loan officer only
+- Request fields: `first_name`, `last_name`, and/or `phone` optional
+- Read-only profile fields: `email`, `department`, and `employee_id`
+- Key response fields: updated officer profile
+- If `must_change_password` is active, protected profile access returns HTTP 423
+  with `password_change_required` until `POST /change-password/` succeeds.
 
 ### Admin Authentication
 
@@ -315,7 +362,8 @@ audit, and Bandit gates with deterministic non-production settings.
   - If 2FA is enabled: `requires_2fa`, `temp_token`
 
 29. `POST /admin/logout/`
-- Auth: refresh token required
+- Auth: refresh token recommended from JSON `refresh`/`refresh_token` or cookie;
+  access token may be sent by Bearer header or access cookie
 - Request fields: none required in body
 - Key response fields: `message`
 
@@ -323,6 +371,13 @@ audit, and Bandit gates with deterministic non-production settings.
 - Auth: authenticated admin
 - Request fields: none
 - Key response fields: admin profile fields
+
+30a. `PUT /admin/me/`
+- Auth: authenticated administrator or super administrator only
+- Request fields: `first_name` and/or `last_name` optional
+- Read-only/profile-managed elsewhere: `username`, `email`, `permissions`, and
+  `super_admin`
+- Key response fields: updated admin profile
 
 ### Admin - Loan Officer Management
 
@@ -463,6 +518,59 @@ audit, and Bandit gates with deterministic non-production settings.
 14. If you have loan-officer credentials, test `POST /loan-officer/login/`, `GET /loan-officer/me/`, and `POST /loan-officer/logout/`
 15. If you have super-admin credentials, test `POST /admin/login/`, `POST /admin/admins/`, and the admin management routes.
 
+## Negative Tests
+
+Run these checks with a disposable test account and record the HTTP status and
+error code:
+
+1. Send `token_transport: "hybrid"` to a login or verification endpoint -> `400`.
+2. Send a cookie-authenticated unsafe request without `csrftoken` or
+   `X-CSRFToken` -> `403 csrf_token_missing`.
+3. Send a mismatched CSRF cookie/header pair -> `403 csrf_token_invalid`.
+4. Send a pure Bearer request without a CSRF pair -> it is not blocked by the
+   cookie-CSRF middleware.
+5. Call refresh with only `Authorization: Bearer <refresh_token>` -> no refresh
+   token is found; use JSON or the refresh cookie instead.
+6. Call customer refresh or logout without a refresh token -> `400`.
+7. Use a temporary 2FA token at refresh -> `401`.
+8. Reuse the old refresh token after rotation or logout -> `401`.
+9. Use a customer token on `/loan-officer/me/` or an officer token on the
+   customer-only consent/lifecycle routes -> reject the request.
+10. Access a protected officer route while `must_change_password` is true ->
+    `423 password_change_required`.
+11. Attempt administrator 2FA disablement -> reject with the administrator-2FA
+    mandatory error.
+
+## Revocation Checks
+
+For each check, use a second protected request or refresh attempt to prove that
+the old credential is no longer usable:
+
+- Refresh rotation: the new pair works, while the old refresh token returns
+  `401`.
+- Logout: the refresh membership is revoked and a later refresh returns `401`.
+- Password change/reset: all existing sessions are revoked; old access and
+  refresh credentials fail.
+- Customer email confirmation, account deletion request, state change, officer
+  deactivation, and approved 2FA recovery: existing sessions are revoked.
+- `DELETE /sessions/` with one session, `revoke_all: true`, and
+  `keep_current: true` produces the expected single-session, all-session, and
+  all-except-current results.
+- A security-state change increments `security_version`; an older access token
+  then fails live authentication even if its JWT expiry has not passed.
+
+## Security-State Transitions
+
+| Transition | Expected behavior |
+| --- | --- |
+| Customer `active` -> `suspended` or `deactivated` | Existing sessions are revoked; protected access and refresh fail. |
+| Account `security_version` changes | Older access/refresh credentials fail live-state validation. |
+| Officer `must_change_password = true` | Protected officer views return HTTP 423 until password change succeeds. |
+| Password reset/change succeeds | Existing sessions are revoked and a security event is recorded. |
+| Login password accepted with 2FA enabled | A short-lived `temp_token` is returned; full tokens are issued only after 2FA verification. |
+| Temporary 2FA token is verified | The temporary token is consumed/blacklisted and the final token transport is preserved. |
+| Customer deletion requested | State becomes `pending_deletion`, sessions are revoked, and cancellation remains credentialed until retention. |
+
 ## Common Errors
 
 1. `401 Unauthorized`
@@ -490,8 +598,9 @@ audit, and Bandit gates with deterministic non-production settings.
 
 ## Notes
 
-- Customer login returns `access` and `refresh`; loan officer login returns `access_token` and `refresh_token`.
-- Refresh and logout endpoints expect the refresh token via cookie or `Authorization: Bearer` header, not in the JSON body.
+- Customer login returns `access` and `refresh`; loan officer login returns `access_token` and `refresh_token` in body mode.
+- Refresh uses JSON `refresh`/`refresh_token` or the refresh cookie, not `Authorization: Bearer` for the refresh token.
+- Cookie-mode login/verification requests must explicitly request `token_transport: "cookie"` or send `X-Token-Transport: cookie`; `withCredentials` alone does not select cookie delivery.
 - Admin login accepts `username` and `password`. The `username` field also supports email lookup.
 - Password reset accepts optional `role` (`customer`, `loan_officer`, `admin`) to target non-customer accounts.
 - Admin loan-officer creation accepts multiple field name aliases (snake_case and camelCase) for frontend compatibility.
