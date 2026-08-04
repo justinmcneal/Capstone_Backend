@@ -28,7 +28,9 @@ class AuthService:
         if customer:
             return customer
 
-        return Customer.find_one({"email": re.compile(f"^{re.escape(email)}$", re.IGNORECASE)})
+        return Customer.find_one(
+            {"email": re.compile(f"^{re.escape(email)}$", re.IGNORECASE)}
+        )
 
     @staticmethod
     def get_customer_by_id(customer_id):

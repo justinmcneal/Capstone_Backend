@@ -202,11 +202,14 @@ def test_deletion_can_be_cancelled_with_credentials_and_finalized_after_retentio
 
     refreshed = Customer.find_one({"_id": customer._id})
     deletion_client, _ = _customer_client(refreshed)
-    assert deletion_client.post(
-        reverse("accounts:account-deletion-request"),
-        {},
-        format="json",
-    ).status_code == 200
+    assert (
+        deletion_client.post(
+            reverse("accounts:account-deletion-request"),
+            {},
+            format="json",
+        ).status_code
+        == 200
+    )
 
     admin_client = _admin_client(_admin("deletion-stage8-admin"))
     finalized = admin_client.post(
@@ -229,11 +232,14 @@ def test_deletion_can_be_cancelled_with_credentials_and_finalized_after_retentio
 def test_deletion_finalization_is_blocked_before_retention_period():
     customer = _customer("deletion-due-stage8@example.com")
     client, _tokens = _customer_client(customer)
-    assert client.post(
-        reverse("accounts:account-deletion-request"),
-        {},
-        format="json",
-    ).status_code == 200
+    assert (
+        client.post(
+            reverse("accounts:account-deletion-request"),
+            {},
+            format="json",
+        ).status_code
+        == 200
+    )
 
     admin_client = _admin_client(_admin("deletion-due-stage8-admin"))
     response = admin_client.post(

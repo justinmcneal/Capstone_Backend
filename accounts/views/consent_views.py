@@ -355,9 +355,7 @@ class ConsentHistoryView(AccessControlMixin, APIView):
                 return result
             history = [
                 event.to_public_dict()
-                for event in ConsentService.get_consent_history(
-                    result.id, "customer"
-                )
+                for event in ConsentService.get_consent_history(result.id, "customer")
             ]
 
             return success_response(
@@ -400,7 +398,9 @@ class ConsentRequiredMixin(AccessControlMixin):
         user_id = result.id
         user_type = "customer"
 
-        if self.require_ai_consent and not ConsentService.check_ai_consent(user_id, user_type):
+        if self.require_ai_consent and not ConsentService.check_ai_consent(
+            user_id, user_type
+        ):
             return False, error_response(
                 message="AI consent is required to use this feature",
                 code="CONSENT_REQUIRED",
@@ -419,7 +419,9 @@ class ConsentRequiredMixin(AccessControlMixin):
                 status_code=status.HTTP_403_FORBIDDEN,
             )
 
-        if self.require_data_consent and not ConsentService.check_data_consent(user_id, user_type):
+        if self.require_data_consent and not ConsentService.check_data_consent(
+            user_id, user_type
+        ):
             return False, error_response(
                 message="Data consent is required to use this feature",
                 code="CONSENT_REQUIRED",

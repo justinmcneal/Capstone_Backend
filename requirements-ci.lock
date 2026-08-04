@@ -1,0 +1,6 @@
+# Reviewed CI-only tool pins. Application and test dependencies belong in
+# requirements.lock; these tools are intentionally isolated from runtime code.
+bandit==1.9.4
+black==25.1.0
+pip-audit==2.9.0
+ruff==0.12.10

@@ -98,8 +98,16 @@ urlpatterns = [
     path("sessions/", ActiveSessionsView.as_view(), name="active-sessions"),
     path("login-activity/", LoginActivityView.as_view(), name="login-activity"),
     # Account Lifecycle and Recovery
-    path("email-change/request/", EmailChangeRequestView.as_view(), name="email-change-request"),
-    path("email-change/confirm/", EmailChangeConfirmView.as_view(), name="email-change-confirm"),
+    path(
+        "email-change/request/",
+        EmailChangeRequestView.as_view(),
+        name="email-change-request",
+    ),
+    path(
+        "email-change/confirm/",
+        EmailChangeConfirmView.as_view(),
+        name="email-change-confirm",
+    ),
     path("account/export/", AccountExportView.as_view(), name="account-export"),
     path(
         "account/deletion-request/",

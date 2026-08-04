@@ -130,9 +130,7 @@ class Confirm2FASetupView(APIView):
     """
 
     permission_classes = (IsAuthenticated,)
-    throttle_classes = (
-        TwoFactorRateThrottle,
-    )
+    throttle_classes = (TwoFactorRateThrottle,)
 
     def post(self, request):
         code = str(request.data.get("code") or "").strip()
@@ -334,9 +332,7 @@ class Verify2FAView(APIView):
 
             # Generate full tokens after successful 2FA
             if user_type == "customer":
-                tokens = AuthService.create_customer_tokens(
-                    user, token_type=token_type
-                )
+                tokens = AuthService.create_customer_tokens(user, token_type=token_type)
                 user_data = AuthService.serialize_customer_data(
                     user, include_last_name=True
                 )
@@ -349,9 +345,7 @@ class Verify2FAView(APIView):
                     role="admin",
                     token_type=token_type,
                     security_version=getattr(user, "security_version", 1),
-                    must_change_password=getattr(
-                        user, "must_change_password", False
-                    ),
+                    must_change_password=getattr(user, "must_change_password", False),
                     token_transport=token_transport,
                 )
                 user_data = {

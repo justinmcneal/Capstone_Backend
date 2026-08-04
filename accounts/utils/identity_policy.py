@@ -31,7 +31,9 @@ def find_accounts_by_email(normalized_email):
     return matches
 
 
-def is_email_available_globally(normalized_email, *, exclude_role=None, exclude_id=None):
+def is_email_available_globally(
+    normalized_email, *, exclude_role=None, exclude_id=None
+):
     for role, account in find_accounts_by_email(normalized_email).items():
         if exclude_role == role and exclude_id:
             account_id = str(getattr(account, "_id", "") or "")

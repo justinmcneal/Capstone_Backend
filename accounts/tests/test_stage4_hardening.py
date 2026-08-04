@@ -133,9 +133,7 @@ def test_password_reset_otp_has_only_one_password_update_winner(monkeypatch):
     second = Customer.find_one({"_id": customer._id})
     otp = first.password_reset_otp
 
-    first_result = PasswordService.reset_password(
-        first.email, otp, "FirstNewPass123!"
-    )
+    first_result = PasswordService.reset_password(first.email, otp, "FirstNewPass123!")
     second_result = PasswordService.reset_password(
         second.email, otp, "SecondNewPass123!"
     )

@@ -50,9 +50,7 @@ class Consent:
     @property
     def can_access_ai(self):
         """Check if user can access AI features"""
-        current_version = str(
-            getattr(settings, "CONSENT_POLICY_VERSION", "2026-08-01")
-        )
+        current_version = str(getattr(settings, "CONSENT_POLICY_VERSION", "2026-08-01"))
         return bool(
             self.data_consent is True
             and self.ai_consent is True
@@ -62,9 +60,7 @@ class Consent:
     @property
     def can_access_data_features(self):
         """Check if user can use data-dependent features"""
-        current_version = str(
-            getattr(settings, "CONSENT_POLICY_VERSION", "2026-08-01")
-        )
+        current_version = str(getattr(settings, "CONSENT_POLICY_VERSION", "2026-08-01"))
         return bool(
             self.data_consent is True and self.consent_version == current_version
         )

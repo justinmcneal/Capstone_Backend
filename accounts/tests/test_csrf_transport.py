@@ -69,7 +69,9 @@ def _request(path="/api/loans/", *, bearer=False, csrf_header=None):
         headers["HTTP_AUTHORIZATION"] = "Bearer explicit-api-token"
     if csrf_header is not None:
         headers["HTTP_X_CSRFTOKEN"] = csrf_header
-    return RequestFactory().post(path, data={}, content_type="application/json", **headers)
+    return RequestFactory().post(
+        path, data={}, content_type="application/json", **headers
+    )
 
 
 def test_cookie_authenticated_unsafe_request_requires_csrf_cookie_and_header():
@@ -133,12 +135,13 @@ def test_safe_cookie_request_does_not_require_csrf():
 def test_cookie_transport_uses_narrow_paths_and_removes_json_tokens(tokens_factory):
     tokens = tokens_factory()
     response = Response(
-        {"status": "success", "data": {"access": tokens["access"], "refresh": tokens["refresh"]}}
+        {
+            "status": "success",
+            "data": {"access": tokens["access"], "refresh": tokens["refresh"]},
+        }
     )
 
-    apply_auth_token_transport(
-        response, tokens["access"], tokens["refresh"], "cookie"
-    )
+    apply_auth_token_transport(response, tokens["access"], tokens["refresh"], "cookie")
 
     assert "access" not in response.data["data"]
     assert "refresh" not in response.data["data"]

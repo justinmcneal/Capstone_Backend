@@ -43,9 +43,7 @@ def _customer(
 
 
 def _authenticated_client(customer):
-    tokens = AuthService.create_customer_tokens(
-        customer, token_type="no_remember_me"
-    )
+    tokens = AuthService.create_customer_tokens(customer, token_type="no_remember_me")
     client = APIClient()
     client.credentials(HTTP_AUTHORIZATION=f"Bearer {tokens['access']}")
     return client
@@ -101,9 +99,7 @@ def test_voluntary_setup_requires_current_password_and_records_events():
         == 400
     )
 
-    setup_response = client.post(
-        setup_url, {"password": "Pass123!"}, format="json"
-    )
+    setup_response = client.post(setup_url, {"password": "Pass123!"}, format="json")
     assert setup_response.status_code == 200
     secret = setup_response.json()["data"]["manual_entry_key"]
 

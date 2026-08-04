@@ -35,7 +35,9 @@ class CentralizedEmailService:
         }
 
         host_user = str(getattr(settings, "EMAIL_HOST_USER", "")).strip().lower()
-        host_password = str(getattr(settings, "EMAIL_HOST_PASSWORD", "")).strip().lower()
+        host_password = (
+            str(getattr(settings, "EMAIL_HOST_PASSWORD", "")).strip().lower()
+        )
         if host_user in placeholder_values or host_password in placeholder_values:
             return False
 

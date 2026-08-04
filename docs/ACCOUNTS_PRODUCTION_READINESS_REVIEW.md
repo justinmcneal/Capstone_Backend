@@ -57,7 +57,7 @@ Current remediation status:
 - [x] **Stage 6 — Privileged administration and audit coverage**
 - [x] **Stage 7 — Consent history and policy lifecycle**
 - [x] **Stage 8 — Account lifecycle and recovery capabilities**
-- [ ] Stage 9 — Test isolation, dependency reproducibility, and CI
+- [x] **Stage 9 — Test isolation, dependency reproducibility, and CI**
 - [ ] Stage 10 — API contract and documentation alignment
 
 ## Verified Complete
@@ -652,14 +652,26 @@ all 58 account tests passed on 2026-08-03 using the isolated test settings.
 
 ### Stage 9 — Test isolation, dependency reproducibility, and CI
 
-- [ ] Make plain `pytest -q` select an isolated test configuration before base
-  settings initialize external services.
-- [ ] Ensure CI supplies safe deterministic settings and verify it from a clean
-  environment.
-- [ ] Add real-Mongo index/concurrency tests for auth-critical operations.
-- [ ] Pin supported framework/runtime versions or introduce a reviewed lock file.
-- [ ] Restore `black --check accounts` compliance.
-- [ ] Add dependency and static security scanning to CI.
+- [x] ~~Make plain `pytest -q` select an isolated test configuration before base
+  settings initialize external services.~~
+- [x] ~~Ensure CI supplies safe deterministic settings and verify it from a clean
+  environment.~~
+- [x] ~~Add real-Mongo index/concurrency tests for auth-critical operations.~~
+- [x] ~~Pin supported framework/runtime versions or introduce a reviewed lock file.~~
+- [x] ~~Restore `black --check accounts` compliance.~~
+- [x] ~~Add dependency and static security scanning to CI.~~
+
+Implementation note: `pytest.ini` now selects `config.settings_test`, which sets
+safe values before importing base settings; the root fixtures use mongomock and
+force AnyIO tests onto asyncio. `requirements.lock` pins application and test
+dependencies, while `requirements-ci.lock` pins Black, Ruff, Bandit, and
+pip-audit. CI uses the repository's `runtime.txt` Python 3.13.5 pin, safe test
+environment variables, a dedicated real-Mongo service job, `pip check`, and
+security gates. The lockfile resolved cleanly and `pip-audit` reported no known
+vulnerabilities on 2026-08-03. Local validation completed with 854 passed and 12
+skipped tests; real-Mongo tests intentionally skip without
+`REAL_MONGO_TEST_URI` and run in the CI Mongo service. The hosted workflow still
+needs to execute on the repository's CI provider as deployment evidence.
 
 ### Stage 10 — API contract and documentation alignment
 
@@ -701,7 +713,7 @@ all 58 account tests passed on 2026-08-03 using the isolated test settings.
   protection.~~
 - [x] ~~Add authoritative local consent history and policy versioning.~~
 - [x] ~~Implement required customer lifecycle and security-recovery operations.~~
-- [ ] Make test startup isolated and CI reproducible.
+- [x] ~~Make test startup isolated and CI reproducible.~~
 - [ ] Correct the testing guide and API token-transport contract.
 
 ## Review Limits

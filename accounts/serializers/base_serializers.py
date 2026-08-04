@@ -32,12 +32,18 @@ class PasswordConfirmationMixin:
         password_field = "new_password" if "new_password" in attrs else "password"
         confirm_field = "confirm_password"
 
-        if password_field in attrs and confirm_field in attrs and attrs.get(password_field) != attrs.get(confirm_field):
-            raise serializers.ValidationError(
-                {confirm_field: "Passwords do not match"}
-            )
+        if (
+            password_field in attrs
+            and confirm_field in attrs
+            and attrs.get(password_field) != attrs.get(confirm_field)
+        ):
+            raise serializers.ValidationError({confirm_field: "Passwords do not match"})
 
-        if "old_password" in attrs and "new_password" in attrs and attrs.get("old_password") == attrs.get("new_password"):
+        if (
+            "old_password" in attrs
+            and "new_password" in attrs
+            and attrs.get("old_password") == attrs.get("new_password")
+        ):
             raise serializers.ValidationError(
                 {"new_password": "New password must be different from old password"}
             )

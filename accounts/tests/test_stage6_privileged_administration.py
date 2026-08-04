@@ -256,9 +256,7 @@ def test_officer_password_recovery_completion_records_security_event(monkeypatch
         "accounts.services.password_service.EmailUtils.send_password_reset_email",
         lambda **kwargs: True,
     )
-    success, _ = PasswordService.initiate_password_reset(
-        officer.email, "loan_officer"
-    )
+    success, _ = PasswordService.initiate_password_reset(officer.email, "loan_officer")
     assert success is True
     otp = LoanOfficer.find_one({"_id": officer._id}).password_reset_otp
 

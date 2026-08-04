@@ -59,9 +59,7 @@ class LockoutService:
             current = settings.MONGODB[customer.collection_name].find_one(
                 {"_id": customer._id}, {"locked_until": 1}
             )
-            current_lock = EmailUtils.to_aware_utc(
-                (current or {}).get("locked_until")
-            )
+            current_lock = EmailUtils.to_aware_utc((current or {}).get("locked_until"))
             if current_lock and current_lock > now:
                 customer.locked_until = current_lock
                 return (True, int((current_lock - now).total_seconds()))
@@ -88,9 +86,7 @@ class LockoutService:
         failed_attempts = int((document or {}).get("failed_login_attempts", 1))
         customer.failed_login_attempts = failed_attempts
         customer.last_login_attempt = now
-        attempts_remaining = max(
-            LockoutService.MAX_ATTEMPTS - failed_attempts, 0
-        )
+        attempts_remaining = max(LockoutService.MAX_ATTEMPTS - failed_attempts, 0)
 
         if failed_attempts >= LockoutService.MAX_ATTEMPTS:
             duration = lockout_duration or LockoutService.LOCKOUT_DURATION

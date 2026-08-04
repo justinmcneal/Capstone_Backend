@@ -3,6 +3,38 @@
 ## Scope
 Accounts handles authentication, OTP, password reset, consent, 2FA, loan officer auth, admin management, activity tracking, and support contact.
 
+## Stage 9 Automated Verification
+
+Run these commands from `Capstone_Backend`:
+
+```powershell
+.\venv\Scripts\python.exe -m pytest -q
+.\venv\Scripts\python.exe -m black --check accounts
+.\venv\Scripts\python.exe -m ruff check accounts
+.\venv\Scripts\python.exe -m bandit --recursive accounts --exclude accounts/tests --severity-level high --confidence-level high
+.\venv\Scripts\python.exe -m pip_audit --requirement requirements.lock --strict --progress-spinner off
+```
+
+Plain `pytest -q` uses `config.settings_test` automatically. It uses an
+in-memory SQLite database, mongomock, an in-memory cache/channel layer, local
+email delivery, and disabled blockchain integration; it must not require a
+production `.env`, MongoDB, Redis, SMTP provider, or blockchain node.
+
+The real-Mongo auth tests are opt-in because they must never use a production
+database:
+
+```powershell
+$env:REAL_MONGO_TEST_URI = "mongodb://127.0.0.1:27017"
+.\venv\Scripts\python.exe -m pytest -q tests/test_stage9_real_mongo.py -m real_mongo
+```
+
+The test creates a unique temporary database, verifies the actual account model
+indexes, and races concurrent customer-email and session claims. Without
+`REAL_MONGO_TEST_URI`, the tests skip intentionally. CI starts an isolated
+MongoDB service for this job. CI installs `requirements.lock` and
+`requirements-ci.lock`, runs `pip check`, then runs the full test, dependency
+audit, and Bandit gates with deterministic non-production settings.
+
 ## Base URL and Auth
 - Base URL: `http://localhost:8000/api/auth`
 - Protected endpoints require:

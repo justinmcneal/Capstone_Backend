@@ -143,6 +143,7 @@ def test_risk_score_task_runs_with_or_without_ai_consent():
             user_type="customer",
             data_consent=True,
             ai_consent=ai_consent,
+            consent_version=ConsentService.current_policy()["consent_version"],
         )
         AlternativeData(
             customer_id=cust_id,

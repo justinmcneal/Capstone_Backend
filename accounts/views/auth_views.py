@@ -405,9 +405,7 @@ class LoginView(APIView):
                     {
                         "user_id": str(customer.id),
                         "role": "customer",
-                        "session_id": RefreshToken(tokens["refresh"]).get(
-                            "session_id"
-                        ),
+                        "session_id": RefreshToken(tokens["refresh"]).get("session_id"),
                     },
                     {
                         "$set": {
@@ -767,11 +765,9 @@ class RefreshTokenView(APIView):
                     return APIResponseHelper.error_response(
                         "Account is inactive", status.HTTP_401_UNAUTHORIZED
                     )
-                if (
-                    getattr(user, "deleted_at", None)
-                    or int(token_security_version)
-                    != int(getattr(user, "security_version", 1))
-                ):
+                if getattr(user, "deleted_at", None) or int(
+                    token_security_version
+                ) != int(getattr(user, "security_version", 1)):
                     TokenUtils.revoke_session(customer_id, role, session_id)
                     return APIResponseHelper.error_response(
                         "Account state has changed", status.HTTP_401_UNAUTHORIZED
@@ -784,9 +780,7 @@ class RefreshTokenView(APIView):
                     role=role,
                     token_type=token_type,
                     security_version=getattr(user, "security_version", 1),
-                    must_change_password=getattr(
-                        user, "must_change_password", False
-                    ),
+                    must_change_password=getattr(user, "must_change_password", False),
                 )
                 user_email = user.email
 

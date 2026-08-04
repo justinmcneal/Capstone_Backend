@@ -156,7 +156,9 @@ class SecurityEventService:
                     details=details or {},
                     ip_address=ip_address,
                 )
-            except Exception as exc:  # noqa: BLE001 - audit failure must not undo security state
+            except (
+                Exception
+            ) as exc:  # noqa: BLE001 - audit failure must not undo security state
                 logger.error("Failed to audit security event %s: %s", action, exc)
 
         try:

@@ -186,7 +186,9 @@ class AccountLifecycleService:
 
     @staticmethod
     def confirm_email_change(customer, *, otp):
-        pending_email = EmailUtils.normalize_email(getattr(customer, "pending_email", ""))
+        pending_email = EmailUtils.normalize_email(
+            getattr(customer, "pending_email", "")
+        )
         if not pending_email:
             return (False, "No pending email change request found")
 
@@ -337,7 +339,9 @@ class AccountLifecycleService:
     @staticmethod
     def finalize_deletion(customer, *, reason=""):
         now = AccountLifecycleService._now()
-        placeholder_email = f"deleted-{customer.id}-{uuid.uuid4().hex[:8]}@deleted.local"
+        placeholder_email = (
+            f"deleted-{customer.id}-{uuid.uuid4().hex[:8]}@deleted.local"
+        )
         document = settings.MONGODB[Customer.collection_name].find_one_and_update(
             {
                 "_id": customer._id,
@@ -405,14 +409,22 @@ class AccountLifecycleService:
     def request_two_factor_recovery(email, password):
         customer = AccountLifecycleService.get_customer_by_email(email)
         if not customer or not customer.check_password(password):
-            return (True, None, "If the account is eligible, a recovery OTP has been sent.")
+            return (
+                True,
+                None,
+                "If the account is eligible, a recovery OTP has been sent.",
+            )
         if (
             getattr(customer, "account_state", "active") != "active"
             or not getattr(customer, "active", True)
             or not getattr(customer, "verified", True)
             or not customer.two_factor_enabled
         ):
-            return (True, None, "If the account is eligible, a recovery OTP has been sent.")
+            return (
+                True,
+                None,
+                "If the account is eligible, a recovery OTP has been sent.",
+            )
 
         now = AccountLifecycleService._now()
         otp = OTPService.generate_otp()
@@ -466,14 +478,26 @@ class AccountLifecycleService:
                     "$or": [
                         {"two_factor_recovery_window_started_at": None},
                         {"two_factor_recovery_window_started_at": {"$exists": False}},
-                        {"two_factor_recovery_window_started_at": {"$lte": window_cutoff}},
+                        {
+                            "two_factor_recovery_window_started_at": {
+                                "$lte": window_cutoff
+                            }
+                        },
                     ],
                     "$and": [
                         {
                             "$or": [
                                 {"two_factor_recovery_requested_at": None},
-                                {"two_factor_recovery_requested_at": {"$exists": False}},
-                                {"two_factor_recovery_requested_at": {"$lte": cooldown_cutoff}},
+                                {
+                                    "two_factor_recovery_requested_at": {
+                                        "$exists": False
+                                    }
+                                },
+                                {
+                                    "two_factor_recovery_requested_at": {
+                                        "$lte": cooldown_cutoff
+                                    }
+                                },
                             ]
                         }
                     ],
@@ -495,10 +519,18 @@ class AccountLifecycleService:
             )
 
         if not active_window:
-            return (True, None, "If the account is eligible, a recovery OTP has been sent.")
+            return (
+                True,
+                None,
+                "If the account is eligible, a recovery OTP has been sent.",
+            )
 
         EmailUtils.send_verification_email(customer.email, customer.first_name, otp)
-        return (True, customer, "If the account is eligible, a recovery OTP has been sent.")
+        return (
+            True,
+            customer,
+            "If the account is eligible, a recovery OTP has been sent.",
+        )
 
     @staticmethod
     def verify_two_factor_recovery(email, otp):
@@ -567,7 +599,10 @@ class AccountLifecycleService:
         approval_hours = int(
             getattr(settings, "TWO_FACTOR_RECOVERY_APPROVAL_HOURS", 24)
         )
-        return verified_at + timedelta(hours=approval_hours) > AccountLifecycleService._now()
+        return (
+            verified_at + timedelta(hours=approval_hours)
+            > AccountLifecycleService._now()
+        )
 
     @staticmethod
     def decide_two_factor_recovery(customer, *, approve):
@@ -665,7 +700,9 @@ class AccountLifecycleService:
     @staticmethod
     def export_customer_data(customer):
         consent = Consent.find_by_user(customer.id, "customer")
-        sessions = ActiveSession.find({"user_id": customer.id}, sort=[("created_at", -1)])
+        sessions = ActiveSession.find(
+            {"user_id": customer.id}, sort=[("created_at", -1)]
+        )
         login_activity = LoginActivity.find({"user_id": customer.id}, limit=200)
         audit_entries = AuditLog.find_by_user(customer.id, limit=200)
         notifications = Notification.find_by_user(customer.id, limit=200)
@@ -684,8 +721,12 @@ class AccountLifecycleService:
                 "verified": customer.verified,
                 "active": customer.active,
                 "account_state": getattr(customer, "account_state", "active"),
-                "created_at": AccountLifecycleService._serialize_datetime(customer.created_at),
-                "updated_at": AccountLifecycleService._serialize_datetime(customer.updated_at),
+                "created_at": AccountLifecycleService._serialize_datetime(
+                    customer.created_at
+                ),
+                "updated_at": AccountLifecycleService._serialize_datetime(
+                    customer.updated_at
+                ),
             },
             "consent": consent.to_dict() if consent else None,
             "active_sessions": [session.to_dict() for session in sessions],

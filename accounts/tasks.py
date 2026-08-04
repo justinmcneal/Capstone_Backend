@@ -72,7 +72,9 @@ def finalize_scheduled_customer_deletions_task():
             )
             finalized += 1
         except Exception as exc:  # noqa: BLE001 - one record must not stop the batch
-            logger.error("Scheduled customer deletion failed for %s: %s", customer.id, exc)
+            logger.error(
+                "Scheduled customer deletion failed for %s: %s", customer.id, exc
+            )
 
     logger.info("Scheduled customer deletion task finalized %s account(s)", finalized)
     return f"Finalized {finalized} scheduled customer deletion(s)"

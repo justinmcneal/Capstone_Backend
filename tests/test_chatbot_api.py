@@ -9,6 +9,7 @@ from rest_framework.test import APIRequestFactory, force_authenticate
 
 from accounts.authentication import AuthenticatedUser
 from accounts.models import Consent, Customer
+from accounts.services.consent_service import ConsentService
 from ai_assistant.models import AIInteraction
 from ai_assistant.views import (
     AIStatusView,
@@ -34,6 +35,7 @@ def _create_customer_with_ai_consent(ai_consent=True):
         user_type="customer",
         data_consent=True,
         ai_consent=ai_consent,
+        consent_version=ConsentService.current_policy()["consent_version"],
     ).save()
     return customer
 
@@ -134,7 +136,7 @@ class TestChatView:
 
         assert response.status_code == 403
         assert response.data["status"] == "error"
-        assert "AI consent is required" in response.data["message"]
+        assert "Current data and AI consent are required" in response.data["message"]
 
     def test_chat_filters_prohibited_content_and_saves_interactions(self):
         customer = _create_customer_with_ai_consent(ai_consent=True)
@@ -516,7 +518,7 @@ class TestChatHistoryView:
 
         assert response.status_code == 403
         assert response.data["status"] == "error"
-        assert "AI consent is required" in response.data["message"]
+        assert "Current data and AI consent are required" in response.data["message"]
 
     def test_history_rejects_invalid_page(self):
         customer = _create_customer_with_ai_consent(ai_consent=True)

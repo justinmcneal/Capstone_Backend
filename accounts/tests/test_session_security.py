@@ -114,9 +114,7 @@ def test_password_change_rotates_security_version_and_revokes_sessions():
     tokens = TokenUtils.generate_jwt_tokens(customer)
     old_version = customer.security_version
 
-    success, _ = PasswordService.change_password(
-        customer, "OldPass123!", "NewPass456!"
-    )
+    success, _ = PasswordService.change_password(customer, "OldPass123!", "NewPass456!")
 
     assert success is True
     assert customer.security_version == old_version + 1

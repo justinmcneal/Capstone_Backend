@@ -449,9 +449,7 @@ class TokenUtils:
     def is_session_active(
         user_id: str, role: str, session_id: str, security_version: int
     ) -> bool:
-        query = TokenUtils._token_membership_query(
-            user_id, role=role, active_only=True
-        )
+        query = TokenUtils._token_membership_query(user_id, role=role, active_only=True)
         query.update(
             {
                 "session_id": session_id,

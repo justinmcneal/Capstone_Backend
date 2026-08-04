@@ -33,7 +33,12 @@ _pepper_cache = None
 
 
 def _is_debug_mode() -> bool:
-    return os.environ.get("DEBUG", "False").strip().lower() in {"1", "true", "yes", "on"}
+    return os.environ.get("DEBUG", "False").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
 
 
 def _get_pepper() -> str:

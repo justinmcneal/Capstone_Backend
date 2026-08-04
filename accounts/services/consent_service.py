@@ -187,17 +187,13 @@ class ConsentService:
                 raise ValueError("No consent record found for user")
 
             after = {
-                "data_consent": updates.get(
-                    "data_consent", before["data_consent"]
-                ),
+                "data_consent": updates.get("data_consent", before["data_consent"]),
                 "ai_consent": updates.get("ai_consent", before["ai_consent"]),
             }
             if after["ai_consent"] and not after["data_consent"]:
                 raise ConsentPolicyError("AI consent requires data consent")
 
-            changed_fields = [
-                field for field in after if after[field] != before[field]
-            ]
+            changed_fields = [field for field in after if after[field] != before[field]]
             accepted_version = (
                 policy["consent_version"]
                 if any(value is True for value in updates.values())
@@ -259,8 +255,12 @@ class ConsentService:
         if before["ai_consent"] and not after["ai_consent"]:
             try:
                 cache.delete(f"ai_consent:{user_id}")
-            except Exception as exc:  # noqa: BLE001 - checks bypass cache and fail closed
-                logger.warning("Consent cache invalidation failed for %s: %s", user_id, exc)
+            except (
+                Exception
+            ) as exc:  # noqa: BLE001 - checks bypass cache and fail closed
+                logger.warning(
+                    "Consent cache invalidation failed for %s: %s", user_id, exc
+                )
 
         consent = Consent.from_dict(document)
         consent.previous_state = event.previous_state
@@ -328,8 +328,7 @@ class ConsentService:
             return bool(
                 state["data_consent"]
                 and state["ai_consent"]
-                and state["consent_version"]
-                == cls.current_policy()["consent_version"]
+                and state["consent_version"] == cls.current_policy()["consent_version"]
             )
         except Exception:
             logger.exception("AI consent check failed closed for user %s", user_id)
@@ -342,8 +341,7 @@ class ConsentService:
             state = cls._authoritative_state(user_id, user_type)
             return bool(
                 state["data_consent"]
-                and state["consent_version"]
-                == cls.current_policy()["consent_version"]
+                and state["consent_version"] == cls.current_policy()["consent_version"]
             )
         except Exception:
             logger.exception("Data consent check failed closed for user %s", user_id)
@@ -354,12 +352,11 @@ class ConsentService:
         user_id, user_type = cls._normalize_identity(user_id, user_type)
         state = cls._authoritative_state(user_id, user_type)
         current_policy = cls.current_policy()
-        version_current = (
-            state["consent_version"] == current_policy["consent_version"]
+        version_current = state["consent_version"] == current_policy["consent_version"]
+        has_record = (
+            state["event_id"] is not None
+            or Consent.find_by_user(user_id, user_type) is not None
         )
-        has_record = state["event_id"] is not None or Consent.find_by_user(
-            user_id, user_type
-        ) is not None
         return {
             "data_consent": state["data_consent"],
             "ai_consent": state["ai_consent"],
@@ -368,13 +365,12 @@ class ConsentService:
             "consent_version": state["consent_version"],
             "current_policy": current_policy,
             "requires_reconsent": bool(
-                has_record and any((state["data_consent"], state["ai_consent"]))
+                has_record
+                and any((state["data_consent"], state["ai_consent"]))
                 and not version_current
             ),
             "can_access_ai": bool(
-                state["data_consent"]
-                and state["ai_consent"]
-                and version_current
+                state["data_consent"] and state["ai_consent"] and version_current
             ),
             "has_consent_record": has_record,
             "revision": state["revision"],

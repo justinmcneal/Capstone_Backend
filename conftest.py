@@ -9,6 +9,12 @@ import pytest
 from unittest.mock import MagicMock, patch
 
 
+@pytest.fixture
+def anyio_backend():
+    """Run AnyIO tests on the supported asyncio backend only."""
+    return "asyncio"
+
+
 @pytest.fixture(autouse=True)
 def _mock_mongodb(settings):
     """

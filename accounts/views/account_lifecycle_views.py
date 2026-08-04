@@ -54,7 +54,9 @@ class EmailChangeRequestView(APIView):
                 password=serializer.validated_data["password"],
             )
             if not success:
-                return APIResponseHelper.error_response(message, status.HTTP_400_BAD_REQUEST)
+                return APIResponseHelper.error_response(
+                    message, status.HTTP_400_BAD_REQUEST
+                )
 
             SecurityEventService.record(
                 user=user,
@@ -74,10 +76,14 @@ class EmailChangeRequestView(APIView):
             )
             return APIResponseHelper.success_response(message=message)
         except ValueError as exc:
-            return APIResponseHelper.error_response(str(exc), status.HTTP_400_BAD_REQUEST)
+            return APIResponseHelper.error_response(
+                str(exc), status.HTTP_400_BAD_REQUEST
+            )
         except NON_FATAL_EXCEPTIONS as exc:
             logger.error("Email change request failed: %s", exc)
-            return APIResponseHelper.server_error_response("Failed to request email change")
+            return APIResponseHelper.server_error_response(
+                "Failed to request email change"
+            )
 
 
 class EmailChangeConfirmView(APIView):
@@ -104,7 +110,9 @@ class EmailChangeConfirmView(APIView):
                 otp=serializer.validated_data["otp"],
             )
             if not success:
-                return APIResponseHelper.error_response(message, status.HTTP_400_BAD_REQUEST)
+                return APIResponseHelper.error_response(
+                    message, status.HTTP_400_BAD_REQUEST
+                )
 
             refreshed = AccountLifecycleService.get_customer_by_id(user.id)
             if refreshed:
@@ -135,10 +143,14 @@ class EmailChangeConfirmView(APIView):
                 )
             return APIResponseHelper.success_response(message=message)
         except ValueError as exc:
-            return APIResponseHelper.error_response(str(exc), status.HTTP_400_BAD_REQUEST)
+            return APIResponseHelper.error_response(
+                str(exc), status.HTTP_400_BAD_REQUEST
+            )
         except NON_FATAL_EXCEPTIONS as exc:
             logger.error("Email change confirmation failed: %s", exc)
-            return APIResponseHelper.server_error_response("Failed to confirm email change")
+            return APIResponseHelper.server_error_response(
+                "Failed to confirm email change"
+            )
 
 
 class AccountExportView(APIView):
@@ -160,7 +172,9 @@ class AccountExportView(APIView):
             )
         except NON_FATAL_EXCEPTIONS as exc:
             logger.error("Account export failed: %s", exc)
-            return APIResponseHelper.server_error_response("Failed to generate account export")
+            return APIResponseHelper.server_error_response(
+                "Failed to generate account export"
+            )
 
 
 class AccountDeletionRequestView(APIView):
@@ -281,12 +295,16 @@ class TwoFactorRecoveryRequestView(APIView):
         if not serializer.is_valid():
             return APIResponseHelper.validation_error_response(serializer.errors)
 
-        success, customer, message = AccountLifecycleService.request_two_factor_recovery(
-            serializer.validated_data["email"],
-            serializer.validated_data["password"],
+        success, customer, message = (
+            AccountLifecycleService.request_two_factor_recovery(
+                serializer.validated_data["email"],
+                serializer.validated_data["password"],
+            )
         )
         if not success:
-            return APIResponseHelper.error_response(message, status.HTTP_400_BAD_REQUEST)
+            return APIResponseHelper.error_response(
+                message, status.HTTP_400_BAD_REQUEST
+            )
         if customer:
             SecurityEventService.record(
                 user=customer,
@@ -320,7 +338,9 @@ class TwoFactorRecoveryVerifyView(APIView):
             serializer.validated_data["otp"],
         )
         if not success:
-            return APIResponseHelper.error_response(message, status.HTTP_400_BAD_REQUEST)
+            return APIResponseHelper.error_response(
+                message, status.HTTP_400_BAD_REQUEST
+            )
         if customer:
             AuditLog.log_action(
                 action="two_factor_recovery_requested",

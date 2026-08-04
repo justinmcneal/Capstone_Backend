@@ -196,9 +196,7 @@ class LoanOfficerLoginView(APIView):
                     user_id=officer.id,
                     email=officer.email,
                     role="loan_officer",
-                    token_type=(
-                        "remember_me" if remember_me else "no_remember_me"
-                    ),
+                    token_type=("remember_me" if remember_me else "no_remember_me"),
                     security_version=getattr(officer, "security_version", 1),
                     must_change_password=officer.must_change_password,
                     token_transport=token_transport,
@@ -234,9 +232,7 @@ class LoanOfficerLoginView(APIView):
                 description=f"Loan officer {officer.full_name} logged in",
                 ip_address=request.META.get("REMOTE_ADDR", ""),
             )
-            user_logged_in.send(
-                sender=officer.__class__, request=request, user=officer
-            )
+            user_logged_in.send(sender=officer.__class__, request=request, user=officer)
 
             response = success_response(
                 data={
@@ -314,9 +310,7 @@ class LoanOfficerLogoutView(APIView):
                     "Could not decode token for audit log user info during logout"
                 )
 
-            if not TokenUtils.blacklist_tokens_on_logout(
-                access_token, refresh_token
-            ):
+            if not TokenUtils.blacklist_tokens_on_logout(access_token, refresh_token):
                 return error_response(
                     message="Logout failed",
                     status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,

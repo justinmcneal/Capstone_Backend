@@ -130,7 +130,9 @@ class CustomJWTAuthentication(JWTAuthentication):
         validated_token = self.get_validated_token(raw_token)
         user = self.get_user(validated_token)
         if user.must_change_password:
-            url_name = getattr(getattr(request, "resolver_match", None), "url_name", None)
+            url_name = getattr(
+                getattr(request, "resolver_match", None), "url_name", None
+            )
             if url_name not in self.TEMPORARY_PASSWORD_ALLOWED_URLS:
                 exc = PermissionDenied(
                     "You must change your password before accessing this resource. "

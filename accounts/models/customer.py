@@ -85,9 +85,13 @@ class Customer:
         self.two_factor_recovery_requested_at = kwargs.get(
             "two_factor_recovery_requested_at"
         )
-        self.two_factor_recovery_verified_at = kwargs.get("two_factor_recovery_verified_at")
+        self.two_factor_recovery_verified_at = kwargs.get(
+            "two_factor_recovery_verified_at"
+        )
         self.two_factor_recovery_otp = kwargs.get("two_factor_recovery_otp")
-        self.two_factor_recovery_otp_expires = kwargs.get("two_factor_recovery_otp_expires")
+        self.two_factor_recovery_otp_expires = kwargs.get(
+            "two_factor_recovery_otp_expires"
+        )
         self.two_factor_recovery_attempt_count = kwargs.get(
             "two_factor_recovery_attempt_count", 0
         )

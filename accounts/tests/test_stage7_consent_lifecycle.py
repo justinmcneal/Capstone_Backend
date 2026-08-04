@@ -127,7 +127,10 @@ def test_consent_updates_are_single_projection_with_ordered_revisions(settings):
         "ai_consent": True,
         "consent_version": "2026-08-01",
     }
-    assert client.post(reverse("accounts:consent"), grant, format="json").status_code == 201
+    assert (
+        client.post(reverse("accounts:consent"), grant, format="json").status_code
+        == 201
+    )
     assert (
         client.put(
             reverse("accounts:consent"),

@@ -357,8 +357,10 @@ class AdminLoginView(APIView):
 
             # Verify password
             if not admin.check_password(password):
-                is_now_locked, attempts_remaining = LockoutService.record_failed_attempt(
-                    admin, lockout_duration=timedelta(minutes=30)
+                is_now_locked, attempts_remaining = (
+                    LockoutService.record_failed_attempt(
+                        admin, lockout_duration=timedelta(minutes=30)
+                    )
                 )
                 if is_now_locked:
                     _log_admin_login_failure(
@@ -407,9 +409,7 @@ class AdminLoginView(APIView):
                     email=admin.email,
                     role="admin",
                     security_version=getattr(admin, "security_version", 1),
-                    must_change_password=getattr(
-                        admin, "must_change_password", False
-                    ),
+                    must_change_password=getattr(admin, "must_change_password", False),
                     token_transport=token_transport,
                 )
                 logger.info(
@@ -493,9 +493,7 @@ class AdminLogoutView(APIView):
                     "Could not decode token for audit log user info during admin logout"
                 )
 
-            if not TokenUtils.blacklist_tokens_on_logout(
-                access_token, refresh_token
-            ):
+            if not TokenUtils.blacklist_tokens_on_logout(access_token, refresh_token):
                 return error_response(
                     message="Logout failed",
                     status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -691,7 +689,8 @@ class LoanOfficerManagementView(AdminRequiredMixin, APIView):
                 )
             else:  # created_at
                 all_officers.sort(
-                    key=lambda o: o.created_at or datetime.min.replace(tzinfo=timezone.utc),
+                    key=lambda o: o.created_at
+                    or datetime.min.replace(tzinfo=timezone.utc),
                     reverse=(sort_order == "desc"),
                 )
 
@@ -1358,7 +1357,8 @@ class AdminManagementView(SuperAdminRequiredMixin, APIView):
                 )
             else:  # created_at
                 all_admins.sort(
-                    key=lambda a: a.created_at or datetime.min.replace(tzinfo=timezone.utc),
+                    key=lambda a: a.created_at
+                    or datetime.min.replace(tzinfo=timezone.utc),
                     reverse=(sort_order == "desc"),
                 )
 
@@ -1641,7 +1641,9 @@ class AdminDetailView(SuperAdminRequiredMixin, APIView):
             if is_deactivation and target_admin.super_admin:
                 try:
                     with _super_admin_mutation_guard():
-                        remaining = settings.MONGODB[Admin.collection_name].count_documents(
+                        remaining = settings.MONGODB[
+                            Admin.collection_name
+                        ].count_documents(
                             {
                                 "_id": {"$ne": target_admin._id},
                                 "active": True,
@@ -1678,7 +1680,9 @@ class AdminDetailView(SuperAdminRequiredMixin, APIView):
                     request=request,
                     actor=current_admin,
                     target=target_admin,
-                    action=("admin_deactivated" if is_deactivation else "admin_updated"),
+                    action=(
+                        "admin_deactivated" if is_deactivation else "admin_updated"
+                    ),
                     description=(
                         f"Deactivated admin: {target_admin.username}"
                         if is_deactivation
@@ -1741,7 +1745,9 @@ class AdminDetailView(SuperAdminRequiredMixin, APIView):
             try:
                 with _super_admin_mutation_guard():
                     if target_admin.super_admin:
-                        remaining = settings.MONGODB[Admin.collection_name].count_documents(
+                        remaining = settings.MONGODB[
+                            Admin.collection_name
+                        ].count_documents(
                             {
                                 "_id": {"$ne": target_admin._id},
                                 "active": True,
@@ -1845,9 +1851,7 @@ class AdminPermissionsView(SuperAdminRequiredMixin, APIView):
 
             data = serializer.validated_data
             data.pop("last_known_updated_at", None)
-            requested_super_admin = data.get(
-                "super_admin", target_admin.super_admin
-            )
+            requested_super_admin = data.get("super_admin", target_admin.super_admin)
             is_demotion = target_admin.super_admin and not requested_super_admin
 
             if is_demotion and str(current_admin.id) == str(target_admin.id):
@@ -1878,7 +1882,9 @@ class AdminPermissionsView(SuperAdminRequiredMixin, APIView):
             try:
                 if is_demotion:
                     with _super_admin_mutation_guard():
-                        remaining = settings.MONGODB[Admin.collection_name].count_documents(
+                        remaining = settings.MONGODB[
+                            Admin.collection_name
+                        ].count_documents(
                             {
                                 "_id": {"$ne": target_admin._id},
                                 "active": True,
@@ -1922,9 +1928,7 @@ class AdminPermissionsView(SuperAdminRequiredMixin, APIView):
                         f"Updated permissions for admin: {target_admin.username}"
                     ),
                     before=before,
-                    after=_account_state(
-                        target_admin, ["super_admin", "permissions"]
-                    ),
+                    after=_account_state(target_admin, ["super_admin", "permissions"]),
                 )
                 SecurityEventService.record(
                     user=target_admin,

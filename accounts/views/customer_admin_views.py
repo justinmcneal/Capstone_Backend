@@ -44,7 +44,9 @@ class CustomerManagementView(ManageUsersRequiredMixin, APIView):
 
         search = sanitize_text(request.query_params.get("search", ""))
         active_raw = request.query_params.get("active")
-        account_state = sanitize_text(request.query_params.get("account_state", "")).lower()
+        account_state = sanitize_text(
+            request.query_params.get("account_state", "")
+        ).lower()
         query = {}
 
         if search:
@@ -60,7 +62,9 @@ class CustomerManagementView(ManageUsersRequiredMixin, APIView):
             query["account_state"] = account_state
 
         if active_raw is not None:
-            is_valid, active_value, error_message = parse_optional_bool(active_raw, "active")
+            is_valid, active_value, error_message = parse_optional_bool(
+                active_raw, "active"
+            )
             if not is_valid:
                 return error_response(
                     message="Invalid active filter",
@@ -82,8 +86,12 @@ class CustomerManagementView(ManageUsersRequiredMixin, APIView):
                 "account_state": getattr(customer, "account_state", "active"),
                 "account_state_reason": getattr(customer, "account_state_reason", ""),
                 "verified": customer.verified,
-                "created_at": customer.created_at.isoformat() if customer.created_at else None,
-                "updated_at": customer.updated_at.isoformat() if customer.updated_at else None,
+                "created_at": (
+                    customer.created_at.isoformat() if customer.created_at else None
+                ),
+                "updated_at": (
+                    customer.updated_at.isoformat() if customer.updated_at else None
+                ),
             }
             for customer in customers
         ]
@@ -190,7 +198,8 @@ class CustomerDetailView(ManageUsersRequiredMixin, APIView):
                 "previous_state": previous_state,
                 "new_state": updated.account_state,
                 "reason": serializer.validated_data.get("reason", ""),
-                "sessions_revoked": updated.account_state in {"suspended", "deactivated"},
+                "sessions_revoked": updated.account_state
+                in {"suspended", "deactivated"},
             },
         )
         AuditLog.log_action(
@@ -213,7 +222,9 @@ class CustomerDetailView(ManageUsersRequiredMixin, APIView):
                 "id": updated.id,
                 "account_state": updated.account_state,
                 "active": updated.active,
-                "updated_at": updated.updated_at.isoformat() if updated.updated_at else None,
+                "updated_at": (
+                    updated.updated_at.isoformat() if updated.updated_at else None
+                ),
             },
             message="Customer state updated successfully",
         )
@@ -315,7 +326,9 @@ class CustomerDeletionFinalizeView(ManageUsersRequiredMixin, APIView):
             data={
                 "id": updated.id,
                 "account_state": updated.account_state,
-                "deleted_at": updated.deleted_at.isoformat() if updated.deleted_at else None,
+                "deleted_at": (
+                    updated.deleted_at.isoformat() if updated.deleted_at else None
+                ),
             },
             message="Customer deletion finalized successfully",
         )
@@ -330,7 +343,9 @@ class TwoFactorRecoveryAdminView(ManageUsersRequiredMixin, APIView):
         if not has_perm:
             return result
         return success_response(
-            data={"requests": AccountLifecycleService.list_pending_two_factor_recovery()},
+            data={
+                "requests": AccountLifecycleService.list_pending_two_factor_recovery()
+            },
             message="Pending 2FA recovery requests retrieved",
         )
 

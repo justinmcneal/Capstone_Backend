@@ -60,9 +60,7 @@ class TwoFactorTokenRateThrottle(RequestValueRateThrottle):
         user = getattr(request, "user", None)
         if user and getattr(user, "is_authenticated", False):
             return str(
-                getattr(user, "id", None)
-                or getattr(user, "customer_id", None)
-                or ""
+                getattr(user, "id", None) or getattr(user, "customer_id", None) or ""
             )
         return ""
 
