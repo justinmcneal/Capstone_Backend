@@ -9,8 +9,8 @@ from .security_event_service import SecurityEventService
 from .two_factor_service import TwoFactorService
 
 __all__ = [
-    "AuthService",
     "AccountLifecycleService",
+    "AuthService",
     "CentralizedEmailService",
     "ConsentService",
     "LockoutService",

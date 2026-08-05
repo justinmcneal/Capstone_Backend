@@ -15,7 +15,6 @@ from accounts.utils.token_utils import TokenUtils
 from analytics.models import AuditLog
 from notifications.models.notification import Notification
 
-
 ACCOUNT_STATES = {
     "active",
     "suspended",

@@ -28,11 +28,11 @@ from accounts.utils.auth_cookies import (
 )
 from accounts.utils.email_utils import EmailUtils
 from accounts.utils.exception_types import NON_FATAL_EXCEPTIONS
+from accounts.utils.identity_policy import assert_email_available_globally
 from accounts.utils.request_utils import get_client_ip
 from accounts.utils.response_helpers import error_response, success_response
 from accounts.utils.throttles import AdminLoginRateThrottle, LoginIdentifierRateThrottle
 from accounts.utils.token_utils import TokenUtils
-from accounts.utils.identity_policy import assert_email_available_globally
 from accounts.utils.validation_utils import (
     normalize_text,
     parse_bool,

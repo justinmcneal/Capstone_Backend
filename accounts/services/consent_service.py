@@ -257,7 +257,7 @@ class ConsentService:
                 cache.delete(f"ai_consent:{user_id}")
             except (
                 Exception
-            ) as exc:  # noqa: BLE001 - checks bypass cache and fail closed
+            ) as exc:
                 logger.warning(
                     "Consent cache invalidation failed for %s: %s", user_id, exc
                 )

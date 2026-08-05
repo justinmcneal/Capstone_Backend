@@ -5,7 +5,6 @@ from bson import ObjectId
 from accounts.models import Admin, Customer, LoanOfficer
 from accounts.utils.email_utils import EmailUtils
 
-
 ROLE_MODEL_MAP = {
     "customer": Customer,
     "loan_officer": LoanOfficer,
