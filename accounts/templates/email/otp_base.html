@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <title>{% block title %}MSME Pathways{% endblock %}</title>
+    <!--[if mso]>
+    <style type="text/css">
+        body, table, td { font-family: Arial, sans-serif !important; }
+    </style>
+    <![endif]-->
+</head>
+<body style="margin: 0; padding: 0; background-color: #f3f4f6; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;">
+    <div style="display: none; max-height: 0; overflow: hidden; opacity: 0; color: transparent;">
+        {% block preheader %}{% endblock %}
+    </div>
+
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color: #f3f4f6;">
+        <tr>
+            <td align="center" style="padding: 40px 20px;">
+                <table role="presentation" width="480" cellpadding="0" cellspacing="0" border="0" style="width: 100%; max-width: 480px; background-color: #ffffff; border: 1px solid #e5e7eb; border-radius: 8px;">
+                    <tr>
+                        <td style="padding: 20px 24px 16px 24px;">
+                            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+                                <tr>
+                                    <td align="left" valign="middle">
+                                        <table role="presentation" cellpadding="0" cellspacing="0" border="0">
+                                            <tr>
+                                                <td valign="middle" style="padding-right: 10px;">
+                                                    <div style="width: 38px; height: 38px; background-color: #1a3c34; border-radius: 5px; display: inline-block; vertical-align: middle; line-height: 38px; text-align: center;">
+                                                        <img src="cid:{{ brand_logo_cid }}" width="28" height="28" alt="MSME Pathways" style="display: inline-block; width: 28px; height: 28px; object-fit: contain; vertical-align: middle; border: 0; outline: none; text-decoration: none;">
+                                                    </div>
+                                                </td>
+                                                <td valign="middle">
+                                                    <div style="font-size: 15px; font-weight: 700; color: #111827; line-height: 1.2; margin: 0;">MSME Pathways</div>
+                                                    <div style="font-size: 10px; font-weight: 400; color: #9ca3af; text-transform: uppercase; letter-spacing: 0.08em; margin: 0;">ENTERPRISE PORTAL</div>
+                                                </td>
+                                            </tr>
+                                        </table>
+                                    </td>
+                                    <td align="right" valign="middle">
+                                        {% block badge %}{% endblock %}
+                                    </td>
+                                </tr>
+                            </table>
+                        </td>
+                    </tr>
+
+                    <tr>
+                        <td style="padding: 0 24px;">
+                            <div style="height: 1px; background-color: #e5e7eb;"></div>
+                        </td>
+                    </tr>
+
+                    <tr>
+                        <td style="padding: 28px 24px 8px 24px;">
+                            <h1 style="font-size: 22px; font-weight: 700; color: #111827; margin: 0 0 12px 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;">{% block heading %}{% endblock %}</h1>
+
+                            <div style="font-size: 14px; color: #374151; line-height: 1.6; margin: 0 0 24px 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;">
+                                {% block introduction %}{% endblock %}
+                            </div>
+
+                            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color: #f9fafb; border: 2px dashed #e5e7eb; border-radius: 8px; margin-bottom: 24px;">
+                                <tr>
+                                    <td align="center" style="padding: 24px;">
+                                        <div style="font-size: 11px; font-weight: 600; color: #6b7280; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 12px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;">{% block code_label %}Your verification code{% endblock %}</div>
+                                        <div style="font-size: 40px; font-weight: 700; color: #16a34a; letter-spacing: 0.2em; margin-bottom: 12px; font-family: 'Courier New', monospace;">{{ otp }}</div>
+                                        <div style="font-size: 12px; color: #9ca3af; font-weight: 500; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;">
+                                            Valid for <strong style="color: #ef4444; font-weight: 700;">10 minutes</strong>
+                                        </div>
+                                    </td>
+                                </tr>
+                            </table>
+
+                            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color: #dbeafe; border-radius: 6px; margin-bottom: 24px;">
+                                <tr>
+                                    <td style="padding: 16px;">
+                                        <div style="font-size: 13px; font-weight: 700; color: #1e40af; margin-bottom: 6px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;">{% block instruction_title %}{% endblock %}</div>
+                                        <div style="font-size: 13px; color: #1e3a8a; line-height: 1.6; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;">
+                                            {% block instructions %}{% endblock %}
+                                        </div>
+                                    </td>
+                                </tr>
+                            </table>
+
+                            {% block secondary_callout %}{% endblock %}
+                        </td>
+                    </tr>
+
+                    <tr>
+                        <td align="center" style="padding: 20px 24px 16px 24px;">
+                            <div style="font-size: 12px; color: #6b7280; font-style: italic; margin-bottom: 4px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;">Empowering Filipino Entrepreneurs.</div>
+                            <div style="font-size: 13px; font-weight: 700; color: #111827; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;">The MSME Pathways Team</div>
+                        </td>
+                    </tr>
+
+                    <tr>
+                        <td style="background-color: #f9fafb; border-top: 1px solid #e5e7eb; padding: 14px 24px; text-align: center;">
+                            <p style="font-size: 11px; color: #9ca3af; margin: 0; line-height: 1.5; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;">
+                                {% block legal_reason %}You received this email because you are a registered user of MSME Pathways.{% endblock %}<br>
+                                Data Privacy Act of 2012 Compliant. All rights reserved.
+                            </p>
+                        </td>
+                    </tr>
+                </table>
+            </td>
+        </tr>
+    </table>
+</body>
+</html>

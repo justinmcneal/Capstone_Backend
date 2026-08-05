@@ -1,0 +1,33 @@
+{% extends "email/otp_base.html" %}
+
+{% block title %}MSME Pathways - Confirm Email Change{% endblock %}
+{% block preheader %}Use your one-time code to confirm your new MSME Pathways email address.{% endblock %}
+
+{% block badge %}
+<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="background-color: #fef3c7; border-radius: 4px;">
+    <tr><td style="padding: 6px 10px; font-size: 10px; font-weight: 600; color: #92400e; text-transform: uppercase; letter-spacing: 0.03em;">EMAIL CHANGE</td></tr>
+</table>
+{% endblock %}
+
+{% block heading %}Confirm your new email address{% endblock %}
+
+{% block introduction %}
+Kumusta, <strong style="color: #111827; font-weight: 600;">{{ first_name|default:"there" }}</strong>! We received a request to use this email address for your MSME Pathways account. Enter the one-time password (OTP) below to confirm the change.
+{% endblock %}
+
+{% block code_label %}Your email change code{% endblock %}
+{% block instruction_title %}Complete your email change{% endblock %}
+{% block instructions %}Enter this 6-digit code on the email-change confirmation screen. Your account email will remain unchanged until the code is accepted.{% endblock %}
+
+{% block secondary_callout %}
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color: #fffbeb; border: 1px solid #fde68a; border-radius: 6px; margin-bottom: 24px;">
+    <tr>
+        <td style="padding: 16px;">
+            <div style="font-size: 13px; font-weight: 700; color: #92400e; margin-bottom: 8px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;">Didn&apos;t request this change?</div>
+            <div style="font-size: 13px; color: #78350f; line-height: 1.6; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;">Do not share or enter this code. Your current account email will stay active.</div>
+        </td>
+    </tr>
+</table>
+{% endblock %}
+
+{% block legal_reason %}You received this email because an email change was requested for your MSME Pathways account.{% endblock %}

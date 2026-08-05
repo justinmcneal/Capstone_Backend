@@ -49,6 +49,21 @@ class EmailUtils:
         )
 
     @staticmethod
+    def send_email_change_verification(
+        email: str, first_name: str | None, token: str
+    ) -> bool:
+        from accounts.services.email_service import email_service
+
+        context = {"first_name": first_name, "otp": token}
+
+        return email_service.send_template_email(
+            to_emails=[email],
+            subject="Confirm Your New Email Address",
+            template_name="email_change_verification",
+            context=context,
+        )
+
+    @staticmethod
     def send_password_reset_email(email: str, first_name: str | None, otp: str) -> bool:
         from accounts.services.email_service import email_service
 

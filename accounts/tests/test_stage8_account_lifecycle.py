@@ -114,7 +114,7 @@ def test_verified_email_change_consumes_otp_and_revokes_sessions(monkeypatch):
         sent.update({"email": email, "token": token})
         return True
 
-    monkeypatch.setattr(EmailUtils, "send_verification_email", fake_send)
+    monkeypatch.setattr(EmailUtils, "send_email_change_verification", fake_send)
     requested = client.post(
         reverse("accounts:email-change-request"),
         {"new_email": "new-stage8@example.com", "password": "Pass123!"},

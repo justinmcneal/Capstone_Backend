@@ -176,7 +176,7 @@ class AccountLifecycleService:
             },
         )
 
-        EmailUtils.send_verification_email(
+        EmailUtils.send_email_change_verification(
             email=normalized_email,
             first_name=customer.first_name,
             token=otp,
