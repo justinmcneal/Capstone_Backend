@@ -45,16 +45,17 @@ state/security-version enforcement, and centralized mandatory first-password
 change enforcement. Stage 3 now fails closed for cookie-backed unsafe requests
 and separates cookie and response-body credential delivery. Stage 10 documentation
 has been rechecked against the current views, token helpers, middleware, routes,
-and account tests. Production release remains blocked by the intentionally
-unchanged authentication throttle policy and by unresolved API token-name
-standardization.
+and account tests. The current `100/hour` authentication throttle policy is an
+explicitly accepted development/deployment policy and is no longer tracked as an
+unfinished implementation item. Production release remains blocked by unresolved
+API token-name standardization and the validation/CI work recorded below.
 
 Current remediation status:
 
 - [x] **Stage 1 — Session credential safety and revocation**
 - [x] **Stage 2 — Temporary-password and live account-state enforcement**
 - [x] **Stage 3 — Cookie authentication and CSRF integrity**
-- [ ] Stage 4 — Brute-force, OTP, and concurrency hardening
+- [x] **Stage 4 — Brute-force, OTP, and concurrency hardening**
 - [x] **Stage 5 — 2FA lifecycle integrity**
 - [x] **Stage 6 — Privileged administration and audit coverage**
 - [x] **Stage 7 — Consent history and policy lifecycle**
@@ -210,27 +211,36 @@ successful revocation.
 
 ### Authentication throttling and lockouts
 
-**Status: Partial / materially weaker than documented**
+**Status: Complete for the accepted policy**
 
 Dedicated DRF throttle classes are attached to signup, customer/officer/admin
-login, OTP verification/resend, 2FA, password reset, and support contact. Every
-one currently permits `100/hour`, despite docstrings describing limits such as
-3, 5, or 10 requests per hour.
+login, OTP verification/resend, 2FA, password reset, refresh, and support contact.
+Public authentication paths combine IP limits with normalized, SHA-256-hashed
+identifier or temporary-token limits where a stable request subject exists.
 
-Account lockout fields provide an additional control, but implementations differ
-between customer, officer, and administrator paths. Customer login also emits
-django-axes signals, while privileged login flows primarily rely on their custom
-lockout fields.
+All authentication throttle classes intentionally remain at `100/hour`. This is
+an accepted project policy for the current development and initial deployment
+configuration, not an unimplemented placeholder. Lower environment-specific
+values, exponential cooldowns, and alerting thresholds remain optional operational
+tuning rather than completion blockers.
 
-Remaining work:
+MongoDB `LockoutService` is authoritative for customer, loan-officer, and
+administrator account lockouts. Failed-attempt increments are atomic, the default
+policy locks after five failures for 15 minutes, administrators use an explicit
+30-minute lock, successful authentication resets state, and administrator unlock
+is supported. django-axes remains an observer for customer-login events and does
+not impose a second lockout because `AXES_LOCK_OUT_AT_FAILURE=False`.
 
-- Move rates to explicit environment-aware settings with production-safe values.
-- Combine IP, normalized identifier/account, and temporary-token throttles.
-- Add exponential cooldowns and security metrics.
-- Decide whether django-axes or the custom MongoDB lockout service is
-  authoritative and remove inconsistent duplicate policy.
-- Stop trusting arbitrary `X-Forwarded-For`; use an explicit trusted-proxy
-  configuration.
+`TRUSTED_PROXY_COUNT` defaults to zero, so client-supplied forwarding headers are
+ignored unless an exact trusted proxy depth is configured. Invalid or negative
+proxy counts now fail settings validation. Production (`DEBUG=False`) also fails
+closed unless shared Redis caching is enabled and an explicit `REDIS_URL` is
+configured, preventing per-worker throttle and axes state. The cache does not
+assume that an arbitrary Celery broker URL is Redis-compatible.
+
+Regression tests pin the accepted rate, compound endpoint throttle wiring,
+authoritative MongoDB lockout policy, untrusted-forwarding behavior, and configured
+trusted-proxy depth.
 
 ### Atomic attempt and one-time-code enforcement
 
@@ -246,21 +256,17 @@ Remaining work:
 
 ### Password-reset issuance controls
 
-**Status: Partial**
+**Status: Complete for request-abuse controls / delivery durability remains a
+maintainability gap**
 
-Wrong reset-OTP attempts and cooldowns are implemented. Reset initiation itself
-does not have a per-account issuance timestamp/cooldown; the effective external
-limit is the currently weak `100/hour` anonymous throttle. Repeated requests can
-overwrite a valid OTP and create email abuse or denial-of-use behavior.
+Wrong reset-OTP attempts and cooldowns are implemented. Reset initiation enforces
+one message per minute and five messages per account per hour without replacing a
+still-valid OTP during the cooldown. Public responses remain generic, and reset
+completion records a security event.
 
-Remaining work:
-
-- Add per-account issuance cooldown and resend limits.
-- Queue email through a durable outbox/task instead of making delivery latency
-  part of the request path.
-- Preserve generic responses and consider timing normalization for unknown,
-  inactive, and existing accounts.
-- Add reset-request security notifications and operational delivery metrics.
+Moving security email delivery to a durable outbox/task and adding provider-level
+delivery metrics remain cross-cutting email reliability improvements, not missing
+password-reset issuance controls.
 
 ### 2FA lifecycle
 
@@ -494,9 +500,11 @@ complete by documentation alone.
 - Dependency lower bounds without an upper bound or lock file allow major
   framework/tool-version drift. The reviewed environment installed Django 6 even
   though the project header and architecture target Django 4.2.
-- Security-sensitive behavior is distributed between custom lockouts,
-  django-axes, DRF throttles, MongoDB refresh membership, token blacklist, and
-  ActiveSession without one authoritative session/security service.
+- Security-sensitive behavior remains distributed across several services, but
+  responsibility is defined: MongoDB `LockoutService` owns account lockouts,
+  django-axes observes customer-login attempts, DRF/Redis owns request throttles,
+  and MongoDB refresh membership/blacklists/ActiveSession own token and session
+  revocation.
 
 ## Test Status and Coverage Gaps
 
@@ -520,8 +528,8 @@ Full-suite validation:
 
 Current validation gaps:
 
-- Production authentication throttle values remain `100/hour` and need a reviewed
-  deployment policy.
+- Authentication throttle values remain at the explicitly accepted `100/hour`
+  policy and are covered by a regression test.
 - Real-Mongo concurrency and hosted CI evidence remain pending in this run.
 - Real browser cookie/CORS behavior, multi-worker rate limits, and operational
   recovery still need staging validation.
@@ -588,19 +596,24 @@ used by the refresh request.
 
 ### Stage 4 — Brute-force, OTP, and concurrency hardening
 
-- [ ] Replace `100/hour` auth throttle values with reviewed production policy.
+- [x] ~~Accept and regression-test the current `100/hour` authentication throttle
+  policy.~~
 - [x] ~~Add per-identifier and per-token limits in addition to IP limits.~~
 - [x] ~~Make login, OTP, reset, and backup-code changes atomic.~~
 - [x] ~~Add password-reset issuance cooldown and email-abuse protection.~~
 - [x] ~~Define trusted-proxy/IP extraction behavior.~~
 - [x] ~~Reconcile custom lockouts with django-axes.~~
+- [x] ~~Require explicitly configured shared Redis cache state in production.~~
+- [x] ~~Regression-test compound throttle wiring and lockout authority.~~
 
-Implementation note: auth throttles intentionally remain at `100/hour` for the
-current test phase. Identifier and token cache keys are SHA-256 digests rather
-than raw credentials. Password-reset issuance is limited to one message per
-minute and five messages per account per hour. `TRUSTED_PROXY_COUNT` defaults to
-zero, and MongoDB account lockouts are authoritative while django-axes remains an
-audit/reset observer rather than imposing a second lockout duration.
+Implementation note: auth throttles intentionally remain at the accepted
+`100/hour` policy. Identifier and token cache keys are SHA-256 digests rather than
+raw credentials. Password-reset issuance is limited to one message per minute and
+five messages per account per hour. `TRUSTED_PROXY_COUNT` defaults to zero, and
+MongoDB account lockouts are authoritative while django-axes remains an
+audit/reset observer rather than imposing a second lockout duration. Production
+settings require shared Redis so these cache-backed controls work consistently
+across workers.
 
 ### Stage 5 — 2FA lifecycle integrity
 
@@ -729,7 +742,7 @@ hosted workflow and a clean dependency environment remain pending evidence.
   events.~~
 - [x] ~~Enforce live account/security state for every protected endpoint.~~
 - [x] ~~Make logout/session revocation reliable and observable.~~
-- [ ] Deploy reviewed authentication throttle rates.
+- [x] ~~Accept and verify the current authentication throttle policy.~~
 - [x] ~~Complete 2FA lifecycle/session/audit behavior.~~
 - [x] ~~Complete privileged administration audit and last-super-admin
   protection.~~

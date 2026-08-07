@@ -2,6 +2,7 @@ import os
 from datetime import datetime, timedelta, timezone
 
 import pytest
+from django.conf import settings
 from django.test import RequestFactory, override_settings
 
 from accounts.models import Customer
@@ -26,6 +27,21 @@ from accounts.utils.throttles import (
     TwoFactorRateThrottle,
     TwoFactorTokenRateThrottle,
 )
+from accounts.views.admin_views import AdminLoginView
+from accounts.views.auth_views import (
+    LoginView,
+    RefreshTokenView,
+    ResendOTP,
+    SignUpView,
+    VerifyOTP,
+)
+from accounts.views.loan_officer_views import LoanOfficerLoginView
+from accounts.views.password_views import (
+    ForgotPasswordView,
+    ResetPasswordView,
+    VerifyResetOTPView,
+)
+from accounts.views.two_factor_views import Verify2FAView
 
 
 @pytest.fixture(autouse=True)
@@ -64,6 +80,40 @@ def test_all_auth_throttles_remain_100_per_hour():
         RefreshTokenRateThrottle,
     )
     assert {throttle.rate for throttle in throttle_classes} == {"100/hour"}
+
+
+def test_public_auth_endpoints_use_compound_ip_and_subject_throttles():
+    expected = {
+        SignUpView: (SignUpRateThrottle, SignUpIdentifierRateThrottle),
+        LoginView: (LoginRateThrottle, LoginIdentifierRateThrottle),
+        LoanOfficerLoginView: (
+            LoanOfficerLoginRateThrottle,
+            LoginIdentifierRateThrottle,
+        ),
+        AdminLoginView: (AdminLoginRateThrottle, LoginIdentifierRateThrottle),
+        VerifyOTP: (OTPVerificationRateThrottle, OTPIdentifierRateThrottle),
+        ResendOTP: (OTPResendRateThrottle, OTPIdentifierRateThrottle),
+        ForgotPasswordView: (ForgotPasswordRateThrottle, OTPIdentifierRateThrottle),
+        VerifyResetOTPView: (
+            OTPVerificationRateThrottle,
+            OTPIdentifierRateThrottle,
+        ),
+        ResetPasswordView: (
+            OTPVerificationRateThrottle,
+            OTPIdentifierRateThrottle,
+        ),
+        Verify2FAView: (TwoFactorRateThrottle, TwoFactorTokenRateThrottle),
+        RefreshTokenView: (RefreshTokenRateThrottle,),
+    }
+
+    for view, throttle_classes in expected.items():
+        assert view.throttle_classes == throttle_classes
+
+
+def test_mongodb_lockout_is_authoritative_over_django_axes():
+    assert settings.AXES_LOCK_OUT_AT_FAILURE is False
+    assert LockoutService.MAX_ATTEMPTS == 5
+    assert LockoutService.LOCKOUT_DURATION == timedelta(minutes=15)
 
 
 def test_login_failure_increment_is_atomic_across_stale_instances():
@@ -151,3 +201,13 @@ def test_client_ip_ignores_forwarded_header_when_no_proxy_is_trusted():
         "/", REMOTE_ADDR="203.0.113.10", HTTP_X_FORWARDED_FOR="198.51.100.4"
     )
     assert get_client_ip(request) == "203.0.113.10"
+
+
+@override_settings(REST_FRAMEWORK={"NUM_PROXIES": 2})
+def test_client_ip_uses_configured_trusted_proxy_depth():
+    request = RequestFactory().get(
+        "/",
+        REMOTE_ADDR="192.0.2.20",
+        HTTP_X_FORWARDED_FOR="198.51.100.4, 192.0.2.10",
+    )
+    assert get_client_ip(request) == "198.51.100.4"
