@@ -10,13 +10,15 @@ For the full list of settings and their values, see
 https://docs.djangoproject.com/en/4.2/ref/settings/
 """
 
-from pathlib import Path
-import os
 import json
-from dotenv import load_dotenv
+import os
+from pathlib import Path
+
 from cryptography.fernet import Fernet
 from django.core.exceptions import ImproperlyConfigured
 from django.core.management.utils import get_random_secret_key
+from dotenv import load_dotenv
+
 from config.mongodb import LazyMongoDatabase
 
 load_dotenv()
@@ -227,9 +229,24 @@ DOCUMENT_UPLOAD_NOTIFY_REVIEWERS = os.getenv('DOCUMENT_UPLOAD_NOTIFY_REVIEWERS',
 DOCUMENT_UPLOAD_NOTIFY_ASYNC = os.getenv('DOCUMENT_UPLOAD_NOTIFY_ASYNC', 'True') == 'True'
 
 # Cache Configuration
-# Uses Redis if available, falls back to local memory cache
-REDIS_URL = os.getenv('REDIS_URL', os.getenv('CELERY_BROKER_URL', 'redis://localhost:6379/0'))
-USE_REDIS_CACHE = env_bool('USE_REDIS_CACHE', False)
+# Development may use process-local memory. Production requires Redis so DRF
+# throttles and django-axes observe one shared counter across all workers.
+_configured_redis_url = os.getenv('REDIS_URL')
+REDIS_URL = _configured_redis_url or os.getenv(
+    'CELERY_BROKER_URL', 'redis://localhost:6379/0'
+)
+USE_REDIS_CACHE = env_bool('USE_REDIS_CACHE', not DEBUG)
+
+if not DEBUG and not USE_REDIS_CACHE:
+    raise ImproperlyConfigured(
+        "USE_REDIS_CACHE must be enabled when DEBUG=False so authentication "
+        "throttles and django-axes use shared state"
+    )
+if not DEBUG and not _configured_redis_url:
+    raise ImproperlyConfigured(
+        "REDIS_URL must be explicitly configured when DEBUG=False so the "
+        "Django cache uses a Redis-compatible connection"
+    )
 
 if USE_REDIS_CACHE and REDIS_URL:
     # Use Django's built-in Redis cache (Django 4.0+)
@@ -268,6 +285,13 @@ CACHE_TTL = {
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 # REST Framework configuration
+try:
+    TRUSTED_PROXY_COUNT = int(os.getenv('TRUSTED_PROXY_COUNT', '0'))
+except ValueError as exc:
+    raise ImproperlyConfigured("TRUSTED_PROXY_COUNT must be an integer") from exc
+if TRUSTED_PROXY_COUNT < 0:
+    raise ImproperlyConfigured("TRUSTED_PROXY_COUNT cannot be negative")
+
 REST_FRAMEWORK = {
     'DEFAULT_PERMISSION_CLASSES': [
         'rest_framework.permissions.IsAuthenticated',
@@ -279,7 +303,7 @@ REST_FRAMEWORK = {
     'PAGE_SIZE': 10,
     # Do not trust client-supplied forwarding headers by default. Set this to the
     # exact number of trusted reverse proxies when deploying behind a proxy chain.
-    'NUM_PROXIES': int(os.getenv('TRUSTED_PROXY_COUNT', '0')),
+    'NUM_PROXIES': TRUSTED_PROXY_COUNT,
 }
 
 # JWT Settings
@@ -368,10 +392,10 @@ else:
     EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
 
 EMAIL_HOST = os.getenv('EMAIL_HOST', 'smtp.gmail.com')
-EMAIL_PORT = int(os.getenv('EMAIL_PORT', 587))
+EMAIL_PORT = int(os.getenv('EMAIL_PORT', '587'))
 EMAIL_USE_TLS = os.getenv('EMAIL_USE_TLS', 'True') == 'True'
 DEFAULT_FROM_EMAIL = os.getenv('DEFAULT_FROM_EMAIL', EMAIL_HOST_USER)
-EMAIL_TIMEOUT = int(os.getenv('EMAIL_TIMEOUT', 10))
+EMAIL_TIMEOUT = int(os.getenv('EMAIL_TIMEOUT', '10'))
 # Recipient address for the public contact/support form.
 SUPPORT_EMAIL = os.getenv('SUPPORT_EMAIL', 'sorianoeligabriel@gmail.com')
 

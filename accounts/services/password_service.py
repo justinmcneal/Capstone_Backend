@@ -8,7 +8,8 @@ from pymongo import ReturnDocument
 from accounts.models import Admin, LoanOfficer
 from accounts.services.auth_service import AuthService
 from accounts.services.otp_service import OTPService
-from accounts.utils.email_utils import EmailUtils
+from accounts.services.security_event_service import SecurityEventService
+from accounts.tasks import queue_password_reset_delivery
 from accounts.utils.identity_policy import find_accounts_by_email
 from accounts.utils.token_utils import TokenUtils
 
@@ -62,7 +63,7 @@ class PasswordService:
         return user, user_type
 
     @staticmethod
-    def initiate_password_reset(email, requested_user_type=None):
+    def initiate_password_reset(email, requested_user_type=None, ip_address=""):
         user, user_type = PasswordService._find_user_by_email(
             email, requested_user_type
         )
@@ -105,7 +106,7 @@ class PasswordService:
         )
 
         # Use password reset expiry (15 minutes) instead of default (10 minutes).
-        otp = OTPService.set_otp(
+        OTPService.set_otp(
             user,
             "password_reset_otp",
             "password_reset_otp_expires",
@@ -145,6 +146,11 @@ class PasswordService:
                     "password_reset_attempt_count": 0,
                     "password_reset_last_attempt": None,
                     "password_reset_last_sent_at": now,
+                    "password_reset_delivery_status": "pending",
+                    "password_reset_delivery_attempts": 0,
+                    "password_reset_delivery_last_error": "",
+                    "password_reset_delivery_updated_at": now,
+                    "password_reset_delivery_next_attempt_at": now,
                     "updated_at": now,
                 },
                 "$inc": {"password_reset_issue_count": 1},
@@ -159,16 +165,24 @@ class PasswordService:
             )
             return (True, PasswordService.GENERIC_RESET_INIT_MESSAGE)
 
-        # Get name for email
-        first_name = getattr(user, "first_name", None) or getattr(
-            user, "username", "User"
+        queued = queue_password_reset_delivery(
+            user_id=str(user.id),
+            user_type=user_type,
+            expected_expiry=issued["password_reset_otp_expires"],
         )
-
-        EmailUtils.send_password_reset_email(
-            email=user.email, first_name=first_name, otp=otp
+        logger.info(
+            "Password reset OTP delivery %s for %s (%s)",
+            "queued" if queued else "pending reconciliation",
+            email,
+            user_type,
         )
-
-        logger.info(f"Password reset OTP sent for {email} ({user_type})")
+        SecurityEventService.record(
+            user=user,
+            user_type=user_type,
+            action="password_reset_requested",
+            ip_address=ip_address,
+            details={"delivery": "queued" if queued else "pending_reconciliation"},
+        )
         return (True, PasswordService.GENERIC_RESET_INIT_MESSAGE)
 
     @staticmethod
@@ -264,6 +278,9 @@ class PasswordService:
             "password_reset_otp_expires": None,
             "password_reset_attempt_count": 0,
             "password_reset_last_attempt": None,
+            "password_reset_delivery_status": "consumed",
+            "password_reset_delivery_next_attempt_at": None,
+            "password_reset_delivery_updated_at": now,
             "failed_login_attempts": 0,
             "locked_until": None,
             "updated_at": now,

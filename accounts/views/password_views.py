@@ -42,7 +42,9 @@ class ForgotPasswordView(APIView):
 
         email = serializer.validated_data["email"]
         role = serializer.validated_data.get("role")
-        success, message = PasswordService.initiate_password_reset(email, role)
+        success, message = PasswordService.initiate_password_reset(
+            email, role, ip_address=get_client_ip(request)
+        )
         if not success:
             logger.error(f"Password reset initiation failed for {email}: {message}")
             return APIResponseHelper.server_error_response(
