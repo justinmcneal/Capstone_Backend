@@ -1,6 +1,6 @@
 # Accounts Production Readiness Review
 
-Last updated: 2026-08-04
+Last updated: 2026-08-07
 
 Scope: `accounts/` plus the Django/DRF authentication settings, middleware,
 MongoDB collections, Redis/Celery paths, audit logging, email delivery, consent
@@ -93,6 +93,81 @@ Current remediation status:
   enumeration.
 - Unverified customer cleanup is implemented as a periodic Celery task.
 
+### Authentication throttling and lockouts
+
+- Dedicated DRF throttle classes cover signup, customer/officer/admin login, OTP
+  verification/resend, 2FA, password reset, refresh, and support contact.
+- Public authentication paths combine IP limits with normalized,
+  SHA-256-hashed identifier or temporary-token limits where a stable request
+  subject exists.
+- All authentication throttle classes intentionally remain at the accepted
+  `100/hour` policy. Lower environment-specific values, exponential cooldowns,
+  and alerting thresholds are optional operational tuning.
+- MongoDB `LockoutService` is authoritative for customer, loan-officer, and
+  administrator lockouts. Failed-attempt increments are atomic, the default
+  policy locks after five failures for 15 minutes, administrators use an explicit
+  30-minute lock, successful authentication resets state, and administrator unlock
+  is supported.
+- django-axes observes customer-login events without imposing a second lockout
+  because `AXES_LOCK_OUT_AT_FAILURE=False`.
+- `TRUSTED_PROXY_COUNT` defaults to zero and rejects invalid or negative values.
+  Forwarding headers are ignored unless an exact trusted proxy depth is configured.
+- Production fails closed unless shared Redis caching and an explicit `REDIS_URL`
+  are configured, preventing per-worker throttle and axes state.
+- Regression tests pin the accepted rate, compound endpoint wiring, MongoDB
+  lockout authority, and trusted/untrusted proxy behavior.
+
+### Atomic attempt and one-time-code enforcement
+
+- Login and OTP failure counters use atomic MongoDB increments rather than stale
+  model saves.
+- Email-verification and recovery OTPs are consumed with conditional updates so
+  only one concurrent request can win.
+- Password-reset completion conditionally consumes the active OTP while updating
+  the password and security version, preventing two password changes from one
+  code.
+- Backup codes use atomic removal, and accepted TOTP timesteps use conditional
+  persistence to prevent reuse.
+- Mongomock regression tests cover stale-instance counter increments and
+  single-winner OTP, password-reset, backup-code, and TOTP behavior.
+- `tests/test_stage9_real_mongo.py` includes concurrent real-Mongo tests for OTP
+  consumption and password-reset issuance. They run only when
+  `REAL_MONGO_TEST_URI` is explicitly supplied.
+
+### Password-reset issuance and delivery controls
+
+- Reset initiation enforces one issued message per minute and five messages per
+  account per hour without replacing a still-valid OTP during cooldown.
+- Unknown, inactive, ambiguous-role, cooldown-suppressed, and accepted requests
+  preserve the generic public response contract.
+- Reset requests and completions create account-security events for known active
+  accounts.
+- Delivery is dispatched through a retrying Celery task. Celery receives only the
+  account ID, role, and expected expiry; the raw OTP is loaded from the encrypted
+  account record by the worker and is not placed in the broker message.
+- Delivery state (`pending`, `queued`, `sent`, `failed`, `expired`, or `consumed`),
+  attempts, last error type, timestamps, and next retry are persisted on the
+  account document.
+- A one-minute Celery Beat reconciler requeues failed, unpublished, or abandoned
+  queued deliveries while their OTP remains valid.
+- Compound reconciliation indexes are declared for customer, loan-officer, and
+  administrator collections and are included through the existing account index
+  bootstrap.
+- Prometheus counters record password-reset email task success and failure.
+- Focused tests cover cooldown suppression, database-loaded OTP delivery, broker
+  enqueue failure recovery, and single-winner password reset.
+
+### 2FA lifecycle
+
+- Voluntary enrollment requires password confirmation and expires after ten
+  minutes.
+- Temporary tokens preserve session type and transport and recheck live
+  account/security state during final verification.
+- Successful 2FA login records consistent session and activity metadata.
+- Backup codes and TOTP timesteps are consumed atomically.
+- Every 2FA lifecycle change produces an audit record and in-app security
+  notification.
+
 ### Token foundations
 
 - Access and refresh lifetimes are centralized for signup, remembered, and
@@ -137,6 +212,38 @@ Current remediation status:
 - AI consent revocation dispatches cache invalidation.
 - Consent changes can be sent to the blockchain audit path, and administrators
   have a current-state consent report.
+
+### Consent history and revocation
+
+- The append-only `consent_events` collection is authoritative. Each decision has
+  a stable event ID, per-customer revision, before state, resulting state, policy
+  identifier/version/content digest, timestamp, and request IP.
+- The `consents` collection is maintained as an atomic current-state projection,
+  while history remains available when blockchain synchronization is disabled or
+  fails.
+- Consent ownership is customer-only. Grant requests must identify the currently
+  deployed policy (`2026-08-01`), and a policy version/content change immediately
+  requires re-consent.
+- AI entry points fail closed unless data and AI consent are active under the
+  current version. Revocation is authoritative immediately and does not depend on
+  Redis or Celery cache invalidation.
+- Blockchain dispatch is a best-effort secondary audit mirror after the local
+  consent event is durable.
+
+### Privileged administration and auditing
+
+- Administrator creation, profile/deactivation, privilege, and super-admin
+  changes create dedicated audit entries with allowlisted before/after state.
+- Officer updates and deactivation have equivalent audit treatment. Password,
+  2FA, and session-termination operations create account-security audit records
+  and in-app notifications.
+- Super administrators cannot demote or deactivate themselves. Mutations that can
+  remove another active super administrator use a short MongoDB lease and verify
+  that another active super administrator remains.
+- Admin/officer updates use conditional `_id` + `updated_at` updates, returning
+  `409 stale_update` instead of overwriting concurrent changes.
+- Officer deactivation increments security version, revokes every session, and
+  returns `409 active_officer_workload` while active applications remain assigned.
 
 ### Persistence and production settings
 
@@ -209,76 +316,6 @@ successful revocation.
 
 ## Partial Implementations
 
-### Authentication throttling and lockouts
-
-**Status: Complete for the accepted policy**
-
-Dedicated DRF throttle classes are attached to signup, customer/officer/admin
-login, OTP verification/resend, 2FA, password reset, refresh, and support contact.
-Public authentication paths combine IP limits with normalized, SHA-256-hashed
-identifier or temporary-token limits where a stable request subject exists.
-
-All authentication throttle classes intentionally remain at `100/hour`. This is
-an accepted project policy for the current development and initial deployment
-configuration, not an unimplemented placeholder. Lower environment-specific
-values, exponential cooldowns, and alerting thresholds remain optional operational
-tuning rather than completion blockers.
-
-MongoDB `LockoutService` is authoritative for customer, loan-officer, and
-administrator account lockouts. Failed-attempt increments are atomic, the default
-policy locks after five failures for 15 minutes, administrators use an explicit
-30-minute lock, successful authentication resets state, and administrator unlock
-is supported. django-axes remains an observer for customer-login events and does
-not impose a second lockout because `AXES_LOCK_OUT_AT_FAILURE=False`.
-
-`TRUSTED_PROXY_COUNT` defaults to zero, so client-supplied forwarding headers are
-ignored unless an exact trusted proxy depth is configured. Invalid or negative
-proxy counts now fail settings validation. Production (`DEBUG=False`) also fails
-closed unless shared Redis caching is enabled and an explicit `REDIS_URL` is
-configured, preventing per-worker throttle and axes state. The cache does not
-assume that an arbitrary Celery broker URL is Redis-compatible.
-
-Regression tests pin the accepted rate, compound endpoint throttle wiring,
-authoritative MongoDB lockout policy, untrusted-forwarding behavior, and configured
-trusted-proxy depth.
-
-### Atomic attempt and one-time-code enforcement
-
-**Status: Partial / concurrency hardening required**
-
-Login, OTP, reset, and backup-code state changes now use conditional MongoDB
-updates with `$inc`, `$set`, and `$pull`. Accepted TOTP timesteps are also stored
-through a conditional update, preventing same-window replay.
-
-Remaining work:
-
-- Add real-Mongo concurrency tests; mongomock does not prove these semantics.
-
-### Password-reset issuance controls
-
-**Status: Complete for request-abuse controls / delivery durability remains a
-maintainability gap**
-
-Wrong reset-OTP attempts and cooldowns are implemented. Reset initiation enforces
-one message per minute and five messages per account per hour without replacing a
-still-valid OTP during the cooldown. Public responses remain generic, and reset
-completion records a security event.
-
-Moving security email delivery to a durable outbox/task and adding provider-level
-delivery metrics remain cross-cutting email reliability improvements, not missing
-password-reset issuance controls.
-
-### 2FA lifecycle
-
-**Status: Complete**
-
-Voluntary enrollment now requires password confirmation and expires after ten
-minutes. Temporary tokens preserve session type and transport, final verification
-rechecks live account/security state, and successful login records consistent
-session and activity metadata. Backup codes and TOTP timesteps are consumed
-atomically, while every 2FA lifecycle change produces an audit record and in-app
-security notification.
-
 ### Session and activity tracking
 
 **Status: Partial / session-policy and activity semantics remain**
@@ -302,45 +339,6 @@ The product must choose and document one policy:
 - **Single device**: keep one authoritative session and simplify the UI/model.
 - **Multiple devices**: retain independent refresh memberships and revoke by
   stable session ID.
-
-### Consent history and revocation
-
-**Status: Implemented**
-
-The append-only `consent_events` collection is now authoritative. Each decision
-has a stable event ID, per-customer revision, before state, resulting state,
-policy identifier/version/content digest, timestamp, and request IP. The
-`consents` collection is maintained as an atomic current-state projection, while
-history remains available when blockchain synchronization is disabled or fails.
-
-Consent ownership is explicitly customer-only. Grant requests must identify the
-currently deployed policy (`2026-08-01`); a version or content change can update
-the configured policy manifest and immediately requires re-consent. AI entry
-points fail closed unless both data and AI consent are active under that current
-version. Revocation is authoritative immediately and does not depend on Redis or
-Celery cache invalidation. Blockchain dispatch remains a best-effort secondary
-audit mirror after the local event is durable.
-
-### Privileged administration and auditing
-
-**Status: Implemented**
-
-Administrator creation, profile/deactivation, privilege, and super-admin changes
-now create dedicated audit entries with allowlisted before/after state. Officer
-updates and deactivation have the same audit treatment. Password changes, 2FA
-changes, and session termination create account-security audit records and
-in-app notifications.
-
-Super administrators cannot demote or deactivate themselves. Mutations that can
-remove another active super administrator are serialized through a short MongoDB
-lease and verify that another active super administrator remains. Admin/officer
-updates use a conditional `_id` + `updated_at` MongoDB update, so a concurrent
-write returns `409 stale_update` rather than being overwritten.
-
-Officer deactivation increments the security version and revokes every session.
-It fails with `409 active_officer_workload` while submitted, under-review,
-approved, or disbursed applications remain assigned; those applications must be
-reassigned through the existing loan workflow before deactivation.
 
 ### Field encryption and key lifecycle
 
@@ -494,7 +492,9 @@ complete by documentation alone.
 - `BaseAuthView` exists but the main authentication views generally do not use it.
 - Some model saves replace broad document state, increasing lost-update risk under
   concurrent requests.
-- Sensitive email delivery is synchronous and lacks a durable outbox/retry status.
+- Password-reset email delivery is asynchronous, retrying, observable, and
+  reconciled from durable account state. Other sensitive account-email workflows
+  remain synchronous and lack equivalent delivery state.
 - Import-time MongoDB client creation makes test startup depend on external DNS or
   network state unless `MONGODB_URI` is overridden before settings import.
 - Dependency lower bounds without an upper bound or lock file allow major
@@ -517,6 +517,10 @@ Focused account validation:
 - 45 focused account/auth/security tests passed, including cookie-CSRF,
   session, 2FA, privileged-administration, lifecycle, and role-auth tests.
 - The real-Mongo tests were skipped because `REAL_MONGO_TEST_URI` was not set.
+- On 2026-08-07, 21 focused Stage 4/6 tests passed and five real-Mongo tests were
+  skipped because `REAL_MONGO_TEST_URI` was not configured. The focused set covers
+  compound throttle wiring, lockouts, atomic OTP/reset behavior, password-reset
+  delivery/reconciliation, privileged audit behavior, and proxy trust.
 
 Full-suite validation:
 
@@ -601,6 +605,11 @@ used by the refresh request.
 - [x] ~~Add per-identifier and per-token limits in addition to IP limits.~~
 - [x] ~~Make login, OTP, reset, and backup-code changes atomic.~~
 - [x] ~~Add password-reset issuance cooldown and email-abuse protection.~~
+- [x] ~~Dispatch password-reset email through retrying Celery delivery without
+  placing the raw OTP in the broker payload.~~
+- [x] ~~Persist delivery state, add reconciliation, indexes, metrics, and request
+  security events.~~
+- [x] ~~Add real-Mongo concurrency tests for OTP consumption and reset issuance.~~
 - [x] ~~Define trusted-proxy/IP extraction behavior.~~
 - [x] ~~Reconcile custom lockouts with django-axes.~~
 - [x] ~~Require explicitly configured shared Redis cache state in production.~~

@@ -253,8 +253,8 @@ def test_single_session_termination_records_security_event():
 def test_officer_password_recovery_completion_records_security_event(monkeypatch):
     officer = _officer("STAGE6-LO-5")
     monkeypatch.setattr(
-        "accounts.services.password_service.EmailUtils.send_password_reset_email",
-        lambda **kwargs: True,
+        "accounts.services.password_service.queue_password_reset_delivery",
+        lambda **_kwargs: True,
     )
     success, _ = PasswordService.initiate_password_reset(officer.email, "loan_officer")
     assert success is True

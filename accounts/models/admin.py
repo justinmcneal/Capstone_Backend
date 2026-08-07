@@ -85,6 +85,21 @@ class Admin:
             "password_reset_window_started_at"
         )
         self.password_reset_issue_count = kwargs.get("password_reset_issue_count", 0)
+        self.password_reset_delivery_status = kwargs.get(
+            "password_reset_delivery_status"
+        )
+        self.password_reset_delivery_attempts = kwargs.get(
+            "password_reset_delivery_attempts", 0
+        )
+        self.password_reset_delivery_last_error = kwargs.get(
+            "password_reset_delivery_last_error", ""
+        )
+        self.password_reset_delivery_updated_at = kwargs.get(
+            "password_reset_delivery_updated_at"
+        )
+        self.password_reset_delivery_next_attempt_at = kwargs.get(
+            "password_reset_delivery_next_attempt_at"
+        )
 
     @property
     def id(self):
@@ -158,6 +173,11 @@ class Admin:
             "password_reset_last_sent_at": self.password_reset_last_sent_at,
             "password_reset_window_started_at": self.password_reset_window_started_at,
             "password_reset_issue_count": self.password_reset_issue_count,
+            "password_reset_delivery_status": self.password_reset_delivery_status,
+            "password_reset_delivery_attempts": self.password_reset_delivery_attempts,
+            "password_reset_delivery_last_error": self.password_reset_delivery_last_error,
+            "password_reset_delivery_updated_at": self.password_reset_delivery_updated_at,
+            "password_reset_delivery_next_attempt_at": self.password_reset_delivery_next_attempt_at,
         }
         if self._id:
             data["_id"] = self._id
@@ -231,3 +251,11 @@ class Admin:
         collection = db[cls.collection_name]
         collection.create_index("username", unique=True)
         collection.create_index("email", unique=True)
+        collection.create_index(
+            [
+                ("password_reset_delivery_status", 1),
+                ("password_reset_delivery_next_attempt_at", 1),
+                ("password_reset_otp_expires", 1),
+            ],
+            name="password_reset_delivery_reconciliation",
+        )

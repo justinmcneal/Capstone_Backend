@@ -10,13 +10,15 @@ For the full list of settings and their values, see
 https://docs.djangoproject.com/en/4.2/ref/settings/
 """
 
-from pathlib import Path
-import os
 import json
-from dotenv import load_dotenv
+import os
+from pathlib import Path
+
 from cryptography.fernet import Fernet
 from django.core.exceptions import ImproperlyConfigured
 from django.core.management.utils import get_random_secret_key
+from dotenv import load_dotenv
+
 from config.mongodb import LazyMongoDatabase
 
 load_dotenv()
@@ -390,10 +392,10 @@ else:
     EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
 
 EMAIL_HOST = os.getenv('EMAIL_HOST', 'smtp.gmail.com')
-EMAIL_PORT = int(os.getenv('EMAIL_PORT', 587))
+EMAIL_PORT = int(os.getenv('EMAIL_PORT', '587'))
 EMAIL_USE_TLS = os.getenv('EMAIL_USE_TLS', 'True') == 'True'
 DEFAULT_FROM_EMAIL = os.getenv('DEFAULT_FROM_EMAIL', EMAIL_HOST_USER)
-EMAIL_TIMEOUT = int(os.getenv('EMAIL_TIMEOUT', 10))
+EMAIL_TIMEOUT = int(os.getenv('EMAIL_TIMEOUT', '10'))
 # Recipient address for the public contact/support form.
 SUPPORT_EMAIL = os.getenv('SUPPORT_EMAIL', 'sorianoeligabriel@gmail.com')
 

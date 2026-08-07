@@ -34,6 +34,10 @@ class SecurityEventService:
             "Password changed",
             "Your account password was changed.",
         ),
+        "password_reset_requested": (
+            "Password reset requested",
+            "A password reset code was requested for your account.",
+        ),
         "password_reset_completed": (
             "Password reset completed",
             "Your account password was reset using the recovery workflow.",
@@ -156,9 +160,7 @@ class SecurityEventService:
                     details=details or {},
                     ip_address=ip_address,
                 )
-            except (
-                Exception
-            ) as exc:
+            except Exception as exc:  # noqa: BLE001 - audit failure must not block auth
                 logger.error("Failed to audit security event %s: %s", action, exc)
 
         try:

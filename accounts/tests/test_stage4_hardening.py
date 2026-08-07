@@ -10,6 +10,10 @@ from accounts.services.auth_service import AuthService
 from accounts.services.lockout_service import LockoutService
 from accounts.services.password_service import PasswordService
 from accounts.services.two_factor_service import TwoFactorService
+from accounts.tasks import (
+    reconcile_password_reset_email_deliveries_task,
+    send_password_reset_email_task,
+)
 from accounts.utils.request_utils import get_client_ip
 from accounts.utils.throttles import (
     AdminLoginRateThrottle,
@@ -156,10 +160,10 @@ def test_backup_code_can_only_be_consumed_once():
 
 def test_password_reset_issuance_cooldown_suppresses_duplicate_email(monkeypatch):
     customer = _customer("reset-cooldown@example.com")
-    sent = []
+    queued = []
     monkeypatch.setattr(
-        "accounts.services.password_service.EmailUtils.send_password_reset_email",
-        lambda **kwargs: sent.append(kwargs),
+        "accounts.services.password_service.queue_password_reset_delivery",
+        lambda **kwargs: queued.append(kwargs) or True,
     )
 
     assert PasswordService.initiate_password_reset(customer.email)[0] is True
@@ -167,16 +171,83 @@ def test_password_reset_issuance_cooldown_suppresses_duplicate_email(monkeypatch
     assert PasswordService.initiate_password_reset(customer.email)[0] is True
     stored = Customer.find_one({"_id": customer._id})
 
-    assert len(sent) == 1
+    assert len(queued) == 1
     assert stored.password_reset_otp == first_otp
     assert stored.password_reset_issue_count == 1
+    assert stored.password_reset_delivery_status == "pending"
+
+
+def test_password_reset_email_task_loads_otp_from_database(monkeypatch):
+    customer = _customer("reset-task@example.com")
+    monkeypatch.setattr(
+        "accounts.services.password_service.queue_password_reset_delivery",
+        lambda **_kwargs: True,
+    )
+    PasswordService.initiate_password_reset(customer.email)
+    stored = Customer.find_one({"_id": customer._id})
+    delivered = []
+    monkeypatch.setattr(
+        "accounts.tasks.EmailUtils.send_password_reset_email",
+        lambda **kwargs: delivered.append(kwargs) or True,
+    )
+
+    result = send_password_reset_email_task.run(
+        customer.id,
+        "customer",
+        stored.password_reset_otp_expires.isoformat(),
+    )
+    raw = settings.MONGODB[Customer.collection_name].find_one({"_id": customer._id})
+
+    assert result is True
+    assert delivered == [
+        {
+            "email": customer.email,
+            "first_name": customer.first_name,
+            "otp": stored.password_reset_otp,
+        }
+    ]
+    assert raw["password_reset_delivery_status"] == "sent"
+    assert raw["password_reset_delivery_attempts"] == 1
+
+
+def test_password_reset_enqueue_failure_is_recoverable(monkeypatch):
+    customer = _customer("reset-reconcile@example.com")
+    monkeypatch.setattr(
+        "accounts.tasks.send_password_reset_email_task.delay",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("broker down")),
+    )
+
+    PasswordService.initiate_password_reset(customer.email)
+    collection = settings.MONGODB[Customer.collection_name]
+    pending = collection.find_one({"_id": customer._id})
+    assert pending["password_reset_delivery_status"] == "pending"
+
+    collection.update_one(
+        {"_id": customer._id},
+        {
+            "$set": {
+                "password_reset_delivery_next_attempt_at": datetime.now(timezone.utc)
+                - timedelta(seconds=1)
+            }
+        },
+    )
+    requeued = []
+    monkeypatch.setattr(
+        "accounts.tasks.send_password_reset_email_task.delay",
+        lambda *args, **_kwargs: requeued.append(args),
+    )
+
+    assert reconcile_password_reset_email_deliveries_task.run() == 1
+    recovered = collection.find_one({"_id": customer._id})
+    assert recovered["password_reset_delivery_status"] == "queued"
+    assert len(requeued) == 1
 
 
 def test_password_reset_otp_has_only_one_password_update_winner(monkeypatch):
     customer = _customer("atomic-reset@example.com")
     monkeypatch.setattr(
-        "accounts.services.password_service.EmailUtils.send_password_reset_email",
-        lambda **_kwargs: None,
+        "accounts.services.password_service.queue_password_reset_delivery",
+        lambda **_kwargs: True,
     )
     PasswordService.initiate_password_reset(customer.email)
     first = Customer.find_one({"_id": customer._id})

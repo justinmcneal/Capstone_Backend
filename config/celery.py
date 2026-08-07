@@ -3,6 +3,7 @@ Celery configuration for Capstone Backend
 """
 
 import os
+
 from celery import Celery
 from celery.schedules import crontab
 
@@ -21,6 +22,10 @@ app.conf.beat_schedule = {
     "finalize-scheduled-customer-deletions-every-30-minutes": {
         "task": "accounts.tasks.finalize_scheduled_customer_deletions_task",
         "schedule": crontab(minute="*/30"),
+    },
+    "reconcile-password-reset-email-deliveries-every-minute": {
+        "task": "accounts.tasks.reconcile_password_reset_email_deliveries_task",
+        "schedule": crontab(minute="*"),
     },
     "check-overdue-daily": {
         "task": "loans.tasks.check_overdue_installments_task",
