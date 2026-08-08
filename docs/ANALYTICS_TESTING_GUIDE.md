@@ -264,7 +264,7 @@ Loan officer personal dashboard — review activity and queue stats.
 | `my_reviews.approved_today` | int | Approved/disbursed today (`decision_date >= today`) |
 | `my_reviews.rejected_today` | int | Rejected today |
 | `queue` | object | Application queue |
-| `queue.pending_total` | int | System-wide `submitted` + `under_review` |
+| `queue.pending_total` | int | Officer's assigned `submitted` + `under_review` |
 | `queue.assigned_to_me` | int | Officer's `under_review` apps |
 | `performance` | object | Review performance |
 | `performance.total_reviewed` | int | `total_approved + total_rejected` |

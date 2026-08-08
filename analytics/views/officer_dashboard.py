@@ -89,9 +89,14 @@ class OfficerDashboardView(LoanOfficerRequiredMixin, APIView):
             }
         )
 
-        # Pending queue - all applications waiting for any officer
+        # Active queue assigned to this officer. Unassigned applications and
+        # applications owned by another officer must not appear on a personal
+        # dashboard.
         pending_queue = db["loan_applications"].count_documents(
-            {"status": {"$in": ["submitted", "under_review"]}}
+            {
+                "assigned_officer": str(officer_id),
+                "status": {"$in": ["submitted", "under_review"]},
+            }
         )
 
         # Assigned to me

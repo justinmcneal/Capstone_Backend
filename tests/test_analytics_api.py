@@ -164,6 +164,54 @@ class TestOfficerDashboard:
         finally:
             _restore_auth(OfficerDashboardView, original_auth, original_perm)
 
+    def test_officer_dashboard_queue_isolated_by_assigned_officer(self, settings):
+        old_officer = _create_officer()
+        new_officer = _create_officer()
+        settings.MONGODB["loan_applications"].insert_many(
+            [
+                {
+                    "_id": ObjectId(),
+                    "assigned_officer": str(old_officer.id),
+                    "status": "under_review",
+                }
+                for _ in range(4)
+            ]
+        )
+
+        original_auth, original_perm = _bypass_auth(OfficerDashboardView)
+        try:
+            old_user = AuthenticatedUser(
+                customer_id=str(old_officer.id),
+                email=old_officer.email,
+                verified=True,
+                role="loan_officer",
+            )
+            old_response = OfficerDashboardView.as_view()(
+                _auth_get_request("/api/analytics/officer/", old_user)
+            )
+            assert old_response.status_code == 200
+            assert old_response.data["data"]["queue"] == {
+                "pending_total": 4,
+                "assigned_to_me": 4,
+            }
+
+            new_user = AuthenticatedUser(
+                customer_id=str(new_officer.id),
+                email=new_officer.email,
+                verified=True,
+                role="loan_officer",
+            )
+            new_response = OfficerDashboardView.as_view()(
+                _auth_get_request("/api/analytics/officer/", new_user)
+            )
+            assert new_response.status_code == 200
+            assert new_response.data["data"]["queue"] == {
+                "pending_total": 0,
+                "assigned_to_me": 0,
+            }
+        finally:
+            _restore_auth(OfficerDashboardView, original_auth, original_perm)
+
     def test_officer_audit_logs_scoped_to_user_and_assigned_loans(self):
         officer = _create_officer()
         user = AuthenticatedUser(
