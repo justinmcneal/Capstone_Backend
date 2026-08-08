@@ -38,7 +38,12 @@ class ActiveSessionsView(APIView):
             else str(request.user.id)
         )
         sessions = ActiveSession.find(
-            {"user_id": user_id, "is_active": True}, sort=[("last_active", -1)]
+            {
+                "user_id": user_id,
+                "role": request.user.role,
+                "is_active": True,
+            },
+            sort=[("last_active", -1)],
         )
         data = [s.to_dict() for s in sessions]
         return APIResponseHelper.success_response(
@@ -90,12 +95,20 @@ class ActiveSessionsView(APIView):
             # Prefer the public opaque session ID. ObjectId lookup remains only
             # for records created by the previous API contract.
             session = ActiveSession.find_one(
-                {"session_id": str(session_id), "user_id": user_id}
+                {
+                    "session_id": str(session_id),
+                    "user_id": user_id,
+                    "role": request.user.role,
+                }
             )
             if not session:
                 try:
                     session = ActiveSession.find_one(
-                        {"_id": ObjectId(session_id), "user_id": user_id}
+                        {
+                            "_id": ObjectId(session_id),
+                            "user_id": user_id,
+                            "role": request.user.role,
+                        }
                     )
                 except (TypeError, ValueError):
                     session = None

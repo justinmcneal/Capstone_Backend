@@ -3,8 +3,10 @@ from types import SimpleNamespace
 
 import pytest
 from django.core.management import call_command
+from django.test import override_settings
+from django.urls import reverse
 from rest_framework.exceptions import AuthenticationFailed, PermissionDenied
-from rest_framework.test import APIRequestFactory
+from rest_framework.test import APIClient, APIRequestFactory
 from rest_framework_simplejwt.tokens import AccessToken, RefreshToken
 
 from accounts.authentication import CustomJWTAuthentication
@@ -88,6 +90,62 @@ def test_revoked_membership_immediately_invalidates_access_token():
 
     with pytest.raises(AuthenticationFailed):
         authentication.authenticate(_request(tokens["access"]))
+
+
+@override_settings(SECURE_SSL_REDIRECT=False)
+def test_staff_sessions_coexist_until_other_devices_are_terminated():
+    officer = _officer("multi-session@example.com", must_change_password=False)
+    first_tokens = TokenUtils.generate_tokens(
+        officer.id,
+        officer.email,
+        role="loan_officer",
+        security_version=officer.security_version,
+    )
+    second_tokens = TokenUtils.generate_tokens(
+        officer.id,
+        officer.email,
+        role="loan_officer",
+        security_version=officer.security_version,
+    )
+    first_session_id = AccessToken(first_tokens["access"])["session_id"]
+    second_session_id = AccessToken(second_tokens["access"])["session_id"]
+    authentication = CustomJWTAuthentication()
+
+    assert first_session_id != second_session_id
+    assert authentication.authenticate(_request(first_tokens["access"])) is not None
+    assert authentication.authenticate(_request(second_tokens["access"])) is not None
+
+    client = APIClient()
+    client.credentials(HTTP_AUTHORIZATION=f"Bearer {second_tokens['access']}")
+    sessions_url = reverse("accounts:active-sessions")
+    response = client.get(sessions_url)
+
+    assert response.status_code == 200
+    assert {session["session_id"] for session in response.json()["data"]} == {
+        first_session_id,
+        second_session_id,
+    }
+
+    response = client.delete(
+        sessions_url,
+        {"revoke_all": True, "keep_current": True},
+        format="json",
+    )
+
+    assert response.status_code == 200
+    assert response.json()["message"] == "Other sessions terminated successfully"
+    with pytest.raises(AuthenticationFailed):
+        authentication.authenticate(_request(first_tokens["access"]))
+    assert authentication.authenticate(_request(second_tokens["access"])) is not None
+
+    active_sessions = ActiveSession.find(
+        {
+            "user_id": str(officer.id),
+            "role": "loan_officer",
+            "is_active": True,
+        }
+    )
+    assert [session.session_id for session in active_sessions] == [second_session_id]
 
 
 def test_temporary_password_is_blocked_centrally_for_domain_requests():

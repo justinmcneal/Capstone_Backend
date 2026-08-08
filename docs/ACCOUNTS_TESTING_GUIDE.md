@@ -549,13 +549,16 @@ the old credential is no longer usable:
 - Refresh rotation: the new pair works, while the old refresh token returns
   `401`.
 - Logout: the refresh membership is revoked and a later refresh returns `401`.
+- Staff multi-session login: signing in from two browsers keeps both sessions
+  active and lists both on `GET /sessions/`.
 - Password change/reset: all existing sessions are revoked; old access and
   refresh credentials fail.
 - Customer email confirmation, account deletion request, state change, officer
   deactivation, and approved 2FA recovery: existing sessions are revoked.
 - `DELETE /sessions/` with one session, `revoke_all: true`, and
   `keep_current: true` produces the expected single-session, all-session, and
-  all-except-current results.
+  all-except-current results. For all-except-current, the other browser must
+  receive `401` while the requesting browser remains authenticated.
 - A security-state change increments `security_version`; an older access token
   then fails live authentication even if its JWT expiry has not passed.
 

@@ -19,7 +19,7 @@ logger = logging.getLogger("authentication")
 
 
 class TokenUtils:
-    """Utility class for token operations with single-device enforcement"""
+    """Utility class for token issuance, validation, and session revocation."""
 
     @staticmethod
     def _hash_token(token: str) -> str:
@@ -180,6 +180,10 @@ class TokenUtils:
         """
         Generate JWT tokens for non-customer users (admin, loan officer).
 
+        Each successful login creates an independent active session. Existing
+        sessions remain valid until the user or a security-sensitive workflow
+        explicitly revokes them.
+
         Args:
             user_id: User's ID
             email: User's email
@@ -192,17 +196,6 @@ class TokenUtils:
         """
         lifetimes = TokenUtils._get_token_lifetimes(token_type)
         session_id = str(uuid.uuid4())
-
-        user_query = TokenUtils._token_membership_query(
-            user_id, role=role, active_only=True
-        )
-        existing_tokens = RefreshTokenEntry.find(user_query)
-        invalidated_count = len(existing_tokens)
-        if invalidated_count > 0:
-            TokenUtils.revoke_all_sessions(user_id, role)
-            logger.info(
-                f"Invalidated {invalidated_count} existing refresh token(s) for {email} ({role})"
-            )
 
         # Create refresh token
         refresh = RefreshToken()
@@ -383,7 +376,7 @@ class TokenUtils:
     ) -> bool:
         """
         Check if the refresh token is valid for this customer.
-        Used for single-device token validation.
+        Used for active-session membership validation.
         """
         token_hash = TokenUtils._hash_token(token)
         query = TokenUtils._token_membership_query(

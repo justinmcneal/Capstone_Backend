@@ -318,7 +318,7 @@ successful revocation.
 
 ### Session and activity tracking
 
-**Status: Partial / session-policy and activity semantics remain**
+**Status: Partial / activity semantics remain**
 
 Customer non-2FA login creates `LoginActivity` and `ActiveSession`. New session
 records store an opaque `session_id` and a refresh-token hash; public session
@@ -328,17 +328,16 @@ and logout deactivates the matching session.
 Coverage is inconsistent:
 
 - Email-verification token issuance does not create a session record.
-- New token issuance invalidates refresh membership but does not consistently
-  deactivate old `ActiveSession` rows.
 - `last_active` is not updated during normal authenticated use.
-- The token layer describes single-device enforcement while the API exposes a
-  multi-session device-management interface.
 
-The product must choose and document one policy:
+The session policy is role-specific:
 
-- **Single device**: keep one authoritative session and simplify the UI/model.
-- **Multiple devices**: retain independent refresh memberships and revoke by
-  stable session ID.
+- **Customers** retain single-device login behavior in the mobile flow.
+- **Admins and loan officers** retain independent browser sessions. Their web
+  Settings page lists active sessions and can revoke one, all, or all except the
+  current session by stable session ID.
+- Password changes, password resets, lifecycle/security-state transitions, and
+  privileged account actions continue to revoke every affected session.
 
 ### Field encryption and key lifecycle
 
@@ -540,8 +539,7 @@ Current validation gaps:
 - Public token field names remain inconsistent between customer/2FA and
   loan-officer login, and officer/admin logout still accepts an empty credential
   set.
-- Session `last_active` updates and the single-device versus multi-device policy
-  remain product decisions.
+- Session `last_active` updates remain pending.
 
 ## Remediation Plan
 
