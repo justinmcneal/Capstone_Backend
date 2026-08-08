@@ -315,7 +315,14 @@ class PasswordService:
 
     @staticmethod
     def change_password(customer, old_password, new_password):
-        if not customer.check_password(old_password):
+        is_mandatory_change = bool(
+            getattr(customer, "must_change_password", False)
+        )
+
+        if not is_mandatory_change and not old_password:
+            return (False, "Old password is required")
+
+        if not is_mandatory_change and not customer.check_password(old_password):
             return (False, "Old password is incorrect")
 
         if customer.check_password(new_password):

@@ -43,9 +43,19 @@ class ResetPasswordSerializer(
 class ChangePasswordSerializer(
     PasswordValidationMixin, PasswordConfirmationMixin, serializers.Serializer
 ):
-    old_password = serializers.CharField(write_only=True)
+    old_password = serializers.CharField(write_only=True, required=False)
     new_password = serializers.CharField(write_only=True)
     confirm_password = serializers.CharField(write_only=True)
 
     def validate_new_password(self, value):
         return self.validate_password(value)
+
+    def validate(self, attrs):
+        attrs = super().validate(attrs)
+        if self.context.get("require_old_password", True) and not attrs.get(
+            "old_password"
+        ):
+            raise serializers.ValidationError(
+                {"old_password": "This field is required."}
+            )
+        return attrs

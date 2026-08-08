@@ -179,6 +179,28 @@ def test_change_password_wrong_old_password():
 
 
 @override_settings(SECURE_SSL_REDIRECT=False)
+def test_change_password_requires_old_password_when_not_mandatory():
+    client = APIClient()
+    customer = _make_customer("change-missing-old@example.com")
+
+    login_resp = client.post(
+        reverse("accounts:login"),
+        {"email": customer.email, "password": "OldPass123!"},
+        format="json",
+    )
+    access = login_resp.json()["data"]["access"]
+    client.credentials(HTTP_AUTHORIZATION=f"Bearer {access}")
+
+    r = client.post(
+        reverse("accounts:change-password"),
+        {"new_password": "NewPass456!", "confirm_password": "NewPass456!"},
+        format="json",
+    )
+    assert r.status_code == 400
+    assert "old_password" in r.json()["errors"]
+
+
+@override_settings(SECURE_SSL_REDIRECT=False)
 def test_change_password_same_rejected():
     client = APIClient()
     customer = _make_customer("change-same@example.com", password="SamePass123!")
@@ -197,7 +219,7 @@ def test_change_password_same_rejected():
 
 @override_settings(SECURE_SSL_REDIRECT=False)
 def test_change_password_clears_must_change_flag():
-    """After LO changes password, must_change_password should be False."""
+    """Mandatory first-login change does not require the temporary password."""
     client = APIClient()
     officer = _make_officer("lo-mustchange@example.com", password="Initial123!", must_change=True)
 
@@ -213,7 +235,7 @@ def test_change_password_clears_must_change_flag():
 
     r = client.post(
         reverse("accounts:change-password"),
-        {"old_password": "Initial123!", "new_password": "Changed456!", "confirm_password": "Changed456!"},
+        {"new_password": "Changed456!", "confirm_password": "Changed456!"},
         format="json",
     )
     assert r.status_code == 200
@@ -222,3 +244,26 @@ def test_change_password_clears_must_change_flag():
     from bson import ObjectId
     officer = LoanOfficer.find_one({"_id": ObjectId(officer.id)})
     assert officer.must_change_password is False
+
+
+@override_settings(SECURE_SSL_REDIRECT=False)
+def test_mandatory_change_rejects_reusing_temporary_password():
+    client = APIClient()
+    officer = _make_officer(
+        "lo-reuse-temp@example.com", password="Initial123!", must_change=True
+    )
+
+    login_resp = client.post(
+        reverse("accounts:loan-officer-login"),
+        {"email": officer.email, "password": "Initial123!"},
+        format="json",
+    )
+    access = login_resp.json()["data"]["access_token"]
+    client.credentials(HTTP_AUTHORIZATION=f"Bearer {access}")
+
+    r = client.post(
+        reverse("accounts:change-password"),
+        {"new_password": "Initial123!", "confirm_password": "Initial123!"},
+        format="json",
+    )
+    assert r.status_code == 400

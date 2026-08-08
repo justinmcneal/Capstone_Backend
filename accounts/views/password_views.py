@@ -131,20 +131,16 @@ class ResetPasswordView(APIView):
 
 class ChangePasswordView(APIView):
     """
-    Change password for authenticated user (Customer or LoanOfficer).
-    Requires old password verification.
+    Change password for an authenticated customer or staff user.
+
+    The current password is required and verified for ordinary password changes.
+    Accounts explicitly marked for a mandatory first-login password change may
+    submit only the new password and confirmation.
     """
 
     permission_classes = (IsAuthenticated,)
 
     def post(self, request):
-        serializer = ChangePasswordSerializer(data=request.data)
-        if not serializer.is_valid():
-            return APIResponseHelper.validation_error_response(serializer.errors)
-
-        old_password = serializer.validated_data["old_password"]
-        new_password = serializer.validated_data["new_password"]
-
         try:
             from accounts.utils.user_detection import get_authenticated_user
 
@@ -154,6 +150,19 @@ class ChangePasswordView(APIView):
                 return APIResponseHelper.error_response(
                     "User not found", error_code=status.HTTP_404_NOT_FOUND
                 )
+
+            is_mandatory_change = bool(
+                getattr(user, "must_change_password", False)
+            )
+            serializer = ChangePasswordSerializer(
+                data=request.data,
+                context={"require_old_password": not is_mandatory_change},
+            )
+            if not serializer.is_valid():
+                return APIResponseHelper.validation_error_response(serializer.errors)
+
+            old_password = serializer.validated_data.get("old_password")
+            new_password = serializer.validated_data["new_password"]
 
             success, message = PasswordService.change_password(
                 user, old_password, new_password
