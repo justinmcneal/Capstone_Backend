@@ -1,5 +1,6 @@
 """Read-only customer profile data exposed to loan officers."""
 
+from datetime import datetime
 from typing import Any
 
 from accounts.models import Customer
@@ -7,6 +8,12 @@ from profiles.models import AlternativeData, BusinessProfile, CustomerProfile
 
 
 def _isoformat(value):
+    return value.isoformat() if value else None
+
+
+def _date_only_iso(value):
+    if isinstance(value, datetime):
+        value = value.date()
     return value.isoformat() if value else None
 
 
@@ -20,7 +27,9 @@ def _as_number(value):
 
 
 def _find_or_empty(model, customer_id):
-    return model.find_by_customer(customer_id) or model(customer_id=customer_id)
+    profile = model.find_by_customer(customer_id) or model(customer_id=customer_id)
+    profile.calculate_completion()
+    return profile
 
 
 def build_officer_customer_profile(customer: Customer) -> dict[str, Any]:
@@ -46,7 +55,7 @@ def build_officer_customer_profile(customer: Customer) -> dict[str, Any]:
             "middle_name": customer.middle_name,
             "last_name": customer.last_name,
             "mobile_number": mobile_number,
-            "date_of_birth": _isoformat(personal.date_of_birth),
+            "date_of_birth": _date_only_iso(personal.date_of_birth),
             "gender": personal.gender,
             "civil_status": personal.civil_status,
             "nationality": personal.nationality,
@@ -58,6 +67,8 @@ def build_officer_customer_profile(customer: Customer) -> dict[str, Any]:
             "zip_code": personal.zip_code,
             "profile_completed": personal.profile_completed,
             "completion_percentage": personal.completion_percentage,
+            "completion_policy_version": personal.profile_completion_policy_version,
+            "missing_fields": personal.profile_missing_fields,
         },
         "business_profile": {
             "business_name": business.business_name,
@@ -82,6 +93,8 @@ def build_officer_customer_profile(customer: Customer) -> dict[str, Any]:
             "number_of_employees": business.number_of_employees,
             "profile_completed": business.profile_completed,
             "completion_percentage": business.completion_percentage,
+            "completion_policy_version": business.profile_completion_policy_version,
+            "missing_fields": business.profile_missing_fields,
         },
         "alternative_data": {
             "education_level": alternative.education_level,
@@ -120,5 +133,9 @@ def build_officer_customer_profile(customer: Customer) -> dict[str, Any]:
             "risk_score_error_code": alternative.risk_score_error_code,
             "profile_completed": alternative.profile_completed,
             "completion_percentage": alternative.completion_percentage,
+            "completion_policy_version": (
+                alternative.profile_completion_policy_version
+            ),
+            "missing_fields": alternative.profile_missing_fields,
         },
     }

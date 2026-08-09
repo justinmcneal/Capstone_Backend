@@ -11,26 +11,22 @@ Validates privacy controls in the AI assistant context builder:
 - Context selection by intent respects privacy
 =============================================================================
 """
-import pytest
-from datetime import datetime, timezone
-from unittest.mock import patch, MagicMock
+from datetime import datetime
+from unittest.mock import patch
 
 from ai_assistant.services.context_builder import (
-    REDACTED_FIELDS,
     MASKED_FIELDS,
-    mask_value,
-    format_currency,
-    format_date,
-    days_until,
-    summarize_status,
-    build_profile_summary,
+    REDACTED_FIELDS,
     build_documents_summary,
     build_loans_summary,
-    build_user_context,
-    build_minimal_context,
+    build_profile_summary,
+    days_until,
+    format_currency,
+    format_date,
     get_context_for_intent,
+    mask_value,
+    summarize_status,
 )
-
 
 # =============================================================================
 # MOCK HELPERS
@@ -44,10 +40,13 @@ class FakeProfile:
             ('date_of_birth', 'date of birth'),
             ('gender', 'gender'),
             ('civil_status', 'civil status'),
+            ('nationality', 'nationality'),
+            ('mobile_number', 'mobile number'),
             ('address_line1', 'address'),
             ('barangay', 'barangay'),
             ('city_municipality', 'city / municipality'),
             ('province', 'province'),
+            ('zip_code', 'ZIP code'),
         ]:
             setattr(self, field, kwargs.get(field, None))
 
@@ -60,9 +59,15 @@ class FakeBusinessProfile:
         self.estimated_monthly_income = kwargs.get('estimated_monthly_income')
         self.income_range = kwargs.get('income_range')
         self.is_registered = kwargs.get('is_registered', False)
-        for field, _ in [
-            ('business_type', 'business type'),
-            ('income_range', 'income range'),
+        self.profile_completed = kwargs.get('profile_completed', False)
+        self.profile_missing_fields = kwargs.get('profile_missing_fields', [])
+        for field in [
+            'business_address',
+            'business_barangay',
+            'business_city',
+            'business_province',
+            'estimated_monthly_expenses',
+            'number_of_employees',
         ]:
             setattr(self, field, kwargs.get(field, None))
 
@@ -73,6 +78,21 @@ class FakeAlternativeData:
         self.housing_status = kwargs.get('housing_status')
         self.risk_score = kwargs.get('risk_score')
         self.risk_category = kwargs.get('risk_category')
+        self.profile_completed = kwargs.get('profile_completed', False)
+        self.profile_missing_fields = kwargs.get('profile_missing_fields', [])
+        for field in [
+            'employment_status',
+            'years_of_experience',
+            'years_at_current_address',
+            'number_of_dependents',
+            'household_income',
+            'has_existing_loans',
+            'has_bank_account',
+            'has_ewallet',
+            'pays_utilities',
+            'is_coop_member',
+        ]:
+            setattr(self, field, kwargs.get(field, None))
 
 
 class FakeDocument:
@@ -208,10 +228,13 @@ class TestPrivacyControls:
             date_of_birth='1990-01-01',
             gender='male',
             civil_status='single',
+            nationality='Filipino',
+            mobile_number='+639171234567',
             address_line1='123 Main St',
             barangay='Sample',
             city_municipality='City',
             province='Province',
+            zip_code='1000',
             password='secret123',
             otp='123456',
         )
@@ -245,10 +268,13 @@ class TestBuildProfileSummary:
             date_of_birth='1990-01-01',
             gender='male',
             civil_status='single',
+            nationality='Filipino',
+            mobile_number='+639171234567',
             address_line1='123 Main St',
             barangay='Sample',
             city_municipality='City',
             province='Province',
+            zip_code='1000',
         )
         profile.completion_percentage = 100
         profile.profile_completed = True
@@ -276,6 +302,8 @@ class TestBuildProfileSummary:
             business_age_months=18,
             estimated_monthly_income=50000,
             income_range='₱20k-50k',
+            profile_completed=True,
+            profile_missing_fields=[],
         )
         with patch('profiles.models.profile_models.CustomerProfile.find_by_customer', return_value=None):
             with patch('profiles.models.profile_models.BusinessProfile.find_by_customer', return_value=business):
@@ -292,6 +320,8 @@ class TestBuildProfileSummary:
             education_level='college',
             housing_status='owned',
             risk_category='low',
+            profile_completed=True,
+            profile_missing_fields=[],
         )
         with patch('profiles.models.profile_models.CustomerProfile.find_by_customer', return_value=None):
             with patch('profiles.models.profile_models.BusinessProfile.find_by_customer', return_value=None):

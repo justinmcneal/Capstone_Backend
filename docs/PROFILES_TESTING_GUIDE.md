@@ -45,6 +45,8 @@ Content-Type: application/json
   - `profile_completed`
   - `completion_percentage`
   - `profile_revision`
+  - `profile_completion_policy_version`
+  - `profile_missing_fields`
 
 2. `PUT /`
 - Auth: customer only
@@ -66,11 +68,16 @@ Content-Type: application/json
   - `wallet_address`
   - `profile_revision` (optional optimistic-concurrency precondition)
 - Key response fields: `profile_completed`, `completion_percentage`,
-  `profile_revision`
+  `profile_revision`, `profile_completion_policy_version`, and
+  `profile_missing_fields`
 - Validation:
+  - Customer age must be 18 through 100
   - Mobile number must be Philippine format (+639 or 09)
+  - Emergency phone uses the same Philippine format when supplied
+  - ZIP code must contain exactly four digits
   - Wallet address must be valid Ethereum format (0x + 40 hex chars)
-  - Barangay/city/province must match location name regex
+  - Locations support Unicode letters, numbered barangays, spaces, apostrophes,
+    periods, and hyphens
 
 3. `GET /business/`
 - Auth: customer only
@@ -87,7 +94,6 @@ Content-Type: application/json
   - `business_city`
   - `business_province`
   - `business_age_months` (canonical unit: months)
-  - `years_in_operation` (legacy alias accepted; mapped to `business_age_months` in months)
   - `is_registered`
   - `registration_type`
   - `registration_number`
@@ -98,6 +104,8 @@ Content-Type: application/json
   - `profile_completed`
   - `completion_percentage`
   - `profile_revision`
+  - `profile_completion_policy_version`
+  - `profile_missing_fields`
 
 4. `PUT /business/`
 - Auth: customer only
@@ -111,9 +119,8 @@ Content-Type: application/json
   - `business_city`
   - `business_province`
   - `business_age_months` (canonical unit: months)
-  - `years_in_operation` (legacy alias accepted; when present it's used as years and converted to months)
-  
-    Note: `years_in_operation` is accepted as a legacy field. The API treats it as years and converts it to `business_age_months` (months). Example: `years_in_operation: 2` → `business_age_months: 24`.
+  - `years_in_operation` (legacy alias currently accepted by validation but not
+    persisted; do not use it—Stage 6 will implement conversion or remove it)
   - `is_registered`
   - `registration_type` (`DTI`, `SEC`, `BIR`, `none`)
   - `registration_number`
@@ -123,7 +130,15 @@ Content-Type: application/json
   - `number_of_employees`
 - Optional concurrency field: `profile_revision`
 - Key response field: `profile_revision`
-- Validation: `business_type_other` is required when `business_type` is `other`
+- Response also includes completion status, percentage, policy version, and
+  machine-readable missing fields.
+- Validation:
+  - `business_type_other` is required for `business_type=other` and cleared for
+    another type.
+  - Registered businesses require registration type and number; selecting false
+    clears obsolete registration details.
+  - Income and expenses allow at most two decimal places and reject non-finite
+    values.
 
 5. `GET /alternative-data/`
 - Auth: customer only
@@ -157,6 +172,8 @@ Content-Type: application/json
   - `profile_completed`
   - `completion_percentage`
   - `profile_revision`
+  - `profile_completion_policy_version`
+  - `profile_missing_fields`
 
 6. `PUT /alternative-data/`
 - Auth: customer only
@@ -186,8 +203,14 @@ Content-Type: application/json
   - `risk_score_status`
   - `risk_input_revision`
   - `profile_revision`
+  - `profile_completed`
+  - `completion_percentage`
+  - `profile_completion_policy_version`
+  - `profile_missing_fields`
 - Side effect: atomically advances the input revision, clears the superseded
   score, marks calculation pending, and enqueues that exact revision.
+- Conditional validation requires or clears rent, loan, bank-account, e-wallet,
+  and utility-history fields based on their controlling answers.
 
 7. `GET /summary/`
 - Auth: customer only
@@ -197,10 +220,15 @@ Content-Type: application/json
   - `personal_profile.completed`
   - `personal_profile.completion_percentage`
   - `personal_profile.profile_revision`
+  - `personal_profile.completion_policy_version`
+  - `personal_profile.missing_fields`
   - `business_profile.completed`
   - `business_profile.has_business_type`
   - `business_profile.has_income_info`
   - `business_profile.profile_revision`
+  - `business_profile.completion_percentage`
+  - `business_profile.completion_policy_version`
+  - `business_profile.missing_fields`
   - `alternative_data.completed`
   - `alternative_data.has_risk_score`
   - `alternative_data.risk_category`
@@ -211,6 +239,9 @@ Content-Type: application/json
   - `alternative_data.risk_input_revision`
   - `alternative_data.risk_calculated_revision`
   - `alternative_data.profile_revision`
+  - `alternative_data.completion_percentage`
+  - `alternative_data.completion_policy_version`
+  - `alternative_data.missing_fields`
   - `documents.total`
   - `documents.approved`
   - `documents.pending`
@@ -224,6 +255,11 @@ Content-Type: application/json
   - `overall.documents_complete`
   - `overall.documents_verified`
   - `overall.ready_for_loan`
+  - `overall.ready_for_loan_deprecated`
+  - `overall.profile_ready_for_application`
+  - `overall.product_eligibility_evaluated`
+  - `overall.completion_policy_version`
+  - `overall.missing_field_codes`
   - `overall.completion_percentage`
   - `overall.completed_section_names`
   - `overall.missing`
@@ -289,7 +325,9 @@ Content-Type: application/json
 3. `PUT /` then `GET /` to confirm personal profile updates.
 4. `PUT /business/` then `GET /business/`.
 5. `PUT /alternative-data/` then `GET /alternative-data/`.
-6. `GET /summary/` and verify `overall.profiles_complete` and `overall.ready_for_loan`.
+6. `GET /summary/` and verify `overall.profiles_complete` and
+   `overall.profile_ready_for_application`. Treat `ready_for_loan` only as the
+   temporary deprecated alias.
 7. `GET /notifications/`, then `PUT /notifications/`, then `GET /notifications/` to confirm persistence.
 8. As a loan officer: list `/api/officer/profiles/`, then retrieve an in-scope
    customer from `/api/officer/profiles/<customer_id>/`. Confirm a customer
@@ -308,6 +346,8 @@ Content-Type: application/json
 - Invalid choice values.
 - Invalid notification preference payload.
 - `business_type_other` missing when `business_type=other`.
+- Age outside 18–100, invalid emergency phone or ZIP, inconsistent conditional
+  answers, non-finite money, or money with more than two decimal places.
 - Invalid customer ID format for officer endpoint.
 
 4. `404 Not Found`
@@ -345,6 +385,31 @@ Content-Type: application/json
   ciphertext format is an internal storage concern.
 - Randomized encrypted fields cannot be queried or sorted by their plaintext
   value without a separate reviewed indexing design.
+
+## Completion and Application Readiness
+
+- Completion policy version `2026-08-09-v1` replaces the former minimal 7/2/2-
+  field rules. Exact core and conditional requirements are documented in
+  `docs/PROFILES_COMPLETION_POLICY.md`.
+- `profile_ready_for_application` means all three profile sections satisfy that
+  policy. It does not evaluate documents, consent, identity verification, risk-
+  score approval, or a loan product's eligibility requirements.
+- `ready_for_loan` currently returns the same boolean only for compatibility and
+  is marked deprecated in the response.
+- False boolean answers and numeric zero values count as answered. Missing values
+  are returned as stable field codes rather than inferred from display text.
+
+Inventory legacy stored completion metadata without writing:
+
+```bash
+python manage.py recalculate_profile_completion
+```
+
+After backup review and staging validation, persist the current policy result:
+
+```bash
+python manage.py recalculate_profile_completion --apply
+```
 
 ## Rate Limiting
 

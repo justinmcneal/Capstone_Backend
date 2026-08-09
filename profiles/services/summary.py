@@ -7,7 +7,12 @@ Builds the cross-section readiness summary for /api/profile/summary/.
 import logging
 from typing import Any
 
-from profiles.models import AlternativeData, BusinessProfile, CustomerProfile
+from profiles.models import (
+    PROFILE_COMPLETION_POLICY_VERSION,
+    AlternativeData,
+    BusinessProfile,
+    CustomerProfile,
+)
 
 logger = logging.getLogger("profiles")
 
@@ -22,6 +27,9 @@ def get_profile_summary(customer_id: str) -> dict[str, Any]:
     alternative = AlternativeData.find_by_customer(customer_id) or AlternativeData(
         customer_id=str(customer_id)
     )
+    personal.calculate_completion()
+    business.calculate_completion()
+    alternative.calculate_completion()
 
     from documents.models import Document
 
@@ -48,9 +56,17 @@ def get_profile_summary(customer_id: str) -> dict[str, Any]:
     sections_complete = sum(
         [personal_complete, business_complete, alternative_complete]
     )
-    overall_percentage = int((sections_complete / 3) * 100)
+    overall_percentage = int(
+        (
+            personal.completion_percentage
+            + business.completion_percentage
+            + alternative.completion_percentage
+        )
+        / 3
+    )
 
-    ready_for_loan = profiles_complete
+    profile_ready_for_application = profiles_complete
+    ready_for_loan = profile_ready_for_application
 
     completed_sections = []
     if personal_complete:
@@ -82,6 +98,8 @@ def get_profile_summary(customer_id: str) -> dict[str, Any]:
             "completed": personal_complete,
             "completion_percentage": personal.completion_percentage,
             "profile_revision": personal.profile_revision,
+            "completion_policy_version": personal.profile_completion_policy_version,
+            "missing_fields": personal.profile_missing_fields,
         },
         "business_profile": {
             "completed": business_complete,
@@ -90,6 +108,9 @@ def get_profile_summary(customer_id: str) -> dict[str, Any]:
                 business.income_range or business.estimated_monthly_income
             ),
             "profile_revision": business.profile_revision,
+            "completion_percentage": business.completion_percentage,
+            "completion_policy_version": business.profile_completion_policy_version,
+            "missing_fields": business.profile_missing_fields,
         },
         "alternative_data": {
             "completed": alternative_complete,
@@ -104,6 +125,11 @@ def get_profile_summary(customer_id: str) -> dict[str, Any]:
             "risk_input_revision": alternative.risk_input_revision,
             "risk_calculated_revision": alternative.risk_calculated_revision,
             "profile_revision": alternative.profile_revision,
+            "completion_percentage": alternative.completion_percentage,
+            "completion_policy_version": (
+                alternative.profile_completion_policy_version
+            ),
+            "missing_fields": alternative.profile_missing_fields,
         },
         "documents": {
             "total": total_docs,
@@ -116,13 +142,22 @@ def get_profile_summary(customer_id: str) -> dict[str, Any]:
         },
         "overall": {
             "profiles_complete": profiles_complete,
+            "completion_policy_version": PROFILE_COMPLETION_POLICY_VERSION,
             "sections_complete": sections_complete,
             "total_sections": 3,
             "documents_complete": documents_complete,
             "documents_verified": documents_ready,
             "ready_for_loan": ready_for_loan,
+            "ready_for_loan_deprecated": True,
+            "profile_ready_for_application": profile_ready_for_application,
+            "product_eligibility_evaluated": False,
             "completion_percentage": overall_percentage,
             "completed_section_names": completed_sections,
             "missing": missing,
+            "missing_field_codes": (
+                personal.profile_missing_fields
+                + business.profile_missing_fields
+                + alternative.profile_missing_fields
+            ),
         },
     }

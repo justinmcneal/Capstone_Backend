@@ -111,22 +111,24 @@ PROFILES_INFO = {
             "date_of_birth",
             "gender",
             "civil_status",
+            "nationality",
+            "mobile_number",
             "address_line1",
             "barangay",
             "city_municipality",
             "province",
+            "zip_code",
         ],
         "optional_sensitive_fields": [
-            "mobile_number",
             "emergency_contact_name",
             "emergency_contact_phone",
             "wallet_address",
         ],
-        "note": "Personal profile completion percentage is calculated from the 7 completion fields above. Mobile number, emergency contact, and wallet address are useful but do not determine profile_completed.",
+        "note": "Completion follows the versioned application-profile policy. Emergency contact and wallet address remain optional.",
     },
     "business_profile": {
         "endpoint": "GET/PUT /api/profile/business/",
-        "completion_rule": "Business profile is complete when business_type and income_range are present.",
+        "completion_rule": "Business completion requires identity, address, age, registration status, precise income/expenses, income range, and employee count; other/registered selections add their dependent fields.",
         "business_age_unit": "business_age_months is the canonical unit; older years_in_operation data is normalized to months.",
         "optional_fields": [
             "business_name",
@@ -140,13 +142,13 @@ PROFILES_INFO = {
     },
     "alternative_data": {
         "endpoint": "GET/PUT /api/profile/alternative-data/",
-        "completion_rule": "Alternative data is complete when education_level and housing_status are present.",
+        "completion_rule": "Alternative completion requires the core employment, housing, household, credit, digital-account, utility, and cooperative questionnaire; true/rented selections add dependent fields.",
         "risk": "risk_score is 0-100 and risk_category is low, medium, or high when calculated.",
     },
     "summary": {
         "endpoint": "GET /api/profile/summary/",
         "sections": "Personal profile, business profile, and alternative data are the 3 required profile sections.",
-        "ready_for_loan": "At the profile stage, ready_for_loan means those 3 profile sections are complete. Product-specific document requirements are enforced later during loan application.",
+        "profile_ready_for_application": "True only when all three sections satisfy the current completion policy. It does not evaluate documents or product eligibility. ready_for_loan is a deprecated compatibility alias.",
     },
 }
 
@@ -478,13 +480,12 @@ Mobile app for microloans. When blockchain is enabled, loan events (application,
 - Requirements vary by product (min business age, min income)
 
 === PROFILE COMPLETION ===
-- Personal profile completion is based on: date_of_birth, gender, civil_status, address_line1, barangay, city_municipality, province
-- Mobile number, emergency contacts, and wallet address are useful optional fields, but they do not determine personal profile completion
-- Business profile completion requires business_type and income_range; business_age_months is stored in months
-- When answering about business profile, explicitly mention business_type, income_range, and business_age_months as the key fields
-- Alternative data completion requires education_level and housing_status; risk_score/risk_category appear after scoring
-- Profile summary ready_for_loan means personal, business, and alternative data sections are complete; product-specific documents are checked later
-- When asked "what fields do I need" or "requirements", always list the exact required fields for ALL sections (personal: 7 fields; business: business_type + income_range; alternative: education_level + housing_status), even if the user's profile is already complete
+- Personal completion requires identity, nationality, mobile contact, complete address, and ZIP code; emergency contact and wallet remain optional
+- Business completion requires business identity/address, age in months, registration status, exact income/expenses, income range, and employee count; conditional fields must also be complete
+- Alternative completion requires the core employment, housing, household, credit, digital, utility, and cooperative questionnaire plus applicable conditional fields
+- Use machine-readable missing-field results when explaining what remains
+- profile_ready_for_application only means the three profile sections are complete; it does not mean documents are approved or that a loan product's rules are satisfied
+- ready_for_loan is a deprecated compatibility alias for profile_ready_for_application
 - When explaining business_age_months: mention it's the canonical business age unit in months; older years_in_operation data is normalized into this field
 
 === PAYMENT METHODS ===
@@ -538,7 +539,7 @@ MANUAL (officer records): {manual_methods}
 - For balance: include peso amount AND progress; explicitly check for and report overdue installments
 - When asked "how do I apply for a loan": provide standard step-by-step process; always include 'completing your profile' and 'uploading required documents' even if already complete
 - List specific blockers/missing items, not vague summaries
-- When answering profile questions: list the exact required fields (personal: 7 fields; business: business_type + income_range; alternative: education_level + housing_status)
+- When answering profile questions: use the current versioned completion policy and the returned missing-field codes; do not repeat the obsolete 7/2/2-field rules
 - When reporting readiness: accurately reflect the `ready_to_apply` boolean; if false, clearly state user is NOT ready and list blockers
 - Intent recognition: "What are my X?" queries personal data (use tools); "What X do I need?" or "How does X work?" asks for general info (use knowledge base); "Where is X?" asks for navigation (use app navigation knowledge)
 - When asked about documents: list each document by its specific name/type and status; never just give a numerical summary

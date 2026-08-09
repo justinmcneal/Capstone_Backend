@@ -96,6 +96,8 @@ def test_serializer_valid_payload_flows_through_versioned_scoring():
             "housing_status": "company_provided",
             "household_income": 50_000,
             "has_existing_loans": True,
+            "existing_loan_amount": 10_000,
+            "existing_loan_source": "bank",
             "loan_payment_history": "often_late",
             "pays_utilities": True,
             "utility_payment_history": "sometimes_late",

@@ -42,10 +42,10 @@ field encryption; audit logging; rate limiting; and asynchronous risk scoring
 all exist. The codebase also contains substantially more profile tests than the
 previous version of this review recorded.
 
-Stages 2–4 close the previously unrestricted loan-officer access, profile-data
+Stages 2–5 close the previously unrestricted loan-officer access, profile-data
 retention, risk-input mismatch, stale-score publication, plaintext numeric-
-financial data, read-side mutation, and lost-update blockers. Production release
-still requires the Stage 5 validation/readiness work, Stage 6 API/audit cleanup,
+financial data, read-side mutation, lost-update, weak-validation, and misleading
+readiness blockers. Production release still requires Stage 6 API/audit cleanup
 and live environment validation.
 
 The original review was a static code audit. On 2026-08-09, the focused profile
@@ -59,7 +59,7 @@ Current remediation status:
 - [x] Stage 2 — Officer privacy, authorization scope, and lifecycle retention
 - [x] Stage 3 — Risk-scoring correctness, explainability, and task durability
 - [x] Stage 4 — Encryption, persistence integrity, and concurrency
-- [ ] Stage 5 — Validation, completion, and readiness policy
+- [x] Stage 5 — Validation, completion, and readiness policy
 - [ ] Stage 6 — API consistency, audit completeness, and documentation
 - [ ] Stage 7 — Optional customer capabilities and operational hardening
 
@@ -145,15 +145,38 @@ Current remediation status:
 ### Validation and sanitization
 
 - Serializer text fields pass through the shared input-sanitization mixin.
-- Philippine mobile numbers accept `09` or `+639` form and normalize to `+639`.
+- Customer and emergency-contact mobile numbers accept `09` or `+639` form and
+  normalize to `+639`.
+- Birth dates enforce an inclusive 18–100 age range and API responses normalize
+  stored BSON datetimes to date-only values.
+- ZIP codes require four digits. Location validation supports Unicode letters and
+  numbered Philippine barangays while retaining character controls.
 - Wallet addresses require `0x` followed by 40 hexadecimal characters.
 - Barangay, city, and province fields use a shared location-name validator.
 - Business, income, education, employment, housing, credit, payment, and digital
   fields use explicit choice lists where applicable.
-- Nonnegative validation exists for business age, income, expenses, employees,
-  experience, rent, dependents, loan amounts, and account duration.
-- `business_type_other` is required when `business_type=other` is submitted in
-  the same request.
+- Monetary inputs use two-decimal `Decimal` validation and reject NaN, infinity,
+  and excess precision. Unencrypted storage uses `Decimal128` rather than binary
+  float.
+- Conditional validation uses the existing record during partial updates.
+  Business type/registration and alternative rent/loan/bank/e-wallet/utility
+  dependents are required or cleared with their controller.
+
+### Completion and application readiness
+
+- Completion policy `2026-08-09-v1` defines core and conditional requirements for
+  personal, business, and alternative sections.
+- Each section persists and returns policy version, completion percentage,
+  completion boolean, and stable machine-readable missing-field codes.
+- False boolean answers and numeric zero answers count as answered values.
+- `profile_ready_for_application` means all three sections satisfy the current
+  policy. It explicitly does not evaluate documents or product eligibility.
+- `ready_for_loan` is retained only as a marked deprecated compatibility alias.
+- AI context, customer analytics, officer payloads, and loan-qualification gates
+  consume the authoritative model completion result rather than old local 7/2/2
+  field heuristics.
+- `recalculate_profile_completion` inventories obsolete stored metadata by
+  default; `--apply` performs revision-guarded reconciliation.
 
 ### Services and background work
 
@@ -185,12 +208,15 @@ Current remediation status:
 
 - Completion is calculated by each profile model rather than duplicated in the
   summary view.
-- The summary reports profile-section status, document counts/statuses, overall
-  percentage, missing profile sections, and a `ready_for_loan` flag.
-- Loan qualification independently checks that all three profile records are
-  present and minimally complete and can require product-specific approved
-  documents.
-- AI-assistant context and officer loan views consume profile and risk data.
+- The summary reports versioned section completion, stable missing-field codes,
+  document counts/statuses, and an overall profile percentage.
+- `profile_ready_for_application` is the canonical profile-only readiness signal;
+  `ready_for_loan` is a marked deprecated alias and product eligibility remains
+  explicitly unevaluated by the Profiles module.
+- Loan qualification consumes authoritative section completion and separately
+  evaluates product-specific income, age, amount, and approved-document rules.
+- AI-assistant context, customer analytics, and officer loan views consume the
+  same authoritative completion and risk data.
 
 ### Encryption and auditing foundations
 
@@ -215,11 +241,12 @@ Current remediation status:
   alternative-data round trips, and synchronous task execution under mongomock.
 - Business-age conversion tests cover direct model construction.
 - Blockchain/profile tests cover wallet-field serialization and validation.
-- On 2026-08-09, 101 focused tests passed across API, business-age, model/task,
+- On 2026-08-09, 130 focused tests passed across API, business-age, model/task,
   scoring, Stage 1 characterization, Stage 2 privacy/lifecycle, Stage 3 risk
-  durability, and Stage 4 persistence/encryption modules.
-- The post-Stage 4 full suite collected 939 tests: 923 passed and 16 opt-in
-  integration tests skipped, including two new real-Mongo profile tests.
+  durability, Stage 4 persistence/encryption, and Stage 5 validation/readiness
+  modules.
+- The post-Stage 5 full suite collected 968 tests: 952 passed and 16 opt-in
+  integration tests skipped, including two real-Mongo profile tests.
 
 ## Resolved Production Blockers
 
@@ -236,35 +263,6 @@ The newly encrypted financial fields are not used for MongoDB search or sorting;
 any future query requirement needs a separate reviewed indexing design.
 
 ## Partial Implementations and High-Priority Gaps
-
-### Completion and readiness rules are weaker than their names imply
-
-**Status: Partial / product-policy decision required**
-
-Actual completion requirements are:
-
-- Personal: seven fields (`date_of_birth`, `gender`, `civil_status`, address line
-  1, barangay, city/municipality, and province).
-- Business: only `business_type` and `income_range`.
-- Alternative data: only `education_level` and `housing_status`.
-
-`ready_for_loan` is true when those three minimal section rules pass. It does not
-require a risk score, any uploaded document, approved documents, a contact number,
-business age, exact income, or registration information. The summary does report
-document state separately, and product-specific loan qualification later enforces
-required documents; however, the name `ready_for_loan` can mislead clients and
-users into treating it as actual eligibility.
-
-Remaining work:
-
-- Define and version the formal meaning of profile completion and loan readiness.
-- Either strengthen `ready_for_loan` or rename it to a narrower signal such as
-  `minimum_profile_sections_complete`.
-- Decide whether current risk score, required documents, customer consent, and
-  contact verification belong in readiness.
-- Return machine-readable missing field codes instead of display strings alone.
-- Keep product-specific eligibility separate from generic profile completeness.
-- Add boundary tests for every required field and readiness transition.
 
 ### Legacy business-age compatibility is not implemented through PUT
 
@@ -283,38 +281,6 @@ Remaining work:
 - Define precedence or reject the request when both fields are supplied.
 - Add endpoint tests proving persisted conversion.
 - Return only canonical months from GET and publish a deprecation schedule.
-
-### Conditional and identity validation is incomplete
-
-**Status: Partial**
-
-Serializers enforce types, lengths, choices, and nonnegative values, but important
-cross-field and identity rules are absent. Stale dependent values can remain after
-their controlling boolean/status changes.
-
-Remaining work:
-
-- Reject future dates of birth and define plausible minimum/maximum customer age.
-- Normalize stored BSON datetimes back to date-only API values; a reloaded birth
-  date can currently serialize as `YYYY-MM-DDT00:00:00` instead of `YYYY-MM-DD`.
-- Validate `emergency_contact_phone`, not only the customer's mobile number.
-- Validate Philippine ZIP codes where applicable.
-- Consider checksum-aware Ethereum address normalization if the wallet field
-  remains part of the product.
-- Require or clear rent when housing changes to or from `rented`.
-- Require or clear loan amount/source/history based on `has_existing_loans`.
-- Require or clear bank duration based on `has_bank_account`.
-- Require or clear e-wallet usage based on `has_ewallet`.
-- Require or clear utility history based on `pays_utilities`.
-- Require or clear registration type/number based on `is_registered`.
-- Validate conditional business fields against existing instance state during
-  partial updates, not only the fields in the current request.
-- Review the ASCII-only location regex for valid numbered and non-ASCII Philippine
-  location names.
-- Store monetary values as Decimal128 or integer centavos rather than binary
-  floats.
-- Reject non-finite monetary values. DRF currently accepts `NaN` and positive
-  infinity for fields such as `household_income`.
 
 ### Notification preference validation and persistence are incomplete
 
@@ -371,12 +337,7 @@ Required additions:
 - Execute the opt-in profile unique-index, concurrent-upsert, and optimistic-
   concurrency tests against an isolated real MongoDB instance.
 - Legacy business-age endpoint conversion and dual-field precedence tests.
-- Date-of-birth range and date-only response-shape tests.
-- Emergency-contact phone, ZIP, location edge-case, and cross-field validation
-  tests.
-- Non-finite and precision-boundary monetary-value tests.
 - Strict notification boolean and concurrent-update tests.
-- Completion/readiness transition and missing-field-code tests.
 - Tests proving business and alternative GET responses match the published API
   schema, including completion fields if those remain part of the contract.
 
@@ -385,28 +346,21 @@ Required additions:
 `docs/PROFILES_TESTING_GUIDE.md` and the previous version of this review do not
 match current code in several material areas:
 
-- Personal completion uses seven fields, not ten.
 - `business_age_months` already accepts zero.
 - Model, API, task, risk, conversion, and encryption-related tests now exist.
 - `years_in_operation` is present in the serializer but is silently discarded by
   the PUT view instead of converted.
 - Business GET does not return `years_in_operation`.
-- Business and alternative GET responses do not currently include the documented
-  completion fields.
 - There are seven throttled profile views, not six.
 - Notification preference boolean-like values are not strictly parsed or
   validated.
 - Partial stored notification preferences are not merged with documented
   defaults.
-- A reloaded MongoDB birth date may be returned as a datetime string rather than
-  the guide's date-only value.
-- `emergency_contact_phone` has no phone-format validation, and non-finite float
-  values can pass monetary serializers.
 
-Stage 2 officer behavior, Stage 3 scoring, and Stage 4 encryption/persistence
-behavior are now reflected in the testing guide. The remaining mismatches must be
-corrected with their owning implementation stages so the guide does not preserve
-accidental behavior.
+Stage 2 officer behavior, Stage 3 scoring, Stage 4 encryption/persistence, and
+Stage 5 validation/readiness behavior are now reflected in the testing guide. The
+remaining mismatches must be corrected with their owning implementation stages so
+the guide does not preserve accidental behavior.
 
 ## Staged Remediation Plan
 
@@ -464,8 +418,9 @@ discarded business-age aliases, and string-to-boolean preference coercion. Stage
 2 converted the deletion assertion to the secure target behavior. Stage 3
 converted scoring-contract and stale-task assertions and added a dedicated risk-
 durability module. Stage 4 converted plaintext-financial, read-side-write, and
-lost-update assertions. Remaining characterization assertions must be converted
-as Stages 5–6 fix each issue.
+lost-update assertions. Stage 5 converted the weak-readiness assertion and added
+dedicated validation/readiness coverage. Remaining characterization assertions
+must be converted in Stage 6.
 
 ### Stage 2 — Officer privacy, authorization scope, and lifecycle retention
 
@@ -575,18 +530,42 @@ Stage 4 behavior:
 
 ### Stage 5 — Validation, completion, and readiness policy
 
-**Status: Not started**
+**Status: Complete**
 
-- [ ] Add date-of-birth and identity validation.
-- [ ] Normalize birth-date responses to date-only values and validate emergency
-  contact phone numbers.
-- [ ] Add conditional field validation and stale-value clearing.
-- [ ] Review Philippine location validation and ZIP rules.
-- [ ] Replace monetary floats with a precise representation.
-- [ ] Reject NaN and infinite monetary inputs.
-- [ ] Implement the approved, versioned completion/readiness definition.
-- [ ] Add machine-readable missing-field codes and transition tests.
-- [ ] Keep product-specific eligibility distinct from profile completion.
+- [x] ~~Add date-of-birth and identity validation.~~
+- [x] ~~Normalize birth-date responses to date-only values and validate emergency
+  contact phone numbers.~~
+- [x] ~~Add existing-state conditional validation and stale-value clearing.~~
+- [x] ~~Support numbered/Unicode Philippine locations and enforce ZIP rules.~~
+- [x] ~~Replace profile monetary floats with two-decimal `Decimal`/`Decimal128`
+  representation.~~
+- [x] ~~Reject NaN, infinity, and excess monetary precision.~~
+- [x] ~~Implement the approved, versioned completion/readiness definition.~~
+- [x] ~~Add machine-readable missing-field codes and transition tests.~~
+- [x] ~~Keep documents and product-specific eligibility distinct from profile
+  completion.~~
+- [x] ~~Add dry-run-default completion metadata reconciliation.~~
+
+Stage 5 behavior:
+
+- Customer age is accepted from 18 through 100; customer and emergency phones
+  normalize consistently; ZIP, Unicode, numbered-location, and date-only output
+  rules are covered by tests.
+- Conditional values are evaluated against the authoritative existing instance
+  during partial updates. Enabling a controller requires its dependent values;
+  disabling it clears obsolete data.
+- Monetary serializer values are exact two-decimal `Decimal` objects. With no
+  encryption key they persist as `Decimal128`; with a key the existing encrypted
+  envelope preserves the decimal value.
+- Completion policy `2026-08-09-v1` replaces the legacy 7/2/2 rules. Section and
+  summary responses return policy versions and stable missing-field codes.
+- `profile_ready_for_application` is the canonical profile-only signal.
+  `ready_for_loan` is a deprecated alias, and `product_eligibility_evaluated`
+  remains false in the profile summary.
+- AI profile context, the customer dashboard, officer payloads, and loan profile
+  gates now consume model completion rather than maintaining weaker local rules.
+- See `docs/PROFILES_COMPLETION_POLICY.md` for the exact core, conditional,
+  response, validation, and reconciliation contract.
 
 ### Stage 6 — API consistency, audit completeness, and documentation
 
@@ -655,8 +634,9 @@ Stage 4 behavior:
 - [x] ~~Encryption backfill and verification cover every declared profile field.~~
 - [x] ~~GET and summary endpoints are side-effect-free.~~
 - [x] ~~Profile creation and API updates are atomic, revisioned, and stale-safe.~~
-- [ ] Completion/readiness semantics are formally defined and accurately named.
-- [ ] Cross-field, date, location, and monetary validation is production-safe.
+- [x] ~~Completion/readiness semantics are formally defined and accurately
+  named.~~
+- [x] ~~Cross-field, date, location, and monetary validation is production-safe.~~
 - [ ] Legacy business-age behavior is implemented as documented or removed.
 - [ ] Notification preferences use strict booleans and atomic persistence.
 - [ ] Audit coverage includes preferences and automatic profile creation; scoring
@@ -672,8 +652,11 @@ admin web application require coordinated changes as later stages complete:
 
 - Customer mobile must treat risk scoring as asynchronous, poll or refresh
   `risk_score_status`, display the score as informational with manual review, and
-  avoid using it as an approval result. It may also need canonical
-  `business_age_months`, stricter validation, and machine-readable missing fields.
+  avoid using it as an approval result. It must use
+  `profile_ready_for_application` as the profile-only signal, retain temporary
+  compatibility with the deprecated `ready_for_loan` alias, render validation
+  failures by field, and use `profile_missing_fields` for incomplete-section
+  guidance. It may also need canonical `business_age_months` in Stage 6.
   For edit conflict protection it should store the returned `profile_revision`,
   send it on the next PUT, and reload the form after a `409` response.
 - Loan-officer web must use `/api/officer/profiles/` routes, handle scoped/404
@@ -692,6 +675,8 @@ admin web application require coordinated changes as later stages complete:
 - The scoring contract and governance boundary are documented in
   `docs/PROFILES_RISK_SCORING_POLICY.md`. Representative calibration and fairness
   validation remain mandatory before any future authoritative lending use.
+- The versioned completion contract and stable missing-field codes are documented
+  in `docs/PROFILES_COMPLETION_POLICY.md`.
 - `init_db.py`, profile backfills, encryption migrations, duplicate reconciliation,
   and account-retention operations are state-changing and require explicit
   approval, backups, dry-run review, and staging validation before use.

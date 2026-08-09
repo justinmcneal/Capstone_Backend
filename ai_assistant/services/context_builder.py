@@ -43,21 +43,65 @@ PERSONAL_PROFILE_REQUIRED_FIELDS = [
     ('date_of_birth', 'date of birth'),
     ('gender', 'gender'),
     ('civil_status', 'civil status'),
+    ('nationality', 'nationality'),
+    ('mobile_number', 'mobile number'),
     ('address_line1', 'address'),
     ('barangay', 'barangay'),
     ('city_municipality', 'city / municipality'),
     ('province', 'province'),
+    ('zip_code', 'ZIP code'),
 ]
 
 BUSINESS_PROFILE_REQUIRED_FIELDS = [
+    ('business_name', 'business name'),
     ('business_type', 'business type'),
+    ('business_address', 'business address'),
+    ('business_barangay', 'business barangay'),
+    ('business_city', 'business city'),
+    ('business_province', 'business province'),
+    ('business_age_months', 'business age in months'),
+    ('is_registered', 'business registration status'),
+    ('estimated_monthly_income', 'estimated monthly income'),
     ('income_range', 'income range'),
+    ('estimated_monthly_expenses', 'estimated monthly expenses'),
+    ('number_of_employees', 'number of employees'),
 ]
 
 ALTERNATIVE_DATA_REQUIRED_FIELDS = [
     ('education_level', 'education level'),
+    ('employment_status', 'employment status'),
+    ('years_of_experience', 'years of experience'),
     ('housing_status', 'housing status'),
+    ('years_at_current_address', 'years at current address'),
+    ('number_of_dependents', 'number of dependents'),
+    ('household_income', 'household income'),
+    ('has_existing_loans', 'existing-loan status'),
+    ('has_bank_account', 'bank-account status'),
+    ('has_ewallet', 'e-wallet status'),
+    ('pays_utilities', 'utility-payment status'),
+    ('is_coop_member', 'cooperative-membership status'),
 ]
+
+
+def _profile_value_answered(value):
+    if value is None:
+        return False
+    if isinstance(value, str):
+        return bool(value.strip())
+    return True
+
+
+def _missing_labels(profile, required_fields):
+    if hasattr(profile, 'profile_missing_fields'):
+        return [
+            code.rsplit('.', 1)[-1].replace('_', ' ')
+            for code in profile.profile_missing_fields
+        ]
+    return [
+        label
+        for field, label in required_fields
+        if not _profile_value_answered(getattr(profile, field, None))
+    ]
 
 
 # =============================================================================
@@ -154,20 +198,25 @@ def build_profile_summary(customer_id: str) -> dict:
     if profile:
         result['completion_pct'] = getattr(profile, 'completion_percentage', 0) or 0
         
-        for field, label in PERSONAL_PROFILE_REQUIRED_FIELDS:
-            if not getattr(profile, field, None):
-                result['missing_fields'].append(label)
+        result['missing_fields'] = _missing_labels(
+            profile, PERSONAL_PROFILE_REQUIRED_FIELDS
+        )
     
     # Business profile
     business = BusinessProfile.find_by_customer(customer_id)
-    if business and any(getattr(business, field, None) for field, _ in BUSINESS_PROFILE_REQUIRED_FIELDS):
+    if business and any(
+        _profile_value_answered(getattr(business, field, None))
+        for field, _ in BUSINESS_PROFILE_REQUIRED_FIELDS
+    ):
         result['has_business'] = True
-        result['business_complete'] = all(
-            getattr(business, field, None) for field, _ in BUSINESS_PROFILE_REQUIRED_FIELDS
+        result['business_complete'] = getattr(
+            business,
+            'profile_completed',
+            not _missing_labels(business, BUSINESS_PROFILE_REQUIRED_FIELDS),
         )
-        for field, label in BUSINESS_PROFILE_REQUIRED_FIELDS:
-            if not getattr(business, field, None):
-                result['missing_business_fields'].append(label)
+        result['missing_business_fields'] = _missing_labels(
+            business, BUSINESS_PROFILE_REQUIRED_FIELDS
+        )
 
         name = getattr(business, 'business_name', None) or 'Business profile'
         btype = getattr(business, 'business_type', 'business')
@@ -194,12 +243,14 @@ def build_profile_summary(customer_id: str) -> dict:
 
     alternative = AlternativeData.find_by_customer(customer_id)
     if alternative:
-        result['alternative_complete'] = all(
-            getattr(alternative, field, None) for field, _ in ALTERNATIVE_DATA_REQUIRED_FIELDS
+        result['alternative_complete'] = getattr(
+            alternative,
+            'profile_completed',
+            not _missing_labels(alternative, ALTERNATIVE_DATA_REQUIRED_FIELDS),
         )
-        for field, label in ALTERNATIVE_DATA_REQUIRED_FIELDS:
-            if not getattr(alternative, field, None):
-                result['missing_alternative_fields'].append(label)
+        result['missing_alternative_fields'] = _missing_labels(
+            alternative, ALTERNATIVE_DATA_REQUIRED_FIELDS
+        )
         result['risk_category'] = getattr(alternative, 'risk_category', None)
     
     return result

@@ -7,21 +7,19 @@ These tests ensure the context builder properly handles:
 - Context summarization
 - Intent-based context selection
 """
-import pytest
+from datetime import datetime
+
 from ai_assistant.services.context_builder import (
     ALTERNATIVE_DATA_REQUIRED_FIELDS,
     BUSINESS_PROFILE_REQUIRED_FIELDS,
-    mask_value,
+    MAX_APPLICATIONS,
+    MAX_DOCUMENTS,
+    PERSONAL_PROFILE_REQUIRED_FIELDS,
     format_currency,
     format_date,
+    mask_value,
     summarize_status,
-    get_context_for_intent,
-    build_minimal_context,
-    MAX_DOCUMENTS,
-    MAX_APPLICATIONS,
-    PERSONAL_PROFILE_REQUIRED_FIELDS,
 )
-from datetime import datetime
 
 
 class TestHelperFunctions:
@@ -130,21 +128,49 @@ class TestProfileAlignment:
             "date_of_birth",
             "gender",
             "civil_status",
+            "nationality",
+            "mobile_number",
             "address_line1",
             "barangay",
             "city_municipality",
             "province",
+            "zip_code",
         ]
-        assert "mobile_number" not in fields
         assert "emergency_contact_name" not in fields
 
     def test_business_profile_required_fields(self):
         fields = [field for field, _ in BUSINESS_PROFILE_REQUIRED_FIELDS]
-        assert fields == ["business_type", "income_range"]
+        assert fields == [
+            "business_name",
+            "business_type",
+            "business_address",
+            "business_barangay",
+            "business_city",
+            "business_province",
+            "business_age_months",
+            "is_registered",
+            "estimated_monthly_income",
+            "income_range",
+            "estimated_monthly_expenses",
+            "number_of_employees",
+        ]
 
     def test_alternative_data_required_fields(self):
         fields = [field for field, _ in ALTERNATIVE_DATA_REQUIRED_FIELDS]
-        assert fields == ["education_level", "housing_status"]
+        assert fields == [
+            "education_level",
+            "employment_status",
+            "years_of_experience",
+            "housing_status",
+            "years_at_current_address",
+            "number_of_dependents",
+            "household_income",
+            "has_existing_loans",
+            "has_bank_account",
+            "has_ewallet",
+            "pays_utilities",
+            "is_coop_member",
+        ]
 
 
 class TestStatusSummarization:

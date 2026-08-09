@@ -446,7 +446,11 @@ class OfficerApplicationDetailView(LoanOfficerRequiredMixin, APIView):
                 "phone_number": personal.mobile_number
                 or (customer.phone if customer else None),
                 "date_of_birth": (
-                    personal.date_of_birth.isoformat()
+                    (
+                        personal.date_of_birth.date()
+                        if isinstance(personal.date_of_birth, datetime)
+                        else personal.date_of_birth
+                    ).isoformat()
                     if personal.date_of_birth
                     else None
                 ),

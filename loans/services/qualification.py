@@ -916,14 +916,22 @@ def check_basic_eligibility(
 
     if not business:
         missing.append("Business profile required")
-    elif not (business.business_type and business.income_range):
-        missing.append("Business profile incomplete (type and income required)")
+    elif not getattr(
+        business,
+        "profile_completed",
+        bool(business.business_type and business.income_range),
+    ):
+        missing.append("Business profile incomplete")
 
     # Alternative data is required
     if not alternative:
         missing.append("Alternative data required")
-    elif not (alternative.education_level and alternative.housing_status):
-        missing.append("Alternative data incomplete (education and housing required)")
+    elif not getattr(
+        alternative,
+        "profile_completed",
+        bool(alternative.education_level and alternative.housing_status),
+    ):
+        missing.append("Alternative data incomplete")
 
     required_doc_types = resolve_required_document_types(product, scope)
 

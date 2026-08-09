@@ -18,11 +18,6 @@ from datetime import datetime
 from django.conf import settings
 from django.core.cache import cache
 
-from ai_assistant.services.context_builder import (
-    ALTERNATIVE_DATA_REQUIRED_FIELDS,
-    BUSINESS_PROFILE_REQUIRED_FIELDS,
-    PERSONAL_PROFILE_REQUIRED_FIELDS,
-)
 from ai_assistant.services.tool_safety import safe_execute_tool
 from loans.services.qualification import (
     document_type_label,
@@ -30,6 +25,13 @@ from loans.services.qualification import (
 )
 
 logger = logging.getLogger('ai_assistant')
+
+
+def _profile_missing_labels(profile):
+    return [
+        code.rsplit('.', 1)[-1].replace('_', ' ')
+        for code in getattr(profile, 'profile_missing_fields', [])
+    ]
 
 # Cache TTL for tool results
 CACHE_TTL = getattr(settings, 'CACHE_TTL', {})
@@ -270,10 +272,7 @@ def _get_profile_status(customer_id, **kwargs):
 
     profile = CustomerProfile.find_by_customer(customer_id)
     if profile:
-        missing = [
-            label for field, label in PERSONAL_PROFILE_REQUIRED_FIELDS
-            if not getattr(profile, field, None)
-        ]
+        missing = _profile_missing_labels(profile)
 
         result["profile"] = {
             "completion_percentage": getattr(profile, 'completion_percentage', 0),
@@ -283,10 +282,7 @@ def _get_profile_status(customer_id, **kwargs):
 
     business = BusinessProfile.find_by_customer(customer_id)
     if business:
-        missing = [
-            label for field, label in BUSINESS_PROFILE_REQUIRED_FIELDS
-            if not getattr(business, field, None)
-        ]
+        missing = _profile_missing_labels(business)
         result["business"] = {
             "business_name": getattr(business, 'business_name', None),
             "business_type": getattr(business, 'business_type', None),
@@ -294,22 +290,19 @@ def _get_profile_status(customer_id, **kwargs):
             "income_range": getattr(business, 'income_range', None),
             "estimated_monthly_income": getattr(business, 'estimated_monthly_income', None),
             "is_registered": getattr(business, 'is_registered', False),
-            "is_complete": len(missing) == 0,
+            "is_complete": business.profile_completed,
             "missing_fields": missing,
         }
 
     alternative = AlternativeData.find_by_customer(customer_id)
     if alternative:
-        missing = [
-            label for field, label in ALTERNATIVE_DATA_REQUIRED_FIELDS
-            if not getattr(alternative, field, None)
-        ]
+        missing = _profile_missing_labels(alternative)
         result["alternative_data"] = {
             "education_level": getattr(alternative, 'education_level', None),
             "housing_status": getattr(alternative, 'housing_status', None),
             "risk_score": getattr(alternative, 'risk_score', None),
             "risk_category": getattr(alternative, 'risk_category', None),
-            "is_complete": len(missing) == 0,
+            "is_complete": alternative.profile_completed,
             "missing_fields": missing,
         }
 
@@ -572,10 +565,7 @@ def _get_application_readiness(customer_id, **kwargs):
         if pct >= 100:
             completed.append("Personal profile is complete")
         else:
-            missing = [
-                label for field, label in PERSONAL_PROFILE_REQUIRED_FIELDS
-                if not getattr(profile, field, None)
-            ]
+            missing = _profile_missing_labels(profile)
             blockers.append(f"Profile is {pct}% complete — missing: {', '.join(missing)}")
     else:
         blockers.append("Personal profile has not been created yet")
@@ -583,11 +573,8 @@ def _get_application_readiness(customer_id, **kwargs):
     # Business check
     business = BusinessProfile.find_by_customer(customer_id)
     if business:
-        missing = [
-            label for field, label in BUSINESS_PROFILE_REQUIRED_FIELDS
-            if not getattr(business, field, None)
-        ]
-        if missing:
+        missing = _profile_missing_labels(business)
+        if not business.profile_completed:
             blockers.append(f"Business profile is incomplete — missing: {', '.join(missing)}")
         else:
             name = getattr(business, 'business_name', None) or 'business profile'
@@ -598,11 +585,8 @@ def _get_application_readiness(customer_id, **kwargs):
     # Alternative data check
     alternative = AlternativeData.find_by_customer(customer_id)
     if alternative:
-        missing = [
-            label for field, label in ALTERNATIVE_DATA_REQUIRED_FIELDS
-            if not getattr(alternative, field, None)
-        ]
-        if missing:
+        missing = _profile_missing_labels(alternative)
+        if not alternative.profile_completed:
             blockers.append(f"Alternative data is incomplete — missing: {', '.join(missing)}")
         else:
             completed.append("Alternative data is complete")
@@ -650,6 +634,8 @@ def _get_customer_dashboard(customer_id, **kwargs):
     """
     from django.conf import settings
 
+    from profiles.models import AlternativeData, BusinessProfile, CustomerProfile
+
     # Check cache first
     cache_key = _get_user_cache_key(customer_id, 'customer_dashboard')
     cached = cache.get(cache_key)
@@ -694,31 +680,12 @@ def _get_customer_dashboard(customer_id, **kwargs):
     }
 
     # Profile completion (same 3-section logic as analytics customer dashboard)
-    personal = db["customer_profiles"].find_one(
-        {"customer_id": str(customer_id)},
-        sort=[("updated_at", -1), ("created_at", -1)],
-    )
-    business = db["business_profiles"].find_one(
-        {"customer_id": str(customer_id)},
-        sort=[("updated_at", -1), ("created_at", -1)],
-    )
-    alternative = db["alternative_data"].find_one(
-        {"customer_id": str(customer_id)},
-        sort=[("updated_at", -1), ("created_at", -1)],
-    )
-
-    has_personal = bool((personal or {}).get("completion_percentage", 0) > 0)
-    has_business = bool(
-        (business or {}).get("business_type")
-        and (
-            (business or {}).get("income_range")
-            or (business or {}).get("estimated_monthly_income")
-        )
-    )
-    has_alternative = bool(
-        (alternative or {}).get("education_level")
-        and (alternative or {}).get("housing_status")
-    )
+    personal = CustomerProfile.find_by_customer(customer_id)
+    business = BusinessProfile.find_by_customer(customer_id)
+    alternative = AlternativeData.find_by_customer(customer_id)
+    has_personal = bool(personal and personal.profile_completed)
+    has_business = bool(business and business.profile_completed)
+    has_alternative = bool(alternative and alternative.profile_completed)
     has_id = (
         db["documents"].count_documents(
             {"customer_id": str(customer_id), "document_type": "valid_id"}
@@ -726,8 +693,12 @@ def _get_customer_dashboard(customer_id, **kwargs):
         > 0
     )
 
-    profile_items = [has_personal, has_business, has_alternative]
-    completion = (sum(profile_items) / len(profile_items)) * 100
+    section_percentages = [
+        personal.completion_percentage if personal else 0,
+        business.completion_percentage if business else 0,
+        alternative.completion_percentage if alternative else 0,
+    ]
+    completion = sum(section_percentages) / len(section_percentages)
 
     profile_completion = {
         "percentage": f"{completion:.0f}%",

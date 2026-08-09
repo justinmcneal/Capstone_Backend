@@ -168,7 +168,7 @@ def test_full_document_save_rejects_a_stale_business_revision():
     assert stored.business_type == "retail_store"
 
 
-def test_minimal_fields_currently_report_ready_for_loan():
+def test_minimal_legacy_fields_do_not_report_application_readiness():
     customer_id = str(ObjectId())
     CustomerProfile(
         customer_id=customer_id,
@@ -193,8 +193,12 @@ def test_minimal_fields_currently_report_ready_for_loan():
 
     summary = get_profile_summary(customer_id)
 
-    assert summary["overall"]["profiles_complete"] is True
-    assert summary["overall"]["ready_for_loan"] is True
+    assert summary["overall"]["profiles_complete"] is False
+    assert summary["overall"]["profile_ready_for_application"] is False
+    assert summary["overall"]["ready_for_loan"] is False
+    assert "personal.mobile_number" in summary["overall"]["missing_field_codes"]
+    assert "business.business_name" in summary["overall"]["missing_field_codes"]
+    assert "alternative.employment_status" in summary["overall"]["missing_field_codes"]
 
 
 def test_legacy_business_age_input_currently_is_not_mapped_by_serializer():

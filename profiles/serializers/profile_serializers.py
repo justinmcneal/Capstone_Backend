@@ -1,5 +1,6 @@
 import re
 
+from django.utils import timezone as django_timezone
 from rest_framework import serializers
 
 from accounts.serializers.base_serializers import InputSanitizationMixin
@@ -17,7 +18,19 @@ from profiles.models import (
 # - Must start with a letter
 # - May contain letters, spaces, hyphens, apostrophes, periods
 # - Examples: "San Juan", "Sta. Rosa", "Sto. Tomas", "O'Donnell", "Baguio City"
-_LOCATION_NAME_RE = re.compile(r"^[a-zA-Z][a-zA-Z\s'\-.]*$")
+MIN_CUSTOMER_AGE = 18
+MAX_CUSTOMER_AGE = 100
+
+
+def _money_field():
+    return serializers.DecimalField(
+        max_digits=14,
+        decimal_places=2,
+        required=False,
+        allow_null=True,
+        min_value=0,
+        coerce_to_string=False,
+    )
 
 
 def _validate_location_name(value, field_label):
@@ -25,14 +38,40 @@ def _validate_location_name(value, field_label):
     if not value:
         return value  # allow blank (required check is handled per-field)
     stripped = value.strip()
-    if not _LOCATION_NAME_RE.match(stripped):
+    if not stripped[0].isalpha() or any(
+        not (character.isalnum() or character in " '-.\u2019")
+        for character in stripped
+    ):
         raise serializers.ValidationError(
-            f"{field_label} may only contain letters, spaces, hyphens, "
-            "apostrophes and periods."
+            f"{field_label} may only contain letters, numbers, spaces, hyphens, "
+            "apostrophes and periods, and must start with a letter."
         )
     if re.search(r"\s{2,}", stripped):
         raise serializers.ValidationError(f"Please enter a valid {field_label} name.")
     return stripped
+
+
+def _normalize_ph_mobile(value):
+    if not value:
+        return value
+    cleaned = re.sub(r"[\s\-().]", "", value)
+    if not re.fullmatch(r"(09\d{9}|\+639\d{9})", cleaned):
+        raise serializers.ValidationError(
+            "Enter a valid Philippine mobile number "
+            "(e.g. 09171234567 or +639171234567)."
+        )
+    return "+63" + cleaned[1:] if cleaned.startswith("09") else cleaned
+
+
+def _merged(serializer, data, field, default=None):
+    if field in data:
+        return data[field]
+    return getattr(serializer.instance, field, default) if serializer.instance else default
+
+
+def _require(data, field, value, message):
+    if value is None or isinstance(value, str) and not value.strip():
+        raise serializers.ValidationError({field: message})
 
 
 class CustomerProfileSerializer(InputSanitizationMixin, serializers.Serializer):
@@ -100,19 +139,32 @@ class CustomerProfileSerializer(InputSanitizationMixin, serializers.Serializer):
         return value
 
     def validate_mobile_number(self, value):
-        if not value:
-            return value  # optional field
-        cleaned = re.sub(r"[\s\-().]", "", value)
-        # Accept 09XXXXXXXXX (11 digits) or +639XXXXXXXXX (13 chars)
-        if not re.fullmatch(r"(09\d{9}|\+639\d{9})", cleaned):
+        return _normalize_ph_mobile(value)
+
+    def validate_emergency_contact_phone(self, value):
+        return _normalize_ph_mobile(value)
+
+    def validate_zip_code(self, value):
+        if value and not re.fullmatch(r"\d{4}", value.strip()):
             raise serializers.ValidationError(
-                "Enter a valid Philippine mobile number "
-                "(e.g. 09171234567 or +639171234567)."
+                "Enter a valid 4-digit Philippine ZIP code."
             )
-        # Normalize to +639XXXXXXXXX
-        if cleaned.startswith("09"):
-            cleaned = "+63" + cleaned[1:]
-        return cleaned
+        return value.strip() if value else value
+
+    def validate_date_of_birth(self, value):
+        if value is None:
+            return value
+        today = django_timezone.localdate()
+        age = today.year - value.year - ((today.month, today.day) < (value.month, value.day))
+        if age < MIN_CUSTOMER_AGE:
+            raise serializers.ValidationError(
+                f"Customer must be at least {MIN_CUSTOMER_AGE} years old."
+            )
+        if age > MAX_CUSTOMER_AGE:
+            raise serializers.ValidationError(
+                f"Customer age cannot exceed {MAX_CUSTOMER_AGE} years."
+            )
+        return value
 
     def validate_barangay(self, value):
         return _validate_location_name(value, "Barangay")
@@ -148,6 +200,9 @@ class CustomerProfileResponseSerializer(serializers.Serializer):
     )
     profile_completed = serializers.BooleanField()
     completion_percentage = serializers.IntegerField()
+    profile_revision = serializers.IntegerField()
+    profile_completion_policy_version = serializers.CharField()
+    profile_missing_fields = serializers.ListField(child=serializers.CharField())
 
 
 class BusinessProfileSerializer(InputSanitizationMixin, serializers.Serializer):
@@ -216,22 +271,43 @@ class BusinessProfileSerializer(InputSanitizationMixin, serializers.Serializer):
     )
 
     # Financial
-    estimated_monthly_income = serializers.FloatField(
-        required=False, allow_null=True, min_value=0
-    )
+    estimated_monthly_income = _money_field()
     income_range = serializers.ChoiceField(
         choices=INCOME_RANGES, required=False, allow_null=True
     )
-    estimated_monthly_expenses = serializers.FloatField(
-        required=False, allow_null=True, min_value=0
-    )
+    estimated_monthly_expenses = _money_field()
     number_of_employees = serializers.IntegerField(required=False, min_value=0)
 
     def validate(self, data):
-        if data.get("business_type") == "other" and not data.get("business_type_other"):
-            raise serializers.ValidationError(
-                {"business_type_other": "Please specify the business type"}
+        business_type = _merged(self, data, "business_type")
+        business_type_other = _merged(self, data, "business_type_other", "")
+        if business_type == "other":
+            _require(
+                data,
+                "business_type_other",
+                business_type_other,
+                "Please specify the business type.",
             )
+        elif business_type is not None:
+            data["business_type_other"] = ""
+
+        is_registered = _merged(self, data, "is_registered")
+        if is_registered is True:
+            registration_type = _merged(self, data, "registration_type")
+            registration_number = _merged(self, data, "registration_number", "")
+            if registration_type in (None, "none"):
+                raise serializers.ValidationError(
+                    {"registration_type": "Select the active registration type."}
+                )
+            _require(
+                data,
+                "registration_number",
+                registration_number,
+                "Registration number is required for a registered business.",
+            )
+        elif is_registered is False:
+            data["registration_type"] = None
+            data["registration_number"] = ""
         return data
 
 
@@ -264,19 +340,15 @@ class AlternativeDataSerializer(InputSanitizationMixin, serializers.Serializer):
     years_at_current_address = serializers.FloatField(
         required=False, allow_null=True, min_value=0
     )
-    monthly_rent = serializers.FloatField(required=False, allow_null=True, min_value=0)
+    monthly_rent = _money_field()
 
     # Dependents
     number_of_dependents = serializers.IntegerField(required=False, min_value=0)
-    household_income = serializers.FloatField(
-        required=False, allow_null=True, min_value=0
-    )
+    household_income = _money_field()
 
     # Existing Credit
     has_existing_loans = serializers.BooleanField(required=False)
-    existing_loan_amount = serializers.FloatField(
-        required=False, allow_null=True, min_value=0
-    )
+    existing_loan_amount = _money_field()
     existing_loan_source = serializers.ChoiceField(
         choices=["bank", "cooperative", "microfinance", "informal", "family", "none"],
         required=False,
@@ -313,3 +385,64 @@ class AlternativeDataSerializer(InputSanitizationMixin, serializers.Serializer):
     community_involvement = serializers.ListField(
         child=serializers.CharField(max_length=100), required=False, max_length=10
     )
+
+    def validate(self, data):
+        housing_status = _merged(self, data, "housing_status")
+        if housing_status == "rented":
+            _require(
+                data,
+                "monthly_rent",
+                _merged(self, data, "monthly_rent"),
+                "Monthly rent is required when housing is rented.",
+            )
+        elif housing_status is not None:
+            data["monthly_rent"] = None
+
+        has_loans = _merged(self, data, "has_existing_loans")
+        if has_loans is True:
+            amount = _merged(self, data, "existing_loan_amount")
+            if amount is None or amount <= 0:
+                raise serializers.ValidationError(
+                    {"existing_loan_amount": "Enter an existing loan amount above zero."}
+                )
+            source = _merged(self, data, "existing_loan_source")
+            if source in (None, "none"):
+                raise serializers.ValidationError(
+                    {"existing_loan_source": "Select the existing loan source."}
+                )
+            history = _merged(self, data, "loan_payment_history")
+            if history in (None, "no_history"):
+                raise serializers.ValidationError(
+                    {"loan_payment_history": "Select the existing loan payment history."}
+                )
+        elif has_loans is False:
+            data.update(
+                existing_loan_amount=None,
+                existing_loan_source=None,
+                loan_payment_history=None,
+            )
+
+        for controller, dependent, message in (
+            (
+                "has_bank_account",
+                "bank_account_duration",
+                "Bank account duration is required when an account exists.",
+            ),
+            (
+                "has_ewallet",
+                "ewallet_usage",
+                "E-wallet usage is required when an e-wallet exists.",
+            ),
+            (
+                "pays_utilities",
+                "utility_payment_history",
+                "Utility payment history is required when utilities are paid.",
+            ),
+        ):
+            enabled = _merged(self, data, controller)
+            if enabled is True:
+                _require(data, dependent, _merged(self, data, dependent), message)
+            elif enabled is False:
+                data[dependent] = None
+
+        return data

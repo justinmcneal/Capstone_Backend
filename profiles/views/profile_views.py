@@ -1,6 +1,7 @@
 import logging
 import math
 import re
+from datetime import datetime
 from typing import ClassVar
 
 from bson import ObjectId
@@ -38,6 +39,14 @@ from profiles.services.summary import get_profile_summary
 from profiles.tasks import enqueue_risk_score_calculation
 
 logger = logging.getLogger("profiles")
+
+
+def _date_only_iso(value):
+    if not value:
+        return None
+    if isinstance(value, datetime):
+        value = value.date()
+    return value.isoformat()
 
 
 def _active_customer_query():
@@ -125,6 +134,7 @@ class CustomerProfileView(CustomerProfileAccessMixin, APIView):
             profile = CustomerProfile.find_by_customer(customer_id) or CustomerProfile(
                 customer_id=str(customer_id)
             )
+            profile.calculate_completion()
 
             return success_response(
                 data={
@@ -132,11 +142,7 @@ class CustomerProfileView(CustomerProfileAccessMixin, APIView):
                     "customer_id": (
                         str(profile.customer_id) if profile.customer_id else ""
                     ),
-                    "date_of_birth": (
-                        profile.date_of_birth.isoformat()
-                        if profile.date_of_birth
-                        else None
-                    ),
+                    "date_of_birth": _date_only_iso(profile.date_of_birth),
                     "gender": profile.gender,
                     "civil_status": profile.civil_status,
                     "nationality": profile.nationality,
@@ -154,6 +160,10 @@ class CustomerProfileView(CustomerProfileAccessMixin, APIView):
                     "profile_completed": profile.profile_completed,
                     "completion_percentage": profile.completion_percentage,
                     "profile_revision": profile.profile_revision,
+                    "profile_completion_policy_version": (
+                        profile.profile_completion_policy_version
+                    ),
+                    "profile_missing_fields": profile.profile_missing_fields,
                 },
                 message="Profile retrieved successfully",
             )
@@ -171,7 +181,16 @@ class CustomerProfileView(CustomerProfileAccessMixin, APIView):
             if not has_permission:
                 return result
 
-            serializer = CustomerProfileSerializer(data=request.data)
+            user = request.user
+            customer_id = user.customer_id
+            profile = CustomerProfile.find_by_customer(customer_id) or CustomerProfile(
+                customer_id=str(customer_id)
+            )
+            serializer = CustomerProfileSerializer(
+                instance=profile,
+                data=request.data,
+                partial=True,
+            )
             if not serializer.is_valid():
                 return error_response(
                     message="Invalid profile data",
@@ -179,10 +198,8 @@ class CustomerProfileView(CustomerProfileAccessMixin, APIView):
                     status_code=status.HTTP_400_BAD_REQUEST,
                 )
 
-            user = request.user
-            customer_id = user.customer_id
-
-            profile = CustomerProfile.get_or_create(customer_id)
+            if not profile._id:
+                profile = CustomerProfile.get_or_create(customer_id)
 
             # Update fields
             data = dict(serializer.validated_data)
@@ -208,6 +225,10 @@ class CustomerProfileView(CustomerProfileAccessMixin, APIView):
                     "profile_completed": profile.profile_completed,
                     "completion_percentage": profile.completion_percentage,
                     "profile_revision": profile.profile_revision,
+                    "profile_completion_policy_version": (
+                        profile.profile_completion_policy_version
+                    ),
+                    "profile_missing_fields": profile.profile_missing_fields,
                 },
                 message="Profile updated successfully",
             )
@@ -249,6 +270,7 @@ class BusinessProfileView(CustomerProfileAccessMixin, APIView):
             profile = BusinessProfile.find_by_customer(customer_id) or BusinessProfile(
                 customer_id=str(customer_id)
             )
+            profile.calculate_completion()
 
             return success_response(
                 data={
@@ -273,6 +295,12 @@ class BusinessProfileView(CustomerProfileAccessMixin, APIView):
                     "estimated_monthly_expenses": profile.estimated_monthly_expenses,
                     "number_of_employees": profile.number_of_employees,
                     "profile_revision": profile.profile_revision,
+                    "profile_completed": profile.profile_completed,
+                    "completion_percentage": profile.completion_percentage,
+                    "profile_completion_policy_version": (
+                        profile.profile_completion_policy_version
+                    ),
+                    "profile_missing_fields": profile.profile_missing_fields,
                 },
                 message="Business profile retrieved successfully",
             )
@@ -290,7 +318,16 @@ class BusinessProfileView(CustomerProfileAccessMixin, APIView):
             if not has_permission:
                 return result
 
-            serializer = BusinessProfileSerializer(data=request.data)
+            user = request.user
+            customer_id = user.customer_id
+            profile = BusinessProfile.find_by_customer(customer_id) or BusinessProfile(
+                customer_id=str(customer_id)
+            )
+            serializer = BusinessProfileSerializer(
+                instance=profile,
+                data=request.data,
+                partial=True,
+            )
             if not serializer.is_valid():
                 return error_response(
                     message="Invalid business profile data",
@@ -298,10 +335,8 @@ class BusinessProfileView(CustomerProfileAccessMixin, APIView):
                     status_code=status.HTTP_400_BAD_REQUEST,
                 )
 
-            user = request.user
-            customer_id = user.customer_id
-
-            profile = BusinessProfile.get_or_create(customer_id)
+            if not profile._id:
+                profile = BusinessProfile.get_or_create(customer_id)
 
             data = dict(serializer.validated_data)
             expected_revision = data.pop("profile_revision", None)
@@ -322,7 +357,15 @@ class BusinessProfileView(CustomerProfileAccessMixin, APIView):
             )
 
             return success_response(
-                data={"profile_revision": profile.profile_revision},
+                data={
+                    "profile_revision": profile.profile_revision,
+                    "profile_completed": profile.profile_completed,
+                    "completion_percentage": profile.completion_percentage,
+                    "profile_completion_policy_version": (
+                        profile.profile_completion_policy_version
+                    ),
+                    "profile_missing_fields": profile.profile_missing_fields,
+                },
                 message="Business profile updated successfully",
             )
         except ProfileRevisionConflict as exc:
@@ -363,6 +406,7 @@ class AlternativeDataView(CustomerProfileAccessMixin, APIView):
             data = AlternativeData.find_by_customer(customer_id) or AlternativeData(
                 customer_id=str(customer_id)
             )
+            data.calculate_completion()
 
             return success_response(
                 data={
@@ -425,6 +469,12 @@ class AlternativeDataView(CustomerProfileAccessMixin, APIView):
                         else None
                     ),
                     "profile_revision": data.profile_revision,
+                    "profile_completed": data.profile_completed,
+                    "completion_percentage": data.completion_percentage,
+                    "profile_completion_policy_version": (
+                        data.profile_completion_policy_version
+                    ),
+                    "profile_missing_fields": data.profile_missing_fields,
                 },
                 message="Alternative data retrieved successfully",
             )
@@ -442,7 +492,16 @@ class AlternativeDataView(CustomerProfileAccessMixin, APIView):
             if not has_permission:
                 return result
 
-            serializer = AlternativeDataSerializer(data=request.data)
+            user = request.user
+            customer_id = user.customer_id
+            alt_data = AlternativeData.find_by_customer(customer_id) or AlternativeData(
+                customer_id=str(customer_id)
+            )
+            serializer = AlternativeDataSerializer(
+                instance=alt_data,
+                data=request.data,
+                partial=True,
+            )
             if not serializer.is_valid():
                 return error_response(
                     message="Invalid alternative data",
@@ -450,10 +509,8 @@ class AlternativeDataView(CustomerProfileAccessMixin, APIView):
                     status_code=status.HTTP_400_BAD_REQUEST,
                 )
 
-            user = request.user
-            customer_id = user.customer_id
-
-            alt_data = AlternativeData.get_or_create(customer_id)
+            if not alt_data._id:
+                alt_data = AlternativeData.get_or_create(customer_id)
             data = dict(serializer.validated_data)
             expected_revision = data.pop("profile_revision", None)
             alt_data = alt_data.update_inputs(data, expected_revision)
@@ -477,6 +534,12 @@ class AlternativeDataView(CustomerProfileAccessMixin, APIView):
                     "risk_input_revision": alt_data.risk_input_revision,
                     "risk_score_status": alt_data.risk_score_status,
                     "profile_revision": alt_data.profile_revision,
+                    "profile_completed": alt_data.profile_completed,
+                    "completion_percentage": alt_data.completion_percentage,
+                    "profile_completion_policy_version": (
+                        alt_data.profile_completion_policy_version
+                    ),
+                    "profile_missing_fields": alt_data.profile_missing_fields,
                 },
                 ip_address=request.META.get("REMOTE_ADDR", ""),
             )

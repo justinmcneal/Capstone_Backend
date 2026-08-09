@@ -12,6 +12,7 @@ from rest_framework.views import APIView
 from accounts.authentication import CustomJWTAuthentication
 from accounts.utils.access_control import AccessControlMixin
 from accounts.utils.response_helpers import success_response
+from profiles.models import AlternativeData, BusinessProfile, CustomerProfile
 
 logger = logging.getLogger("analytics")
 
@@ -66,33 +67,12 @@ class CustomerDashboardView(AccessControlMixin, APIView):
         }
 
         # Profile completion
-        personal = db["customer_profiles"].find_one(
-            {"customer_id": str(customer_id)},
-            sort=[("updated_at", -1), ("created_at", -1)],
-        )
-        business = db["business_profiles"].find_one(
-            {"customer_id": str(customer_id)},
-            sort=[("updated_at", -1), ("created_at", -1)],
-        )
-        alternative = db["alternative_data"].find_one(
-            {"customer_id": str(customer_id)},
-            sort=[("updated_at", -1), ("created_at", -1)],
-        )
-
-        # Treat section as complete only when meaningful data exists,
-        # not merely because an empty placeholder document exists.
-        has_personal = bool((personal or {}).get("completion_percentage", 0) > 0)
-        has_business = bool(
-            (business or {}).get("business_type")
-            and (
-                (business or {}).get("income_range")
-                or (business or {}).get("estimated_monthly_income")
-            )
-        )
-        has_alternative = bool(
-            (alternative or {}).get("education_level")
-            and (alternative or {}).get("housing_status")
-        )
+        personal = CustomerProfile.find_by_customer(customer_id)
+        business = BusinessProfile.find_by_customer(customer_id)
+        alternative = AlternativeData.find_by_customer(customer_id)
+        has_personal = bool(personal and personal.profile_completed)
+        has_business = bool(business and business.profile_completed)
+        has_alternative = bool(alternative and alternative.profile_completed)
         has_id = (
             db["documents"].count_documents(
                 {"customer_id": str(customer_id), "document_type": "valid_id"}
@@ -100,9 +80,12 @@ class CustomerDashboardView(AccessControlMixin, APIView):
             > 0
         )
 
-        # Profile completion is based on the 3 core sections only.
-        profile_items = [has_personal, has_business, has_alternative]
-        completion = (sum(profile_items) / len(profile_items)) * 100
+        section_percentages = [
+            personal.completion_percentage if personal else 0,
+            business.completion_percentage if business else 0,
+            alternative.completion_percentage if alternative else 0,
+        ]
+        completion = sum(section_percentages) / len(section_percentages)
 
         profile_completion = {
             "percentage": f"{completion:.0f}%",

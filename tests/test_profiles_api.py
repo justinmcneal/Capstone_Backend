@@ -12,12 +12,14 @@ Coverage:
 - Validation errors (invalid payloads)
 """
 
+from datetime import date
 from unittest.mock import MagicMock
 
 from bson import ObjectId
 from django.conf import settings
 from django.core.cache import cache
 from django.urls import resolve
+from django.utils import timezone
 from rest_framework.test import APIRequestFactory, force_authenticate
 
 from accounts.authentication import AuthenticatedUser
@@ -229,6 +231,44 @@ class TestCustomerProfileView:
         profile = CustomerProfile.find_by_customer(customer.id)
         assert profile.gender == "female"
         assert profile.barangay == "New Barangay"
+
+    def test_invalid_put_does_not_create_profile_shell(self, monkeypatch):
+        customer = _create_customer()
+        request = _put(
+            "/api/profile/",
+            {"date_of_birth": timezone.localdate().isoformat()},
+            _auth_customer(customer),
+        )
+        monkeypatch.setattr(
+            CustomerProfileView, "authentication_classes", [], raising=False
+        )
+        monkeypatch.setattr(
+            CustomerProfileView, "permission_classes", [], raising=False
+        )
+
+        response = CustomerProfileView.as_view()(request)
+
+        assert response.status_code == 400
+        assert CustomerProfile.find_by_customer(customer.id) is None
+
+    def test_get_normalizes_stored_datetime_birth_date(self, monkeypatch):
+        customer = _create_customer()
+        CustomerProfile(
+            customer_id=customer.id,
+            date_of_birth=date(1990, 1, 2),
+        ).save()
+        request = _get("/api/profile/", _auth_customer(customer))
+        monkeypatch.setattr(
+            CustomerProfileView, "authentication_classes", [], raising=False
+        )
+        monkeypatch.setattr(
+            CustomerProfileView, "permission_classes", [], raising=False
+        )
+
+        response = CustomerProfileView.as_view()(request)
+
+        assert response.status_code == 200
+        assert response.data["data"]["date_of_birth"] == "1990-01-02"
 
     def test_officer_returns_403(self, monkeypatch):
         officer = _create_officer()
@@ -460,22 +500,45 @@ class TestProfileSummaryView:
         customer = _create_customer()
         personal = CustomerProfile(
             customer_id=str(customer.id),
-            profile_completed=True,
-            completion_percentage=100,
+            date_of_birth=date(1990, 1, 1),
+            gender="female",
+            civil_status="single",
+            mobile_number="+639171234567",
+            address_line1="1 Main Street",
+            barangay="Barangay One",
+            city_municipality="Manila",
+            province="Metro Manila",
+            zip_code="1000",
         )
         business = BusinessProfile(
             customer_id=str(customer.id),
+            business_name="Test Store",
             business_type="sari_sari_store",
+            business_address="1 Market Road",
+            business_barangay="Barangay One",
+            business_city="Manila",
+            business_province="Metro Manila",
+            business_age_months=24,
+            is_registered=False,
+            estimated_monthly_income=50_000,
             income_range="30000_50000",
-            profile_completed=True,
-            completion_percentage=100,
+            estimated_monthly_expenses=20_000,
+            number_of_employees=1,
         )
         alternative = AlternativeData(
             customer_id=str(customer.id),
             education_level="college_graduate",
+            employment_status="self_employed",
+            years_of_experience=3,
             housing_status="owned",
-            profile_completed=True,
-            completion_percentage=100,
+            years_at_current_address=2,
+            number_of_dependents=0,
+            household_income=50_000,
+            has_existing_loans=False,
+            has_bank_account=False,
+            has_ewallet=False,
+            pays_utilities=False,
+            is_coop_member=False,
         )
         docs = []
 
@@ -663,10 +726,15 @@ class TestOfficerProfileView:
         _assign_customer(officer, customer)
         profile = CustomerProfile(
             customer_id=str(customer.id),
+            date_of_birth=date(1990, 1, 1),
             gender="male",
+            civil_status="single",
+            mobile_number="+639171234567",
+            address_line1="1 Main Street",
             barangay="Test Barangay",
-            profile_completed=True,
-            completion_percentage=100,
+            city_municipality="Manila",
+            province="Metro Manila",
+            zip_code="1000",
         )
 
         monkeypatch.setattr(

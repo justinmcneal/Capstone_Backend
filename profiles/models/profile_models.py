@@ -9,8 +9,10 @@ Collections:
 
 import logging
 from datetime import date, datetime, time, timezone
+from decimal import Decimal
 
 from bson import ObjectId
+from bson.decimal128 import Decimal128
 from bson.errors import InvalidId
 from django.conf import settings
 from pymongo import ReturnDocument
@@ -20,9 +22,90 @@ from config.field_encryption import decrypt_fields, encrypt_fields
 
 logger = logging.getLogger("profiles")
 
+PROFILE_COMPLETION_POLICY_VERSION = "2026-08-09-v1"
+
+PERSONAL_COMPLETION_FIELDS = (
+    "date_of_birth",
+    "gender",
+    "civil_status",
+    "nationality",
+    "mobile_number",
+    "address_line1",
+    "barangay",
+    "city_municipality",
+    "province",
+    "zip_code",
+)
+BUSINESS_COMPLETION_FIELDS = (
+    "business_name",
+    "business_type",
+    "business_address",
+    "business_barangay",
+    "business_city",
+    "business_province",
+    "business_age_months",
+    "is_registered",
+    "estimated_monthly_income",
+    "income_range",
+    "estimated_monthly_expenses",
+    "number_of_employees",
+)
+ALTERNATIVE_COMPLETION_FIELDS = (
+    "education_level",
+    "employment_status",
+    "years_of_experience",
+    "housing_status",
+    "years_at_current_address",
+    "number_of_dependents",
+    "household_income",
+    "has_existing_loans",
+    "has_bank_account",
+    "has_ewallet",
+    "pays_utilities",
+    "is_coop_member",
+)
+
 
 class ProfileRevisionConflict(RuntimeError):
     """Raised when a client updates a profile revision that is no longer current."""
+
+
+def _is_completed_value(value):
+    if value is None:
+        return False
+    if isinstance(value, str):
+        return bool(value.strip())
+    return True
+
+
+def _calculate_completion(profile, section, required_fields):
+    missing = [
+        f"{section}.{field}"
+        for field in required_fields
+        if not _is_completed_value(getattr(profile, field, None))
+    ]
+    profile.profile_missing_fields = missing
+    profile.profile_completion_policy_version = PROFILE_COMPLETION_POLICY_VERSION
+    completed = len(required_fields) - len(missing)
+    profile.completion_percentage = int(completed / len(required_fields) * 100)
+    profile.profile_completed = not missing
+    return profile.completion_percentage
+
+
+def _serialize_profile_fields(data, encrypted_fields, monetary_fields=()):
+    serialized = encrypt_fields(data, encrypted_fields)
+    for field in monetary_fields:
+        if isinstance(serialized.get(field), Decimal):
+            serialized[field] = Decimal128(serialized[field])
+    return serialized
+
+
+def _deserialize_profile_fields(data, encrypted_fields, monetary_fields=()):
+    deserialized = decrypt_fields(data, encrypted_fields)
+    for field in monetary_fields:
+        if isinstance(deserialized.get(field), Decimal128):
+            deserialized[field] = deserialized[field].to_decimal()
+    return deserialized
 
 
 def get_db():
@@ -129,6 +212,10 @@ def _finish_atomic_profile_update(model_class, document):
                 "$set": {
                     "profile_completed": profile.profile_completed,
                     "completion_percentage": profile.completion_percentage,
+                    "profile_completion_policy_version": (
+                        profile.profile_completion_policy_version
+                    ),
+                    "profile_missing_fields": profile.profile_missing_fields,
                 }
             },
             return_document=ReturnDocument.AFTER,
@@ -162,7 +249,11 @@ def _atomic_update_profile(
     if additional_set:
         updates.update(additional_set)
     updates["updated_at"] = datetime.now(timezone.utc)
-    updates = encrypt_fields(updates, profile.encrypted_fields)
+    updates = _serialize_profile_fields(
+        updates,
+        profile.encrypted_fields,
+        profile.monetary_fields,
+    )
     increments = {"profile_revision": 1}
     if additional_inc:
         increments.update(additional_inc)
@@ -281,6 +372,7 @@ class CustomerProfile:
         "emergency_contact_name",
         "emergency_contact_phone",
     )
+    monetary_fields = ()
 
     def __init__(self, **kwargs):
         self._id = kwargs.get("_id")
@@ -321,6 +413,10 @@ class CustomerProfile:
         self.profile_completed = kwargs.get("profile_completed", False)
         self.completion_percentage = kwargs.get("completion_percentage", 0)
         self.profile_revision = kwargs.get("profile_revision", 0)
+        self.profile_completion_policy_version = kwargs.get(
+            "profile_completion_policy_version", PROFILE_COMPLETION_POLICY_VERSION
+        )
+        self.profile_missing_fields = kwargs.get("profile_missing_fields", [])
 
         # Timestamps
         self.created_at = kwargs.get("created_at", datetime.now(timezone.utc))
@@ -356,34 +452,32 @@ class CustomerProfile:
             "profile_completed": self.profile_completed,
             "completion_percentage": self.completion_percentage,
             "profile_revision": self.profile_revision,
+            "profile_completion_policy_version": (
+                self.profile_completion_policy_version
+            ),
+            "profile_missing_fields": self.profile_missing_fields,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
         }
         if self._id:
             data["_id"] = self._id
-        return encrypt_fields(data, self.encrypted_fields)
+        return _serialize_profile_fields(data, self.encrypted_fields)
 
     @classmethod
     def from_dict(cls, data):
         if not data:
             return None
-        return cls(**decrypt_fields(data, cls.encrypted_fields))
+        profile = cls(**_deserialize_profile_fields(data, cls.encrypted_fields))
+        profile.calculate_completion()
+        return profile
 
     def calculate_completion(self):
         """Calculate profile completion percentage"""
-        fields = [
-            self.date_of_birth,
-            self.gender,
-            self.civil_status,
-            self.address_line1,
-            self.barangay,
-            self.city_municipality,
-            self.province,
-        ]
-        filled = sum(1 for f in fields if f)
-        self.completion_percentage = int((filled / len(fields)) * 100)
-        self.profile_completed = self.completion_percentage == 100
-        return self.completion_percentage
+        return _calculate_completion(
+            self,
+            "personal",
+            PERSONAL_COMPLETION_FIELDS,
+        )
 
     def save(self):
         return _save_profile(self)
@@ -433,6 +527,10 @@ class BusinessProfile:
         "estimated_monthly_income",
         "estimated_monthly_expenses",
     )
+    monetary_fields = (
+        "estimated_monthly_income",
+        "estimated_monthly_expenses",
+    )
 
     def __init__(self, **kwargs):
         self._id = kwargs.get("_id")
@@ -472,7 +570,7 @@ class BusinessProfile:
                 self.business_age_months = _years_op
         else:
             self.business_age_months = None
-        self.is_registered = kwargs.get("is_registered", False)  # DTI/SEC registered
+        self.is_registered = kwargs.get("is_registered")  # DTI/SEC registered
         self.registration_type = kwargs.get("registration_type")  # DTI, SEC, BIR
         self.registration_number = kwargs.get("registration_number", "")
 
@@ -480,12 +578,16 @@ class BusinessProfile:
         self.estimated_monthly_income = kwargs.get("estimated_monthly_income")  # Float
         self.income_range = kwargs.get("income_range")  # From INCOME_RANGES
         self.estimated_monthly_expenses = kwargs.get("estimated_monthly_expenses")
-        self.number_of_employees = kwargs.get("number_of_employees", 0)
+        self.number_of_employees = kwargs.get("number_of_employees")
 
         # Profile Completion
         self.profile_completed = kwargs.get("profile_completed", False)
         self.completion_percentage = kwargs.get("completion_percentage", 0)
         self.profile_revision = kwargs.get("profile_revision", 0)
+        self.profile_completion_policy_version = kwargs.get(
+            "profile_completion_policy_version", PROFILE_COMPLETION_POLICY_VERSION
+        )
+        self.profile_missing_fields = kwargs.get("profile_missing_fields", [])
 
         # Timestamps
         self.created_at = kwargs.get("created_at", datetime.now(timezone.utc))
@@ -517,18 +619,34 @@ class BusinessProfile:
             "profile_completed": self.profile_completed,
             "completion_percentage": self.completion_percentage,
             "profile_revision": self.profile_revision,
+            "profile_completion_policy_version": (
+                self.profile_completion_policy_version
+            ),
+            "profile_missing_fields": self.profile_missing_fields,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
         }
         if self._id:
             data["_id"] = self._id
-        return encrypt_fields(data, self.encrypted_fields)
+        return _serialize_profile_fields(
+            data,
+            self.encrypted_fields,
+            self.monetary_fields,
+        )
 
     @classmethod
     def from_dict(cls, data):
         if not data:
             return None
-        return cls(**decrypt_fields(data, cls.encrypted_fields))
+        profile = cls(
+            **_deserialize_profile_fields(
+                data,
+                cls.encrypted_fields,
+                cls.monetary_fields,
+            )
+        )
+        profile.calculate_completion()
+        return profile
 
     def save(self):
         return _save_profile(self)
@@ -542,11 +660,12 @@ class BusinessProfile:
 
     def calculate_completion(self):
         """Calculate business profile completion."""
-        required = [self.business_type, self.income_range]
-        filled = sum(1 for field in required if field)
-        self.completion_percentage = int((filled / len(required)) * 100)
-        self.profile_completed = self.completion_percentage == 100
-        return self.completion_percentage
+        required = list(BUSINESS_COMPLETION_FIELDS)
+        if self.business_type == "other":
+            required.append("business_type_other")
+        if self.is_registered is True:
+            required.extend(("registration_type", "registration_number"))
+        return _calculate_completion(self, "business", required)
 
     @classmethod
     def find_one(cls, query):
@@ -584,6 +703,11 @@ class AlternativeData:
         "existing_loan_amount",
         "monthly_rent",
     )
+    monetary_fields = (
+        "monthly_rent",
+        "household_income",
+        "existing_loan_amount",
+    )
 
     def __init__(self, **kwargs):
         self._id = kwargs.get("_id")
@@ -604,11 +728,11 @@ class AlternativeData:
         self.monthly_rent = kwargs.get("monthly_rent")  # If renting
 
         # Dependents & Family
-        self.number_of_dependents = kwargs.get("number_of_dependents", 0)
+        self.number_of_dependents = kwargs.get("number_of_dependents")
         self.household_income = kwargs.get("household_income")
 
         # Existing Credit
-        self.has_existing_loans = kwargs.get("has_existing_loans", False)
+        self.has_existing_loans = kwargs.get("has_existing_loans")
         self.existing_loan_amount = kwargs.get("existing_loan_amount")
         self.existing_loan_source = kwargs.get(
             "existing_loan_source"
@@ -618,21 +742,21 @@ class AlternativeData:
         )  # on_time, late, defaulted
 
         # Digital Footprint (optional)
-        self.has_bank_account = kwargs.get("has_bank_account", False)
+        self.has_bank_account = kwargs.get("has_bank_account")
         self.bank_account_duration = kwargs.get("bank_account_duration")  # Years
-        self.has_ewallet = kwargs.get("has_ewallet", False)  # GCash, Wallet (ETH), etc.
+        self.has_ewallet = kwargs.get("has_ewallet")  # GCash, Wallet (ETH), etc.
         self.ewallet_usage = kwargs.get(
             "ewallet_usage"
         )  # daily, weekly, monthly, rarely
 
         # Utility Payments
-        self.pays_utilities = kwargs.get("pays_utilities", False)
+        self.pays_utilities = kwargs.get("pays_utilities")
         self.utility_payment_history = kwargs.get(
             "utility_payment_history"
         )  # on_time, late
 
         # Social Capital
-        self.is_coop_member = kwargs.get("is_coop_member", False)
+        self.is_coop_member = kwargs.get("is_coop_member")
         self.community_involvement = kwargs.get(
             "community_involvement", []
         )  # List of orgs
@@ -665,6 +789,10 @@ class AlternativeData:
         self.profile_completed = kwargs.get("profile_completed", False)
         self.completion_percentage = kwargs.get("completion_percentage", 0)
         self.profile_revision = kwargs.get("profile_revision", 0)
+        self.profile_completion_policy_version = kwargs.get(
+            "profile_completion_policy_version", PROFILE_COMPLETION_POLICY_VERSION
+        )
+        self.profile_missing_fields = kwargs.get("profile_missing_fields", [])
 
         # Timestamps
         self.created_at = kwargs.get("created_at", datetime.now(timezone.utc))
@@ -718,18 +846,34 @@ class AlternativeData:
             "profile_completed": self.profile_completed,
             "completion_percentage": self.completion_percentage,
             "profile_revision": self.profile_revision,
+            "profile_completion_policy_version": (
+                self.profile_completion_policy_version
+            ),
+            "profile_missing_fields": self.profile_missing_fields,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
         }
         if self._id:
             data["_id"] = self._id
-        return encrypt_fields(data, self.encrypted_fields)
+        return _serialize_profile_fields(
+            data,
+            self.encrypted_fields,
+            self.monetary_fields,
+        )
 
     @classmethod
     def from_dict(cls, data):
         if not data:
             return None
-        return cls(**decrypt_fields(data, cls.encrypted_fields))
+        profile = cls(
+            **_deserialize_profile_fields(
+                data,
+                cls.encrypted_fields,
+                cls.monetary_fields,
+            )
+        )
+        profile.calculate_completion()
+        return profile
 
     def save(self):
         return _save_profile(self)
@@ -766,11 +910,24 @@ class AlternativeData:
 
     def calculate_completion(self):
         """Calculate alternative data completion."""
-        required = [self.education_level, self.housing_status]
-        filled = sum(1 for field in required if field)
-        self.completion_percentage = int((filled / len(required)) * 100)
-        self.profile_completed = self.completion_percentage == 100
-        return self.completion_percentage
+        required = list(ALTERNATIVE_COMPLETION_FIELDS)
+        if self.housing_status == "rented":
+            required.append("monthly_rent")
+        if self.has_existing_loans is True:
+            required.extend(
+                (
+                    "existing_loan_amount",
+                    "existing_loan_source",
+                    "loan_payment_history",
+                )
+            )
+        if self.has_bank_account is True:
+            required.append("bank_account_duration")
+        if self.has_ewallet is True:
+            required.append("ewallet_usage")
+        if self.pays_utilities is True:
+            required.append("utility_payment_history")
+        return _calculate_completion(self, "alternative", required)
 
     @classmethod
     def find_one(cls, query):
