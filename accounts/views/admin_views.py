@@ -18,6 +18,7 @@ from accounts.authentication import CustomJWTAuthentication
 from accounts.models import Admin, LoanOfficer
 from accounts.services.lockout_service import LockoutService
 from accounts.services.security_event_service import SecurityEventService
+from accounts.services.session_activity_service import SessionActivityService
 from accounts.services.two_factor_service import TwoFactorService
 from accounts.utils.access_control import AccessControlMixin
 from accounts.utils.auth_cookies import (
@@ -198,6 +199,14 @@ def _log_admin_login_failure(request, login_identifier, reason, admin=None):
             login_identifier,
             str(log_error),
         )
+    SessionActivityService.record_login_activity(
+        role="admin",
+        status="FAILED",
+        request=request,
+        user=admin,
+        email=attempted_email or str(login_identifier),
+        failure_reason=reason,
+    )
     user_login_failed.send(
         sender=__name__,
         credentials={"username": login_identifier},

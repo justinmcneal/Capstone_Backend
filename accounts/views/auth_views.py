@@ -12,7 +12,6 @@ from rest_framework_simplejwt.tokens import RefreshToken
 
 from accounts.authentication import CustomJWTAuthentication
 from accounts.models import Admin, LoanOfficer
-from accounts.models.activity import ActiveSession, LoginActivity
 from accounts.serializers import SignUpSerializer
 from accounts.serializers.auth_serializers import (
     LoginSerializer,
@@ -20,7 +19,7 @@ from accounts.serializers.auth_serializers import (
 )
 from accounts.services import AuthService
 from accounts.services.lockout_service import LockoutService
-from accounts.services.security_event_service import SecurityEventService
+from accounts.services.session_activity_service import SessionActivityService
 from accounts.utils.auth_cookies import (
     TOKEN_TRANSPORT_BODY,
     TOKEN_TRANSPORT_COOKIE,
@@ -82,20 +81,14 @@ def _log_customer_login_failure(request, email, reason, user=None):
             str(log_error),
         )
 
-    # Record LoginActivity for failure
-    try:
-        device_info = request.META.get("HTTP_USER_AGENT", "")
-        LoginActivity(
-            user_id=str(user.id) if user else None,
-            email=email,
-            role="customer",
-            status="FAILED",
-            ip_address=ip_address,
-            device_info=device_info,
-            failure_reason=reason,
-        ).save()
-    except NON_FATAL_EXCEPTIONS as e:
-        logger.error("Failed to save LoginActivity: %s", e)
+    SessionActivityService.record_login_activity(
+        role="customer",
+        status="FAILED",
+        request=request,
+        user=user,
+        email=email,
+        failure_reason=reason,
+    )
 
     # Dispatch signal for django-axes
     user_login_failed.send(
@@ -384,45 +377,11 @@ class LoginView(APIView):
                 ip_address=request.META.get("REMOTE_ADDR", ""),
             )
 
-            # Record LoginActivity for success
-            try:
-                ip_address = get_client_ip(request)
-                device_info = request.META.get("HTTP_USER_AGENT", "")
-                LoginActivity(
-                    user_id=str(customer.id),
-                    email=customer.email,
-                    role="customer",
-                    status="SUCCESS",
-                    ip_address=ip_address,
-                    device_info=device_info,
-                ).save()
-            except NON_FATAL_EXCEPTIONS as e:
-                logger.error("Failed to save LoginActivity: %s", e)
-
-            # Create ActiveSession
-            try:
-                ActiveSession.update_many(
-                    {
-                        "user_id": str(customer.id),
-                        "role": "customer",
-                        "session_id": RefreshToken(tokens["refresh"]).get("session_id"),
-                    },
-                    {
-                        "$set": {
-                            "ip_address": ip_address,
-                            "device_info": device_info,
-                        }
-                    },
-                )
-            except NON_FATAL_EXCEPTIONS as e:
-                logger.error("Failed to save ActiveSession: %s", e)
-
-            SecurityEventService.record_new_device_login_if_first(
+            SessionActivityService.complete_successful_login(
                 user=customer,
-                user_type="customer",
-                session_id=RefreshToken(tokens["refresh"]).get("session_id"),
-                ip_address=ip_address,
-                device_info=device_info,
+                role="customer",
+                tokens=tokens,
+                request=request,
             )
 
             # Dispatch signal for django-axes
@@ -533,6 +492,12 @@ class VerifyOTP(APIView):
                 )
             AuthService.reset_otp_attempts(customer)
             tokens = AuthService.create_customer_tokens(customer)
+            SessionActivityService.complete_successful_login(
+                user=customer,
+                role="customer",
+                tokens=tokens,
+                request=request,
+            )
 
             logger.info(
                 f"OTP verified successfully for {email} from IP {request.META.get('REMOTE_ADDR')}"
@@ -726,7 +691,11 @@ class RefreshTokenView(APIView):
                         "Account state has changed", status.HTTP_401_UNAUTHORIZED
                     )
                 new_tokens = AuthService.create_customer_tokens(
-                    customer, token_type=token_type
+                    customer,
+                    token_type=token_type,
+                    session_id=session_id,
+                    persist=False,
+                    revoke_existing=False,
                 )
                 user_email = customer.email
             else:
@@ -781,39 +750,39 @@ class RefreshTokenView(APIView):
                     token_type=token_type,
                     security_version=getattr(user, "security_version", 1),
                     must_change_password=getattr(user, "must_change_password", False),
+                    token_transport=token_transport,
+                    session_id=session_id,
+                    persist=False,
                 )
                 user_email = user.email
 
+            ip_address = get_client_ip(request)
+            device_info = request.META.get("HTTP_USER_AGENT", "")
+            if not TokenUtils.rotate_refresh_session(
+                user_id=customer_id,
+                role=role,
+                session_id=session_id,
+                old_refresh_token=refresh_token,
+                new_refresh_token=new_tokens["refresh"],
+                security_version=int(token_security_version),
+                ip_address=ip_address,
+                device_info=device_info,
+            ):
+                logger.error(
+                    "Conditional refresh rotation lost for user %s (%s)",
+                    customer_id,
+                    role,
+                )
+                return APIResponseHelper.error_response(
+                    "Token is no longer valid", status.HTTP_401_UNAUTHORIZED
+                )
+
             if not TokenUtils.blacklist_token(refresh_token):
                 logger.error(
-                    f"Failed to rotate refresh token for user {customer_id} ({role}) "
+                    f"Failed to blacklist rotated refresh token for user {customer_id} ({role}) "
                     f"from IP {request.META.get('REMOTE_ADDR')}"
                 )
                 return APIResponseHelper.server_error_response("Token refresh failed")
-
-            # Manage ActiveSession during refresh
-            try:
-                TokenUtils.revoke_session(customer_id, role, session_id)
-
-                ip_address = get_client_ip(request)
-                device_info = request.META.get("HTTP_USER_AGENT", "")
-                ActiveSession.update_many(
-                    {
-                        "user_id": str(customer_id),
-                        "role": role,
-                        "session_id": RefreshToken(new_tokens["refresh"]).get(
-                            "session_id"
-                        ),
-                    },
-                    {
-                        "$set": {
-                            "ip_address": ip_address,
-                            "device_info": device_info,
-                        }
-                    },
-                )
-            except NON_FATAL_EXCEPTIONS as e:
-                logger.error("Failed to manage ActiveSession during refresh: %s", e)
 
             logger.info(
                 f"Token refreshed for user {user_email} ({role}) from IP {request.META.get('REMOTE_ADDR')}"

@@ -9,6 +9,7 @@ from rest_framework_simplejwt.authentication import JWTAuthentication
 from rest_framework_simplejwt.exceptions import AuthenticationFailed, InvalidToken
 
 from accounts.models import Admin, Customer, LoanOfficer
+from accounts.services.session_activity_service import SessionActivityService
 from accounts.utils.token_utils import TokenUtils
 
 logger = logging.getLogger("authentication")
@@ -129,6 +130,12 @@ class CustomJWTAuthentication(JWTAuthentication):
 
         validated_token = self.get_validated_token(raw_token)
         user = self.get_user(validated_token)
+        SessionActivityService.touch_active_session(
+            user_id=user.customer_id,
+            role=user.role,
+            session_id=user.session_id,
+            request=request,
+        )
         if user.must_change_password:
             url_name = getattr(
                 getattr(request, "resolver_match", None), "url_name", None

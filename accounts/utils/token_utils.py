@@ -101,7 +101,12 @@ class TokenUtils:
 
     @staticmethod
     def generate_jwt_tokens(
-        customer: Customer, token_type: str = "no_remember_me"
+        customer: Customer,
+        token_type: str = "no_remember_me",
+        *,
+        session_id: str | None = None,
+        persist: bool = True,
+        revoke_existing: bool = True,
     ) -> dict[str, str]:
         """
         Generate JWT access and refresh tokens for a customer with dynamic lifetimes.
@@ -115,20 +120,23 @@ class TokenUtils:
             dict with access and refresh tokens
         """
         lifetimes = TokenUtils._get_token_lifetimes(token_type)
-        session_id = str(uuid.uuid4())
+        session_id = str(session_id or uuid.uuid4())
         security_version = int(getattr(customer, "security_version", 1))
 
         # Single-device enforcement: Invalidate all existing refresh tokens for this customer.
         customer_query = TokenUtils._token_membership_query(
             customer.id, role="customer", active_only=True
         )
-        existing_tokens = RefreshTokenEntry.find(customer_query)
-        invalidated_count = len(existing_tokens)
-        if invalidated_count > 0:
-            TokenUtils.revoke_all_sessions(customer.id, "customer")
-            logger.info(
-                f"Invalidated {invalidated_count} existing refresh token(s) for {customer.email}"
-            )
+        if revoke_existing:
+            existing_tokens = RefreshTokenEntry.find(customer_query)
+            invalidated_count = len(existing_tokens)
+            if invalidated_count > 0:
+                TokenUtils.revoke_all_sessions(customer.id, "customer")
+                logger.info(
+                    "Invalidated %s existing refresh token(s) for %s",
+                    invalidated_count,
+                    customer.email,
+                )
 
         # Create refresh token
         refresh = RefreshToken()
@@ -155,14 +163,15 @@ class TokenUtils:
         access.set_exp(lifetime=lifetimes["access"])
 
         # Store new refresh token hash in DB
-        TokenUtils._store_refresh_token_entry(
-            customer_id=customer.id,
-            refresh_token=str(refresh),
-            role="customer",
-            expires_at=datetime.fromtimestamp(refresh["exp"], tz=timezone.utc),
-            session_id=session_id,
-            security_version=security_version,
-        )
+        if persist:
+            TokenUtils._store_refresh_token_entry(
+                customer_id=customer.id,
+                refresh_token=str(refresh),
+                role="customer",
+                expires_at=datetime.fromtimestamp(refresh["exp"], tz=timezone.utc),
+                session_id=session_id,
+                security_version=security_version,
+            )
 
         return {"access": str(access), "refresh": str(refresh)}
 
@@ -176,6 +185,8 @@ class TokenUtils:
         security_version: int = 1,
         must_change_password: bool = False,
         token_transport: str = "body",
+        session_id: str | None = None,
+        persist: bool = True,
     ) -> dict[str, str]:
         """
         Generate JWT tokens for non-customer users (admin, loan officer).
@@ -195,7 +206,7 @@ class TokenUtils:
             dict with access and refresh tokens
         """
         lifetimes = TokenUtils._get_token_lifetimes(token_type)
-        session_id = str(uuid.uuid4())
+        session_id = str(session_id or uuid.uuid4())
 
         # Create refresh token
         refresh = RefreshToken()
@@ -225,14 +236,15 @@ class TokenUtils:
         access["must_change_password"] = bool(must_change_password)
         access.set_exp(lifetime=lifetimes["access"])
 
-        TokenUtils._store_refresh_token_entry(
-            customer_id=user_id,
-            refresh_token=str(refresh),
-            role=role,
-            expires_at=datetime.fromtimestamp(refresh["exp"], tz=timezone.utc),
-            session_id=session_id,
-            security_version=int(security_version),
-        )
+        if persist:
+            TokenUtils._store_refresh_token_entry(
+                customer_id=user_id,
+                refresh_token=str(refresh),
+                role=role,
+                expires_at=datetime.fromtimestamp(refresh["exp"], tz=timezone.utc),
+                session_id=session_id,
+                security_version=int(security_version),
+            )
 
         return {"access": str(access), "refresh": str(refresh)}
 
@@ -417,6 +429,74 @@ class TokenUtils:
             {"$set": {"is_active": False}},
         )
         return True
+
+    @staticmethod
+    def rotate_refresh_session(
+        *,
+        user_id: str,
+        role: str,
+        session_id: str,
+        old_refresh_token: str,
+        new_refresh_token: str,
+        security_version: int,
+        ip_address: str = "",
+        device_info: str = "",
+    ) -> bool:
+        """Atomically rotate credentials while preserving the logical session ID."""
+        now = datetime.now(timezone.utc)
+        parsed = RefreshToken(new_refresh_token)
+        new_hash = TokenUtils._hash_token(new_refresh_token)
+        query = TokenUtils._token_membership_query(user_id, role=role, active_only=True)
+        query.update(
+            {
+                "session_id": str(session_id),
+                "token_hash": TokenUtils._hash_token(old_refresh_token),
+                "security_version": int(security_version),
+            }
+        )
+        result = settings.MONGODB[RefreshTokenEntry.collection_name].update_one(
+            query,
+            {
+                "$set": {
+                    "token_hash": new_hash,
+                    "issued_at": now,
+                    "expires_at": datetime.fromtimestamp(
+                        parsed["exp"], tz=timezone.utc
+                    ),
+                    "is_active": True,
+                    "revoked_at": None,
+                }
+            },
+        )
+        if result.modified_count != 1:
+            return False
+
+        from accounts.models.activity import ActiveSession
+
+        session_result = settings.MONGODB[ActiveSession.collection_name].update_one(
+            {
+                "user_id": str(user_id),
+                "role": role,
+                "session_id": str(session_id),
+            },
+            {
+                "$set": {
+                    "refresh_token_hash": new_hash,
+                    "last_active": now,
+                    "ip_address": ip_address,
+                    "device_info": device_info,
+                },
+                "$setOnInsert": {
+                    "user_id": str(user_id),
+                    "role": role,
+                    "session_id": str(session_id),
+                    "created_at": now,
+                    "is_active": True,
+                }
+            },
+            upsert=True,
+        )
+        return session_result.matched_count == 1 or session_result.upserted_id is not None
 
     @staticmethod
     def revoke_all_sessions(

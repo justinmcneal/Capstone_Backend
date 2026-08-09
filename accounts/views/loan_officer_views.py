@@ -8,6 +8,7 @@ from rest_framework.views import APIView
 
 from accounts.models import LoanOfficer
 from accounts.services.lockout_service import LockoutService
+from accounts.services.session_activity_service import SessionActivityService
 from accounts.utils.auth_cookies import (
     apply_auth_token_transport,
     clear_auth_cookies,
@@ -58,6 +59,14 @@ def _log_loan_officer_login_failure(request, email, reason, officer=None):
             email,
             str(log_error),
         )
+    SessionActivityService.record_login_activity(
+        role="loan_officer",
+        status="FAILED",
+        request=request,
+        user=officer,
+        email=email,
+        failure_reason=reason,
+    )
     user_login_failed.send(
         sender=__name__, credentials={"username": email}, request=request
     )
@@ -221,6 +230,12 @@ class LoanOfficerLoginView(APIView):
                 security_version=getattr(officer, "security_version", 1),
                 must_change_password=officer.must_change_password,
                 token_transport=token_transport,
+            )
+            SessionActivityService.complete_successful_login(
+                user=officer,
+                role="loan_officer",
+                tokens=tokens,
+                request=request,
             )
 
             # Audit log for loan officer login

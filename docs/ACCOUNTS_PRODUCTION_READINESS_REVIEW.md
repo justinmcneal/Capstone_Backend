@@ -1,6 +1,6 @@
 # Accounts Production Readiness Review
 
-Last updated: 2026-08-07
+Last updated: 2026-08-09
 
 Scope: `accounts/` plus the Django/DRF authentication settings, middleware,
 MongoDB collections, Redis/Celery paths, audit logging, email delivery, consent
@@ -175,10 +175,35 @@ Current remediation status:
 - Refresh tokens are represented by SHA-256 hashes in `RefreshTokenEntry`.
 - Customer, officer, and administrator refresh tokens require active membership
   in `RefreshTokenEntry` before rotation.
-- Refresh rotation creates a new token pair and revokes the old refresh token.
+- Refresh rotation creates a new token pair, revokes the old refresh token, and
+  preserves the stable logical session ID.
 - Blacklist records store token hashes and have an expiration TTL index.
 - Temporary 2FA tokens are short-lived, are rejected by the normal refresh flow,
   and are blacklisted after successful use.
+
+### Session and activity tracking
+
+- Customer, loan-officer, administrator, email-verification, and completed 2FA
+  login paths attach request IP/device metadata to the active session and record
+  normalized successful login activity.
+- Customer, loan-officer, and administrator credential failures record normalized
+  failed login activity without making telemetry persistence an authentication
+  dependency.
+- Refresh rotates the credential hash in place while preserving the logical
+  `session_id`, so the active-session list does not show a refresh as a new
+  device/session.
+- Successful authenticated requests update `last_active`, IP, and device metadata
+  through a configurable bounded heartbeat (five minutes by default), avoiding a
+  MongoDB write on every request.
+- Customers retain intentional single-device behavior. Loan officers and
+  administrators retain independent browser sessions and may revoke one, all, or
+  all except the current session using the stable session ID.
+- Password changes/resets, account-state/security-version changes, logout, and
+  privileged termination continue to revoke the affected active membership.
+- Active-session records retain the existing 30-day inactivity TTL index.
+- Regression tests cover stable refresh identity, bounded heartbeat updates,
+  email-verification metadata, officer success/failure activity, 2FA metadata,
+  role-specific coexistence, and immediate session revocation.
 
 ### 2FA foundations
 
@@ -315,29 +340,6 @@ Failed blacklist persistence returns an error rather than silently reporting a
 successful revocation.
 
 ## Partial Implementations
-
-### Session and activity tracking
-
-**Status: Partial / activity semantics remain**
-
-Customer non-2FA login creates `LoginActivity` and `ActiveSession`. New session
-records store an opaque `session_id` and a refresh-token hash; public session
-serialization omits credential material. Refresh rotates the refresh membership
-and logout deactivates the matching session.
-
-Coverage is inconsistent:
-
-- Email-verification token issuance does not create a session record.
-- `last_active` is not updated during normal authenticated use.
-
-The session policy is role-specific:
-
-- **Customers** retain single-device login behavior in the mobile flow.
-- **Admins and loan officers** retain independent browser sessions. Their web
-  Settings page lists active sessions and can revoke one, all, or all except the
-  current session by stable session ID.
-- Password changes, password resets, lifecycle/security-state transitions, and
-  privileged account actions continue to revoke every affected session.
 
 ### Field encryption and key lifecycle
 
@@ -520,6 +522,11 @@ Focused account validation:
   skipped because `REAL_MONGO_TEST_URI` was not configured. The focused set covers
   compound throttle wiring, lockouts, atomic OTP/reset behavior, password-reset
   delivery/reconciliation, privileged audit behavior, and proxy trust.
+- On 2026-08-09, 71 local account tests passed and five opt-in real-Mongo tests
+  skipped because `REAL_MONGO_TEST_URI` was not configured. The 19 focused
+  session/security and 2FA tests cover stable refresh identity, bounded
+  `last_active` heartbeats, verification and officer activity coverage,
+  role-specific session policy, revocation, and existing 2FA session metadata.
 
 Full-suite validation:
 
@@ -539,7 +546,6 @@ Current validation gaps:
 - Public token field names remain inconsistent between customer/2FA and
   loan-officer login, and officer/admin logout still accepts an empty credential
   set.
-- Session `last_active` updates remain pending.
 
 ## Remediation Plan
 

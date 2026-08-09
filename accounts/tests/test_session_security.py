@@ -1,4 +1,5 @@
 import os
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 import pytest
@@ -11,7 +12,7 @@ from rest_framework_simplejwt.tokens import AccessToken, RefreshToken
 
 from accounts.authentication import CustomJWTAuthentication
 from accounts.models import Customer, LoanOfficer, RefreshTokenEntry
-from accounts.models.activity import ActiveSession
+from accounts.models.activity import ActiveSession, LoginActivity
 from accounts.services.password_service import PasswordService
 from accounts.utils.token_utils import TokenUtils
 
@@ -55,6 +56,141 @@ def _request(access_token, url_name="active-sessions"):
     )
     request.resolver_match = SimpleNamespace(url_name=url_name)
     return request
+
+
+def test_refresh_rotation_preserves_logical_session_identity(settings):
+    customer = _customer("stable-session@example.com")
+    tokens = TokenUtils.generate_jwt_tokens(customer)
+    original_refresh = RefreshToken(tokens["refresh"])
+    original_session_id = original_refresh["session_id"]
+
+    response = APIClient().post(
+        reverse("accounts:refresh-token"),
+        {"refresh": tokens["refresh"]},
+        format="json",
+        HTTP_USER_AGENT="Refresh Client",
+        REMOTE_ADDR="203.0.113.10",
+    )
+
+    assert response.status_code == 200
+    new_refresh_value = response.json()["data"]["refresh"]
+    assert RefreshToken(new_refresh_value)["session_id"] == original_session_id
+    assert TokenUtils.is_token_blacklisted(tokens["refresh"])
+    assert not TokenUtils.is_refresh_token_valid(
+        customer.id, tokens["refresh"], role="customer"
+    )
+    assert TokenUtils.is_refresh_token_valid(
+        customer.id, new_refresh_value, role="customer"
+    )
+
+    sessions = list(
+        settings.MONGODB[ActiveSession.collection_name].find(
+            {"user_id": customer.id, "role": "customer"}
+        )
+    )
+    assert len(sessions) == 1
+    assert sessions[0]["session_id"] == original_session_id
+    assert sessions[0]["ip_address"] == "203.0.113.10"
+    assert sessions[0]["device_info"] == "Refresh Client"
+
+
+@override_settings(SESSION_ACTIVITY_HEARTBEAT_SECONDS=300)
+def test_authenticated_requests_update_last_active_at_bounded_frequency(settings):
+    customer = _customer("heartbeat@example.com")
+    tokens = TokenUtils.generate_jwt_tokens(customer)
+    session_id = AccessToken(tokens["access"])["session_id"]
+    old_activity = datetime.now(timezone.utc) - timedelta(minutes=10)
+    collection = settings.MONGODB[ActiveSession.collection_name]
+    collection.update_one(
+        {"session_id": session_id}, {"$set": {"last_active": old_activity}}
+    )
+
+    first_request = _request(tokens["access"])
+    first_request.META["REMOTE_ADDR"] = "203.0.113.20"
+    first_request.META["HTTP_USER_AGENT"] = "First Device"
+    assert CustomJWTAuthentication().authenticate(first_request) is not None
+
+    first_update = collection.find_one({"session_id": session_id})
+    assert first_update["last_active"] > old_activity.replace(tzinfo=None)
+    assert first_update["ip_address"] == "203.0.113.20"
+    assert first_update["device_info"] == "First Device"
+
+    second_request = _request(tokens["access"])
+    second_request.META["REMOTE_ADDR"] = "203.0.113.21"
+    second_request.META["HTTP_USER_AGENT"] = "Second Device"
+    assert CustomJWTAuthentication().authenticate(second_request) is not None
+
+    second_update = collection.find_one({"session_id": session_id})
+    assert second_update["last_active"] == first_update["last_active"]
+    assert second_update["ip_address"] == "203.0.113.20"
+    assert second_update["device_info"] == "First Device"
+
+
+def test_email_verification_records_session_metadata_and_activity():
+    customer = Customer(
+        first_name="Verify",
+        last_name="User",
+        email="verify-session@example.com",
+        verified=False,
+        verification_token="123456",
+        verification_token_expires=datetime.now(timezone.utc) + timedelta(minutes=5),
+    )
+    customer.set_password("OldPass123!")
+    customer.save()
+
+    response = APIClient().post(
+        reverse("accounts:verify-email"),
+        {"email": customer.email, "otp": "123456"},
+        format="json",
+        HTTP_USER_AGENT="Verification Device",
+        REMOTE_ADDR="203.0.113.30",
+    )
+
+    assert response.status_code == 200
+    refresh_value = response.json()["data"]["refresh"]
+    session = ActiveSession.find_one(
+        {"session_id": RefreshToken(refresh_value)["session_id"]}
+    )
+    assert session.ip_address == "203.0.113.30"
+    assert session.device_info == "Verification Device"
+    activities = LoginActivity.find(
+        {"user_id": customer.id, "role": "customer", "status": "SUCCESS"}
+    )
+    activity = activities[0] if activities else None
+    assert activity is not None
+    assert activity.ip_address == "203.0.113.30"
+
+
+def test_loan_officer_login_records_success_and_failure_activity():
+    officer = _officer("tracked-officer@example.com", must_change_password=False)
+    client = APIClient()
+
+    failed = client.post(
+        reverse("accounts:loan-officer-login"),
+        {"email": officer.email, "password": "WrongPass123!"},
+        format="json",
+        HTTP_USER_AGENT="Officer Portal",
+        REMOTE_ADDR="203.0.113.40",
+    )
+    succeeded = client.post(
+        reverse("accounts:loan-officer-login"),
+        {"email": officer.email, "password": "OldPass123!"},
+        format="json",
+        HTTP_USER_AGENT="Officer Portal",
+        REMOTE_ADDR="203.0.113.40",
+    )
+
+    assert failed.status_code == 401
+    assert succeeded.status_code == 200
+    activities = LoginActivity.find(
+        {"user_id": officer.id, "role": "loan_officer"}
+    )
+    assert {activity.status for activity in activities} == {"FAILED", "SUCCESS"}
+    session = ActiveSession.find_one(
+        {"user_id": officer.id, "role": "loan_officer", "is_active": True}
+    )
+    assert session.ip_address == "203.0.113.40"
+    assert session.device_info == "Officer Portal"
 
 
 def test_session_records_never_store_or_serialize_raw_refresh_tokens(settings):

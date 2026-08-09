@@ -15,9 +15,9 @@ from rest_framework_simplejwt.exceptions import TokenError
 from rest_framework_simplejwt.tokens import RefreshToken
 
 from accounts.models import Admin, LoanOfficer
-from accounts.models.activity import ActiveSession, LoginActivity
 from accounts.services import AuthService
 from accounts.services.security_event_service import SecurityEventService
+from accounts.services.session_activity_service import SessionActivityService
 from accounts.services.two_factor_service import TwoFactorService
 from accounts.utils.auth_cookies import apply_auth_token_transport
 from accounts.utils.exception_types import NON_FATAL_EXCEPTIONS
@@ -34,37 +34,11 @@ logger = logging.getLogger("authentication")
 
 def _record_successful_2fa_login(user, user_type, tokens, request):
     """Complete session metadata and activity records after 2FA login."""
-    ip_address = get_client_ip(request)
-    device_info = request.META.get("HTTP_USER_AGENT", "")
-    LoginActivity(
-        user_id=str(user.id),
-        email=user.email,
-        role=user_type,
-        status="SUCCESS",
-        ip_address=ip_address,
-        device_info=device_info,
-    ).save()
-
-    session_id = RefreshToken(tokens["refresh"]).get("session_id")
-    ActiveSession.update_many(
-        {
-            "user_id": str(user.id),
-            "role": user_type,
-            "session_id": session_id,
-        },
-        {
-            "$set": {
-                "ip_address": ip_address,
-                "device_info": device_info,
-            }
-        },
-    )
-    SecurityEventService.record_new_device_login_if_first(
+    SessionActivityService.complete_successful_login(
         user=user,
-        user_type=user_type,
-        session_id=session_id,
-        ip_address=ip_address,
-        device_info=device_info,
+        role=user_type,
+        tokens=tokens,
+        request=request,
     )
 
 

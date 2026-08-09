@@ -140,8 +140,10 @@ class AuthService:
             raise RegistrationError(f"Registration failed: {e!s}") from e
 
     @staticmethod
-    def create_customer_tokens(customer, token_type="signup"):
-        return TokenUtils.generate_jwt_tokens(customer, token_type=token_type)
+    def create_customer_tokens(customer, token_type="signup", **kwargs):
+        return TokenUtils.generate_jwt_tokens(
+            customer, token_type=token_type, **kwargs
+        )
 
     @staticmethod
     def create_temp_token(

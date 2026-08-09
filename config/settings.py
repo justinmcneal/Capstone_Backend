@@ -306,6 +306,13 @@ REST_FRAMEWORK = {
     'NUM_PROXIES': TRUSTED_PROXY_COUNT,
 }
 
+# Bound ActiveSession heartbeat writes while keeping user-facing activity fresh.
+SESSION_ACTIVITY_HEARTBEAT_SECONDS = int(
+    os.getenv('SESSION_ACTIVITY_HEARTBEAT_SECONDS', '300')
+)
+if SESSION_ACTIVITY_HEARTBEAT_SECONDS < 0:
+    raise ImproperlyConfigured("SESSION_ACTIVITY_HEARTBEAT_SECONDS cannot be negative")
+
 # JWT Settings
 from datetime import timedelta
 

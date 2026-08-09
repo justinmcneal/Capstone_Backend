@@ -50,6 +50,7 @@ def test_real_mongo_auth_indexes_enforce_uniqueness(real_mongo_database, monkeyp
     assert customer_indexes["email_1"]["unique"] is True
     assert "password_reset_delivery_reconciliation" in customer_indexes
     assert session_indexes["session_id_1"]["unique"] is True
+    assert session_indexes["last_active_1"]["expireAfterSeconds"] == 2592000
     assert refresh_indexes["session_id_1"]["unique"] is True
 
 
