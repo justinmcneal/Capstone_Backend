@@ -1,218 +1,344 @@
-# MSME Pathways - Backend API
+# MSME Pathways Backend API
 
-Smart Loan Support System for Filipino Microentrepreneurs
+Smart loan support services for Filipino microentrepreneurs.
 
----
+The backend is built with Django and Django REST Framework, uses PyMongo with
+MongoDB, serves authenticated WebSockets through Django Channels and Daphne, and
+uses Redis and Celery for real-time and background work.
 
-## Quick Start (Development)
+## Main Components
+
+- Accounts: JWT authentication, cookies, CSRF, 2FA, recovery, consent, sessions,
+  account lifecycle, and administrative account management.
+- Profiles: personal/business/alternative data, completion policy, asynchronous
+  informational risk scoring, profile export/history, and manual review requests.
+- Loans and payments: applications, qualification, schedules, disbursement, and
+  repayment workflows.
+- Documents: uploads, storage, review, and AI-assisted processing.
+- AI assistant, notifications, analytics, Prometheus metrics, and WebSockets.
+
+This project uses PyMongo directly. Django ORM migration commands are not the
+database initialization mechanism.
+
+## Module Status
+
+- Accounts: implementation and development validation complete; deployment-
+  environment integration checks remain release-time work.
+- Profiles: implementation, local tests, real-Mongo concurrency/index tests, and
+  development inventories complete. Only deployment-target inventories and
+  infrastructure validation remain for release.
+
+## Development Quick Start
 
 ```bash
-# 1. Clone and enter directory
-git clone <repo-url>
+# 1. Clone and enter the repository
+git clone https://github.com/your-org/Capstone_Backend.git
 cd Capstone_Backend
 
-# 2. Create virtual environment
-python -m venv venv
-source venv/bin/activate  # Mac/Linux
-# venv\Scripts\activate   # Windows
+# 2. Create and activate a virtual environment
+python -m venv .venv
+source .venv/bin/activate             # macOS/Linux
+# .venv\Scripts\activate              # Windows
 
 # 3. Install dependencies
 pip install -r requirements.txt
 
-# 4. Setup environment
+# 4. Create local configuration
 cp .env.example .env
-# Edit .env with your values (see Configuration section)
+# Review and replace the development values in .env.
 
-# 5. Start Redis (required for WebSocket channel layers)
+# 5. Start Redis for Channels and Celery
 redis-server
 
-# 6. Initialize database indexes
+# 6. For a new/empty development database only, create declared indexes
 python init_db.py
 
-# 7. Run ASGI server with Daphne (supports WebSockets)
+# 7. Start the ASGI application
 daphne -b 0.0.0.0 -p 8000 config.asgi:application
 
-# Or use Django's development ASGI server:
+# Django's development server may also be used locally
 python manage.py runserver 0.0.0.0:8000
 ```
 
-### WebSocket Configuration
+`init_db.py` changes MongoDB indexes. Review the configured database and run the
+duplicate-profile dry run before using it against an existing database.
 
-The notification system uses Django Channels with Redis for real-time WebSocket messaging.
+## Runtime Services
 
-**Frontend WebSocket connection:**
+Run these in separate terminals when testing asynchronous workflows:
+
+```bash
+# Celery worker
+celery -A config worker --loglevel=info
+
+# Celery Beat scheduler
+celery -A config beat --loglevel=info
+```
+
+The ASGI server handles both HTTP and WebSocket traffic. Notification clients
+connect using the authenticated WebSocket route:
 
 ```typescript
 const wsUrl = `ws://localhost:8000/ws/notifications/?token=${accessToken}`;
 const ws = new WebSocket(wsUrl);
 ```
 
-**Note:** The backend uses JWT authentication via query parameter (`?token=...`) for WebSocket connections. The frontend automatically attaches the access token from localStorage.
+Use `wss://` outside local HTTP development. Query-string tokens must not be
+logged by clients, proxies, or monitoring systems.
 
----
+## Configuration
 
-## AI Chatbot — LLM Provider Setup
+Copy `.env.example` to `.env` and use the template as the variable reference.
+Do not commit `.env`, encryption keys, API keys, database credentials, wallet
+keys, Firebase credentials, or cloud credentials.
 
-The AI assistant supports two LLM providers. Switch between them via a single `.env` variable:
+Production configuration and release procedures are documented in
+[`docs/feats/DEPLOYMENT_AND_OPERATIONS_GUIDE.md`](docs/feats/DEPLOYMENT_AND_OPERATIONS_GUIDE.md).
 
-**Option A: Groq (Cloud — default)**
+### LLM Provider
+
+The AI assistant supports Groq and Ollama.
+
 ```bash
-# In .env
+# Groq
 LLM_PROVIDER=groq
-# Free tier: 14,400 requests/day
-# Get API key at: https://console.groq.com
-```
+GROQ_API_KEY='replace-with-development-key'
 
-**Option B: Ollama (Local — no rate limits)**
-```bash
-# 1. Install Ollama
-brew install ollama  # macOS
-
-# 2. Start Ollama server
-ollama serve
-
-# 3. Pull a model
-ollama pull llama3.1
-
-# 4. Switch provider in .env
+# Or local Ollama
 LLM_PROVIDER=ollama
 OLLAMA_BASE_URL=http://localhost:11434
 OLLAMA_MODEL=llama3.1
 ```
 
-Restart the backend after switching providers.
-
----
-
-## Configuration
-
-### Environment Variables
-
-Copy template first:
+For local Ollama:
 
 ```bash
-cp .env.example .env
+brew install ollama       # macOS example
+ollama serve
+ollama pull llama3.1
 ```
 
-For the full variable reference, see `.env.example`. For production procedures,
-see `docs/feats/DEPLOYMENT_AND_OPERATIONS_GUIDE.md`.
+Restart the backend and workers after changing provider configuration.
+
+### Redis Cache
+
+In-memory caching is sufficient for single-process development. Configure the
+Redis cache for multi-process or multi-instance environments so throttling and
+shared cache state are consistent across workers.
+
+## Management and Maintenance Commands
+
+Management commands load the configured environment and may access real data.
+Commands described as dry-run are read-only unless `--apply` is explicitly
+supplied. Review output, backups, the target database, and a rollback plan before
+running state-changing forms.
+
+### Accounts Commands
+
+#### Create an administrator
+
+Interactive mode prompts securely for the password:
 
 ```bash
-# Dry run (default; no database writes)
+python manage.py create_admin
+```
+
+Arguments include `--username`, `--email`, `--first-name`, `--last-name`,
+`--super-admin`, `--permissions`, `--all-permissions`, and `--noinput`. Avoid
+placing passwords in shell history; prefer the interactive password prompt.
+
+#### Encrypt, rotate, and verify declared sensitive fields
+
+```bash
+# Inventory plaintext fields (dry run)
+python manage.py encrypt_sensitive_fields
+
+# Inventory fields requiring primary-key rotation (dry run)
 python manage.py encrypt_sensitive_fields --rotate
 
-# Apply the reviewed rotation
+# Apply a reviewed backfill/rotation
 python manage.py encrypt_sensitive_fields --rotate --apply
 
-# Verify every supported populated field uses the primary key
+# Verify every populated declared field uses valid primary-key encryption
 python manage.py encrypt_sensitive_fields --verify
 ```
 
-Do not remove a previous key until verification, backups, and the rollback window
-are approved. These commands also require the normal management-command
-environment, including `SECRET_PEPPER`.
+Keep required previous keys in `FIELD_ENCRYPTION_PREVIOUS_KEYS` until rotation,
+verification, backups, and the rollback window are complete. The command also
+requires the normal management-command environment, including `SECRET_PEPPER`.
 
----
+#### Scrub legacy plaintext session tokens
 
-### Response Caching (Optional)
-
-The API caches static content (FAQs, education, suggestions, loan products) to improve performance.
-
-**Default: In-memory cache** — works out of the box, no setup required.
-
-**Optional but still do it: Redis cache** — for multi-server deployments:
-
----
-
-## Deploy to Production (Railway)
-
-### 1. Push to GitHub
 ```bash
-git add .
-git commit -m "Ready for deployment"
-git push origin main
+# Inventory legacy active-session records
+python manage.py scrub_legacy_sessions
+
+# Invalidate reviewed records and remove plaintext session_token fields
+python manage.py scrub_legacy_sessions --apply
 ```
 
-### 2. Connect Railway
-1. Go to [railway.app](https://railway.app)
-2. New Project → Deploy from GitHub
-3. Select your repository
+The applied operation invalidates affected sessions and should run only in an
+approved maintenance window.
 
-### 3. Set Environment Variables
+### Profiles Commands
 
-In Railway dashboard, add .env
+#### Find profile data retained for already-deleted customers
 
-If frontend and backend share the same site, you can keep `AUTH_COOKIE_SAMESITE=Lax`.
+```bash
+# Dry run
+python manage.py cleanup_deleted_customer_profiles
 
-### 4. Deploy
-Railway auto-deploys from `Procfile`:
-
+# Irreversibly delete the reviewed retained records
+python manage.py cleanup_deleted_customer_profiles --apply
 ```
+
+#### Recalculate stored completion metadata
+
+```bash
+# Dry run against the current completion policy
+python manage.py recalculate_profile_completion
+
+# Apply revision-guarded metadata updates
+python manage.py recalculate_profile_completion --apply
+```
+
+#### Recalculate obsolete informational risk scores
+
+```bash
+# Dry run: scores missing or obsolete under the current policy
+python manage.py recalculate_profile_risk_scores
+
+# Mark reviewed candidates pending and enqueue recalculation
+python manage.py recalculate_profile_risk_scores --apply
+
+# Include every alternative-data record (review carefully)
+python manage.py recalculate_profile_risk_scores --all
+python manage.py recalculate_profile_risk_scores --all --apply
+```
+
+Applied risk-score recalculation requires a working Celery broker and workers.
+
+#### Reconcile duplicate profiles
+
+```bash
+# Dry run before unique-index creation
+python manage.py reconcile_duplicate_profiles
+
+# Retain the newest authoritative document and remove reviewed duplicates
+python manage.py reconcile_duplicate_profiles --apply
+```
+
+The applied form deletes older duplicate documents. Back up and review the target
+database first.
+
+#### Convert legacy business ages to canonical months
+
+```bash
+# Dry run
+python scripts/backfill_business_age_months.py
+
+# Apply eligible revision-guarded conversions
+python scripts/backfill_business_age_months.py --apply
+```
+
+Ambiguous legacy values remain unchanged for manual review.
+
+## Testing and Static Validation
+
+```bash
+# Complete local suite
+pytest -q
+
+# Profiles-focused suite
+pytest -q tests/test_profiles*.py
+
+# Accounts-focused suites
+pytest -q accounts/tests tests/test_accounts*.py
+
+# Static checks
+ruff check .
+
+# Django configuration checks
+python manage.py check
+```
+
+Real-Mongo tests are opt-in and must use an isolated non-production service whose
+account can create and remove temporary databases:
+
+```bash
+REAL_MONGO_TEST_URI='mongodb://isolated-test-host/' \
+pytest -q -m real_mongo tests/test_stage9_real_mongo.py
+```
+
+Never point the opt-in test suite at a production database account.
+
+## Production Deployment
+
+The provided `Procfile` uses separate ASGI, Celery worker, and Celery Beat
+processes:
+
+```text
 web: daphne -b 0.0.0.0 -p $PORT config.asgi:application
 worker: celery -A config worker --loglevel=info
 beat: celery -A config beat --loglevel=info
 ```
 
-**Note:** Production uses `daphne` (ASGI server) instead of `gunicorn` (WSGI) because the backend supports real-time WebSocket notifications via Django Channels.
+Before release:
 
-# 5. Run with production server (macOS requires OBJC flag)
-OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES gunicorn config.wsgi:application --bind 0.0.0.0:8000 --timeout 120
+```bash
+# Validate Django configuration with the production environment
+python manage.py check --deploy
 
-# Collect static files (before deployment)
-python manage.py collectstatic
+# Collect static assets
+python manage.py collectstatic --noinput
 
-# Check health
-curl http://localhost:8000/api/health/
+# Check the deployed service
+curl https://backend.example.com/api/health/
 ```
+
+Do not run `init_db.py`, reconciliation commands, storage scripts, or an
+encryption `--apply` operation during deployment until their dry runs, backups,
+and target environment have been reviewed.
 
 ### Encrypted Backup and Restore
 
+These scripts are state-changing operational workflows. Use only with approved
+storage, passphrase handling, backup retention, and restore testing.
+
 ```bash
-# Create encrypted backup archive (uses MONGODB_URI + BACKUP_ENCRYPTION_PASSPHRASE)
+# Create an encrypted MongoDB backup archive
 python scripts/create_encrypted_backup.py
 
-# Restore encrypted backup into restore test DB
+# Restore into an explicitly selected restore-test database
 python scripts/restore_encrypted_backup.py /path/to/backup.archive.gz.enc
 ```
 
----
+## Metrics and Observability
 
-## Notifications: Email Sender & Metrics
+The project exposes optional Prometheus metrics when `prometheus-client` is
+installed. Notification counters include:
 
-Configuration options added to improve email throughput and observability:
+- `notifications_email_send_success_total`
+- `notifications_email_send_failure_total`
+- `notifications_email_task_success_total`
+- `notifications_email_task_failure_total`
 
-- `EMAIL_SENDER_THREADPOOL_MAX_WORKERS` (Django `settings`): integer (default 4)
-	- Controls the size of the internal `ThreadPoolExecutor` used when `EmailSender(send_async=True)`.
-	- Example (in `settings.py` or via environment-backed settings):
+Profiles metrics cover scoring outcomes/backlogs, duplicate records, encryption
+coverage, audit recovery, review queues, and denied access. See
+[`docs/profiles/PROFILES_OPERATIONS.md`](docs/profiles/PROFILES_OPERATIONS.md).
 
-```python
-# config/settings.py
-EMAIL_SENDER_THREADPOOL_MAX_WORKERS = 8
-```
+`EMAIL_SENDER_THREADPOOL_MAX_WORKERS` controls the internal notification email
+thread pool and defaults to `4`. Tune it only after observing workload and CPU.
 
-- Prometheus metrics (optional): the email sender and Celery task expose simple counters
-	when `prometheus-client` is installed:
+## Documentation
 
-	- `notifications_email_send_success_total`
-	- `notifications_email_send_failure_total`
-	- `notifications_email_task_success_total`
-	- `notifications_email_task_failure_total`
-
-	To enable scraping, run a Prometheus metrics HTTP server on startup (or integrate with
-	your existing metrics endpoint). Example (quick, development-friendly):
-
-```python
-# in config/wsgi.py or a startup module
-from prometheus_client import start_http_server
-
-# start metrics server on port 8001 (choose an appropriate port for your infra)
-start_http_server(8001)
-```
-
-	For production deployments, integrate with your existing metrics stack (e.g. expose
-	metrics via your application's central metrics endpoint or use a pushgateway).
-
-Notes:
-- The Prometheus counters are optional and guarded; the code falls back gracefully if
-	`prometheus-client` is not installed.
-- Adjust `EMAIL_SENDER_THREADPOOL_MAX_WORKERS` based on workload and available CPU.
+- [Accounts production readiness](docs/accounts/ACCOUNTS_PRODUCTION_READINESS_REVIEW.md)
+- [Accounts testing guide](docs/accounts/ACCOUNTS_TESTING_GUIDE.md)
+- [Profiles production readiness](docs/profiles/PROFILES_PRODUCTION_READINESS_REVIEW.md)
+- [Profiles testing guide](docs/profiles/PROFILES_TESTING_GUIDE.md)
+- [Profiles client migration](docs/profiles/PROFILES_CLIENT_MIGRATION.md)
+- [Profiles completion policy](docs/profiles/PROFILES_COMPLETION_POLICY.md)
+- [Profiles risk-scoring policy](docs/profiles/PROFILES_RISK_SCORING_POLICY.md)
+- [Profiles operations](docs/profiles/PROFILES_OPERATIONS.md)
+- [API reference](docs/feats/API_REFERENCE.md)
+- [Deployment and operations](docs/feats/DEPLOYMENT_AND_OPERATIONS_GUIDE.md)
