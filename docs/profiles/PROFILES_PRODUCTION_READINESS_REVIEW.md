@@ -36,7 +36,7 @@ atomic-update, index, encryption, concurrency, or data-type behavior.
 ## Executive Summary
 
 The Profiles module's planned production-readiness implementation is complete at
-the code and local-test level, but deployment remains gated on the documented
+the code and automated-test level, but deployment remains gated on the documented
 live-environment validation.
 Personal, business, and alternative-data CRUD; customer-only access control;
 profile summaries; notification preferences; profile export/history; customer
@@ -49,13 +49,13 @@ Stages 2–7 close the previously unrestricted loan-officer access, profile-data
 retention, risk-input mismatch, stale-score publication, plaintext numeric-
 financial data, read-side mutation, lost-update, weak-validation, and misleading
 readiness, API inconsistency, notification-persistence, and audit-response
-blockers. Production release still requires isolated real-Mongo validation and
-review of dry-run operational inventories before production writes.
+blockers. Production release still requires review of deployment-target dry-run
+operational inventories before production writes.
 
 The original review was a static code audit. On 2026-08-09, the focused profile
-suite is revalidated after every completed stage. Stage 4 adds opt-in real-Mongo
-index and concurrency tests; executing them against an isolated real MongoDB
-instance remains an operational validation step.
+suite was revalidated after every completed stage. The opt-in real-Mongo index
+and concurrency suite also passed against isolated, automatically removed test
+databases on the configured non-production MongoDB deployment.
 
 Current remediation status:
 
@@ -139,8 +139,9 @@ Current remediation status:
 ### Officer privacy and profile retention
 
 - Account finalization irreversibly deletes the customer's documents from
-  `customer_profiles`, `business_profiles`, and `alternative_data` under the
-  approved Profiles retention policy.
+  `customer_profiles`, `business_profiles`, `alternative_data`, and
+  `profile_risk_reviews` under the approved Profiles retention policy. Unresolved
+  Profiles audit-recovery payloads associated with the customer are also removed.
 - Cleanup supports both string and ObjectId legacy customer identifiers and is
   idempotent.
 - Account anonymization records a durable `profile_cleanup_status`. An interrupted
@@ -212,7 +213,7 @@ Current remediation status:
   by default and requires `--apply` to clear and enqueue recalculation.
 - The current score is explicitly informational only. It is not an approval,
   pricing, limit, eligibility, or adverse-action control.
-- Failed Profiles audit writes are queued with safe replay payloads and retried by
+- Failed Profiles audit writes are queued with allowlisted replay metadata and retried by
   a one-minute reconciler; resolved entries discard the payload.
 - A 15-minute read-only inventory publishes duplicate, declared-encryption,
   audit-backlog, risk-backlog, and review-backlog gauges.
@@ -282,6 +283,9 @@ Current remediation status:
   Stage 6 API/audit, and Stage 7 customer-operations modules.
 - The post-Stage 7 full suite collected 1,003 tests: 986 passed and 17 opt-in
   integration tests skipped, including three real-Mongo profile tests.
+- A separate opt-in real-Mongo run passed all eight tests. Its three Profiles tests
+  verified atomic creation, concurrent revision conflict handling, and risk-review
+  unique-index enforcement. No temporary test databases remained afterward.
 
 ## Resolved Production Blockers
 
@@ -299,10 +303,8 @@ any future query requirement needs a separate reviewed indexing design.
 
 ## Remaining Operational Validation
 
-No known code-level Stage 1–6 blocker remains. Before production deployment:
+No known code-level Stage 1–7 blocker remains. Before production deployment:
 
-- Execute the opt-in unique-index, concurrent-upsert, and optimistic-concurrency
-  tests against an isolated real MongoDB instance.
 - Review duplicate, completion, risk-score, retained-profile, encryption, and
   business-age inventories in dry-run mode before authorizing any production
   reconciliation or index operation.
@@ -310,11 +312,32 @@ No known code-level Stage 1–6 blocker remains. Before production deployment:
   encryption keys, trusted-proxy depth, throttles, logging, and monitoring in the
   deployment environment.
 
+Development inventory baseline recorded on 2026-08-09:
+
+- Duplicate profiles: zero groups and zero older documents in all three profile
+  collections.
+- Completion metadata: zero candidates under policy `2026-08-09-v1`.
+- Risk scores: zero records requiring recalculation under policy
+  `2026-08-09-v1`.
+- Deleted-customer retention: zero profile records across zero deleted customers.
+- Legacy business ages: zero records found and zero eligible conversions.
+- Profiles encryption collections: zero verification failures; the collections
+  currently contain no documents in this development database.
+- The shared encryption inventory initially found one plaintext customer field
+  and four decryptable legacy ciphertext fields. The approved remediation cleared
+  two expired OTP states and one disabled customer 2FA setup, then migrated the
+  customer phone and active admin 2FA secret. Post-operation verification scanned
+  both populated account collections with zero failures, unsupported values, or
+  conflicts.
+
 ## API and Documentation Alignment
 
-`docs/PROFILES_TESTING_GUIDE.md`, `docs/PROFILES_COMPLETION_POLICY.md`,
-`docs/PROFILES_RISK_SCORING_POLICY.md`, and
-`docs/PROFILES_CLIENT_MIGRATION.md` now describe the verified Stage 6 contract.
+`docs/profiles/PROFILES_TESTING_GUIDE.md`,
+`docs/profiles/PROFILES_COMPLETION_POLICY.md`,
+`docs/profiles/PROFILES_RISK_SCORING_POLICY.md`, and
+`docs/profiles/PROFILES_CLIENT_MIGRATION.md`, plus
+`docs/profiles/PROFILES_OPERATIONS.md`, now
+describe the verified Stage 7 contract.
 Canonical responses, compatibility aliases, role boundaries, strict notification
 booleans, asynchronous scoring state, audit failure semantics, and client changes
 are explicitly documented.
@@ -447,7 +470,7 @@ Stage 3 behavior:
   intended use, manual-review requirement, revisions, breakdown, reason codes,
   and safe error metadata where applicable.
 - The current policy is `2026-08-09-v1` and `informational_only`. See
-  `docs/PROFILES_RISK_SCORING_POLICY.md` for weights, thresholds, explanation,
+  `docs/profiles/PROFILES_RISK_SCORING_POLICY.md` for weights, thresholds, explanation,
   publication, change-control, and future validation requirements.
 - Ten Stage 3 tests cover canonical rules, serializer-to-task flow, explanation
   safety, out-of-order and duplicate delivery, broker/scoring failures,
@@ -455,7 +478,7 @@ Stage 3 behavior:
 
 ### Stage 4 — Encryption, persistence integrity, and concurrency
 
-**Status: Implementation complete / live MongoDB validation pending**
+**Status: Complete / real-Mongo behavior validated**
 
 - [x] ~~Add type-preserving encryption for numeric financial fields.~~
 - [x] ~~Derive encryption migration and verification field maps from model
@@ -468,8 +491,10 @@ Stage 3 behavior:
 - [x] ~~Add `profile_revision` optimistic concurrency and stale-save rejection.~~
 - [x] ~~Add dry-run-default duplicate reconciliation and opt-in real-Mongo index,
   creation-race, and revision-race tests.~~
-- [ ] Execute the opt-in tests against an isolated real MongoDB instance and
-  review the duplicate-reconciliation dry run before any production index work.
+- [x] ~~Execute the opt-in tests against isolated real MongoDB databases and review
+  the configured development database's duplicate-reconciliation dry run.~~
+- [ ] Repeat the duplicate inventory against the deployment target immediately
+  before any production index work.
 
 Stage 4 behavior:
 
@@ -485,6 +510,9 @@ Stage 4 behavior:
   stale completion calculation cannot overwrite newer state.
 - The duplicate reconciliation command retains the newest record and canonicalizes
   `customer_id`; it performs no writes unless `--apply` is explicitly supplied.
+- The 2026-08-09 development dry run found zero duplicate groups and zero older
+  duplicate documents in all three profile collections. Deployment-target data
+  must still be inventoried separately before its indexes are changed.
 
 ### Stage 5 — Validation, completion, and readiness policy
 
@@ -522,12 +550,12 @@ Stage 5 behavior:
   remains false in the profile summary.
 - AI profile context, the customer dashboard, officer payloads, and loan profile
   gates now consume model completion rather than maintaining weaker local rules.
-- See `docs/PROFILES_COMPLETION_POLICY.md` for the exact core, conditional,
+- See `docs/profiles/PROFILES_COMPLETION_POLICY.md` for the exact core, conditional,
   response, validation, and reconciliation contract.
 
 ### Stage 6 — API consistency, audit completeness, and documentation
 
-**Status: Implementation complete / live MongoDB validation pending**
+**Status: Complete / real-Mongo integration validated**
 
 - [x] ~~Implement and test legacy business-age conversion or remove the alias.~~
 - [x] ~~Make GET response fields consistent with the canonical schema.~~
@@ -536,12 +564,12 @@ Stage 5 behavior:
 - [x] ~~Complete mutation, score, and sensitive-read audit coverage.~~
 - [x] ~~Define atomic/partial-commit behavior when audit recording or task enqueue
   fails after profile persistence.~~
-- [x] ~~Update `docs/PROFILES_TESTING_GUIDE.md` to the verified contract.~~
+- [x] ~~Update `docs/profiles/PROFILES_TESTING_GUIDE.md` to the verified contract.~~
 - [x] ~~Publish client migration notes for changed routes, fields, roles, and
   asynchronous score status.~~
 - [x] ~~Run focused profile tests and lint/static checks.~~
-- [ ] Execute the opt-in integration tests against an isolated real MongoDB
-  instance before production index or reconciliation work.
+- [x] ~~Execute the opt-in integration tests against isolated real MongoDB
+  databases before production index or reconciliation work.~~
 
 Stage 6 behavior:
 
@@ -561,7 +589,7 @@ Stage 6 behavior:
   helper. Customer mutation audit failure after a durable write is logged but
   does not change the API result to a misleading `500`.
 - Client changes and compatibility removal requirements are published in
-  `docs/PROFILES_CLIENT_MIGRATION.md`.
+  `docs/profiles/PROFILES_CLIENT_MIGRATION.md`.
 
 ### Stage 7 — Optional customer capabilities and operational hardening
 
@@ -590,7 +618,7 @@ Stage 7 behavior:
 - Review requests are bound to the current completed risk revision and policy.
   Duplicate requests return `409`; officer profile scope is reused; terminal
   transitions require a note and stale `review_revision` returns `409`.
-- `docs/PROFILES_OPERATIONS.md` documents tasks, metrics, starting alert rules,
+- `docs/profiles/PROFILES_OPERATIONS.md` documents tasks, metrics, starting alert rules,
   export retention, review operations, and deliberate deferrals.
 
 ## Production Readiness Checklist
@@ -640,7 +668,9 @@ Stage 7 behavior:
   and sensitive staff reads.~~
 - [x] ~~Canonical API responses, roles, and routes match the testing guide.~~
 - [x] ~~Focused profile and full local test suites pass.~~
-- [ ] Real-Mongo index/concurrency behavior is validated.
+- [x] ~~Real-Mongo index/concurrency behavior is validated.~~
+- [ ] Deployment-target dry-run inventories are reviewed before index or
+  reconciliation writes.
 
 ## Client Impact
 
@@ -657,30 +687,35 @@ contract changes below. Admin web has no direct Profiles API integration:
   is input-only and pending coordinated removal.
   For edit conflict protection it should store the returned `profile_revision`,
   send it on the next PUT, and reload the form after a `409` response.
+  It should expose the profile-only export and metadata history as optional
+  customer tools, and allow one manual risk-review request per completed score
+  revision without presenting the informational score as a lending decision.
 - Loan-officer web must use `/api/officer/profiles/` routes, handle scoped/404
   results, stop relying on directory phone search/output or emergency-contact
-  detail fields, and display only the approved allowlisted profile fields.
+  detail fields, and display only the approved allowlisted profile fields. It must
+  also use the scoped risk-review queue and submit the latest `review_revision`
+  when changing review status.
 - Admin web requires a product decision: current code denies admins even though
   older documentation promises admin access. If access is required, it must use
   an explicit permission and sensitive-read audit trail.
 - All clients must treat generic profile completion separately from product loan
   eligibility and approved-document requirements.
 - Detailed migration instructions are in
-  `docs/PROFILES_CLIENT_MIGRATION.md`.
+  `docs/profiles/PROFILES_CLIENT_MIGRATION.md`.
 
 ## Notes
 
 - This is a code-level review, not a live penetration test, data audit, fairness
   validation, or deployment verification.
 - The scoring contract and governance boundary are documented in
-  `docs/PROFILES_RISK_SCORING_POLICY.md`. Representative calibration and fairness
+  `docs/profiles/PROFILES_RISK_SCORING_POLICY.md`. Representative calibration and fairness
   validation remain mandatory before any future authoritative lending use.
 - The versioned completion contract and stable missing-field codes are documented
-  in `docs/PROFILES_COMPLETION_POLICY.md`.
+  in `docs/profiles/PROFILES_COMPLETION_POLICY.md`.
 - `init_db.py`, profile backfills, encryption migrations, duplicate reconciliation,
   and account-retention operations are state-changing and require explicit
   approval, backups, dry-run review, and staging validation before use.
 - The current 500/hour profile throttle is documented as implemented behavior,
   not an endorsement of that value for production.
 - Avatar and bundled address-reference features are deliberately deferred as
-  documented in `docs/PROFILES_OPERATIONS.md`; profile export is implemented.
+  documented in `docs/profiles/PROFILES_OPERATIONS.md`; profile export is implemented.

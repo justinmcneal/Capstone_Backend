@@ -17,6 +17,20 @@ The operational metrics task does not repair data. Reconciliation, encryption,
 and index commands remain dry-run/review workflows requiring explicit approval
 before `--apply` or production execution.
 
+## Development Inventory Baseline
+
+The approved read-only development inventory on 2026-08-09 reported zero profile
+duplicates, obsolete completion records, obsolete risk scores, retained deleted-
+customer profile records, and legacy business-age candidates. The Profiles
+collections reported no encryption failures and contained no documents.
+
+The shared cross-domain encryption scan initially found one plaintext customer
+field and four decryptable legacy ciphertext fields. The approved remediation
+cleared two expired OTP states and one disabled customer 2FA setup, then migrated
+the customer phone and active admin 2FA secret. Verification completed with zero
+failures, unsupported values, or conflicts. Deployment-target inventories must
+still be reviewed independently.
+
 ## Prometheus Metrics
 
 | Metric | Meaning |

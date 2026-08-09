@@ -30,7 +30,9 @@ def real_mongo_database():
 
     client = MongoClient(REAL_MONGO_URI, serverSelectionTimeoutMS=5000)
     client.admin.command("ping")
-    database_name = f"stage9_auth_{uuid.uuid4().hex}"
+    # Atlas limits database names to 38 bytes on some deployments.
+    database_name = f"s9_{uuid.uuid4().hex[:24]}"
+    assert len(database_name.encode("utf-8")) <= 38
     database = client[database_name]
     try:
         yield database

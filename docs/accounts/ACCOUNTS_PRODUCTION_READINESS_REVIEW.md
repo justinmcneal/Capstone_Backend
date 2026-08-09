@@ -20,7 +20,7 @@ asynchronous and scheduled work such as password-reset email delivery, delivery
 reconciliation, unverified-account cleanup, and scheduled account deletion.
 
 Detailed request and response examples are maintained in
-`docs/ACCOUNTS_TESTING_GUIDE.md`. This document describes the implemented module,
+`docs/accounts/ACCOUNTS_TESTING_GUIDE.md`. This document describes the implemented module,
 its current API and security status, and the validation still required before a
 production deployment.
 
@@ -409,14 +409,17 @@ integration.
 - Focused Profiles suite after Stage 7: **164 passed**
 - Changed Accounts view files and the new Profiles characterization module pass
   Ruff.
-- The 14 skips are opt-in external/integration tests, including five real-Mongo
-  tests that require an explicit `REAL_MONGO_TEST_URI` and nine blockchain
-  integration tests.
+- The 17 skips are opt-in external/integration tests: eight real-Mongo tests and
+  nine blockchain integration tests. A separate approved non-production run
+  passed all eight real-Mongo tests on 2026-08-09.
+- The approved development encryption remediation cleared two expired OTP states
+  and one disabled customer 2FA setup, migrated the customer phone and active
+  admin 2FA secret, and finished with zero verification failures or conflicts.
 - One third-party `websockets.legacy` deprecation warning remains; it is not an
   Accounts test failure.
 
 The real-Mongo module includes concurrency and index tests and deliberately skips
-unless an isolated non-production database URI is provided.
+in the default suite unless an isolated non-production database URI is provided.
 
 ## Remaining Gaps and Release Conditions
 
@@ -425,8 +428,6 @@ unless an isolated non-production database URI is provided.
 These are release-evidence gaps, not missing Accounts API implementations:
 
 - Confirm the hosted CI workflow passes from a clean dependency environment.
-- Run the opt-in real-Mongo index and concurrency suite against an isolated
-  MongoDB service.
 - Validate Redis-backed throttles and security state across multiple workers.
 - Validate Celery delivery, retry, reconciliation, and scheduled jobs with the
   deployment broker and workers.
@@ -509,10 +510,10 @@ backup, log, uploaded-data, wallet, or credential contents were inspected.
 
 ## Related Documentation
 
-- `docs/ACCOUNTS_TESTING_GUIDE.md` — endpoint fields, response contracts, smoke
+- `docs/accounts/ACCOUNTS_TESTING_GUIDE.md` — endpoint fields, response contracts, smoke
   tests, negative cases, and revocation checks
 - `.env.example` — configuration variable reference
 - `docs/feats/DEPLOYMENT_AND_OPERATIONS_GUIDE.md` — deployment and operational
   procedures
-- `docs/PROFILES_PRODUCTION_READINESS_REVIEW.md` — profile security, retention,
+- `docs/profiles/PROFILES_PRODUCTION_READINESS_REVIEW.md` — profile security, retention,
   and production-readiness work that interacts with account lifecycle

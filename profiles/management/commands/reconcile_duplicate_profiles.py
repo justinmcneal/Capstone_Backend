@@ -79,7 +79,7 @@ class Command(BaseCommand):
         self.stdout.write(
             self.style.SUCCESS(
                 f"Duplicate profile reconciliation complete: groups={total_groups}, "
-                f"older_documents={'removed' if apply_changes else 'found'}="
+                f"older_documents_{'removed' if apply_changes else 'found'}="
                 f"{total_removed}."
             )
         )

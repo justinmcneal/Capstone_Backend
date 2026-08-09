@@ -448,7 +448,7 @@ Content-Type: application/json
 
 - Completion policy version `2026-08-09-v1` replaces the former minimal 7/2/2-
   field rules. Exact core and conditional requirements are documented in
-  `docs/PROFILES_COMPLETION_POLICY.md`.
+  `docs/profiles/PROFILES_COMPLETION_POLICY.md`.
 - `profile_ready_for_application` means all three profile sections satisfy that
   policy. It does not evaluate documents, consent, identity verification, risk-
   score approval, or a loan product's eligibility requirements.
@@ -495,9 +495,9 @@ python manage.py recalculate_profile_completion --apply
   input revision, and its policy version is current.
 - Policy `2026-08-09-v1` is `informational_only` and requires manual review. It
   must not be treated as approval, pricing, a limit, eligibility, or an adverse
-  decision. See `docs/PROFILES_RISK_SCORING_POLICY.md`.
+  decision. See `docs/profiles/PROFILES_RISK_SCORING_POLICY.md`.
 - Metric definitions and suggested starting alerts are documented in
-  `docs/PROFILES_OPERATIONS.md`.
+  `docs/profiles/PROFILES_OPERATIONS.md`.
 
 ## Risk-Score Recalculation
 
@@ -534,16 +534,19 @@ python manage.py reconcile_duplicate_profiles --apply
 ```
 
 The applied command deletes older duplicates and canonicalizes the retained
-document's `customer_id` as a string. It was not run against a development or
-production database as part of Stage 4.
+document's `customer_id` as a string. The 2026-08-09 development dry run found
+zero duplicate groups and zero older duplicate documents across all three
+collections. No `--apply` operation was run; staging or production must receive
+its own reviewed dry run before index work.
 
 ## Deleted-Customer Profile Cleanup
 
 Final account deletion removes records from `customer_profiles`,
-`business_profiles`, and `alternative_data`. Cleanup is idempotent and records a
-durable completion status on the customer account so an interrupted cleanup can
-be retried. Administrators with `manage_users` can inspect cleanup status,
-attempts, counts, last error type, and timestamps through
+`business_profiles`, `alternative_data`, and `profile_risk_reviews`, plus
+unresolved Profiles audit-recovery payloads associated with the customer. Cleanup
+is idempotent and records a durable completion status on the customer account so
+an interrupted cleanup can be retried. Administrators with `manage_users` can
+inspect cleanup status, attempts, counts, last error type, and timestamps through
 `GET /api/auth/admin/customers/<customer_id>/`.
 
 For profile records retained by accounts deleted before this behavior existed,
@@ -572,6 +575,13 @@ Preview what would be changed without modifying the DB:
 .venv/bin/python scripts/backfill_business_age_months.py
 ```
 
+The script always prints aggregate `found`, `eligible`, and `updated` counts. In
+dry-run mode, `updated` remains zero.
+
+The approved 2026-08-09 development encryption remediation was followed by
+`encrypt_sensitive_fields --verify`; all populated declared fields passed with
+zero unsupported values, conflicts, or failures.
+
 This prints each document `_id` and the months value that would be written.
 
 ### Full run
@@ -595,4 +605,4 @@ This backfill is additive (writes `business_age_months`). To roll back, restore 
 ### Next steps
 - After backfill, monitor logs and alerts for anomalies.
 - Deprecate `years_in_operation` in the API clients over a scheduled window (e.g., 2-4 weeks) and then remove alias support in a follow-up release.
-- Review `docs/PROFILES_CLIENT_MIGRATION.md` before removing the alias.
+- Review `docs/profiles/PROFILES_CLIENT_MIGRATION.md` before removing the alias.

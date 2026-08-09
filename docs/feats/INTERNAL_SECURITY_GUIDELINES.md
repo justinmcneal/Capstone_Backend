@@ -94,4 +94,4 @@ The roles are customer, loan officer, administrator, and super administrator. Us
 
 ## 10. Source basis
 
-Reviewed sources include `docs/AUTH_ACCESS_SECURITY_GUIDE.md`, `docs/ACCOUNTS_PRODUCTION_READINESS_REVIEW.md`, `docs/DEPLOYMENT_AND_OPERATIONS_GUIDE.md`, `docs/PRODUCTION_S3.md`, `docs/AI_ASSISTANT_TESTING_GUIDE.md`, `docs/DOCUMENTS_AND_CNN_GUIDE.md`, `docs/BLOCKCHAIN_SYSTEM_DOCUMENTATION.md`, `config/settings.py`, `config/middleware.py`, `config/field_encryption.py`, and the domain code under `accounts/`, `profiles/`, `loans/`, `documents/`, `ai_assistant/`, `notifications/`, and `analytics/`.
+Reviewed sources include `docs/AUTH_ACCESS_SECURITY_GUIDE.md`, `docs/accounts/ACCOUNTS_PRODUCTION_READINESS_REVIEW.md`, `docs/DEPLOYMENT_AND_OPERATIONS_GUIDE.md`, `docs/PRODUCTION_S3.md`, `docs/AI_ASSISTANT_TESTING_GUIDE.md`, `docs/DOCUMENTS_AND_CNN_GUIDE.md`, `docs/BLOCKCHAIN_SYSTEM_DOCUMENTATION.md`, `config/settings.py`, `config/middleware.py`, `config/field_encryption.py`, and the domain code under `accounts/`, `profiles/`, `loans/`, `documents/`, `ai_assistant/`, `notifications/`, and `analytics/`.

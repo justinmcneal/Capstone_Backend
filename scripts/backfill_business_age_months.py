@@ -132,4 +132,9 @@ if __name__ == "__main__":
         help="Persist eligible conversions. Omit for an inventory-only dry run.",
     )
     arguments = parser.parse_args()
-    main(apply=arguments.apply)
+    result = main(apply=arguments.apply)
+    print(
+        "Business-age reconciliation complete: "
+        f"found={result['found']}, eligible={result['eligible']}, "
+        f"updated={result['updated']}."
+    )
