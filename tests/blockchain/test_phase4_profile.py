@@ -9,15 +9,13 @@ Tests the backend endpoints that the mobile app uses to save/fetch wallet_addres
 """
 
 import inspect
-from unittest.mock import MagicMock, patch
 
-import pytest
+from bson import ObjectId
 
 from profiles.serializers.profile_serializers import (
-    CustomerProfileSerializer,
     CustomerProfileResponseSerializer,
+    CustomerProfileSerializer,
 )
-
 
 # ── 4.1  GET response includes wallet_address ─────────────────────
 
@@ -45,31 +43,21 @@ class TestProfilePutAcceptsWalletAddress:
         assert not field.required  # optional
         assert field.max_length == 42
 
-    def test_put_handler_updates_profile_fields_generically(self):
-        """PUT handler uses setattr loop — wallet_address included automatically."""
+    def test_put_handler_uses_validated_atomic_field_updates(self):
+        """PUT delegates validated fields to the narrow atomic update path."""
         from profiles.views.profile_views import CustomerProfileView
         source = inspect.getsource(CustomerProfileView.put)
-        # The loop: for field, value in data.items(): setattr(profile, field, value)
-        assert "setattr(profile, field, value)" in source or "setattr" in source
+        assert "profile.update_fields(data, expected_revision)" in source
 
-    @patch("profiles.models.profile_models.CustomerProfile.save")
-    @patch("profiles.models.profile_models.CustomerProfile.get_or_create")
-    def test_wallet_address_set_on_profile_via_put(self, mock_get, mock_save):
-        """Simulates PUT with wallet_address — profile field gets updated."""
+    def test_wallet_address_set_on_profile_via_atomic_update(self):
+        """The atomic update path persists wallet_address."""
         from profiles.models.profile_models import CustomerProfile
 
-        profile = CustomerProfile(customer_id="test_cust")
-        mock_get.return_value = profile
-
-        # Simulate serializer validated_data
+        profile = CustomerProfile(customer_id=str(ObjectId())).save()
         validated_data = {
             "wallet_address": "0x742d35Cc6634C0532925a3b844Bc9e7595f2bD28"
         }
-
-        # Replicate the PUT handler's update loop
-        for field, value in validated_data.items():
-            if hasattr(profile, field):
-                setattr(profile, field, value)
+        profile = profile.update_fields(validated_data)
 
         assert profile.wallet_address == "0x742d35Cc6634C0532925a3b844Bc9e7595f2bD28"
 

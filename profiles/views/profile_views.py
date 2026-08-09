@@ -17,7 +17,12 @@ from accounts.utils.request_utils import get_client_ip
 from accounts.utils.response_helpers import error_response, success_response
 from accounts.utils.throttles import ProfileRateThrottle
 from analytics.models import AuditLog
-from profiles.models import AlternativeData, BusinessProfile, CustomerProfile
+from profiles.models import (
+    AlternativeData,
+    BusinessProfile,
+    CustomerProfile,
+    ProfileRevisionConflict,
+)
 from profiles.serializers import (
     AlternativeDataSerializer,
     BusinessProfileSerializer,
@@ -117,7 +122,9 @@ class CustomerProfileView(CustomerProfileAccessMixin, APIView):
             user = request.user
             customer_id = user.customer_id
 
-            profile = CustomerProfile.get_or_create(customer_id)
+            profile = CustomerProfile.find_by_customer(customer_id) or CustomerProfile(
+                customer_id=str(customer_id)
+            )
 
             return success_response(
                 data={
@@ -146,6 +153,7 @@ class CustomerProfileView(CustomerProfileAccessMixin, APIView):
                     "wallet_address": profile.wallet_address,
                     "profile_completed": profile.profile_completed,
                     "completion_percentage": profile.completion_percentage,
+                    "profile_revision": profile.profile_revision,
                 },
                 message="Profile retrieved successfully",
             )
@@ -177,12 +185,9 @@ class CustomerProfileView(CustomerProfileAccessMixin, APIView):
             profile = CustomerProfile.get_or_create(customer_id)
 
             # Update fields
-            data = serializer.validated_data
-            for field, value in data.items():
-                if hasattr(profile, field):
-                    setattr(profile, field, value)
-
-            profile.save()
+            data = dict(serializer.validated_data)
+            expected_revision = data.pop("profile_revision", None)
+            profile = profile.update_fields(data, expected_revision)
 
             logger.info(f"Profile updated for customer {customer_id}")
 
@@ -202,8 +207,14 @@ class CustomerProfileView(CustomerProfileAccessMixin, APIView):
                 data={
                     "profile_completed": profile.profile_completed,
                     "completion_percentage": profile.completion_percentage,
+                    "profile_revision": profile.profile_revision,
                 },
                 message="Profile updated successfully",
+            )
+        except ProfileRevisionConflict as exc:
+            return error_response(
+                message=str(exc),
+                status_code=status.HTTP_409_CONFLICT,
             )
         except Exception:
             logger.exception("Error updating profile")
@@ -235,7 +246,9 @@ class BusinessProfileView(CustomerProfileAccessMixin, APIView):
             user = request.user
             customer_id = user.customer_id
 
-            profile = BusinessProfile.get_or_create(customer_id)
+            profile = BusinessProfile.find_by_customer(customer_id) or BusinessProfile(
+                customer_id=str(customer_id)
+            )
 
             return success_response(
                 data={
@@ -259,6 +272,7 @@ class BusinessProfileView(CustomerProfileAccessMixin, APIView):
                     "income_range": profile.income_range,
                     "estimated_monthly_expenses": profile.estimated_monthly_expenses,
                     "number_of_employees": profile.number_of_employees,
+                    "profile_revision": profile.profile_revision,
                 },
                 message="Business profile retrieved successfully",
             )
@@ -289,12 +303,9 @@ class BusinessProfileView(CustomerProfileAccessMixin, APIView):
 
             profile = BusinessProfile.get_or_create(customer_id)
 
-            data = serializer.validated_data
-            for field, value in data.items():
-                if hasattr(profile, field):
-                    setattr(profile, field, value)
-
-            profile.save()
+            data = dict(serializer.validated_data)
+            expected_revision = data.pop("profile_revision", None)
+            profile = profile.update_fields(data, expected_revision)
 
             logger.info(f"Business profile updated for customer {customer_id}")
 
@@ -310,7 +321,15 @@ class BusinessProfileView(CustomerProfileAccessMixin, APIView):
                 ip_address=request.META.get("REMOTE_ADDR", ""),
             )
 
-            return success_response(message="Business profile updated successfully")
+            return success_response(
+                data={"profile_revision": profile.profile_revision},
+                message="Business profile updated successfully",
+            )
+        except ProfileRevisionConflict as exc:
+            return error_response(
+                message=str(exc),
+                status_code=status.HTTP_409_CONFLICT,
+            )
         except Exception:
             logger.exception("Error updating business profile")
             return error_response(
@@ -341,7 +360,9 @@ class AlternativeDataView(CustomerProfileAccessMixin, APIView):
             user = request.user
             customer_id = user.customer_id
 
-            data = AlternativeData.get_or_create(customer_id)
+            data = AlternativeData.find_by_customer(customer_id) or AlternativeData(
+                customer_id=str(customer_id)
+            )
 
             return success_response(
                 data={
@@ -403,6 +424,7 @@ class AlternativeDataView(CustomerProfileAccessMixin, APIView):
                         if data.risk_score_failed_at
                         else None
                     ),
+                    "profile_revision": data.profile_revision,
                 },
                 message="Alternative data retrieved successfully",
             )
@@ -432,7 +454,9 @@ class AlternativeDataView(CustomerProfileAccessMixin, APIView):
             customer_id = user.customer_id
 
             alt_data = AlternativeData.get_or_create(customer_id)
-            alt_data = alt_data.update_inputs(serializer.validated_data)
+            data = dict(serializer.validated_data)
+            expected_revision = data.pop("profile_revision", None)
+            alt_data = alt_data.update_inputs(data, expected_revision)
             enqueue_risk_score_calculation(
                 customer_id,
                 alt_data.risk_input_revision,
@@ -452,6 +476,7 @@ class AlternativeDataView(CustomerProfileAccessMixin, APIView):
                 details={
                     "risk_input_revision": alt_data.risk_input_revision,
                     "risk_score_status": alt_data.risk_score_status,
+                    "profile_revision": alt_data.profile_revision,
                 },
                 ip_address=request.META.get("REMOTE_ADDR", ""),
             )
@@ -460,8 +485,14 @@ class AlternativeDataView(CustomerProfileAccessMixin, APIView):
                 data={
                     "risk_score_status": alt_data.risk_score_status,
                     "risk_input_revision": alt_data.risk_input_revision,
+                    "profile_revision": alt_data.profile_revision,
                 },
                 message="Alternative data updated successfully",
+            )
+        except ProfileRevisionConflict as exc:
+            return error_response(
+                message=str(exc),
+                status_code=status.HTTP_409_CONFLICT,
             )
         except Exception:
             logger.exception("Error updating alternative data")

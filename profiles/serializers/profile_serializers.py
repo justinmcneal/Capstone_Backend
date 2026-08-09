@@ -38,6 +38,10 @@ def _validate_location_name(value, field_label):
 class CustomerProfileSerializer(InputSanitizationMixin, serializers.Serializer):
     """Serializer for customer profile updates"""
 
+    profile_revision = serializers.IntegerField(
+        required=False, min_value=0, write_only=True
+    )
+
     # Personal Information
     date_of_birth = serializers.DateField(required=False, allow_null=True)
     gender = serializers.ChoiceField(
@@ -149,6 +153,10 @@ class CustomerProfileResponseSerializer(serializers.Serializer):
 class BusinessProfileSerializer(InputSanitizationMixin, serializers.Serializer):
     """Serializer for business profile updates"""
 
+    profile_revision = serializers.IntegerField(
+        required=False, min_value=0, write_only=True
+    )
+
     # Business Information
     business_name = serializers.CharField(
         max_length=200, required=False, allow_blank=True
@@ -229,6 +237,10 @@ class BusinessProfileSerializer(InputSanitizationMixin, serializers.Serializer):
 
 class AlternativeDataSerializer(InputSanitizationMixin, serializers.Serializer):
     """Serializer for alternative credit data updates"""
+
+    profile_revision = serializers.IntegerField(
+        required=False, min_value=0, write_only=True
+    )
 
     # Education & Employment
     education_level = serializers.ChoiceField(

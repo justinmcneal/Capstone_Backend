@@ -14,6 +14,7 @@ from accounts.models.activity import ActiveSession
 from accounts.models.tokens import RefreshTokenEntry
 from accounts.services.otp_service import OTPService
 from accounts.services.password_service import PasswordService
+from profiles.models import CustomerProfile, ProfileRevisionConflict
 
 REAL_MONGO_URI = os.getenv("REAL_MONGO_TEST_URI")
 
@@ -174,3 +175,49 @@ def test_real_mongo_concurrent_password_reset_issuance_has_one_winner(
     assert outcomes == [True] * 8
     assert stored.password_reset_issue_count == 1
     assert stored.password_reset_otp is not None
+
+
+@pytest.mark.real_mongo
+def test_real_mongo_atomic_profile_creation_has_one_document(
+    real_mongo_database, monkeypatch
+):
+    monkeypatch.setattr(settings, "MONGODB", real_mongo_database)
+    CustomerProfile.create_indexes()
+    customer_id = str(uuid.uuid4())
+
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        profiles = list(
+            executor.map(
+                lambda _candidate: CustomerProfile.get_or_create(customer_id),
+                range(8),
+            )
+        )
+
+    assert len({profile.id for profile in profiles}) == 1
+    assert real_mongo_database["customer_profiles"].count_documents({}) == 1
+
+
+@pytest.mark.real_mongo
+def test_real_mongo_profile_revision_allows_one_concurrent_winner(
+    real_mongo_database, monkeypatch
+):
+    monkeypatch.setattr(settings, "MONGODB", real_mongo_database)
+    profile = CustomerProfile(customer_id=str(uuid.uuid4())).save()
+
+    def update(candidate):
+        try:
+            profile.update_fields(
+                {"nationality": f"Candidate {candidate}"},
+                expected_revision=0,
+            )
+            return "updated"
+        except ProfileRevisionConflict:
+            return "conflict"
+
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        outcomes = list(executor.map(update, range(8)))
+
+    assert outcomes.count("updated") == 1
+    assert outcomes.count("conflict") == 7
+    stored = CustomerProfile.find_by_customer(profile.customer_id)
+    assert stored.profile_revision == 1

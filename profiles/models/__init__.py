@@ -9,6 +9,7 @@ from .profile_models import (
     AlternativeData,
     BusinessProfile,
     CustomerProfile,
+    ProfileRevisionConflict,
 )
 
 __all__ = [
@@ -22,4 +23,5 @@ __all__ = [
     "AlternativeData",
     "BusinessProfile",
     "CustomerProfile",
+    "ProfileRevisionConflict",
 ]

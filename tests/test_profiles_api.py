@@ -149,7 +149,7 @@ class TestCustomerProfileView:
 
         monkeypatch.setattr(
             CustomerProfile,
-            "get_or_create",
+            "find_by_customer",
             staticmethod(lambda customer_id: profile),
             raising=False,
         )
@@ -183,7 +183,7 @@ class TestCustomerProfileView:
 
         monkeypatch.setattr(
             CustomerProfile,
-            "get_or_create",
+            "find_by_customer",
             staticmethod(lambda customer_id: profile),
             raising=False,
         )
@@ -204,23 +204,10 @@ class TestCustomerProfileView:
 
     def test_put_updates_profile_fields(self, monkeypatch):
         customer = _create_customer()
-        profile = MagicMock()
-
-        monkeypatch.setattr(
-            CustomerProfile,
-            "get_or_create",
-            staticmethod(lambda customer_id: profile),
-            raising=False,
-        )
+        CustomerProfile(customer_id=str(customer.id)).save()
         monkeypatch.setattr(
             "profiles.views.profile_views.AuditLog.log_action",
             staticmethod(lambda *args, **kwargs: None),
-            raising=False,
-        )
-        monkeypatch.setattr(
-            CustomerProfile,
-            "save",
-            staticmethod(lambda self: self),
             raising=False,
         )
 
@@ -239,6 +226,7 @@ class TestCustomerProfileView:
 
         response = CustomerProfileView.as_view()(request)
         assert response.status_code == 200
+        profile = CustomerProfile.find_by_customer(customer.id)
         assert profile.gender == "female"
         assert profile.barangay == "New Barangay"
 
@@ -330,7 +318,7 @@ class TestBusinessProfileView:
 
         monkeypatch.setattr(
             BusinessProfile,
-            "get_or_create",
+            "find_by_customer",
             staticmethod(lambda customer_id: profile),
             raising=False,
         )
@@ -350,23 +338,10 @@ class TestBusinessProfileView:
 
     def test_put_creates_business_profile(self, monkeypatch):
         customer = _create_customer()
-        profile = MagicMock()
-
-        monkeypatch.setattr(
-            BusinessProfile,
-            "get_or_create",
-            staticmethod(lambda customer_id: profile),
-            raising=False,
-        )
+        BusinessProfile(customer_id=str(customer.id)).save()
         monkeypatch.setattr(
             "profiles.views.profile_views.AuditLog.log_action",
             staticmethod(lambda *args, **kwargs: None),
-            raising=False,
-        )
-        monkeypatch.setattr(
-            BusinessProfile,
-            "save",
-            staticmethod(lambda self: self),
             raising=False,
         )
 
@@ -385,6 +360,7 @@ class TestBusinessProfileView:
 
         response = BusinessProfileView.as_view()(request)
         assert response.status_code == 200
+        profile = BusinessProfile.find_by_customer(customer.id)
         assert profile.business_name == "New Store"
         assert profile.business_age_months == 24
 
@@ -426,7 +402,7 @@ class TestAlternativeDataView:
 
         monkeypatch.setattr(
             AlternativeData,
-            "get_or_create",
+            "find_by_customer",
             staticmethod(lambda customer_id: data),
             raising=False,
         )
@@ -450,12 +426,6 @@ class TestAlternativeDataView:
         data.save()
 
         monkeypatch.setattr(
-            AlternativeData,
-            "get_or_create",
-            staticmethod(lambda customer_id: data),
-            raising=False,
-        )
-        monkeypatch.setattr(
             "profiles.views.profile_views.AuditLog.log_action",
             staticmethod(lambda *args, **kwargs: None),
             raising=False,
@@ -478,6 +448,7 @@ class TestAlternativeDataView:
 
         response = AlternativeDataView.as_view()(request)
         assert response.status_code == 200
+        data = AlternativeData.find_by_customer(customer.id)
         assert data.education_level == "postgraduate"
         assert data.years_of_experience == 5
 
@@ -510,19 +481,19 @@ class TestProfileSummaryView:
 
         monkeypatch.setattr(
             CustomerProfile,
-            "get_or_create",
+            "find_by_customer",
             staticmethod(lambda customer_id: personal),
             raising=False,
         )
         monkeypatch.setattr(
             BusinessProfile,
-            "get_or_create",
+            "find_by_customer",
             staticmethod(lambda customer_id: business),
             raising=False,
         )
         monkeypatch.setattr(
             AlternativeData,
-            "get_or_create",
+            "find_by_customer",
             staticmethod(lambda customer_id: alternative),
             raising=False,
         )

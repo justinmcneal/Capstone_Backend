@@ -7,13 +7,19 @@ must replace each characterization with the secure/correct target expectation.
 from datetime import date, datetime, timedelta, timezone
 from types import SimpleNamespace
 
+import pytest
 from bson import ObjectId
 from cryptography.fernet import Fernet
 
 from accounts.models import Customer
 from accounts.services.account_lifecycle_service import AccountLifecycleService
-from config.field_encryption import _build_keyring, _get_fernet
-from profiles.models import AlternativeData, BusinessProfile, CustomerProfile
+from config.field_encryption import _build_keyring, _get_fernet, is_encrypted_value
+from profiles.models import (
+    AlternativeData,
+    BusinessProfile,
+    CustomerProfile,
+    ProfileRevisionConflict,
+)
 from profiles.serializers import BusinessProfileSerializer
 from profiles.services.notification_preferences import update_preferences
 from profiles.services.risk_scoring import _income_score, _loan_history_score
@@ -21,15 +27,15 @@ from profiles.services.summary import get_profile_summary
 from profiles.tasks import calculate_risk_score_task
 
 
-def test_summary_get_path_currently_creates_three_profile_documents(settings):
+def test_summary_get_path_is_side_effect_free(settings):
     customer_id = str(ObjectId())
 
     summary = get_profile_summary(customer_id)
 
     assert summary["customer_id"] == customer_id
-    assert settings.MONGODB["customer_profiles"].count_documents({}) == 1
-    assert settings.MONGODB["business_profiles"].count_documents({}) == 1
-    assert settings.MONGODB["alternative_data"].count_documents({}) == 1
+    assert settings.MONGODB["customer_profiles"].count_documents({}) == 0
+    assert settings.MONGODB["business_profiles"].count_documents({}) == 0
+    assert settings.MONGODB["alternative_data"].count_documents({}) == 0
 
 
 def test_numeric_income_and_canonical_late_values_have_explicit_scores():
@@ -76,7 +82,7 @@ def test_risk_task_does_not_overwrite_a_newer_profile_update(settings, monkeypat
     assert stored.get("risk_score") is None
 
 
-def test_numeric_financial_fields_currently_remain_plaintext(settings):
+def test_numeric_financial_fields_are_encrypted_and_round_trip(settings):
     settings.FIELD_ENCRYPTION_KEY = Fernet.generate_key().decode()
     settings.FIELD_ENCRYPTION_PREVIOUS_KEYS = ()
     _get_fernet.cache_clear()
@@ -93,10 +99,13 @@ def test_numeric_financial_fields_currently_remain_plaintext(settings):
         stored = settings.MONGODB["alternative_data"].find_one(
             {"customer_id": customer_id}
         )
-        assert stored["household_income"] == 50_000
-        assert stored["existing_loan_amount"] == 10_000
-        assert isinstance(stored["existing_loan_source"], str)
-        assert stored["existing_loan_source"].startswith("enc::")
+        assert is_encrypted_value(stored["household_income"])
+        assert is_encrypted_value(stored["existing_loan_amount"])
+        assert is_encrypted_value(stored["existing_loan_source"])
+        reloaded = AlternativeData.find_by_customer(customer_id)
+        assert reloaded.household_income == 50_000
+        assert reloaded.existing_loan_amount == 10_000
+        assert reloaded.existing_loan_source == "bank"
     finally:
         _get_fernet.cache_clear()
         _build_keyring.cache_clear()
@@ -137,7 +146,7 @@ def test_account_finalization_deletes_profile_domain_data(settings):
     assert AlternativeData.find_by_customer(customer.id) is None
 
 
-def test_full_document_save_currently_loses_a_concurrent_business_update():
+def test_full_document_save_rejects_a_stale_business_revision():
     customer_id = str(ObjectId())
     BusinessProfile(
         customer_id=customer_id,
@@ -151,11 +160,12 @@ def test_full_document_save_currently_loses_a_concurrent_business_update():
     first.business_name = "New Name"
     first.save()
     second.business_type = "food_vendor"
-    second.save()
+    with pytest.raises(ProfileRevisionConflict):
+        second.save()
 
     stored = BusinessProfile.find_by_customer(customer_id)
-    assert stored.business_name == "Original Name"
-    assert stored.business_type == "food_vendor"
+    assert stored.business_name == "New Name"
+    assert stored.business_type == "retail_store"
 
 
 def test_minimal_fields_currently_report_ready_for_loan():

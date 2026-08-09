@@ -42,22 +42,23 @@ field encryption; audit logging; rate limiting; and asynchronous risk scoring
 all exist. The codebase also contains substantially more profile tests than the
 previous version of this review recorded.
 
-Stages 2 and 3 close the previously unrestricted loan-officer access,
-profile-data retention, risk-input mismatch, and stale-score publication
-blockers. Production release remains blocked by incomplete encryption of numeric
-financial fields. Profile persistence/concurrency, completion, validation, and
-`ready_for_loan` semantics also require the later remediation stages.
+Stages 2–4 close the previously unrestricted loan-officer access, profile-data
+retention, risk-input mismatch, stale-score publication, plaintext numeric-
+financial data, read-side mutation, and lost-update blockers. Production release
+still requires the Stage 5 validation/readiness work, Stage 6 API/audit cleanup,
+and live environment validation.
 
 The original review was a static code audit. On 2026-08-09, the focused profile
-suite was executed after the Stage 3 implementation: all 88 profile tests passed.
-Live MongoDB/index and true concurrency behavior remain unverified.
+suite is revalidated after every completed stage. Stage 4 adds opt-in real-Mongo
+index and concurrency tests; executing them against an isolated real MongoDB
+instance remains an operational validation step.
 
 Current remediation status:
 
 - [x] Stage 1 — API contract and regression baseline
 - [x] Stage 2 — Officer privacy, authorization scope, and lifecycle retention
 - [x] Stage 3 — Risk-scoring correctness, explainability, and task durability
-- [ ] Stage 4 — Encryption, persistence integrity, and concurrency
+- [x] Stage 4 — Encryption, persistence integrity, and concurrency
 - [ ] Stage 5 — Validation, completion, and readiness policy
 - [ ] Stage 6 — API consistency, audit completeness, and documentation
 - [ ] Stage 7 — Optional customer capabilities and operational hardening
@@ -77,6 +78,15 @@ Current remediation status:
   return the most recently updated matching record.
 - Business age is stored canonically as `business_age_months`, and direct model
   construction can convert legacy `years_in_operation` values to months.
+- Missing-profile GET and summary responses use unsaved empty representations and
+  do not create MongoDB documents.
+- PUT creation uses atomic upsert semantics. Validated updates `$set` only
+  submitted fields and increment `profile_revision`.
+- Clients may submit the revision returned by GET/PUT for optimistic concurrency;
+  stale revisions return `409` instead of overwriting another update.
+- Legacy full-model saves are revision-guarded and reject stale snapshots.
+- `reconcile_duplicate_profiles` inventories legacy string/ObjectId duplicates
+  by default and requires `--apply` to retain the newest canonical record.
 
 ### Customer API coverage
 
@@ -184,11 +194,14 @@ Current remediation status:
 
 ### Encryption and auditing foundations
 
-- Customer personal contact/address fields and business address/registration
-  fields are declared for field-level encryption.
-- Alternative data declares `existing_loan_source`, `household_income`, and
-  `existing_loan_amount` as sensitive fields and calls the shared encryption
-  helper during serialization.
+- Customer contact/address fields, business address/registration/financial
+  fields, and alternative rent/income/loan fields are declared for field-level
+  encryption.
+- The versioned BSON envelope encrypts integers, floats, Python `Decimal`, and
+  MongoDB `Decimal128` while restoring the original numeric type on read.
+- Encryption backfill, rotation, and verification derive their field map from
+  model declarations. Populated declared numeric fields are supported rather
+  than reported as `unsupported`.
 - Personal, business, and alternative-data PUT operations create audit events.
 - Audit details avoid recording the complete submitted profile payload.
 
@@ -202,83 +215,27 @@ Current remediation status:
   alternative-data round trips, and synchronous task execution under mongomock.
 - Business-age conversion tests cover direct model construction.
 - Blockchain/profile tests cover wallet-field serialization and validation.
-- On 2026-08-09, 88 focused tests passed across API, business-age, model/task,
-  scoring, Stage 1 characterization, Stage 2 privacy/lifecycle, and Stage 3 risk
-  durability modules.
-- The post-Stage 3 full suite collected 924 tests: 910 passed and 14 opt-in
-  integration tests skipped.
+- On 2026-08-09, 101 focused tests passed across API, business-age, model/task,
+  scoring, Stage 1 characterization, Stage 2 privacy/lifecycle, Stage 3 risk
+  durability, and Stage 4 persistence/encryption modules.
+- The post-Stage 4 full suite collected 939 tests: 923 passed and 16 opt-in
+  integration tests skipped, including two new real-Mongo profile tests.
 
-## Production Blockers
+## Resolved Production Blockers
 
-### 1. Numeric financial fields are not encrypted by the current helper
+- Numeric profile financial fields now use type-preserving encrypted BSON
+  envelopes and have raw-database ciphertext/backfill verification tests.
+- Profile GET and summary paths are side-effect-free; lazy creation is restricted
+  to mutation paths and uses an atomic upsert.
+- Validated profile writes are narrow atomic updates. `profile_revision` provides
+  optional optimistic concurrency, and stale full saves fail instead of silently
+  replacing newer state.
 
-**Status: Blocked for production**
-
-`AlternativeData` now declares and passes its sensitive fields to
-`encrypt_fields()`, so the previous claim that it performs no encryption is
-obsolete. However, `encrypt_value()` encrypts strings and structured
-dict/list/tuple values but returns integers and floats unchanged.
-
-Consequently:
-
-- `existing_loan_source` can be encrypted because it is a string.
-- `household_income` remains plaintext when stored as a number.
-- `existing_loan_amount` remains plaintext when stored as a number.
-
-The shared encryption lifecycle now uses versioned ciphertext, previous-key reads,
-strict decryption, rotation, and verification. Its management command derives the
-field map from model declarations, so `alternative_data`, `mobile_number`, and
-other declared profile fields are no longer omitted. However, the helper still
-returns numeric values unchanged; the command reports those values as
-`unsupported`, and verification does not make unsupported numeric declarations
-encrypted.
-
-Required work:
-
-- Extend encryption to supported numeric/Decimal values using a reversible,
-  type-preserving representation.
-- Add raw-database ciphertext and type-preserving round-trip tests under an
-  enabled encryption key.
-- Treat any populated `unsupported` count for a field declared encrypted as a
-  failed production-readiness condition.
-- Decide which encrypted fields require searching or sorting before encryption;
-  randomized Fernet ciphertext cannot support ordinary equality/range queries.
+Randomized Fernet ciphertext cannot support ordinary equality or range queries.
+The newly encrypted financial fields are not used for MongoDB search or sorting;
+any future query requirement needs a separate reviewed indexing design.
 
 ## Partial Implementations and High-Priority Gaps
-
-### GET endpoints mutate state
-
-**Status: Partial / correctness hardening required**
-
-Personal, business, and alternative GET endpoints call model `get_or_create()`.
-The summary service does the same for all three sections. Reading an absent
-profile therefore inserts empty MongoDB records and changes timestamps. A GET can
-also fail with a duplicate-key error if concurrent first requests both complete
-the find step before either insert completes.
-
-Remaining work:
-
-- Return an unsaved empty representation for missing profiles or create profile
-  shells during customer registration.
-- Replace find-then-insert creation with an atomic upsert if lazy creation remains.
-- Keep GET and summary endpoints side-effect-free.
-- Add safe-method and concurrent first-access tests.
-
-### Profile updates are full-document, last-write-wins saves
-
-**Status: Partial / concurrency hardening required**
-
-Views load a complete model, change submitted attributes, and save every field.
-Notification preferences similarly load and save the full customer document.
-Concurrent updates can silently overwrite unrelated changes.
-
-Remaining work:
-
-- Use atomic `$set` updates for only validated fields.
-- Add optimistic concurrency with a revision or `updated_at` precondition where
-  clients can edit the same profile concurrently.
-- Recalculate completion atomically from the resulting authoritative state.
-- Add concurrency tests against real MongoDB, not only mongomock.
 
 ### Completion and readiness rules are weaker than their names imply
 
@@ -411,11 +368,8 @@ contracts are missing.
 
 Required additions:
 
-- Raw MongoDB ciphertext assertions for every declared encrypted field with an
-  enabled test key, including numeric fields.
-- Real MongoDB unique-index and concurrent upsert tests.
-- GET side-effect tests proving reads do not create records.
-- Concurrent partial-update/lost-update tests.
+- Execute the opt-in profile unique-index, concurrent-upsert, and optimistic-
+  concurrency tests against an isolated real MongoDB instance.
 - Legacy business-age endpoint conversion and dual-field precedence tests.
 - Date-of-birth range and date-only response-shape tests.
 - Emergency-contact phone, ZIP, location edge-case, and cross-field validation
@@ -432,8 +386,6 @@ Required additions:
 match current code in several material areas:
 
 - Personal completion uses seven fields, not ten.
-- `AlternativeData.to_dict()` now calls encryption helpers, but numeric financial
-  fields still remain plaintext.
 - `business_age_months` already accepts zero.
 - Model, API, task, risk, conversion, and encryption-related tests now exist.
 - `years_in_operation` is present in the serializer but is silently discarded by
@@ -451,9 +403,10 @@ match current code in several material areas:
 - `emergency_contact_phone` has no phone-format validation, and non-finite float
   values can pass monetary serializers.
 
-Stage 2 officer behavior and Stage 3 scoring behavior are now reflected in the
-testing guide. The remaining mismatches must be corrected with their owning
-implementation stages so the guide does not preserve accidental behavior.
+Stage 2 officer behavior, Stage 3 scoring, and Stage 4 encryption/persistence
+behavior are now reflected in the testing guide. The remaining mismatches must be
+corrected with their owning implementation stages so the guide does not preserve
+accidental behavior.
 
 ## Staged Remediation Plan
 
@@ -510,8 +463,9 @@ fields, the former deletion-retention defect, lost updates, weak readiness,
 discarded business-age aliases, and string-to-boolean preference coercion. Stage
 2 converted the deletion assertion to the secure target behavior. Stage 3
 converted scoring-contract and stale-task assertions and added a dedicated risk-
-durability module. Remaining characterization assertions must be converted as
-Stages 4–6 fix each issue.
+durability module. Stage 4 converted plaintext-financial, read-side-write, and
+lost-update assertions. Remaining characterization assertions must be converted
+as Stages 5–6 fix each issue.
 
 ### Stage 2 — Officer privacy, authorization scope, and lifecycle retention
 
@@ -588,17 +542,36 @@ Stage 3 behavior:
 
 ### Stage 4 — Encryption, persistence integrity, and concurrency
 
-**Status: Not started / production blocker**
+**Status: Implementation complete / live MongoDB validation pending**
 
-- [ ] Add type-preserving encryption for numeric financial fields.
+- [x] ~~Add type-preserving encryption for numeric financial fields.~~
 - [x] ~~Derive encryption migration and verification field maps from model
   declarations, including profile collections and newer declared fields.~~
-- [ ] Add raw-ciphertext and round-trip tests with an enabled key.
-- [ ] Replace GET `get_or_create()` writes with side-effect-free reads or atomic
-  registration-time creation.
-- [ ] Replace full-document updates with validated atomic field updates.
-- [ ] Add optimistic concurrency where required.
-- [ ] Verify indexes, duplicate cleanup, and races against real MongoDB.
+- [x] ~~Add raw-ciphertext and type-preserving round-trip tests with an enabled
+  key.~~
+- [x] ~~Replace GET `get_or_create()` writes with side-effect-free reads and use
+  atomic upsert for mutation-time creation.~~
+- [x] ~~Replace API full-document updates with validated atomic field updates.~~
+- [x] ~~Add `profile_revision` optimistic concurrency and stale-save rejection.~~
+- [x] ~~Add dry-run-default duplicate reconciliation and opt-in real-Mongo index,
+  creation-race, and revision-race tests.~~
+- [ ] Execute the opt-in tests against an isolated real MongoDB instance and
+  review the duplicate-reconciliation dry run before any production index work.
+
+Stage 4 behavior:
+
+- Sensitive numeric values are ciphertext in raw MongoDB while API/model reads
+  receive their original numeric type and value.
+- Personal, business, alternative-data, and summary GET requests no longer create
+  empty records.
+- PUT responses return `profile_revision`. A client that sends this value on its
+  next PUT receives `409` if another request updated the profile first. Omitting
+  it retains backward compatibility while narrow `$set` updates protect unrelated
+  fields.
+- Profile completion is finalized only for the newest observed revision, so a
+  stale completion calculation cannot overwrite newer state.
+- The duplicate reconciliation command retains the newest record and canonicalizes
+  `customer_id`; it performs no writes unless `--apply` is explicitly supplied.
 
 ### Stage 5 — Validation, completion, and readiness policy
 
@@ -677,10 +650,11 @@ Stage 3 behavior:
   and reconciled.~~
 - [x] ~~Risk output is explainable, versioned, manually reviewable, and explicitly
   restricted to informational use.~~
-- [ ] Numeric alternative financial fields are encrypted at rest.
-- [ ] Encryption backfill covers every declared profile field.
-- [ ] GET endpoints are side-effect-free.
-- [ ] Profile creation and updates are concurrency-safe.
+- [x] ~~Declared numeric profile financial fields are encrypted at rest with
+  type-preserving round trips.~~
+- [x] ~~Encryption backfill and verification cover every declared profile field.~~
+- [x] ~~GET and summary endpoints are side-effect-free.~~
+- [x] ~~Profile creation and API updates are atomic, revisioned, and stale-safe.~~
 - [ ] Completion/readiness semantics are formally defined and accurately named.
 - [ ] Cross-field, date, location, and monetary validation is production-safe.
 - [ ] Legacy business-age behavior is implemented as documented or removed.
@@ -700,6 +674,8 @@ admin web application require coordinated changes as later stages complete:
   `risk_score_status`, display the score as informational with manual review, and
   avoid using it as an approval result. It may also need canonical
   `business_age_months`, stricter validation, and machine-readable missing fields.
+  For edit conflict protection it should store the returned `profile_revision`,
+  send it on the next PUT, and reload the form after a `409` response.
 - Loan-officer web must use `/api/officer/profiles/` routes, handle scoped/404
   results, stop relying on directory phone search/output or emergency-contact
   detail fields, and display only the approved allowlisted profile fields.
@@ -716,10 +692,10 @@ admin web application require coordinated changes as later stages complete:
 - The scoring contract and governance boundary are documented in
   `docs/PROFILES_RISK_SCORING_POLICY.md`. Representative calibration and fairness
   validation remain mandatory before any future authoritative lending use.
-- `init_db.py`, profile backfills, encryption migrations, and account-retention
-  operations are state-changing and require explicit approval, backups, dry-run
-  review, and staging validation before use.
+- `init_db.py`, profile backfills, encryption migrations, duplicate reconciliation,
+  and account-retention operations are state-changing and require explicit
+  approval, backups, dry-run review, and staging validation before use.
 - The current 500/hour profile throttle is documented as implemented behavior,
   not an endorsement of that value for production.
-- Optional avatar/export features should not be prioritized ahead of scoring,
-  encryption, validation, and concurrency blockers.
+- Optional avatar/export features should not be prioritized ahead of validation,
+  readiness, API consistency, and audit work.

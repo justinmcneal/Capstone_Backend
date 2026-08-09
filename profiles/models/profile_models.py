@@ -14,10 +14,15 @@ from bson import ObjectId
 from bson.errors import InvalidId
 from django.conf import settings
 from pymongo import ReturnDocument
+from pymongo.errors import DuplicateKeyError
 
 from config.field_encryption import decrypt_fields, encrypt_fields
 
 logger = logging.getLogger("profiles")
+
+
+class ProfileRevisionConflict(RuntimeError):
+    """Raised when a client updates a profile revision that is no longer current."""
 
 
 def get_db():
@@ -70,6 +75,138 @@ def _find_latest_by_customer(collection_name, customer_id):
     query = _customer_lookup_query(customer_id)
     doc = collection.find_one(query, sort=[("updated_at", -1), ("created_at", -1)])
     return doc
+
+
+def _atomic_get_or_create(model_class, customer_id):
+    """Create one canonical profile shell without a find-then-insert race."""
+    existing = model_class.find_by_customer(customer_id)
+    if existing:
+        return existing
+
+    profile = model_class(customer_id=str(customer_id))
+    data = profile.to_dict()
+    data.pop("_id", None)
+    collection = get_db()[model_class.collection_name]
+    try:
+        document = collection.find_one_and_update(
+            _customer_lookup_query(customer_id),
+            {"$setOnInsert": data},
+            upsert=True,
+            return_document=ReturnDocument.AFTER,
+        )
+    except DuplicateKeyError:
+        document = _find_latest_by_customer(model_class.collection_name, customer_id)
+    if not document:
+        raise RuntimeError("Profile creation was not persisted")
+    return model_class.from_dict(document)
+
+
+def _revision_query(document_id, expected_revision):
+    query = {"_id": document_id}
+    if expected_revision is None:
+        return query
+    expected_revision = int(expected_revision)
+    if expected_revision == 0:
+        query["$or"] = [
+            {"profile_revision": 0},
+            {"profile_revision": {"$exists": False}},
+        ]
+    else:
+        query["profile_revision"] = expected_revision
+    return query
+
+
+def _finish_atomic_profile_update(model_class, document):
+    """Persist completion for the newest observed revision without stale writes."""
+    collection = get_db()[model_class.collection_name]
+    for _attempt in range(10):
+        profile = model_class.from_dict(document)
+        profile.calculate_completion()
+        revision = int(profile.profile_revision or 0)
+        completed = collection.find_one_and_update(
+            {"_id": profile._id, "profile_revision": revision},
+            {
+                "$set": {
+                    "profile_completed": profile.profile_completed,
+                    "completion_percentage": profile.completion_percentage,
+                }
+            },
+            return_document=ReturnDocument.AFTER,
+        )
+        if completed:
+            return model_class.from_dict(completed)
+        document = collection.find_one({"_id": profile._id})
+        if not document:
+            raise RuntimeError("Profile disappeared during update")
+    raise RuntimeError("Profile completion could not settle after concurrent updates")
+
+
+def _atomic_update_profile(
+    profile,
+    fields,
+    *,
+    expected_revision=None,
+    additional_set=None,
+    additional_inc=None,
+):
+    """Write only submitted fields and guard optional optimistic concurrency."""
+    if not profile._id:
+        raise ValueError("Profile must be saved before updating fields")
+
+    protected = {"_id", "customer_id", "created_at", "profile_revision"}
+    updates = {
+        field: value
+        for field, value in fields.items()
+        if field not in protected and hasattr(profile, field)
+    }
+    if additional_set:
+        updates.update(additional_set)
+    updates["updated_at"] = datetime.now(timezone.utc)
+    updates = encrypt_fields(updates, profile.encrypted_fields)
+    increments = {"profile_revision": 1}
+    if additional_inc:
+        increments.update(additional_inc)
+
+    document = get_db()[profile.collection_name].find_one_and_update(
+        _revision_query(profile._id, expected_revision),
+        {"$set": updates, "$inc": increments},
+        return_document=ReturnDocument.AFTER,
+    )
+    if not document:
+        if expected_revision is not None:
+            raise ProfileRevisionConflict(
+                "Profile was updated by another request; reload and retry"
+            )
+        raise RuntimeError("Profile update was not persisted")
+    return _finish_atomic_profile_update(type(profile), document)
+
+
+def _save_profile(profile):
+    """Insert a new profile or guard a legacy full save with its revision."""
+    collection = get_db()[profile.collection_name]
+    profile.updated_at = datetime.now(timezone.utc)
+    profile.calculate_completion()
+    data = profile.to_dict()
+    data.pop("_id", None)
+
+    if not profile._id:
+        result = collection.insert_one(data)
+        profile._id = result.inserted_id
+        return profile
+
+    data.pop("profile_revision", None)
+    document = collection.find_one_and_update(
+        _revision_query(profile._id, profile.profile_revision),
+        {"$set": data, "$inc": {"profile_revision": 1}},
+        return_document=ReturnDocument.AFTER,
+    )
+    if not document:
+        raise ProfileRevisionConflict(
+            "Profile was updated by another request; reload and retry"
+        )
+    refreshed = type(profile).from_dict(document)
+    profile.__dict__.update(refreshed.__dict__)
+    return profile
 
 
 # Business Type Options
@@ -183,6 +320,7 @@ class CustomerProfile:
         # Profile Completion
         self.profile_completed = kwargs.get("profile_completed", False)
         self.completion_percentage = kwargs.get("completion_percentage", 0)
+        self.profile_revision = kwargs.get("profile_revision", 0)
 
         # Timestamps
         self.created_at = kwargs.get("created_at", datetime.now(timezone.utc))
@@ -217,6 +355,7 @@ class CustomerProfile:
             "wallet_address": self.wallet_address,
             "profile_completed": self.profile_completed,
             "completion_percentage": self.completion_percentage,
+            "profile_revision": self.profile_revision,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
         }
@@ -247,21 +386,14 @@ class CustomerProfile:
         return self.completion_percentage
 
     def save(self):
-        db = get_db()
-        collection = db[self.collection_name]
+        return _save_profile(self)
 
-        self.updated_at = datetime.now(timezone.utc)
-        self.calculate_completion()
-        data = self.to_dict()
-        data.pop("_id", None)
-
-        if self._id:
-            collection.update_one({"_id": self._id}, {"$set": data})
-        else:
-            result = collection.insert_one(data)
-            self._id = result.inserted_id
-
-        return self
+    def update_fields(self, fields, expected_revision=None):
+        return _atomic_update_profile(
+            self,
+            fields,
+            expected_revision=expected_revision,
+        )
 
     @classmethod
     def find_one(cls, query):
@@ -276,11 +408,7 @@ class CustomerProfile:
 
     @classmethod
     def get_or_create(cls, customer_id):
-        profile = cls.find_by_customer(customer_id)
-        if not profile:
-            profile = cls(customer_id=str(customer_id))
-            profile.save()
-        return profile
+        return _atomic_get_or_create(cls, customer_id)
 
     @classmethod
     def create_indexes(cls):
@@ -302,6 +430,8 @@ class BusinessProfile:
         "business_city",
         "business_province",
         "registration_number",
+        "estimated_monthly_income",
+        "estimated_monthly_expenses",
     )
 
     def __init__(self, **kwargs):
@@ -355,6 +485,7 @@ class BusinessProfile:
         # Profile Completion
         self.profile_completed = kwargs.get("profile_completed", False)
         self.completion_percentage = kwargs.get("completion_percentage", 0)
+        self.profile_revision = kwargs.get("profile_revision", 0)
 
         # Timestamps
         self.created_at = kwargs.get("created_at", datetime.now(timezone.utc))
@@ -385,6 +516,7 @@ class BusinessProfile:
             "number_of_employees": self.number_of_employees,
             "profile_completed": self.profile_completed,
             "completion_percentage": self.completion_percentage,
+            "profile_revision": self.profile_revision,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
         }
@@ -399,21 +531,14 @@ class BusinessProfile:
         return cls(**decrypt_fields(data, cls.encrypted_fields))
 
     def save(self):
-        db = get_db()
-        collection = db[self.collection_name]
+        return _save_profile(self)
 
-        self.updated_at = datetime.now(timezone.utc)
-        self.calculate_completion()
-        data = self.to_dict()
-        data.pop("_id", None)
-
-        if self._id:
-            collection.update_one({"_id": self._id}, {"$set": data})
-        else:
-            result = collection.insert_one(data)
-            self._id = result.inserted_id
-
-        return self
+    def update_fields(self, fields, expected_revision=None):
+        return _atomic_update_profile(
+            self,
+            fields,
+            expected_revision=expected_revision,
+        )
 
     def calculate_completion(self):
         """Calculate business profile completion."""
@@ -436,11 +561,7 @@ class BusinessProfile:
 
     @classmethod
     def get_or_create(cls, customer_id):
-        profile = cls.find_by_customer(customer_id)
-        if not profile:
-            profile = cls(customer_id=str(customer_id))
-            profile.save()
-        return profile
+        return _atomic_get_or_create(cls, customer_id)
 
     @classmethod
     def create_indexes(cls):
@@ -461,6 +582,7 @@ class AlternativeData:
         "existing_loan_source",
         "household_income",
         "existing_loan_amount",
+        "monthly_rent",
     )
 
     def __init__(self, **kwargs):
@@ -542,6 +664,7 @@ class AlternativeData:
         # Profile Completion
         self.profile_completed = kwargs.get("profile_completed", False)
         self.completion_percentage = kwargs.get("completion_percentage", 0)
+        self.profile_revision = kwargs.get("profile_revision", 0)
 
         # Timestamps
         self.created_at = kwargs.get("created_at", datetime.now(timezone.utc))
@@ -594,6 +717,7 @@ class AlternativeData:
             "risk_score_stale_at": self.risk_score_stale_at,
             "profile_completed": self.profile_completed,
             "completion_percentage": self.completion_percentage,
+            "profile_revision": self.profile_revision,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
         }
@@ -608,39 +732,20 @@ class AlternativeData:
         return cls(**decrypt_fields(data, cls.encrypted_fields))
 
     def save(self):
-        db = get_db()
-        collection = db[self.collection_name]
+        return _save_profile(self)
 
-        self.updated_at = datetime.now(timezone.utc)
-        self.calculate_completion()
-        data = self.to_dict()
-        data.pop("_id", None)
-
-        if self._id:
-            collection.update_one({"_id": self._id}, {"$set": data})
-        else:
-            result = collection.insert_one(data)
-            self._id = result.inserted_id
-
-        return self
-
-    def update_inputs(self, fields):
+    def update_inputs(self, fields, expected_revision=None):
         """Atomically update validated inputs and create a new scoring revision."""
 
         if not self._id:
             raise ValueError("Alternative data must be saved before updating inputs")
 
-        for field, value in fields.items():
-            if hasattr(self, field):
-                setattr(self, field, value)
-        self.calculate_completion()
-
         now = datetime.now(timezone.utc)
-        update = dict(fields)
-        update.update(
-            {
-                "profile_completed": self.profile_completed,
-                "completion_percentage": self.completion_percentage,
+        return _atomic_update_profile(
+            self,
+            fields,
+            expected_revision=expected_revision,
+            additional_set={
                 "risk_score": None,
                 "risk_category": None,
                 "score_calculated_at": None,
@@ -655,18 +760,9 @@ class AlternativeData:
                 "risk_score_task_id": None,
                 "risk_score_requested_at": now,
                 "risk_score_failed_at": None,
-                "updated_at": now,
-            }
+            },
+            additional_inc={"risk_input_revision": 1},
         )
-        update = encrypt_fields(update, self.encrypted_fields)
-        document = get_db()[self.collection_name].find_one_and_update(
-            {"_id": self._id},
-            {"$set": update, "$inc": {"risk_input_revision": 1}},
-            return_document=ReturnDocument.AFTER,
-        )
-        if not document:
-            raise RuntimeError("Alternative data update was not persisted")
-        return self.from_dict(document)
 
     def calculate_completion(self):
         """Calculate alternative data completion."""
@@ -689,11 +785,7 @@ class AlternativeData:
 
     @classmethod
     def get_or_create(cls, customer_id):
-        profile = cls.find_by_customer(customer_id)
-        if not profile:
-            profile = cls(customer_id=str(customer_id))
-            profile.save()
-        return profile
+        return _atomic_get_or_create(cls, customer_id)
 
     @classmethod
     def create_indexes(cls):

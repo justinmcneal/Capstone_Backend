@@ -13,9 +13,15 @@ logger = logging.getLogger("profiles")
 
 
 def get_profile_summary(customer_id: str) -> dict[str, Any]:
-    personal = CustomerProfile.get_or_create(customer_id)
-    business = BusinessProfile.get_or_create(customer_id)
-    alternative = AlternativeData.get_or_create(customer_id)
+    personal = CustomerProfile.find_by_customer(customer_id) or CustomerProfile(
+        customer_id=str(customer_id)
+    )
+    business = BusinessProfile.find_by_customer(customer_id) or BusinessProfile(
+        customer_id=str(customer_id)
+    )
+    alternative = AlternativeData.find_by_customer(customer_id) or AlternativeData(
+        customer_id=str(customer_id)
+    )
 
     from documents.models import Document
 
@@ -75,6 +81,7 @@ def get_profile_summary(customer_id: str) -> dict[str, Any]:
         "personal_profile": {
             "completed": personal_complete,
             "completion_percentage": personal.completion_percentage,
+            "profile_revision": personal.profile_revision,
         },
         "business_profile": {
             "completed": business_complete,
@@ -82,6 +89,7 @@ def get_profile_summary(customer_id: str) -> dict[str, Any]:
             "has_income_info": bool(
                 business.income_range or business.estimated_monthly_income
             ),
+            "profile_revision": business.profile_revision,
         },
         "alternative_data": {
             "completed": alternative_complete,
@@ -95,6 +103,7 @@ def get_profile_summary(customer_id: str) -> dict[str, Any]:
             ),
             "risk_input_revision": alternative.risk_input_revision,
             "risk_calculated_revision": alternative.risk_calculated_revision,
+            "profile_revision": alternative.profile_revision,
         },
         "documents": {
             "total": total_docs,

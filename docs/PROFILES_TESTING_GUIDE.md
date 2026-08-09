@@ -44,6 +44,7 @@ Content-Type: application/json
   - `wallet_address`
   - `profile_completed`
   - `completion_percentage`
+  - `profile_revision`
 
 2. `PUT /`
 - Auth: customer only
@@ -63,7 +64,9 @@ Content-Type: application/json
   - `emergency_contact_phone`
   - `emergency_contact_relationship`
   - `wallet_address`
-- Key response fields: `profile_completed`, `completion_percentage`
+  - `profile_revision` (optional optimistic-concurrency precondition)
+- Key response fields: `profile_completed`, `completion_percentage`,
+  `profile_revision`
 - Validation:
   - Mobile number must be Philippine format (+639 or 09)
   - Wallet address must be valid Ethereum format (0x + 40 hex chars)
@@ -94,6 +97,7 @@ Content-Type: application/json
   - `number_of_employees`
   - `profile_completed`
   - `completion_percentage`
+  - `profile_revision`
 
 4. `PUT /business/`
 - Auth: customer only
@@ -117,6 +121,8 @@ Content-Type: application/json
   - `income_range` (`below_10000`, `10000_20000`, `20000_30000`, `30000_50000`, `50000_100000`, `above_100000`)
   - `estimated_monthly_expenses`
   - `number_of_employees`
+- Optional concurrency field: `profile_revision`
+- Key response field: `profile_revision`
 - Validation: `business_type_other` is required when `business_type` is `other`
 
 5. `GET /alternative-data/`
@@ -132,17 +138,6 @@ Content-Type: application/json
   - `years_at_current_address`
   - `monthly_rent`
   - `number_of_dependents`
-  - `household_income`
-  - `has_existing_loans`
-  - `existing_loan_amount`
-  - `existing_loan_source`
-  - `loan_payment_history`
-  - `has_bank_account`
-  - `bank_account_duration`
-  - `has_ewallet`
-  - `ewallet_usage`
-  - `pays_utilities`
-  - `utility_payment_history`
   - `is_coop_member`
   - `community_involvement`
   - `risk_score`
@@ -161,6 +156,7 @@ Content-Type: application/json
   - `risk_score_failed_at`
   - `profile_completed`
   - `completion_percentage`
+  - `profile_revision`
 
 6. `PUT /alternative-data/`
 - Auth: customer only
@@ -185,9 +181,11 @@ Content-Type: application/json
   - `utility_payment_history` (`on_time`, `sometimes_late`, `often_late`)
   - `is_coop_member`
   - `community_involvement`
+  - `profile_revision` (optional optimistic-concurrency precondition)
 - Key response fields:
   - `risk_score_status`
   - `risk_input_revision`
+  - `profile_revision`
 - Side effect: atomically advances the input revision, clears the superseded
   score, marks calculation pending, and enqueues that exact revision.
 
@@ -198,9 +196,11 @@ Content-Type: application/json
   - `customer_id`
   - `personal_profile.completed`
   - `personal_profile.completion_percentage`
+  - `personal_profile.profile_revision`
   - `business_profile.completed`
   - `business_profile.has_business_type`
   - `business_profile.has_income_info`
+  - `business_profile.profile_revision`
   - `alternative_data.completed`
   - `alternative_data.has_risk_score`
   - `alternative_data.risk_category`
@@ -210,6 +210,7 @@ Content-Type: application/json
   - `alternative_data.risk_score_manual_review_required`
   - `alternative_data.risk_input_revision`
   - `alternative_data.risk_calculated_revision`
+  - `alternative_data.profile_revision`
   - `documents.total`
   - `documents.approved`
   - `documents.pending`
@@ -313,8 +314,37 @@ Content-Type: application/json
 - Customer not found when updating notification preferences.
 - Officer requested a customer outside their assigned/shared-review scope.
 
-5. `503 Service Unavailable`
+5. `409 Conflict`
+- A PUT supplied a `profile_revision` that is no longer current. Reload the
+  profile, reconcile the user's edits, and retry with the new revision.
+
+6. `503 Service Unavailable`
 - A required officer profile-access audit could not be written.
+
+## Profile Persistence and Concurrency
+
+- Personal, business, alternative-data, and summary GET requests are
+  side-effect-free. If no record exists, they return an empty representation with
+  `id: null` and `profile_revision: 0` without inserting a document.
+- The first PUT creates the profile through an atomic upsert. Subsequent PUTs
+  update only validated submitted fields, so unrelated simultaneous edits are
+  preserved.
+- Every accepted PUT increments `profile_revision`. Sending the last observed
+  revision enables optimistic concurrency and produces `409` for a stale edit.
+  Omitting it remains supported for older clients, but clients should adopt it.
+- Completion state is written only for the newest observed revision.
+
+## Profile Field Encryption
+
+- Declared personal contact/address, business address/registration/financial,
+  and alternative rent/income/loan fields are encrypted in raw MongoDB when
+  `FIELD_ENCRYPTION_KEY` is configured.
+- Numeric values use a versioned BSON envelope and round-trip as their original
+  `int`, `float`, Python `Decimal`, or MongoDB `Decimal128` type.
+- API clients continue to send and receive ordinary numeric JSON values; the
+  ciphertext format is an internal storage concern.
+- Randomized encrypted fields cannot be queried or sorted by their plaintext
+  value without a separate reviewed indexing design.
 
 ## Rate Limiting
 
@@ -357,6 +387,26 @@ python manage.py recalculate_profile_risk_scores --apply
 
 Add `--all` to include every alternative-data record. The command is dry-run by
 default; operational execution is intentionally not part of local unit testing.
+
+## Duplicate Profile Reconciliation
+
+Inventory legacy records where string and ObjectId forms identify the same
+customer without changing MongoDB:
+
+```bash
+python manage.py reconcile_duplicate_profiles
+```
+
+After backup review, staging validation, and review of which newest documents
+will be retained, apply reconciliation:
+
+```bash
+python manage.py reconcile_duplicate_profiles --apply
+```
+
+The applied command deletes older duplicates and canonicalizes the retained
+document's `customer_id` as a string. It was not run against a development or
+production database as part of Stage 4.
 
 ## Deleted-Customer Profile Cleanup
 

@@ -10,9 +10,11 @@ Behavior:
   an online rotation, and strict mode rejects corruption or unavailable keys.
 """
 import hashlib
+from decimal import Decimal
 from functools import lru_cache
 
 from bson import BSON
+from bson.decimal128 import Decimal128
 from cryptography.fernet import Fernet, InvalidToken
 from django.conf import settings
 from django.core.exceptions import ImproperlyConfigured
@@ -21,6 +23,8 @@ ENCRYPTED_PREFIX = "enc::"
 ENCRYPTED_BSON_PREFIX = "encbson::"
 VERSIONED_ENCRYPTED_PREFIX = "enc::v2::"
 VERSIONED_ENCRYPTED_BSON_PREFIX = "encbson::v2::"
+_TYPE_MARKER = "__field_encryption_type__"
+_DECIMAL_TYPE = "decimal"
 
 
 class FieldDecryptionError(ValueError):
@@ -107,9 +111,19 @@ def encrypt_value(value):
     if isinstance(value, str):
         payload = value.encode("utf-8")
         prefix = VERSIONED_ENCRYPTED_PREFIX
-    elif isinstance(value, (dict, list, tuple)):
+    elif isinstance(value, Decimal):
+        payload = BSON.encode(
+            {"value": {_TYPE_MARKER: _DECIMAL_TYPE, "value": str(value)}}
+        )
+        prefix = VERSIONED_ENCRYPTED_BSON_PREFIX
+    elif (
+        isinstance(value, (dict, list, tuple, Decimal128))
+        or isinstance(value, (int, float))
+        and not isinstance(value, bool)
+    ):
         # BSON preserves the native values used in Mongo documents (including
-        # datetimes and ObjectIds) without lossy JSON conversion.
+        # numeric width, Decimal128, datetimes, and ObjectIds) without lossy JSON
+        # conversion. Booleans are intentionally excluded from numeric handling.
         payload = BSON.encode({"value": value})
         prefix = VERSIONED_ENCRYPTED_BSON_PREFIX
     else:
@@ -165,7 +179,14 @@ def decrypt_value(value):
         try:
             plaintext = fernet.decrypt(token.encode("utf-8"))
             if structured:
-                return BSON(plaintext).decode()["value"]
+                decoded = BSON(plaintext).decode()["value"]
+                if (
+                    isinstance(decoded, dict)
+                    and decoded.get(_TYPE_MARKER) == _DECIMAL_TYPE
+                    and set(decoded) == {_TYPE_MARKER, "value"}
+                ):
+                    return Decimal(decoded["value"])
+                return decoded
             return plaintext.decode("utf-8")
         except (InvalidToken, KeyError, TypeError, ValueError):
             continue
