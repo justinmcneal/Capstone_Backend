@@ -298,9 +298,34 @@ Content-Type: application/json
   unrelated customer fields or simultaneous updates to other preferences.
 - Successful changes are audited using the trusted-proxy client-IP policy.
 
+10. `GET /export/`
+- Auth: customer only
+- Returns an allowlisted, versioned JSON export of profile, risk explanation,
+  completion, notification-preference, and up to 100 risk-review records. The
+  review section reports its total and whether it was truncated.
+- It is generated in memory; no server-side export file is retained.
+- Internal task IDs, account security, documents, loans, and AI history are
+  outside this profile-only export.
+- Required audit failure returns `503` without exposing the payload.
+
+11. `GET /history/`
+- Auth: customer only
+- Query fields: `page`, `page_size` (maximum 100)
+- Returns metadata-only events: action, section, changed field names, revision,
+  status, and timestamp. It omits values, IP addresses, and security information.
+
+12. `GET|POST /risk-reviews/`
+- Auth: customer only
+- GET lists the customer's requests with pagination.
+- POST accepts `reason` (`incorrect_profile_data`, `unexpected_score`,
+  `missing_context`, or `other`), optional `description`, and optional current
+  `risk_calculated_revision` precondition.
+- It requires a completed current score. Only one request may exist for a
+  customer/scoring revision; duplicate or stale revisions return `409`.
+
 ### Officer Endpoints
 
-10. `GET /api/officer/profiles/`
+13. `GET /api/officer/profiles/`
 - Auth: active loan officer only
 - Query fields: `search`, `page`, `page_size` (maximum 100)
 - Scope:
@@ -312,7 +337,7 @@ Content-Type: application/json
 - Key response fields: `customer_id`, `full_name`, and `email` only. Phone search
   and phone output are intentionally unsupported because phone data is encrypted.
 
-11. `GET /api/officer/profiles/<customer_id>/`
+14. `GET /api/officer/profiles/<customer_id>/`
 - Auth: active loan officer only
 - Request fields: none
 - Returns the explicitly allowlisted personal, business, and alternative-data
@@ -325,6 +350,19 @@ Content-Type: application/json
   same scoped view and is pending deprecation.
 - Directory access, successful sensitive reads, and denied reads require audit
   records. If the audit store is unavailable, sensitive access returns `503`.
+
+15. `GET /api/officer/profile-risk-reviews/`
+- Auth: active loan officer only
+- Query fields: `page`, `page_size`, and optional `status`
+- Returns requests only for customers in the officer's existing scope. Queue
+  access requires an audit and fails closed with `503`.
+
+16. `PUT /api/officer/profile-risk-reviews/<review_id>/`
+- Auth: active, in-scope loan officer only
+- Request fields: `status` (`in_review`, `resolved`, or `rejected`),
+  `resolution_note`, and `review_revision`
+- Terminal status requires a resolution note. Stale revisions return `409`, and
+  out-of-scope request IDs return concealed `404`.
 
 ## Smoke Test Sequence
 
@@ -340,6 +378,8 @@ Content-Type: application/json
 8. As a loan officer: list `/api/officer/profiles/`, then retrieve an in-scope
    customer from `/api/officer/profiles/<customer_id>/`. Confirm a customer
    assigned to another officer returns the concealed `404` response.
+9. Generate `/export/`, inspect `/history/`, request review of a completed score,
+   and resolve it through the scoped officer review queue.
 
 ## Common Error Cases
 
@@ -367,9 +407,11 @@ Content-Type: application/json
 5. `409 Conflict`
 - A PUT supplied a `profile_revision` that is no longer current. Reload the
   profile, reconcile the user's edits, and retry with the new revision.
+- A risk result or risk review revision is stale, or the current score already
+  has a review request.
 
 6. `503 Service Unavailable`
-- A required officer profile-access audit could not be written.
+- A required officer read/queue or customer export audit could not be written.
 
 ## Profile Persistence and Concurrency
 
@@ -445,11 +487,17 @@ python manage.py recalculate_profile_completion --apply
   update remains saved and its failed state is visible to the client.
 - `profiles.reconcile_risk_scores` runs every minute to requeue failed work and
   pending work abandoned for at least five minutes.
+- `profiles.reconcile_audit_failures` runs every minute to replay safe queued
+  audit payloads and removes payloads after successful reconciliation.
+- `profiles.collect_operational_metrics` runs every 15 minutes and publishes
+  duplicate, declared-encryption, audit, risk, and review backlog gauges.
 - A score is current only when status is `complete`, calculated revision equals
   input revision, and its policy version is current.
 - Policy `2026-08-09-v1` is `informational_only` and requires manual review. It
   must not be treated as approval, pricing, a limit, eligibility, or an adverse
   decision. See `docs/PROFILES_RISK_SCORING_POLICY.md`.
+- Metric definitions and suggested starting alerts are documented in
+  `docs/PROFILES_OPERATIONS.md`.
 
 ## Risk-Score Recalculation
 

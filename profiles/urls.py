@@ -6,7 +6,10 @@ from profiles.views import (
     CustomerProfileView,
     NotificationPreferencesView,
     OfficerProfileView,
+    ProfileExportView,
+    ProfileHistoryView,
     ProfileSummaryView,
+    RiskReviewRequestView,
 )
 
 app_name = "profiles"
@@ -22,6 +25,9 @@ urlpatterns = [
     path("summary/", ProfileSummaryView.as_view(), name="profile-summary"),
     # Notification Preferences
     path("notifications/", NotificationPreferencesView.as_view(), name="notifications"),
+    path("export/", ProfileExportView.as_view(), name="export"),
+    path("history/", ProfileHistoryView.as_view(), name="history"),
+    path("risk-reviews/", RiskReviewRequestView.as_view(), name="risk-reviews"),
     # Officer Read-Only Profile
     path("officer/<str:customer_id>/", OfficerProfileView.as_view(), name="officer-profile"),
 ]

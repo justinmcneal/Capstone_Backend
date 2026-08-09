@@ -5,7 +5,12 @@ from .profile_views import (
     NotificationPreferencesView,
     OfficerCustomerProfilesListView,
     OfficerProfileView,
+    OfficerRiskReviewDetailView,
+    OfficerRiskReviewListView,
+    ProfileExportView,
+    ProfileHistoryView,
     ProfileSummaryView,
+    RiskReviewRequestView,
 )
 
 __all__ = [
@@ -15,5 +20,10 @@ __all__ = [
     "NotificationPreferencesView",
     "OfficerCustomerProfilesListView",
     "OfficerProfileView",
+    "OfficerRiskReviewDetailView",
+    "OfficerRiskReviewListView",
+    "ProfileExportView",
+    "ProfileHistoryView",
     "ProfileSummaryView",
+    "RiskReviewRequestView",
 ]

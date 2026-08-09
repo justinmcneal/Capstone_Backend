@@ -12,7 +12,12 @@ from config.field_encryption import (
 )
 from documents.models import Document
 from loans.models import LoanApplication, LoanPayment, LoanProduct, RepaymentSchedule
-from profiles.models import AlternativeData, BusinessProfile, CustomerProfile
+from profiles.models import (
+    AlternativeData,
+    BusinessProfile,
+    CustomerProfile,
+    RiskReviewRequest,
+)
 
 ENCRYPTED_MODELS = (
     Customer,
@@ -21,6 +26,7 @@ ENCRYPTED_MODELS = (
     CustomerProfile,
     BusinessProfile,
     AlternativeData,
+    RiskReviewRequest,
     Document,
     LoanApplication,
     LoanPayment,

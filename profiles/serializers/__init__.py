@@ -4,6 +4,8 @@ from .profile_serializers import (
     CustomerProfileResponseSerializer,
     CustomerProfileSerializer,
     NotificationPreferencesUpdateSerializer,
+    RiskReviewRequestSerializer,
+    RiskReviewResolutionSerializer,
 )
 
 __all__ = [
@@ -12,4 +14,6 @@ __all__ = [
     "CustomerProfileResponseSerializer",
     "CustomerProfileSerializer",
     "NotificationPreferencesUpdateSerializer",
+    "RiskReviewRequestSerializer",
+    "RiskReviewResolutionSerializer",
 ]

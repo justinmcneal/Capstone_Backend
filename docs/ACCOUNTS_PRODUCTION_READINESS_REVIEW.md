@@ -47,7 +47,7 @@ recovery checks described in **Remaining Gaps and Release Conditions**.
 | Consent | Implemented | Current consent, append-only history, policy versioning, revocation, audit reporting, and AI enforcement are available. |
 | Account lifecycle | Implemented | Suspension, deactivation, email change, export, deletion scheduling, anonymization, unlock, and 2FA recovery are available. |
 | Field encryption | Implemented | Versioned Fernet encryption, strict production reads, previous-key support, rotation, and verification are available. |
-| Local automated tests | Passing | 975 passed and 16 opt-in integration tests skipped on 2026-08-09. |
+| Local automated tests | Passing | 986 passed and 17 opt-in integration tests skipped on 2026-08-09. |
 | Production environment validation | Pending | Hosted CI, real MongoDB/Redis/Celery, browser cookie/CORS, email, proxy, and recovery validation remain. |
 
 ## Module Responsibilities
@@ -404,9 +404,9 @@ Local validation on 2026-08-09 used `config.settings_test`, mongomock, in-memory
 cache/channel layers, eager Celery, local email, and disabled blockchain
 integration.
 
-- Full suite: **991 collected, 975 passed, 16 skipped**
+- Full suite: **1,003 collected, 986 passed, 17 skipped**
 - Focused Accounts API tests after token-contract changes: **24 passed**
-- Focused Profiles suite after Stage 4: **101 passed**
+- Focused Profiles suite after Stage 7: **164 passed**
 - Changed Accounts view files and the new Profiles characterization module pass
   Ruff.
 - The 14 skips are opt-in external/integration tests, including five real-Mongo

@@ -61,7 +61,8 @@ Content-Type: application/json
 The canonical list is maintained by `AUDIT_ACTIONS` in code. Profile actions
 include `profile_created`, `profile_updated`,
 `notification_preferences_updated`, `profile_directory_viewed`,
-`profile_sensitive_read`, `profile_access_denied`, and the risk-score lifecycle
+`profile_sensitive_read`, `profile_access_denied`, `profile_exported`,
+`profile_history_viewed`, the risk-review workflow, and the risk-score lifecycle
 actions.
 
 ### Extended Actions (also appear in logs from other modules)
@@ -184,6 +185,9 @@ Paginated, filterable audit logs (full system).
 | `profile_updated` | `profile_revision`, `profile_completed`; alternative data also includes safe risk/completion state |
 | `profile_created` | `profile_revision`, `profile_completed` |
 | `notification_preferences_updated` | `changed_keys` |
+| `profile_exported` | `schema_version`, `server_copy_created` |
+| `risk_review_requested` | `revision`, `policy_version`, `reason`, `status` |
+| `risk_review_status_changed` | `customer_id`, `revision`, `status`, `review_revision` |
 | `penalty_applied` | `loan_id`, `installment_number`, `amount`, `reason` |
 | `penalty_waived` | `loan_id`, `installment_number`, `amount`, `reason` |
 | `wallet_payment_verified` | `loan_id`, `installment_number`, `eth_amount`, `php_amount`, `eth_rate`, `tx_hash` |

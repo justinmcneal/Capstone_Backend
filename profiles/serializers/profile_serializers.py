@@ -12,6 +12,7 @@ from profiles.models import (
     HOUSING_STATUSES,
     INCOME_RANGES,
     LOAN_PAYMENT_HISTORIES,
+    RISK_REVIEW_REASONS,
     UTILITY_PAYMENT_HISTORIES,
 )
 
@@ -386,6 +387,35 @@ class NotificationPreferencesUpdateSerializer(serializers.Serializer):
                 {key: "Unsupported request field." for key in unknown}
             )
         return super().to_internal_value(data)
+
+
+class RiskReviewRequestSerializer(InputSanitizationMixin, serializers.Serializer):
+    reason = serializers.ChoiceField(choices=RISK_REVIEW_REASONS)
+    description = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        max_length=1000,
+    )
+    risk_calculated_revision = serializers.IntegerField(required=False, min_value=0)
+
+
+class RiskReviewResolutionSerializer(InputSanitizationMixin, serializers.Serializer):
+    status = serializers.ChoiceField(choices=("in_review", "resolved", "rejected"))
+    resolution_note = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        max_length=1000,
+    )
+    review_revision = serializers.IntegerField(min_value=0)
+
+    def validate(self, data):
+        if data["status"] in {"resolved", "rejected"} and not data.get(
+            "resolution_note", ""
+        ).strip():
+            raise serializers.ValidationError(
+                {"resolution_note": "A resolution note is required."}
+            )
+        return data
 
 
 class AlternativeDataSerializer(InputSanitizationMixin, serializers.Serializer):

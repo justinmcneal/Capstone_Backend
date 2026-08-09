@@ -14,7 +14,11 @@ from accounts.models.activity import ActiveSession
 from accounts.models.tokens import RefreshTokenEntry
 from accounts.services.otp_service import OTPService
 from accounts.services.password_service import PasswordService
-from profiles.models import CustomerProfile, ProfileRevisionConflict
+from profiles.models import (
+    CustomerProfile,
+    ProfileRevisionConflict,
+    RiskReviewRequest,
+)
 
 REAL_MONGO_URI = os.getenv("REAL_MONGO_TEST_URI")
 
@@ -221,3 +225,23 @@ def test_real_mongo_profile_revision_allows_one_concurrent_winner(
     assert outcomes.count("conflict") == 7
     stored = CustomerProfile.find_by_customer(profile.customer_id)
     assert stored.profile_revision == 1
+
+
+@pytest.mark.real_mongo
+def test_real_mongo_risk_review_index_enforces_one_request_per_score(
+    real_mongo_database, monkeypatch
+):
+    monkeypatch.setattr(settings, "MONGODB", real_mongo_database)
+    RiskReviewRequest.create_indexes()
+    collection = real_mongo_database[RiskReviewRequest.collection_name]
+    review_key = {
+        "customer_id": str(uuid.uuid4()),
+        "risk_calculated_revision": 4,
+    }
+
+    collection.insert_one({**review_key, "status": "pending"})
+    with pytest.raises(DuplicateKeyError):
+        collection.insert_one({**review_key, "status": "resolved"})
+
+    indexes = collection.index_information()
+    assert indexes["unique_customer_scoring_review"]["unique"] is True

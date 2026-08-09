@@ -33,7 +33,12 @@ from profiles.views.profile_views import (
     NotificationPreferencesView,
     OfficerCustomerProfilesListView,
     OfficerProfileView,
+    OfficerRiskReviewDetailView,
+    OfficerRiskReviewListView,
+    ProfileExportView,
+    ProfileHistoryView,
     ProfileSummaryView,
+    RiskReviewRequestView,
 )
 
 
@@ -135,6 +140,11 @@ def test_all_profile_views_use_profile_rate_throttle():
         NotificationPreferencesView,
         OfficerCustomerProfilesListView,
         OfficerProfileView,
+        ProfileExportView,
+        ProfileHistoryView,
+        RiskReviewRequestView,
+        OfficerRiskReviewListView,
+        OfficerRiskReviewDetailView,
     )
 
     assert all(
@@ -208,7 +218,7 @@ class TestCustomerProfileView:
         customer = _create_customer()
         CustomerProfile(customer_id=str(customer.id)).save()
         monkeypatch.setattr(
-            "profiles.views.profile_views.AuditLog.log_action",
+            "profiles.services.audit.AuditLog.log_action",
             staticmethod(lambda *args, **kwargs: None),
             raising=False,
         )
@@ -380,7 +390,7 @@ class TestBusinessProfileView:
         customer = _create_customer()
         BusinessProfile(customer_id=str(customer.id)).save()
         monkeypatch.setattr(
-            "profiles.views.profile_views.AuditLog.log_action",
+            "profiles.services.audit.AuditLog.log_action",
             staticmethod(lambda *args, **kwargs: None),
             raising=False,
         )
@@ -466,7 +476,7 @@ class TestAlternativeDataView:
         data.save()
 
         monkeypatch.setattr(
-            "profiles.views.profile_views.AuditLog.log_action",
+            "profiles.services.audit.AuditLog.log_action",
             staticmethod(lambda *args, **kwargs: None),
             raising=False,
         )

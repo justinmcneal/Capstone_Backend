@@ -2,7 +2,7 @@
 
 > **Base URL:** `http://localhost:8000`  
 > **Version:** 1.0.0  
-> **Last Updated:** February 20, 2026
+> **Last Updated:** August 9, 2026
 
 ---
 
@@ -14,13 +14,13 @@ Counts below are based on backend route definitions in `config/urls.py` and modu
 |--------|-----------|----------------|---------------|
 | [System](#system) | 1 | 1 | ❌ |
 | [Authentication](#authentication) | 27 | 35 | Mixed |
-| [Profiles](#profiles) | 5 | 9 | ✅ Customer |
+| [Profiles](#profiles) | 13 | 18 | ✅ Mixed |
 | [Documents](#documents) | 6 | 7 | ✅ Mixed |
 | [Loans](#loans) | 28 | 31 | ✅ Mixed |
 | [AI Assistant](#ai-assistant) | 7 | 8 | ✅ Customer |
 | [Analytics](#analytics) | 7 | 7 | ✅ Mixed |
 | [Notifications](#notifications) | 4 | 4 | ✅ Mixed |
-| **Total** | **85** | **102** | |
+| **Total** | **93** | **111** | |
 
 ---
 
@@ -133,6 +133,15 @@ Content-Type: application/json
 | `GET` | `/api/profile/summary/` | Get profile summary |
 | `GET` | `/api/profile/notifications/` | Get notification preferences |
 | `PUT` | `/api/profile/notifications/` | Update notification preferences |
+| `GET` | `/api/profile/export/` | Generate an audited profile-only JSON export |
+| `GET` | `/api/profile/history/` | Get metadata-only profile history |
+| `GET` | `/api/profile/risk-reviews/` | List customer risk-review requests |
+| `POST` | `/api/profile/risk-reviews/` | Request review of a completed risk result |
+| `GET` | `/api/officer/profiles/` | List scoped customer profiles |
+| `GET` | `/api/officer/profiles/<str:customer_id>/` | Get scoped customer profile detail |
+| `GET` | `/api/officer/profile-risk-reviews/` | List scoped risk-review requests |
+| `PUT` | `/api/officer/profile-risk-reviews/<str:review_id>/` | Update scoped risk-review status |
+| `GET` | `/api/profile/officer/<str:customer_id>/` | Legacy scoped officer profile alias |
 
 ---
 

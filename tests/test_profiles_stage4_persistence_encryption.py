@@ -179,7 +179,7 @@ def test_profile_api_returns_conflict_for_a_stale_revision(monkeypatch):
     monkeypatch.setattr(CustomerProfileView, "authentication_classes", [])
     monkeypatch.setattr(CustomerProfileView, "permission_classes", [])
     monkeypatch.setattr(
-        "profiles.views.profile_views.AuditLog.log_action", lambda **_kwargs: None
+        "profiles.services.audit.AuditLog.log_action", lambda **_kwargs: None
     )
 
     first = CustomerProfileView.as_view()(

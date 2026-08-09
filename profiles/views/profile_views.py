@@ -17,18 +17,32 @@ from accounts.utils.access_control import AccessControlMixin
 from accounts.utils.request_utils import get_client_ip
 from accounts.utils.response_helpers import error_response, success_response
 from accounts.utils.throttles import ProfileRateThrottle
-from analytics.models import AuditLog
+from profiles.metrics import PROFILE_OPERATIONS, increment
 from profiles.models import (
     AlternativeData,
     BusinessProfile,
     CustomerProfile,
     ProfileRevisionConflict,
+    RiskReviewAlreadyExists,
+    RiskReviewConflict,
+    RiskReviewRequest,
 )
 from profiles.serializers import (
     AlternativeDataSerializer,
     BusinessProfileSerializer,
     CustomerProfileSerializer,
     NotificationPreferencesUpdateSerializer,
+    RiskReviewRequestSerializer,
+    RiskReviewResolutionSerializer,
+)
+from profiles.services.audit import (
+    ProfileAuditUnavailable,
+    record_profile_audit,
+)
+from profiles.services.customer_data import (
+    PROFILE_EXPORT_SCHEMA_VERSION,
+    build_profile_export,
+    get_profile_history,
 )
 from profiles.services.notification_preferences import (
     get_preferences,
@@ -73,8 +87,15 @@ def _record_required_officer_audit(
 ):
     """Persist the audit required before returning staff profile information."""
 
+    if action == "profile_access_denied":
+        increment(
+            PROFILE_OPERATIONS,
+            operation="unauthorized_profile_access",
+            outcome="denied",
+        )
     try:
-        AuditLog.log_action(
+        record_profile_audit(
+            required=True,
             action=action,
             user_id=officer.id,
             user_type="loan_officer",
@@ -90,7 +111,7 @@ def _record_required_officer_audit(
             ip_address=get_client_ip(request),
         )
         return True
-    except Exception:
+    except ProfileAuditUnavailable:
         logger.exception("Required officer profile-access audit failed")
         return False
 
@@ -114,8 +135,8 @@ def _record_profile_mutation_audit(
 ):
     """Record a customer mutation without changing an already-durable result."""
 
-    try:
-        AuditLog.log_action(
+    return bool(
+        record_profile_audit(
             action=action,
             user_id=customer_id,
             user_type="customer",
@@ -126,14 +147,7 @@ def _record_profile_mutation_audit(
             details=details or {},
             ip_address=get_client_ip(request),
         )
-        return True
-    except Exception:
-        logger.exception(
-            "Profile mutation audit failed after durable %s mutation for customer %s",
-            resource_type,
-            customer_id,
-        )
-        return False
+    )
 
 
 class CustomerProfileAccessMixin(AccessControlMixin):
@@ -255,6 +269,7 @@ class CustomerProfileView(CustomerProfileAccessMixin, APIView):
                 details={
                     "profile_revision": profile.profile_revision,
                     "profile_completed": profile.profile_completed,
+                    "changed_fields": sorted(data),
                 },
             )
 
@@ -395,6 +410,7 @@ class BusinessProfileView(CustomerProfileAccessMixin, APIView):
                 details={
                     "profile_revision": profile.profile_revision,
                     "profile_completed": profile.profile_completed,
+                    "changed_fields": sorted(data),
                 },
             )
 
@@ -584,6 +600,7 @@ class AlternativeDataView(CustomerProfileAccessMixin, APIView):
                         alt_data.profile_completion_policy_version
                     ),
                     "profile_missing_fields": alt_data.profile_missing_fields,
+                    "changed_fields": sorted(data),
                 },
             )
 
@@ -731,6 +748,187 @@ class NotificationPreferencesView(CustomerProfileAccessMixin, APIView):
         return success_response(
             data={"preferences": updated},
             message="Notification preferences updated",
+        )
+
+
+class ProfileExportView(CustomerProfileAccessMixin, APIView):
+    """Generate an allowlisted in-memory export of the customer's profile data."""
+
+    authentication_classes: ClassVar[list] = [CustomJWTAuthentication]
+    permission_classes: ClassVar[list] = [IsAuthenticated]
+    throttle_classes = (ProfileRateThrottle,)
+
+    def get(self, request):
+        allowed, customer = self.check_customer_permission(request)
+        if not allowed:
+            return customer
+
+        export = build_profile_export(customer)
+        try:
+            record_profile_audit(
+                required=True,
+                action="profile_exported",
+                user_id=customer.id,
+                user_type="customer",
+                user_email=customer.email,
+                description="Customer generated an in-memory profile export",
+                resource_type="customer_profile_export",
+                resource_id=customer.id,
+                details={
+                    "schema_version": PROFILE_EXPORT_SCHEMA_VERSION,
+                    "server_copy_created": False,
+                },
+                ip_address=get_client_ip(request),
+            )
+        except ProfileAuditUnavailable:
+            return _audit_unavailable_response()
+
+        increment(PROFILE_OPERATIONS, operation="export", outcome="success")
+        return success_response(data=export, message="Profile export generated")
+
+
+class ProfileHistoryView(CustomerProfileAccessMixin, APIView):
+    """Return metadata-only profile change history without previous field values."""
+
+    authentication_classes: ClassVar[list] = [CustomJWTAuthentication]
+    permission_classes: ClassVar[list] = [IsAuthenticated]
+    throttle_classes = (ProfileRateThrottle,)
+
+    def get(self, request):
+        allowed, customer = self.check_customer_permission(request)
+        if not allowed:
+            return customer
+        try:
+            page = int(request.query_params.get("page", 1))
+            page_size = int(request.query_params.get("page_size", 20))
+        except (TypeError, ValueError):
+            return error_response(
+                message="Invalid pagination parameters",
+                status_code=status.HTTP_400_BAD_REQUEST,
+            )
+        if page < 1 or page_size < 1 or page_size > 100:
+            return error_response(
+                message="page must be positive and page_size must be between 1 and 100",
+                status_code=status.HTTP_400_BAD_REQUEST,
+            )
+
+        history = get_profile_history(customer.id, page=page, page_size=page_size)
+        _record_profile_mutation_audit(
+            request,
+            customer_id=customer.id,
+            action="profile_history_viewed",
+            description="Customer viewed profile change history",
+            resource_type="customer_profile_history",
+            resource_id=customer.id,
+            details={"page": page, "page_size": page_size},
+        )
+        increment(PROFILE_OPERATIONS, operation="history", outcome="success")
+        return success_response(data=history, message="Profile history retrieved")
+
+
+class RiskReviewRequestView(CustomerProfileAccessMixin, APIView):
+    """List or create a customer review request for the current risk result."""
+
+    authentication_classes: ClassVar[list] = [CustomJWTAuthentication]
+    permission_classes: ClassVar[list] = [IsAuthenticated]
+    throttle_classes = (ProfileRateThrottle,)
+
+    def get(self, request):
+        allowed, customer = self.check_customer_permission(request)
+        if not allowed:
+            return customer
+        try:
+            page = int(request.query_params.get("page", 1))
+            page_size = int(request.query_params.get("page_size", 20))
+        except (TypeError, ValueError):
+            return error_response(
+                message="Invalid pagination parameters",
+                status_code=status.HTTP_400_BAD_REQUEST,
+            )
+        if page < 1 or page_size < 1 or page_size > 100:
+            return error_response(
+                message="page must be positive and page_size must be between 1 and 100",
+                status_code=status.HTTP_400_BAD_REQUEST,
+            )
+        total = RiskReviewRequest.count_by_customer(customer.id)
+        reviews = RiskReviewRequest.find_by_customer(
+            customer.id,
+            skip=(page - 1) * page_size,
+            limit=page_size,
+        )
+        return success_response(
+            data={
+                "reviews": [review.to_customer_dict() for review in reviews],
+                "total": total,
+                "page": page,
+                "page_size": page_size,
+                "total_pages": math.ceil(total / page_size) if total else 0,
+            },
+            message="Risk review requests retrieved",
+        )
+
+    def post(self, request):
+        allowed, customer = self.check_customer_permission(request)
+        if not allowed:
+            return customer
+        serializer = RiskReviewRequestSerializer(data=request.data)
+        if not serializer.is_valid():
+            return error_response(
+                message="Invalid risk review request",
+                errors=serializer.errors,
+                status_code=status.HTTP_400_BAD_REQUEST,
+            )
+        alternative = AlternativeData.find_by_customer(customer.id)
+        if not alternative:
+            return error_response(
+                message="Alternative data not found",
+                status_code=status.HTTP_404_NOT_FOUND,
+            )
+        requested_revision = serializer.validated_data.get(
+            "risk_calculated_revision"
+        )
+        if (
+            requested_revision is not None
+            and requested_revision != alternative.risk_calculated_revision
+        ):
+            return error_response(
+                message="Risk result changed; reload before requesting review",
+                status_code=status.HTTP_409_CONFLICT,
+            )
+        try:
+            review = RiskReviewRequest.create_for_score(
+                alternative,
+                reason=serializer.validated_data["reason"],
+                description=serializer.validated_data.get("description", ""),
+            )
+        except RiskReviewAlreadyExists as exc:
+            return error_response(
+                message=str(exc), status_code=status.HTTP_409_CONFLICT
+            )
+        except ValueError as exc:
+            return error_response(
+                message=str(exc), status_code=status.HTTP_400_BAD_REQUEST
+            )
+
+        _record_profile_mutation_audit(
+            request,
+            customer_id=customer.id,
+            action="risk_review_requested",
+            description="Customer requested manual review of a profile risk result",
+            resource_type="profile_risk_review",
+            resource_id=review.id,
+            details={
+                "revision": review.risk_calculated_revision,
+                "policy_version": review.risk_policy_version,
+                "reason": review.reason,
+                "status": review.status,
+            },
+        )
+        increment(PROFILE_OPERATIONS, operation="risk_review", outcome="requested")
+        return success_response(
+            data={"review": review.to_customer_dict()},
+            message="Risk review requested",
+            status_code=status.HTTP_201_CREATED,
         )
 
 
@@ -910,4 +1108,158 @@ class OfficerProfileView(AccessControlMixin, APIView):
         return success_response(
             data=build_officer_customer_profile(customer),
             message="Customer profile retrieved successfully",
+        )
+
+
+class OfficerRiskReviewListView(AccessControlMixin, APIView):
+    """Return review requests only for customers inside the officer's scope."""
+
+    authentication_classes: ClassVar[list] = [CustomJWTAuthentication]
+    permission_classes: ClassVar[list] = [IsAuthenticated]
+    throttle_classes = (ProfileRateThrottle,)
+
+    def get(self, request):
+        allowed, officer = self.require_roles(request, {"loan_officer"})
+        if not allowed:
+            return officer
+        has_scope, customer_ids = self.get_officer_scoped_customer_ids(request)
+        if not has_scope:
+            return customer_ids
+        try:
+            page = int(request.query_params.get("page", 1))
+            page_size = int(request.query_params.get("page_size", 20))
+        except (TypeError, ValueError):
+            return error_response(
+                message="Invalid pagination parameters",
+                status_code=status.HTTP_400_BAD_REQUEST,
+            )
+        if page < 1 or page_size < 1 or page_size > 100:
+            return error_response(
+                message="page must be positive and page_size must be between 1 and 100",
+                status_code=status.HTTP_400_BAD_REQUEST,
+            )
+        requested_status = request.query_params.get("status", "").strip()
+        if requested_status and requested_status not in {
+            "pending",
+            "in_review",
+            "resolved",
+            "rejected",
+        }:
+            return error_response(
+                message="Invalid review status",
+                status_code=status.HTTP_400_BAD_REQUEST,
+            )
+
+        query = {"customer_id": {"$in": sorted(customer_ids)}}
+        if requested_status:
+            query["status"] = requested_status
+        collection = settings.MONGODB[RiskReviewRequest.collection_name]
+        total = collection.count_documents(query)
+        cursor = (
+            collection.find(query)
+            .sort([("created_at", -1)])
+            .skip((page - 1) * page_size)
+            .limit(page_size)
+        )
+        reviews = [RiskReviewRequest.from_dict(document) for document in cursor]
+        if not _record_required_officer_audit(
+            request,
+            officer,
+            action="risk_review_queue_viewed",
+            details={
+                "status_filter": requested_status or "all",
+                "page": page,
+                "page_size": page_size,
+                "result_count": len(reviews),
+            },
+        ):
+            return _audit_unavailable_response()
+        increment(PROFILE_OPERATIONS, operation="risk_review_queue", outcome="viewed")
+        return success_response(
+            data={
+                "reviews": [review.to_officer_dict() for review in reviews],
+                "total": total,
+                "page": page,
+                "page_size": page_size,
+                "total_pages": math.ceil(total / page_size) if total else 0,
+            },
+            message="Risk review queue retrieved",
+        )
+
+
+class OfficerRiskReviewDetailView(AccessControlMixin, APIView):
+    """Transition a scoped customer risk-review request."""
+
+    authentication_classes: ClassVar[list] = [CustomJWTAuthentication]
+    permission_classes: ClassVar[list] = [IsAuthenticated]
+    throttle_classes = (ProfileRateThrottle,)
+
+    def put(self, request, review_id):
+        allowed, officer = self.require_roles(request, {"loan_officer"})
+        if not allowed:
+            return officer
+        review = RiskReviewRequest.find_by_id(review_id)
+        if not review:
+            return error_response(
+                message="Resource not found", status_code=status.HTTP_404_NOT_FOUND
+            )
+        has_scope, result = self.require_customer_scope_for_officer(
+            request,
+            review.customer_id,
+            conceal_existence=True,
+        )
+        if not has_scope:
+            if not _record_required_officer_audit(
+                request,
+                officer,
+                action="profile_access_denied",
+                customer_id=review.customer_id,
+                details={"reason": "risk_review_outside_officer_scope"},
+            ):
+                return _audit_unavailable_response()
+            return result
+
+        serializer = RiskReviewResolutionSerializer(data=request.data)
+        if not serializer.is_valid():
+            return error_response(
+                message="Invalid risk review update",
+                errors=serializer.errors,
+                status_code=status.HTTP_400_BAD_REQUEST,
+            )
+        try:
+            review = review.transition(
+                officer_id=officer.id,
+                status=serializer.validated_data["status"],
+                resolution_note=serializer.validated_data.get("resolution_note", ""),
+                expected_revision=serializer.validated_data["review_revision"],
+            )
+        except RiskReviewConflict as exc:
+            return error_response(
+                message=str(exc), status_code=status.HTTP_409_CONFLICT
+            )
+        except ValueError as exc:
+            return error_response(
+                message=str(exc), status_code=status.HTTP_400_BAD_REQUEST
+            )
+
+        record_profile_audit(
+            action="risk_review_status_changed",
+            user_id=officer.id,
+            user_type="loan_officer",
+            user_email=officer.email,
+            description="Loan officer updated a customer profile risk review",
+            resource_type="profile_risk_review",
+            resource_id=review.id,
+            details={
+                "customer_id": review.customer_id,
+                "revision": review.risk_calculated_revision,
+                "status": review.status,
+                "review_revision": review.review_revision,
+            },
+            ip_address=get_client_ip(request),
+        )
+        increment(PROFILE_OPERATIONS, operation="risk_review", outcome=review.status)
+        return success_response(
+            data={"review": review.to_officer_dict()},
+            message="Risk review updated",
         )

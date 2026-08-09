@@ -3,7 +3,7 @@
 Last updated: 2026-08-09
 
 These notes describe the verified Profiles API contract that customer mobile,
-loan-officer web, and admin web clients must use after Stages 2–6.
+loan-officer web, and admin web clients must use after Stages 2–7.
 
 ## Customer Mobile
 
@@ -24,6 +24,11 @@ loan-officer web, and admin web clients must use after Stages 2–6.
   and describe completed scores as informational and manually reviewable.
 - Monetary profile fields accept nonnegative values with at most two decimal
   places. Non-finite values and excess precision return field validation errors.
+- Offer profile-only JSON download through `GET /api/profile/export/`; do not
+  describe it as a complete account/document/loan export.
+- Use `GET /api/profile/history/` for metadata-only change visibility.
+- Allow a customer to request one manual review per completed score through
+  `POST /api/profile/risk-reviews/` and show its status/resolution note.
 
 ## Loan-Officer Web
 
@@ -38,6 +43,8 @@ loan-officer web, and admin web clients must use after Stages 2–6.
 - Display risk state, policy version, reason codes, and manual-review status.
   Never treat the profile risk score as an approval, price, credit limit,
   eligibility decision, or adverse-action reason.
+- Use the scoped `/api/officer/profile-risk-reviews/` queue and send the latest
+  `review_revision` when transitioning a request.
 
 ## Admin Web
 

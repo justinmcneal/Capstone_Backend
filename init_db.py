@@ -42,6 +42,7 @@ from profiles.models import (  # noqa: E402
     AlternativeData,
     BusinessProfile,
     CustomerProfile,
+    RiskReviewRequest,
 )
 
 
@@ -162,6 +163,15 @@ def create_indexes():
         print("⚠ AlternativeData indexes already exist, skipping")
     except Exception as e:
         print(f"✗ AlternativeData error: {e}")
+
+    try:
+        print("Creating indexes for RiskReviewRequest collection...")
+        RiskReviewRequest.create_indexes()
+        print("✓ RiskReviewRequest indexes created")
+    except (DuplicateKeyError, OperationFailure):
+        print("⚠ RiskReviewRequest indexes already exist, skipping")
+    except Exception as e:
+        print(f"✗ RiskReviewRequest error: {e}")
 
     try:
         print("Creating indexes for AuditLog collection...")

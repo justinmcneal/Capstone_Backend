@@ -39,12 +39,13 @@ The Profiles module's planned production-readiness implementation is complete at
 the code and local-test level, but deployment remains gated on the documented
 live-environment validation.
 Personal, business, and alternative-data CRUD; customer-only access control;
-profile summaries; notification preferences; officer directory/detail views;
-field encryption; audit logging; rate limiting; and asynchronous risk scoring
-all exist. The codebase also contains substantially more profile tests than the
-previous version of this review recorded.
+profile summaries; notification preferences; profile export/history; customer
+risk review; officer directory/detail/review views; field encryption; recoverable
+audit logging; metrics; rate limiting; and asynchronous risk scoring all exist.
+The codebase also contains substantially more profile tests than the previous
+version of this review recorded.
 
-Stages 2–6 close the previously unrestricted loan-officer access, profile-data
+Stages 2–7 close the previously unrestricted loan-officer access, profile-data
 retention, risk-input mismatch, stale-score publication, plaintext numeric-
 financial data, read-side mutation, lost-update, weak-validation, and misleading
 readiness, API inconsistency, notification-persistence, and audit-response
@@ -64,7 +65,7 @@ Current remediation status:
 - [x] Stage 4 — Encryption, persistence integrity, and concurrency
 - [x] Stage 5 — Validation, completion, and readiness policy
 - [x] Stage 6 — API consistency, audit completeness, and documentation
-- [ ] Stage 7 — Optional customer capabilities and operational hardening
+- [x] Stage 7 — Customer review capabilities and operational hardening
 
 ## Verified Implemented Foundations
 
@@ -211,6 +212,25 @@ Current remediation status:
   by default and requires `--apply` to clear and enqueue recalculation.
 - The current score is explicitly informational only. It is not an approval,
   pricing, limit, eligibility, or adverse-action control.
+- Failed Profiles audit writes are queued with safe replay payloads and retried by
+  a one-minute reconciler; resolved entries discard the payload.
+- A 15-minute read-only inventory publishes duplicate, declared-encryption,
+  audit-backlog, risk-backlog, and review-backlog gauges.
+
+### Customer transparency and correction
+
+- Customers can generate an allowlisted profile-only JSON export. It is created
+  in memory, retained by neither filesystem nor object storage, and fails closed
+  if its required primary audit record cannot be written. The failed write is
+  queued separately for reconciliation.
+- Customers can view metadata-only history containing sections, revisions,
+  changed field names, and timestamps without historical values or IP addresses.
+- A completed scoring revision can receive one customer review request. Scoped
+  loan officers can list and resolve requests with optimistic concurrency,
+  concealed out-of-scope behavior, terminal resolution notes, and audit events.
+- Customer review descriptions and officer resolution notes are encrypted at
+  rest and included in shared encryption lifecycle tooling.
+- Risk-review records follow the profile account-deletion policy.
 
 ### Completion, summary, and downstream integration
 
@@ -256,12 +276,12 @@ Current remediation status:
   alternative-data round trips, and synchronous task execution under mongomock.
 - Business-age conversion tests cover direct model construction.
 - Blockchain/profile tests cover wallet-field serialization and validation.
-- On 2026-08-09, 153 focused tests passed across API, business-age, model/task,
+- On 2026-08-09, 164 focused tests passed across API, business-age, model/task,
   scoring, Stage 1 characterization, Stage 2 privacy/lifecycle, Stage 3 risk
   durability, Stage 4 persistence/encryption, Stage 5 validation/readiness, and
-  Stage 6 API/audit modules.
-- The post-Stage 6 full suite collected 991 tests: 975 passed and 16 opt-in
-  integration tests skipped, including two real-Mongo profile tests.
+  Stage 6 API/audit, and Stage 7 customer-operations modules.
+- The post-Stage 7 full suite collected 1,003 tests: 986 passed and 17 opt-in
+  integration tests skipped, including three real-Mongo profile tests.
 
 ## Resolved Production Blockers
 
@@ -545,19 +565,33 @@ Stage 6 behavior:
 
 ### Stage 7 — Optional customer capabilities and operational hardening
 
-**Status: Not started / optional after blockers**
+**Status: Complete for approved scope / two optional features deferred by design**
 
-- [ ] Add customer data export only with secure authorization, redaction, audit,
-  and retention controls.
-- [ ] Add profile history/version visibility where it supports review or disputes.
-- [ ] Add customer-facing risk explanation and correction/review workflow if the
-  score is exposed or used operationally.
-- [ ] Add profile photo/avatar support only if required by a validated product
-  need and backed by secure media processing.
-- [ ] Consider maintained Philippine address reference data rather than increasingly
-  complex free-text regular expressions.
-- [ ] Add metrics and alerts for scoring backlog/failures, duplicate profiles,
-  encryption migration state, and unauthorized profile-access attempts.
+- [x] ~~Add customer profile export with secure authorization, allowlisting,
+  required audit, and no retained server artifact.~~
+- [x] ~~Add metadata-only profile history/version visibility.~~
+- [x] ~~Add a customer risk explanation/correction request and scoped officer
+  resolution workflow.~~
+- [x] ~~Evaluate avatar support and defer it until a validated product requirement
+  justifies secure media processing and retention.~~
+- [x] ~~Evaluate a maintained Philippine address source and defer it until source
+  ownership, versioning, and client migration are defined.~~
+- [x] ~~Add Prometheus metrics, audit reconciliation, and documented alert queries
+  for scoring, duplicates, encryption state, audit backlog, reviews, and denied
+  access.~~
+
+Stage 7 behavior:
+
+- Export scope is `profiles_only`; credentials, account security, documents,
+  loans, AI history, and internal scoring task IDs are excluded.
+- History is derived from safe audit metadata. Failed mutation audits are queued
+  for replay, but the endpoint is not represented as a cryptographic snapshot of
+  historical field values.
+- Review requests are bound to the current completed risk revision and policy.
+  Duplicate requests return `409`; officer profile scope is reused; terminal
+  transitions require a note and stale `review_revision` returns `409`.
+- `docs/PROFILES_OPERATIONS.md` documents tasks, metrics, starting alert rules,
+  export retention, review operations, and deliberate deferrals.
 
 ## Production Readiness Checklist
 
@@ -567,6 +601,8 @@ Stage 6 behavior:
 - [x] ~~Customer personal, business, and alternative-data GET/PUT endpoints.~~
 - [x] ~~Customer profile summary endpoint.~~
 - [x] ~~Notification preference GET/PUT endpoint with key allowlist.~~
+- [x] ~~Allowlisted ephemeral profile export and metadata-only history endpoints.~~
+- [x] ~~Customer risk-review request and scoped officer resolution endpoints.~~
 - [x] ~~Customer-role enforcement on customer profile endpoints.~~
 - [x] ~~Loan-officer directory and detailed profile endpoints.~~
 - [x] ~~Shared profile rate throttle attached to all profile views.~~
@@ -577,6 +613,8 @@ Stage 6 behavior:
   validation.~~
 - [x] ~~Basic mutation audit events for the three profile sections.~~
 - [x] ~~Profile-related API, model, scoring, conversion, task, and wallet tests.~~
+- [x] ~~Recoverable audit queue plus profile-specific Prometheus inventories and
+  alert guidance.~~
 
 ### Required before production
 
@@ -644,5 +682,5 @@ contract changes below. Admin web has no direct Profiles API integration:
   approval, backups, dry-run review, and staging validation before use.
 - The current 500/hour profile throttle is documented as implemented behavior,
   not an endorsement of that value for production.
-- Optional avatar/export features should not be prioritized ahead of live
-  environment validation and operational monitoring.
+- Avatar and bundled address-reference features are deliberately deferred as
+  documented in `docs/PROFILES_OPERATIONS.md`; profile export is implemented.

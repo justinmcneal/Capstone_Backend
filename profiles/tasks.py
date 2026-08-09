@@ -8,8 +8,25 @@ from celery import shared_task
 from django.conf import settings
 from pymongo import ReturnDocument
 
-from analytics.models import AuditLog
-from profiles.models import AlternativeData
+from config.field_encryption import is_encrypted_value
+from profiles.metrics import (
+    PROFILE_AUDIT_BACKLOG,
+    PROFILE_DUPLICATE_RECORDS,
+    PROFILE_OPERATIONS,
+    PROFILE_REVIEW_BACKLOG,
+    PROFILE_RISK_BACKLOG,
+    PROFILE_RISK_EVENTS,
+    PROFILE_UNPROTECTED_FIELDS,
+    increment,
+    set_gauge,
+)
+from profiles.models import (
+    AlternativeData,
+    BusinessProfile,
+    CustomerProfile,
+    RiskReviewRequest,
+)
+from profiles.services.audit import record_profile_audit
 from profiles.services.risk_scoring import (
     RISK_SCORE_USE,
     RISK_SCORING_POLICY_VERSION,
@@ -30,19 +47,16 @@ def _customer_id_query(customer_id):
 
 
 def _audit_score_event(action, customer_id, *, details):
-    try:
-        AuditLog.log_action(
-            action=action,
-            user_id=customer_id,
-            user_type="system",
-            description="Profile risk-scoring lifecycle event",
-            resource_type="alternative_data",
-            resource_id=customer_id,
-            details=details,
-            ip_address="",
-        )
-    except Exception:
-        logger.exception("Risk score audit failed for customer %s", customer_id)
+    record_profile_audit(
+        action=action,
+        user_id=customer_id,
+        user_type="system",
+        description="Profile risk-scoring lifecycle event",
+        resource_type="alternative_data",
+        resource_id=customer_id,
+        details=details,
+        ip_address="",
+    )
 
 
 def _mark_stale_task(collection, alternative, expected_revision):
@@ -66,6 +80,7 @@ def _mark_stale_task(collection, alternative, expected_revision):
             "policy_version": RISK_SCORING_POLICY_VERSION,
         },
     )
+    increment(PROFILE_RISK_EVENTS, outcome="stale")
 
 
 def enqueue_risk_score_calculation(customer_id, expected_revision):
@@ -94,6 +109,7 @@ def enqueue_risk_score_calculation(customer_id, expected_revision):
             },
         )
         logger.exception("Risk score enqueue failed for customer %s", customer_id)
+        increment(PROFILE_RISK_EVENTS, outcome="enqueue_failed")
         return False
 
     task_id = str(getattr(result, "id", "") or "") or None
@@ -245,6 +261,7 @@ def calculate_risk_score_task(
                 "error_code": type(exc).__name__,
             },
         )
+        increment(PROFILE_RISK_EVENTS, outcome="failed")
         raise
 
     _audit_score_event(
@@ -257,6 +274,7 @@ def calculate_risk_score_task(
             "reason_codes": result.get("reason_codes", []),
         },
     )
+    increment(PROFILE_RISK_EVENTS, outcome="complete")
     logger.info(
         "Risk score calculated for customer %s revision %s: %s (%s)",
         customer_id,
@@ -290,6 +308,21 @@ def reconcile_risk_scores_task():
             },
         ]
     }
+    set_gauge(
+        PROFILE_RISK_BACKLOG,
+        collection.count_documents({"risk_score_status": "failed"}),
+        status="failed",
+    )
+    set_gauge(
+        PROFILE_RISK_BACKLOG,
+        collection.count_documents(
+            {
+                "risk_score_status": "pending",
+                "risk_score_requested_at": {"$lte": stale_before},
+            }
+        ),
+        status="stale_pending",
+    )
     queued = 0
     for document in collection.find(query, {"customer_id": 1, "risk_input_revision": 1}):
         customer_id = str(document.get("customer_id", "") or "")
@@ -309,4 +342,114 @@ def reconcile_risk_scores_task():
             queued += 1
 
     logger.info("Requeued %s profile risk score(s)", queued)
+    increment(PROFILE_OPERATIONS, operation="risk_reconcile", outcome="completed")
     return queued
+
+
+@shared_task(name="profiles.reconcile_audit_failures")
+def reconcile_profile_audit_failures_task(limit=100):
+    """Replay queued profile audit writes without exposing profile values."""
+
+    now = datetime.now(timezone.utc)
+    collection = settings.MONGODB["audit_write_failures"]
+    resolved = 0
+    for failure in collection.find(
+        {"domain": "profiles", "resolved_at": None},
+        sort=[("occurred_at", 1)],
+        limit=max(1, min(int(limit), 500)),
+    ):
+        try:
+            from analytics.models import AuditLog
+
+            AuditLog.log_action(**failure.get("payload", {}))
+        except Exception as exc:  # noqa: BLE001 - audit backends may fail arbitrarily
+            collection.update_one(
+                {"_id": failure["_id"], "resolved_at": None},
+                {
+                    "$inc": {"attempt_count": 1},
+                    "$set": {
+                        "last_attempt_at": now,
+                        "error_type": type(exc).__name__,
+                    },
+                },
+            )
+            continue
+        collection.update_one(
+            {"_id": failure["_id"], "resolved_at": None},
+            {
+                "$inc": {"attempt_count": 1},
+                "$set": {"last_attempt_at": now, "resolved_at": now},
+                "$unset": {"payload": ""},
+            },
+        )
+        resolved += 1
+
+    increment(PROFILE_OPERATIONS, operation="audit_reconcile", outcome="completed")
+    return resolved
+
+
+@shared_task(name="profiles.collect_operational_metrics")
+def collect_profile_operational_metrics_task():
+    """Refresh bounded operational gauges without modifying domain records."""
+
+    db = settings.MONGODB
+    results = {"duplicates": {}, "unprotected_fields": {}}
+    for model_class in (CustomerProfile, BusinessProfile, AlternativeData):
+        collection = db[model_class.collection_name]
+        customer_counts = {}
+        unprotected = 0
+        projection = {"customer_id": 1, **dict.fromkeys(model_class.encrypted_fields, 1)}
+        for document in collection.find({}, projection):
+            customer_id = str(document.get("customer_id") or "")
+            if customer_id:
+                customer_counts[customer_id] = customer_counts.get(customer_id, 0) + 1
+            for field in model_class.encrypted_fields:
+                value = document.get(field)
+                if value not in (None, "", [], {}) and not is_encrypted_value(value):
+                    unprotected += 1
+
+        duplicates = sum(max(count - 1, 0) for count in customer_counts.values())
+        results["duplicates"][model_class.collection_name] = duplicates
+        results["unprotected_fields"][model_class.collection_name] = unprotected
+        set_gauge(
+            PROFILE_DUPLICATE_RECORDS,
+            duplicates,
+            collection=model_class.collection_name,
+        )
+        set_gauge(
+            PROFILE_UNPROTECTED_FIELDS,
+            unprotected,
+            collection=model_class.collection_name,
+        )
+
+    review_unprotected = 0
+    review_projection = dict.fromkeys(RiskReviewRequest.encrypted_fields, 1)
+    for document in db[RiskReviewRequest.collection_name].find(
+        {}, review_projection
+    ):
+        for field in RiskReviewRequest.encrypted_fields:
+            value = document.get(field)
+            if value not in (None, "", [], {}) and not is_encrypted_value(value):
+                review_unprotected += 1
+    results["unprotected_fields"][RiskReviewRequest.collection_name] = (
+        review_unprotected
+    )
+    set_gauge(
+        PROFILE_UNPROTECTED_FIELDS,
+        review_unprotected,
+        collection=RiskReviewRequest.collection_name,
+    )
+
+    audit_backlog = db["audit_write_failures"].count_documents(
+        {"domain": "profiles", "resolved_at": None}
+    )
+    set_gauge(PROFILE_AUDIT_BACKLOG, audit_backlog)
+    results["audit_backlog"] = audit_backlog
+    results["review_backlog"] = {}
+    for review_status in ("pending", "in_review"):
+        count = db[RiskReviewRequest.collection_name].count_documents(
+            {"status": review_status}
+        )
+        results["review_backlog"][review_status] = count
+        set_gauge(PROFILE_REVIEW_BACKLOG, count, status=review_status)
+    return results

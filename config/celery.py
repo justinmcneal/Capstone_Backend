@@ -31,6 +31,14 @@ app.conf.beat_schedule = {
         "task": "profiles.reconcile_risk_scores",
         "schedule": crontab(minute="*"),
     },
+    "reconcile-profile-audit-failures-every-minute": {
+        "task": "profiles.reconcile_audit_failures",
+        "schedule": crontab(minute="*"),
+    },
+    "collect-profile-operational-metrics-every-15-minutes": {
+        "task": "profiles.collect_operational_metrics",
+        "schedule": crontab(minute="*/15"),
+    },
     "check-overdue-daily": {
         "task": "loans.tasks.check_overdue_installments_task",
         "schedule": crontab(hour=0, minute=0),
