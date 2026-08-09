@@ -32,7 +32,7 @@ def test_summary_get_path_currently_creates_three_profile_documents(settings):
     assert settings.MONGODB["alternative_data"].count_documents({}) == 1
 
 
-def test_numeric_income_and_canonical_late_values_currently_hit_score_fallbacks():
+def test_numeric_income_and_canonical_late_values_have_explicit_scores():
     numeric_income = SimpleNamespace(household_income=50_000)
     sometimes_late = SimpleNamespace(
         has_existing_loans=True, loan_payment_history="sometimes_late"
@@ -41,14 +41,12 @@ def test_numeric_income_and_canonical_late_values_currently_hit_score_fallbacks(
         has_existing_loans=True, loan_payment_history="often_late"
     )
 
-    assert _income_score(numeric_income) == 50.0
-    assert _loan_history_score(sometimes_late) == 40.0
-    assert _loan_history_score(often_late) == 40.0
+    assert _income_score(numeric_income) == 80.0
+    assert _loan_history_score(sometimes_late) == 60.0
+    assert _loan_history_score(often_late) == 30.0
 
 
-def test_stale_risk_task_currently_overwrites_a_newer_profile_update(
-    settings, monkeypatch
-):
+def test_risk_task_does_not_overwrite_a_newer_profile_update(settings, monkeypatch):
     customer_id = str(ObjectId())
     AlternativeData(
         customer_id=customer_id,
@@ -60,17 +58,22 @@ def test_stale_risk_task_currently_overwrites_a_newer_profile_update(
     def score_after_concurrent_update(_alternative):
         settings.MONGODB["alternative_data"].update_one(
             {"customer_id": customer_id},
-            {"$set": {"housing_status": "rented"}},
+            {
+                "$set": {"housing_status": "rented"},
+                "$inc": {"risk_input_revision": 1},
+            },
         )
         return {"total_score": 70, "category": "low"}
 
     monkeypatch.setattr("profiles.tasks.calculate_risk_score", score_after_concurrent_update)
-    calculate_risk_score_task(customer_id)
+    result = calculate_risk_score_task(customer_id, 0)
 
     stored = settings.MONGODB["alternative_data"].find_one(
         {"customer_id": customer_id}
     )
-    assert stored["housing_status"] == "owned"
+    assert result["stale"] is True
+    assert stored["housing_status"] == "rented"
+    assert stored.get("risk_score") is None
 
 
 def test_numeric_financial_fields_currently_remain_plaintext(settings):

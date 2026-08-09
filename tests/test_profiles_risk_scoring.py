@@ -58,13 +58,17 @@ class TestPaymentBehaviorScore:
         score = _payment_behavior_score(alt)
         assert score == 100.0
 
-    def test_late_payments_score_low(self):
+    @pytest.mark.parametrize(
+        ("history", "expected"),
+        [("sometimes_late", 60.0), ("often_late", 30.0)],
+    )
+    def test_canonical_late_payment_values_are_scored(self, history, expected):
         alt = FakeAlternativeData(
-            loan_payment_history="late",
-            utility_payment_history="late",
+            loan_payment_history=history,
+            utility_payment_history=history,
         )
         score = _payment_behavior_score(alt)
-        assert score == 40.0
+        assert score == expected
 
     def test_missing_history_defaults_to_mid(self):
         alt = FakeAlternativeData(
@@ -202,7 +206,7 @@ class TestRiskScoreIntegration:
         alt = FakeAlternativeData(
             household_income="30000_50000",
             has_existing_loans=True,
-            loan_payment_history="late",
+            loan_payment_history="often_late",
             utility_payment_history="on_time",
             is_coop_member=False,
             community_involvement=[],

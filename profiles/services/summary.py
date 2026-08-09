@@ -85,8 +85,16 @@ def get_profile_summary(customer_id: str) -> dict[str, Any]:
         },
         "alternative_data": {
             "completed": alternative_complete,
-            "has_risk_score": bool(alternative.risk_score),
+            "has_risk_score": alternative.risk_score is not None,
             "risk_category": alternative.risk_category,
+            "risk_score_status": alternative.risk_score_status,
+            "risk_score_policy_version": alternative.risk_score_policy_version,
+            "risk_score_use": alternative.risk_score_use,
+            "risk_score_manual_review_required": (
+                alternative.risk_score_manual_review_required
+            ),
+            "risk_input_revision": alternative.risk_input_revision,
+            "risk_calculated_revision": alternative.risk_calculated_revision,
         },
         "documents": {
             "total": total_docs,

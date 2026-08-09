@@ -107,6 +107,17 @@ def build_officer_customer_profile(customer: Customer) -> dict[str, Any]:
             "risk_score": _as_number(alternative.risk_score),
             "risk_category": alternative.risk_category,
             "score_calculated_at": _isoformat(alternative.score_calculated_at),
+            "risk_score_status": alternative.risk_score_status,
+            "risk_score_policy_version": alternative.risk_score_policy_version,
+            "risk_score_use": alternative.risk_score_use,
+            "risk_score_manual_review_required": (
+                alternative.risk_score_manual_review_required
+            ),
+            "risk_input_revision": alternative.risk_input_revision,
+            "risk_calculated_revision": alternative.risk_calculated_revision,
+            "risk_score_breakdown": alternative.risk_score_breakdown,
+            "risk_score_reason_codes": alternative.risk_score_reason_codes,
+            "risk_score_error_code": alternative.risk_score_error_code,
             "profile_completed": alternative.profile_completed,
             "completion_percentage": alternative.completion_percentage,
         },

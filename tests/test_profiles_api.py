@@ -447,6 +447,7 @@ class TestAlternativeDataView:
     def test_put_updates_alternative_data(self, monkeypatch):
         customer = _create_customer()
         data = AlternativeData(customer_id=str(customer.id))
+        data.save()
 
         monkeypatch.setattr(
             AlternativeData,

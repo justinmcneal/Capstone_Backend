@@ -42,22 +42,21 @@ field encryption; audit logging; rate limiting; and asynchronous risk scoring
 all exist. The codebase also contains substantially more profile tests than the
 previous version of this review recorded.
 
-Stage 2 closes the previously unrestricted loan-officer access and profile-data
-retention blockers. Production release remains blocked by a mismatch between
-accepted API values and the risk-scoring engine, stale Celery tasks that can
-overwrite newer profile data, and incomplete encryption of numeric financial
-fields. Profile completion and `ready_for_loan` also communicate a stronger
-readiness guarantee than their current minimal rules provide.
+Stages 2 and 3 close the previously unrestricted loan-officer access,
+profile-data retention, risk-input mismatch, and stale-score publication
+blockers. Production release remains blocked by incomplete encryption of numeric
+financial fields. Profile persistence/concurrency, completion, validation, and
+`ready_for_loan` semantics also require the later remediation stages.
 
 The original review was a static code audit. On 2026-08-09, the focused profile
-suite was executed after the Stage 2 implementation: all 77 profile tests passed.
+suite was executed after the Stage 3 implementation: all 88 profile tests passed.
 Live MongoDB/index and true concurrency behavior remain unverified.
 
 Current remediation status:
 
 - [x] Stage 1 — API contract and regression baseline
 - [x] Stage 2 — Officer privacy, authorization scope, and lifecycle retention
-- [ ] Stage 3 — Risk-scoring correctness, explainability, and task durability
+- [x] Stage 3 — Risk-scoring correctness, explainability, and task durability
 - [ ] Stage 4 — Encryption, persistence integrity, and concurrency
 - [ ] Stage 5 — Validation, completion, and readiness policy
 - [ ] Stage 6 — API consistency, audit completeness, and documentation
@@ -153,12 +152,24 @@ Current remediation status:
   preference defaults, allowlisting, and persistence.
 - `profiles/services/officer_profile.py` builds an explicitly allowlisted officer
   response rather than serializing the account model wholesale.
-- `profiles/services/risk_scoring.py` implements a weighted heuristic across
-  financial stability, payment behavior, social capital, housing stability, and
-  digital footprint.
-- `profiles/tasks.py` exposes a Celery task that calculates and persists
-  `risk_score`, `risk_category`, and `score_calculated_at`.
-- Alternative-data PUT attempts to enqueue risk-score recalculation.
+- `profiles/services/risk_scoring.py` implements a versioned weighted heuristic
+  across financial stability, payment behavior, social capital, housing
+  stability, and digital footprint using the same numeric and enum contract as
+  the API serializer.
+- Alternative-data updates atomically increment an input revision, clear any
+  superseded result, mark calculation pending, and enqueue that exact revision.
+- The Celery task publishes only score fields and only when its expected revision
+  is still current. Duplicate tasks are idempotent, stale tasks cannot publish,
+  transient failures retry with backoff, and failure state is persisted.
+- A one-minute reconciliation task requeues failed or abandoned pending scores,
+  so a saved profile is not permanently missed after a broker or worker outage.
+- Stored scoring output includes status, policy version, intended use, manual-
+  review requirement, calculated revision, non-sensitive dimension breakdown,
+  and reason codes. Success, failure, and stale task outcomes are audited.
+- `recalculate_profile_risk_scores` inventories obsolete scores in dry-run mode
+  by default and requires `--apply` to clear and enqueue recalculation.
+- The current score is explicitly informational only. It is not an approval,
+  pricing, limit, eligibility, or adverse-action control.
 
 ### Completion, summary, and downstream integration
 
@@ -191,64 +202,15 @@ Current remediation status:
   alternative-data round trips, and synchronous task execution under mongomock.
 - Business-age conversion tests cover direct model construction.
 - Blockchain/profile tests cover wallet-field serialization and validation.
-- On 2026-08-09, 77 focused tests passed across API, business-age, model/task,
-  scoring, Stage 1 characterization, and Stage 2 privacy/lifecycle modules.
-- The post-Stage 2 full suite collected 913 tests: 899 passed and 14 opt-in
+- On 2026-08-09, 88 focused tests passed across API, business-age, model/task,
+  scoring, Stage 1 characterization, Stage 2 privacy/lifecycle, and Stage 3 risk
+  durability modules.
+- The post-Stage 3 full suite collected 924 tests: 910 passed and 14 opt-in
   integration tests skipped.
 
 ## Production Blockers
 
-### 1. API values and risk-scoring inputs are incompatible
-
-**Status: Blocked for production**
-
-`AlternativeDataSerializer` accepts `household_income` as a nonnegative float,
-but `_income_score()` and rent-burden scoring expect categorical strings such as
-`30000_50000` and `above_100000`. Real API submissions therefore default to the
-neutral income score, and rent burden is not calculated as intended.
-
-The serializer accepts loan and utility histories of `sometimes_late` and
-`often_late`, while the scorer recognizes only `late`. It also accepts
-`company_provided` housing, which the scorer does not explicitly handle.
-
-Current unit tests call the risk service with the scorer's private categorical
-income and `late` values instead of passing serializer-valid API data through the
-complete update-to-score path. The tests therefore validate an input contract
-that customers cannot submit through the API.
-
-Required work:
-
-- Define one canonical type and enum set shared by the serializer, model, scoring
-  service, task, tests, testing guide, and clients.
-- Decide whether income is an exact numeric amount, an income range, or both, and
-  define which value the scorer uses.
-- Give every accepted housing/payment value an explicit scoring rule.
-- Add serializer-to-service integration tests using realistic API payloads.
-- Recalculate existing scores after the corrected scoring contract is deployed.
-- Review every downstream consumer before treating the heuristic as a credit
-  decision or qualification result.
-
-### 2. Asynchronous risk scoring can overwrite newer customer data
-
-**Status: Blocked for production**
-
-The task loads the full `AlternativeData` record, calculates a score, and calls
-`alternative.save()`, which writes every model field with `$set`. Concurrent or
-out-of-order tasks can therefore save an older snapshot over newer customer
-changes. The general model update pattern has a similar lost-update risk when
-multiple requests update the same record.
-
-Required work:
-
-- Persist only score-related fields from the Celery task using an atomic update.
-- Add a profile input revision or compare-and-set condition so stale tasks cannot
-  publish a result for superseded inputs.
-- Record score state (`pending`, `complete`, `failed`, `stale`) and scoring-policy
-  version.
-- Make task behavior idempotent and define retry policy.
-- Add out-of-order task, duplicate task, concurrent update, and retry tests.
-
-### 3. Numeric financial fields are not encrypted by the current helper
+### 1. Numeric financial fields are not encrypted by the current helper
 
 **Status: Blocked for production**
 
@@ -346,8 +308,6 @@ Remaining work:
 - Return machine-readable missing field codes instead of display strings alone.
 - Keep product-specific eligibility separate from generic profile completeness.
 - Add boundary tests for every required field and readiness transition.
-- Treat `risk_score=0` as an existing score; `bool(risk_score)` currently reports
-  zero as `has_risk_score=false`.
 
 ### Legacy business-age compatibility is not implemented through PUT
 
@@ -419,25 +379,6 @@ Remaining work:
 - Test JSON booleans, invalid strings/numbers/nulls, partial updates, defaults,
   concurrent account updates, and unknown keys.
 
-### Celery broker failure behavior is narrower than documented
-
-**Status: Partial / durability gap**
-
-Alternative-data PUT catches only `RuntimeError` and `ImportError` around
-`calculate_risk_score_task.delay()`. Common broker failures may use other
-exception types. Because profile persistence occurs before enqueueing, the client
-can receive a 500 even though its data was saved, and no score recalculation may
-be scheduled.
-
-Remaining work:
-
-- Define whether enqueue failure returns success-with-pending-state, 202, or a
-  retryable service error.
-- Catch the specific Celery/Kombu broker exceptions expected by the deployment.
-- Add an outbox/reconciliation path so a saved profile cannot permanently miss
-  scoring.
-- Test broker outage, timeout, duplicate enqueue, retry, and recovery behavior.
-
 The same partial-commit response problem applies to mutation audit failures:
 profile data is saved before `AuditLog.log_action()`, but the broad outer exception
 handler can then return `500`. A client retry may therefore repeat a mutation that
@@ -451,36 +392,15 @@ must be made explicit and tested.
 Personal, business, and alternative-data PUT operations create basic audit
 records. Officer directory access, successful sensitive reads, and denied scoped
 reads now create required audit records using the shared trusted-proxy IP helper.
-Notification changes, score recalculation, score failures, and automatic profile
-creation are not audited. The three customer mutation paths still use
+Notification changes and automatic profile creation are not audited. Score
+success, failure, and stale-task outcomes now record policy/revision/task metadata
+without raw scoring inputs. The three customer mutation paths still use
 `REMOTE_ADDR`; their proxy handling must be aligned with the shared helper.
 
 Remaining work:
 
 - Audit notification preference changes.
-- Record scoring policy version, input revision, result category, task identity,
-  and failure state without storing raw sensitive inputs in logs.
 - Add audit success/failure tests and trusted-proxy operational guidance.
-
-### Risk score explainability and governance are incomplete
-
-**Status: Partial / not suitable as a production credit decision**
-
-The service constructs a dimension breakdown but the task discards it and stores
-only score/category/timestamp. No scoring-policy version, reason codes,
-recalculation status, manual-review state, calibration record, or fairness review
-is retained. Several inputs represent sensitive socioeconomic proxies and are
-self-reported.
-
-Remaining work:
-
-- Persist a versioned, non-sensitive explanation and reason codes.
-- Establish ownership and change approval for weights and thresholds.
-- Validate performance and fairness using representative data before using the
-  score for approval, pricing, limits, or adverse decisions.
-- Provide a manual-review and correction path.
-- Record whether the score is informational, prequalification support, or an
-  authoritative lending control.
 
 ## Test Coverage Gaps
 
@@ -491,9 +411,6 @@ contracts are missing.
 
 Required additions:
 
-- Serializer-to-risk-service integration tests using accepted API values.
-- Out-of-order and duplicate Celery task tests.
-- Broker outage and reconciliation tests.
 - Raw MongoDB ciphertext assertions for every declared encrypted field with an
   enabled test key, including numeric fields.
 - Real MongoDB unique-index and concurrent upsert tests.
@@ -506,7 +423,6 @@ Required additions:
 - Non-finite and precision-boundary monetary-value tests.
 - Strict notification boolean and concurrent-update tests.
 - Completion/readiness transition and missing-field-code tests.
-- Score version, explanation, stale status, and recalculation tests.
 - Tests proving business and alternative GET responses match the published API
   schema, including completion fields if those remain part of the contract.
 
@@ -530,15 +446,13 @@ match current code in several material areas:
   validated.
 - Partial stored notification preferences are not merged with documented
   defaults.
-- A stored `risk_score` of zero is reported as though no score exists.
 - A reloaded MongoDB birth date may be returned as a datetime string rather than
   the guide's date-only value.
 - `emergency_contact_phone` has no phone-format validation, and non-finite float
   values can pass monetary serializers.
-- Celery broker failure is not guaranteed to be skipped gracefully.
 
-Stage 2 officer scope, payload, audit, and retention behavior is now reflected in
-the testing guide. The remaining mismatches must be corrected with their owning
+Stage 2 officer behavior and Stage 3 scoring behavior are now reflected in the
+testing guide. The remaining mismatches must be corrected with their owning
 implementation stages so the guide does not preserve accidental behavior.
 
 ## Staged Remediation Plan
@@ -594,9 +508,10 @@ Stage 1 validation adds nine passing characterization tests for GET-side writes,
 scoring type/enum fallback, stale-task overwrites, plaintext numeric financial
 fields, the former deletion-retention defect, lost updates, weak readiness,
 discarded business-age aliases, and string-to-boolean preference coercion. Stage
-2 converted the deletion assertion to the secure target behavior and added a
-dedicated privacy/lifecycle module. Remaining characterization assertions must be
-converted as Stages 3–6 fix each issue.
+2 converted the deletion assertion to the secure target behavior. Stage 3
+converted scoring-contract and stale-task assertions and added a dedicated risk-
+durability module. Remaining characterization assertions must be converted as
+Stages 4–6 fix each issue.
 
 ### Stage 2 — Officer privacy, authorization scope, and lifecycle retention
 
@@ -636,16 +551,40 @@ Stage 2 behavior:
 
 ### Stage 3 — Risk-scoring correctness, explainability, and task durability
 
-**Status: Not started / production blocker**
+**Status: Complete**
 
-- [ ] Align API/model/scorer types and enums.
-- [ ] Add full serializer-to-task integration tests.
-- [ ] Make score writes atomic and stale-task-safe.
-- [ ] Add idempotency, retries, failure state, and reconciliation.
-- [ ] Persist scoring policy version, input revision, breakdown/reason codes, and
-  calculation status.
-- [ ] Establish governance, calibration, fairness, and manual-review requirements.
-- [ ] Backfill/recalculate scores created under invalid input mappings.
+- [x] ~~Align API/model/scorer types and enums.~~
+- [x] ~~Add full serializer-to-task integration tests.~~
+- [x] ~~Make score writes atomic and stale-task-safe.~~
+- [x] ~~Add idempotency, retries, failure state, and reconciliation.~~
+- [x] ~~Persist scoring policy version, input revision, breakdown/reason codes,
+  intended use, manual-review requirement, and calculation status.~~
+- [x] ~~Document governance and prohibit approval, pricing, limit, eligibility,
+  or adverse-action use without representative calibration and fairness review.~~
+- [x] ~~Provide a dry-run-default command to inventory and recalculate scores
+  created under obsolete policies or mappings.~~
+
+Stage 3 behavior:
+
+- The serializer, model, and scorer share the exact canonical housing, loan-
+  history, utility-history, and e-wallet values. Household income is scored as
+  the numeric PHP value accepted by the API.
+- Each alternative-data mutation advances `risk_input_revision`. A task may
+  publish only if that revision still matches, preventing an older task from
+  overwriting a newer result or customer update.
+- A duplicate task for an already-completed revision/policy returns the stored
+  result without changing its calculation timestamp.
+- Enqueue and calculation failures are recorded while the customer update remains
+  durable. Retried and abandoned work is recovered by the minute reconciler.
+- API, summary, and officer payloads expose calculation status, policy version,
+  intended use, manual-review requirement, revisions, breakdown, reason codes,
+  and safe error metadata where applicable.
+- The current policy is `2026-08-09-v1` and `informational_only`. See
+  `docs/PROFILES_RISK_SCORING_POLICY.md` for weights, thresholds, explanation,
+  publication, change-control, and future validation requirements.
+- Ten Stage 3 tests cover canonical rules, serializer-to-task flow, explanation
+  safety, out-of-order and duplicate delivery, broker/scoring failures,
+  reconciliation, audit metadata, and dry-run/apply recalculation behavior.
 
 ### Stage 4 — Encryption, persistence integrity, and concurrency
 
@@ -733,9 +672,11 @@ Stage 2 behavior:
 - [x] ~~Officer access is resource-scoped, minimized, concealed, and audited.~~
 - [x] ~~Deleted-account profile data is irreversibly removed under the approved
   Profiles retention policy with retry and legacy reconciliation support.~~
-- [ ] Risk-scoring inputs match serializer-accepted values.
-- [ ] Risk task writes are atomic, versioned, idempotent, and stale-safe.
-- [ ] Risk policy is explainable, governed, calibrated, and reviewed for fairness.
+- [x] ~~Risk-scoring inputs match serializer-accepted values.~~
+- [x] ~~Risk task writes are atomic, versioned, idempotent, stale-safe, retryable,
+  and reconciled.~~
+- [x] ~~Risk output is explainable, versioned, manually reviewable, and explicitly
+  restricted to informational use.~~
 - [ ] Numeric alternative financial fields are encrypted at rest.
 - [ ] Encryption backfill covers every declared profile field.
 - [ ] GET endpoints are side-effect-free.
@@ -744,8 +685,8 @@ Stage 2 behavior:
 - [ ] Cross-field, date, location, and monetary validation is production-safe.
 - [ ] Legacy business-age behavior is implemented as documented or removed.
 - [ ] Notification preferences use strict booleans and atomic persistence.
-- [ ] Audit coverage includes preferences and scoring; sensitive staff reads are
-  now covered.
+- [ ] Audit coverage includes preferences and automatic profile creation; scoring
+  and sensitive staff reads are now covered.
 - [ ] Canonical API responses, roles, and routes match the testing guide.
 - [x] ~~Focused profile and full local test suites pass.~~
 - [ ] Real-Mongo index/concurrency behavior is validated.
@@ -755,9 +696,10 @@ Stage 2 behavior:
 The customer mobile application, loan-officer web application, and potentially the
 admin web application require coordinated changes as later stages complete:
 
-- Customer mobile may need canonical `business_age_months`, stricter validation,
-  machine-readable missing fields, and asynchronous risk status rather than
-  assuming an immediate score.
+- Customer mobile must treat risk scoring as asynchronous, poll or refresh
+  `risk_score_status`, display the score as informational with manual review, and
+  avoid using it as an approval result. It may also need canonical
+  `business_age_months`, stricter validation, and machine-readable missing fields.
 - Loan-officer web must use `/api/officer/profiles/` routes, handle scoped/404
   results, stop relying on directory phone search/output or emergency-contact
   detail fields, and display only the approved allowlisted profile fields.
@@ -771,6 +713,9 @@ admin web application require coordinated changes as later stages complete:
 
 - This is a code-level review, not a live penetration test, data audit, fairness
   validation, or deployment verification.
+- The scoring contract and governance boundary are documented in
+  `docs/PROFILES_RISK_SCORING_POLICY.md`. Representative calibration and fairness
+  validation remain mandatory before any future authoritative lending use.
 - `init_db.py`, profile backfills, encryption migrations, and account-retention
   operations are state-changing and require explicit approval, backups, dry-run
   review, and staging validation before use.

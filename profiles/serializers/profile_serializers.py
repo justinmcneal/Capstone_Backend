@@ -3,7 +3,15 @@ import re
 from rest_framework import serializers
 
 from accounts.serializers.base_serializers import InputSanitizationMixin
-from profiles.models import BUSINESS_TYPES, EDUCATION_LEVELS, INCOME_RANGES
+from profiles.models import (
+    BUSINESS_TYPES,
+    EDUCATION_LEVELS,
+    EWALLET_USAGE_VALUES,
+    HOUSING_STATUSES,
+    INCOME_RANGES,
+    LOAN_PAYMENT_HISTORIES,
+    UTILITY_PAYMENT_HISTORIES,
+)
 
 # Regex that matches valid Philippine location names:
 # - Must start with a letter
@@ -237,7 +245,7 @@ class AlternativeDataSerializer(InputSanitizationMixin, serializers.Serializer):
 
     # Housing
     housing_status = serializers.ChoiceField(
-        choices=["owned", "rented", "living_with_family", "company_provided"],
+        choices=HOUSING_STATUSES,
         required=False,
         allow_null=True,
     )
@@ -263,7 +271,7 @@ class AlternativeDataSerializer(InputSanitizationMixin, serializers.Serializer):
         allow_null=True,
     )
     loan_payment_history = serializers.ChoiceField(
-        choices=["on_time", "sometimes_late", "often_late", "defaulted", "no_history"],
+        choices=LOAN_PAYMENT_HISTORIES,
         required=False,
         allow_null=True,
     )
@@ -275,7 +283,7 @@ class AlternativeDataSerializer(InputSanitizationMixin, serializers.Serializer):
     )
     has_ewallet = serializers.BooleanField(required=False)
     ewallet_usage = serializers.ChoiceField(
-        choices=["daily", "weekly", "monthly", "rarely", "never"],
+        choices=EWALLET_USAGE_VALUES,
         required=False,
         allow_null=True,
     )
@@ -283,7 +291,7 @@ class AlternativeDataSerializer(InputSanitizationMixin, serializers.Serializer):
     # Utility Payments
     pays_utilities = serializers.BooleanField(required=False)
     utility_payment_history = serializers.ChoiceField(
-        choices=["on_time", "sometimes_late", "often_late"],
+        choices=UTILITY_PAYMENT_HISTORIES,
         required=False,
         allow_null=True,
     )

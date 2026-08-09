@@ -27,6 +27,10 @@ app.conf.beat_schedule = {
         "task": "accounts.tasks.reconcile_password_reset_email_deliveries_task",
         "schedule": crontab(minute="*"),
     },
+    "reconcile-profile-risk-scores-every-minute": {
+        "task": "profiles.reconcile_risk_scores",
+        "schedule": crontab(minute="*"),
+    },
     "check-overdue-daily": {
         "task": "loans.tasks.check_overdue_installments_task",
         "schedule": crontab(hour=0, minute=0),

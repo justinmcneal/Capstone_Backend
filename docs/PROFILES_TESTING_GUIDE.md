@@ -148,6 +148,17 @@ Content-Type: application/json
   - `risk_score`
   - `risk_category`
   - `score_calculated_at`
+  - `risk_score_status` (`not_calculated`, `pending`, `complete`, or `failed`)
+  - `risk_score_policy_version`
+  - `risk_score_use` (`informational_only`)
+  - `risk_score_manual_review_required`
+  - `risk_input_revision`
+  - `risk_calculated_revision`
+  - `risk_score_breakdown`
+  - `risk_score_reason_codes`
+  - `risk_score_error_code`
+  - `risk_score_requested_at`
+  - `risk_score_failed_at`
   - `profile_completed`
   - `completion_percentage`
 
@@ -174,8 +185,11 @@ Content-Type: application/json
   - `utility_payment_history` (`on_time`, `sometimes_late`, `often_late`)
   - `is_coop_member`
   - `community_involvement`
-- Key response fields: success message only
-- Side effect: triggers async risk score calculation via Celery task `calculate_risk_score_task`
+- Key response fields:
+  - `risk_score_status`
+  - `risk_input_revision`
+- Side effect: atomically advances the input revision, clears the superseded
+  score, marks calculation pending, and enqueues that exact revision.
 
 7. `GET /summary/`
 - Auth: customer only
@@ -190,6 +204,12 @@ Content-Type: application/json
   - `alternative_data.completed`
   - `alternative_data.has_risk_score`
   - `alternative_data.risk_category`
+  - `alternative_data.risk_score_status`
+  - `alternative_data.risk_score_policy_version`
+  - `alternative_data.risk_score_use`
+  - `alternative_data.risk_score_manual_review_required`
+  - `alternative_data.risk_input_revision`
+  - `alternative_data.risk_calculated_revision`
   - `documents.total`
   - `documents.approved`
   - `documents.pending`
@@ -302,9 +322,41 @@ Content-Type: application/json
 
 ## Background Tasks
 
-- `calculate_risk_score_task` is triggered asynchronously after `PUT /alternative-data/`.
-- It calculates a weighted multi-factor risk score (0-100) and persists `risk_score`, `risk_category`, and `score_calculated_at` to the `alternative_data` collection.
-- If Celery broker is unavailable, the task is skipped gracefully without failing the request.
+- `calculate_risk_score_task` is triggered asynchronously after
+  `PUT /alternative-data/` and calculates a weighted score from 0–100.
+- A task writes score fields only when its expected `risk_input_revision` is
+  still current. An older task is recorded as stale and cannot overwrite newer
+  inputs or a newer score. Duplicate completed tasks are idempotent.
+- Successful results include category, timestamp, policy version, calculated
+  revision, non-sensitive dimension breakdown, and reason codes.
+- Calculation failures are stored as `failed` with a machine-readable error code
+  and are retried with backoff. If initial broker enqueue fails, the profile
+  update remains saved and its failed state is visible to the client.
+- `profiles.reconcile_risk_scores` runs every minute to requeue failed work and
+  pending work abandoned for at least five minutes.
+- A score is current only when status is `complete`, calculated revision equals
+  input revision, and its policy version is current.
+- Policy `2026-08-09-v1` is `informational_only` and requires manual review. It
+  must not be treated as approval, pricing, a limit, eligibility, or an adverse
+  decision. See `docs/PROFILES_RISK_SCORING_POLICY.md`.
+
+## Risk-Score Recalculation
+
+Inventory scores made under an obsolete policy without changing MongoDB:
+
+```bash
+python manage.py recalculate_profile_risk_scores
+```
+
+After backup review and staging validation, enqueue affected records under the
+current policy:
+
+```bash
+python manage.py recalculate_profile_risk_scores --apply
+```
+
+Add `--all` to include every alternative-data record. The command is dry-run by
+default; operational execution is intentionally not part of local unit testing.
 
 ## Deleted-Customer Profile Cleanup
 

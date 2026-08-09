@@ -30,7 +30,7 @@ from profiles.services.notification_preferences import (
 )
 from profiles.services.officer_profile import build_officer_customer_profile
 from profiles.services.summary import get_profile_summary
-from profiles.tasks import calculate_risk_score_task
+from profiles.tasks import enqueue_risk_score_calculation
 
 logger = logging.getLogger("profiles")
 
@@ -382,6 +382,27 @@ class AlternativeDataView(CustomerProfileAccessMixin, APIView):
                         if data.score_calculated_at
                         else None
                     ),
+                    "risk_score_status": data.risk_score_status,
+                    "risk_score_policy_version": data.risk_score_policy_version,
+                    "risk_score_use": data.risk_score_use,
+                    "risk_score_manual_review_required": (
+                        data.risk_score_manual_review_required
+                    ),
+                    "risk_input_revision": data.risk_input_revision,
+                    "risk_calculated_revision": data.risk_calculated_revision,
+                    "risk_score_breakdown": data.risk_score_breakdown,
+                    "risk_score_reason_codes": data.risk_score_reason_codes,
+                    "risk_score_error_code": data.risk_score_error_code,
+                    "risk_score_requested_at": (
+                        data.risk_score_requested_at.isoformat()
+                        if data.risk_score_requested_at
+                        else None
+                    ),
+                    "risk_score_failed_at": (
+                        data.risk_score_failed_at.isoformat()
+                        if data.risk_score_failed_at
+                        else None
+                    ),
                 },
                 message="Alternative data retrieved successfully",
             )
@@ -411,18 +432,12 @@ class AlternativeDataView(CustomerProfileAccessMixin, APIView):
             customer_id = user.customer_id
 
             alt_data = AlternativeData.get_or_create(customer_id)
-
-            data = serializer.validated_data
-            for field, value in data.items():
-                if hasattr(alt_data, field):
-                    setattr(alt_data, field, value)
-
-            alt_data.save()
-
-            try:
-                calculate_risk_score_task.delay(customer_id)
-            except (RuntimeError, ImportError):
-                logger.debug("Risk score task skipped: Celery broker unavailable")
+            alt_data = alt_data.update_inputs(serializer.validated_data)
+            enqueue_risk_score_calculation(
+                customer_id,
+                alt_data.risk_input_revision,
+            )
+            alt_data = AlternativeData.find_by_customer(customer_id)
 
             logger.info(f"Alternative data updated for customer {customer_id}")
 
@@ -434,11 +449,20 @@ class AlternativeDataView(CustomerProfileAccessMixin, APIView):
                 description="Alternative data updated",
                 resource_type="alternative_data",
                 resource_id=alt_data.id,
-                details={"risk_score": alt_data.risk_score},
+                details={
+                    "risk_input_revision": alt_data.risk_input_revision,
+                    "risk_score_status": alt_data.risk_score_status,
+                },
                 ip_address=request.META.get("REMOTE_ADDR", ""),
             )
 
-            return success_response(message="Alternative data updated successfully")
+            return success_response(
+                data={
+                    "risk_score_status": alt_data.risk_score_status,
+                    "risk_input_revision": alt_data.risk_input_revision,
+                },
+                message="Alternative data updated successfully",
+            )
         except Exception:
             logger.exception("Error updating alternative data")
             return error_response(

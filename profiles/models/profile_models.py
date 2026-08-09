@@ -13,6 +13,7 @@ from datetime import date, datetime, time, timezone
 from bson import ObjectId
 from bson.errors import InvalidId
 from django.conf import settings
+from pymongo import ReturnDocument
 
 from config.field_encryption import decrypt_fields, encrypt_fields
 
@@ -105,6 +106,23 @@ INCOME_RANGES = [
     "50000_100000",  # ₱50,000 - ₱100,000
     "above_100000",  # Above ₱100,000
 ]
+
+# Canonical alternative-data values shared by API validation and scoring.
+HOUSING_STATUSES = (
+    "owned",
+    "rented",
+    "living_with_family",
+    "company_provided",
+)
+LOAN_PAYMENT_HISTORIES = (
+    "on_time",
+    "sometimes_late",
+    "often_late",
+    "defaulted",
+    "no_history",
+)
+UTILITY_PAYMENT_HISTORIES = ("on_time", "sometimes_late", "often_late")
+EWALLET_USAGE_VALUES = ("daily", "weekly", "monthly", "rarely", "never")
 
 
 class CustomerProfile:
@@ -501,6 +519,25 @@ class AlternativeData:
         self.risk_score = kwargs.get("risk_score")  # 0-100, higher = lower risk
         self.risk_category = kwargs.get("risk_category")  # low, medium, high
         self.score_calculated_at = kwargs.get("score_calculated_at")
+        self.risk_score_status = kwargs.get("risk_score_status", "not_calculated")
+        self.risk_score_policy_version = kwargs.get("risk_score_policy_version")
+        self.risk_score_use = kwargs.get("risk_score_use", "informational_only")
+        self.risk_score_manual_review_required = kwargs.get(
+            "risk_score_manual_review_required", True
+        )
+        self.risk_input_revision = kwargs.get("risk_input_revision", 0)
+        self.risk_calculated_revision = kwargs.get("risk_calculated_revision")
+        self.risk_score_breakdown = kwargs.get("risk_score_breakdown", {})
+        self.risk_score_reason_codes = kwargs.get("risk_score_reason_codes", [])
+        self.risk_score_error_code = kwargs.get("risk_score_error_code", "")
+        self.risk_score_task_id = kwargs.get("risk_score_task_id")
+        self.risk_score_requested_at = kwargs.get("risk_score_requested_at")
+        self.risk_score_failed_at = kwargs.get("risk_score_failed_at")
+        self.risk_score_last_task_status = kwargs.get("risk_score_last_task_status")
+        self.risk_score_last_stale_revision = kwargs.get(
+            "risk_score_last_stale_revision"
+        )
+        self.risk_score_stale_at = kwargs.get("risk_score_stale_at")
 
         # Profile Completion
         self.profile_completed = kwargs.get("profile_completed", False)
@@ -540,6 +577,21 @@ class AlternativeData:
             "risk_score": self.risk_score,
             "risk_category": self.risk_category,
             "score_calculated_at": self.score_calculated_at,
+            "risk_score_status": self.risk_score_status,
+            "risk_score_policy_version": self.risk_score_policy_version,
+            "risk_score_use": self.risk_score_use,
+            "risk_score_manual_review_required": self.risk_score_manual_review_required,
+            "risk_input_revision": self.risk_input_revision,
+            "risk_calculated_revision": self.risk_calculated_revision,
+            "risk_score_breakdown": self.risk_score_breakdown,
+            "risk_score_reason_codes": self.risk_score_reason_codes,
+            "risk_score_error_code": self.risk_score_error_code,
+            "risk_score_task_id": self.risk_score_task_id,
+            "risk_score_requested_at": self.risk_score_requested_at,
+            "risk_score_failed_at": self.risk_score_failed_at,
+            "risk_score_last_task_status": self.risk_score_last_task_status,
+            "risk_score_last_stale_revision": self.risk_score_last_stale_revision,
+            "risk_score_stale_at": self.risk_score_stale_at,
             "profile_completed": self.profile_completed,
             "completion_percentage": self.completion_percentage,
             "created_at": self.created_at,
@@ -571,6 +623,50 @@ class AlternativeData:
             self._id = result.inserted_id
 
         return self
+
+    def update_inputs(self, fields):
+        """Atomically update validated inputs and create a new scoring revision."""
+
+        if not self._id:
+            raise ValueError("Alternative data must be saved before updating inputs")
+
+        for field, value in fields.items():
+            if hasattr(self, field):
+                setattr(self, field, value)
+        self.calculate_completion()
+
+        now = datetime.now(timezone.utc)
+        update = dict(fields)
+        update.update(
+            {
+                "profile_completed": self.profile_completed,
+                "completion_percentage": self.completion_percentage,
+                "risk_score": None,
+                "risk_category": None,
+                "score_calculated_at": None,
+                "risk_score_status": "pending",
+                "risk_score_policy_version": None,
+                "risk_score_use": "informational_only",
+                "risk_score_manual_review_required": True,
+                "risk_calculated_revision": None,
+                "risk_score_breakdown": {},
+                "risk_score_reason_codes": [],
+                "risk_score_error_code": "",
+                "risk_score_task_id": None,
+                "risk_score_requested_at": now,
+                "risk_score_failed_at": None,
+                "updated_at": now,
+            }
+        )
+        update = encrypt_fields(update, self.encrypted_fields)
+        document = get_db()[self.collection_name].find_one_and_update(
+            {"_id": self._id},
+            {"$set": update, "$inc": {"risk_input_revision": 1}},
+            return_document=ReturnDocument.AFTER,
+        )
+        if not document:
+            raise RuntimeError("Alternative data update was not persisted")
+        return self.from_dict(document)
 
     def calculate_completion(self):
         """Calculate alternative data completion."""
@@ -605,3 +701,6 @@ class AlternativeData:
         collection = db[cls.collection_name]
         collection.create_index("customer_id", unique=True)
         collection.create_index("risk_score")
+        collection.create_index(
+            [("risk_score_status", 1), ("risk_score_requested_at", 1)]
+        )

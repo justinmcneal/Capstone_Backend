@@ -49,6 +49,9 @@ AUDIT_ACTIONS = [
     "profile_directory_viewed",
     "profile_sensitive_read",
     "profile_access_denied",
+    "risk_score_calculated",
+    "risk_score_failed",
+    "risk_score_stale",
     # Documents
     "document_uploaded",
     "document_verified",
@@ -85,6 +88,9 @@ ACTION_GROUPS = {
     ],
     "update": [
         "profile_updated",
+        "risk_score_calculated",
+        "risk_score_failed",
+        "risk_score_stale",
         "document_verified",
         "document_rejected",
         "loan_approved",
