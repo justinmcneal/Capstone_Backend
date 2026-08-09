@@ -13,14 +13,16 @@ Profiles covers customer profile data used for loan readiness:
 
 ## Base URL and Auth
 
-- Base URL: `http://localhost:8000/api/profile`
+- Customer base URL: `http://localhost:8000/api/profile`
+- Canonical officer base URL: `http://localhost:8000/api/officer/profiles`
 - Required headers:
 ```http
 Authorization: Bearer <customer_access_token>
 Content-Type: application/json
 ```
 - Customer endpoints require customer role.
-- Officer endpoint (`/api/profile/officer/<customer_id>/`) requires loan officer or admin role.
+- Officer endpoints require an active loan-officer account. Administrators are
+  denied unless a future, separately permissioned admin profile API is added.
 
 ## URL Reference
 
@@ -233,12 +235,31 @@ Content-Type: application/json
 
 ### Officer Endpoints
 
-10. `GET /officer/<customer_id>/`
-- Auth: loan officer or admin only
+10. `GET /api/officer/profiles/`
+- Auth: active loan officer only
+- Query fields: `search`, `page`, `page_size` (maximum 100)
+- Scope:
+  - customers assigned to the requesting officer;
+  - submitted/under-review customers that remain unassigned; and
+  - eligible document-review customers from the shared access-control scope.
+- Customers assigned to another officer and inactive, suspended, deactivated,
+  pending-deletion, or deleted customers are excluded.
+- Key response fields: `customer_id`, `full_name`, and `email` only. Phone search
+  and phone output are intentionally unsupported because phone data is encrypted.
+
+11. `GET /api/officer/profiles/<customer_id>/`
+- Auth: active loan officer only
 - Request fields: none
-- Returns same structure as `GET /summary/` for the specified customer
-- Read-only — no mutations allowed
-- Returns 400 for invalid customer ID format
+- Returns the explicitly allowlisted personal, business, and alternative-data
+  profile for an in-scope customer.
+- Omits account security fields, wallet address, and emergency-contact data.
+- Returns `404 Resource not found` for an out-of-scope customer, whether or not
+  the customer exists.
+- Returns `400` for an invalid customer ID format.
+- The legacy `/api/profile/officer/<customer_id>/` alias currently reaches the
+  same scoped view and is pending deprecation.
+- Directory access, successful sensitive reads, and denied reads require audit
+  records. If the audit store is unavailable, sensitive access returns `503`.
 
 ## Smoke Test Sequence
 
@@ -249,7 +270,9 @@ Content-Type: application/json
 5. `PUT /alternative-data/` then `GET /alternative-data/`.
 6. `GET /summary/` and verify `overall.profiles_complete` and `overall.ready_for_loan`.
 7. `GET /notifications/`, then `PUT /notifications/`, then `GET /notifications/` to confirm persistence.
-8. As officer/admin: `GET /officer/<customer_id>/` to verify read-only access.
+8. As a loan officer: list `/api/officer/profiles/`, then retrieve an in-scope
+   customer from `/api/officer/profiles/<customer_id>/`. Confirm a customer
+   assigned to another officer returns the concealed `404` response.
 
 ## Common Error Cases
 
@@ -268,6 +291,10 @@ Content-Type: application/json
 
 4. `404 Not Found`
 - Customer not found when updating notification preferences.
+- Officer requested a customer outside their assigned/shared-review scope.
+
+5. `503 Service Unavailable`
+- A required officer profile-access audit could not be written.
 
 ## Rate Limiting
 
@@ -278,6 +305,29 @@ Content-Type: application/json
 - `calculate_risk_score_task` is triggered asynchronously after `PUT /alternative-data/`.
 - It calculates a weighted multi-factor risk score (0-100) and persists `risk_score`, `risk_category`, and `score_calculated_at` to the `alternative_data` collection.
 - If Celery broker is unavailable, the task is skipped gracefully without failing the request.
+
+## Deleted-Customer Profile Cleanup
+
+Final account deletion removes records from `customer_profiles`,
+`business_profiles`, and `alternative_data`. Cleanup is idempotent and records a
+durable completion status on the customer account so an interrupted cleanup can
+be retried. Administrators with `manage_users` can inspect cleanup status,
+attempts, counts, last error type, and timestamps through
+`GET /api/auth/admin/customers/<customer_id>/`.
+
+For profile records retained by accounts deleted before this behavior existed,
+inventory the records without modifying the database:
+
+```bash
+python manage.py cleanup_deleted_customer_profiles
+```
+
+After retention approval, backup review, and staging validation, the operational
+owner may run the state-changing form:
+
+```bash
+python manage.py cleanup_deleted_customer_profiles --apply
+```
 
 ## Backfill: `business_age_months` from `years_in_operation`
 

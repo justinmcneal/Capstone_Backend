@@ -13,6 +13,7 @@ from rest_framework.views import APIView
 from accounts.authentication import CustomJWTAuthentication
 from accounts.models import Customer
 from accounts.utils.access_control import AccessControlMixin
+from accounts.utils.request_utils import get_client_ip
 from accounts.utils.response_helpers import error_response, success_response
 from accounts.utils.throttles import ProfileRateThrottle
 from analytics.models import AuditLog
@@ -32,6 +33,59 @@ from profiles.services.summary import get_profile_summary
 from profiles.tasks import calculate_risk_score_task
 
 logger = logging.getLogger("profiles")
+
+
+def _active_customer_query():
+    """Return the operational customer-state filter used by staff profile reads."""
+
+    return {
+        "role": "customer",
+        "verified": True,
+        "active": True,
+        "$or": [
+            {"account_state": "active"},
+            {"account_state": {"$exists": False}},
+        ],
+    }
+
+
+def _record_required_officer_audit(
+    request,
+    officer,
+    *,
+    action,
+    customer_id=None,
+    details=None,
+):
+    """Persist the audit required before returning staff profile information."""
+
+    try:
+        AuditLog.log_action(
+            action=action,
+            user_id=officer.id,
+            user_type="loan_officer",
+            user_email=officer.email,
+            description=(
+                "Loan officer accessed a customer profile"
+                if customer_id
+                else "Loan officer accessed the scoped customer profile directory"
+            ),
+            resource_type="customer_profile",
+            resource_id=customer_id,
+            details=details or {},
+            ip_address=get_client_ip(request),
+        )
+        return True
+    except Exception:
+        logger.exception("Required officer profile-access audit failed")
+        return False
+
+
+def _audit_unavailable_response():
+    return error_response(
+        message="Unable to record required profile access audit",
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+    )
 
 
 class CustomerProfileAccessMixin(AccessControlMixin):
@@ -513,9 +567,13 @@ class OfficerCustomerProfilesListView(AccessControlMixin, APIView):
     throttle_classes = (ProfileRateThrottle,)
 
     def get(self, request):
-        has_permission, result = self.require_roles(request, {"loan_officer"})
+        has_permission, officer = self.require_roles(request, {"loan_officer"})
         if not has_permission:
-            return result
+            return officer
+
+        has_scope, scoped_customer_ids = self.get_officer_scoped_customer_ids(request)
+        if not has_scope:
+            return scoped_customer_ids
 
         try:
             page = int(request.query_params.get("page", 1))
@@ -537,21 +595,29 @@ class OfficerCustomerProfilesListView(AccessControlMixin, APIView):
                 status_code=status.HTTP_400_BAD_REQUEST,
             )
 
+        customer_id_variants = []
+        for customer_id in scoped_customer_ids:
+            customer_id_variants.extend(self._id_variants(customer_id))
+
         search = request.query_params.get("search", "").strip()
-        query = {"role": "customer"}
+        query = {
+            "$and": [
+                _active_customer_query(),
+                {"_id": {"$in": customer_id_variants}},
+            ]
+        }
         if search:
             search_regex = re.compile(re.escape(search), re.IGNORECASE)
             search_conditions = [
                 {"first_name": search_regex},
                 {"last_name": search_regex},
                 {"email": search_regex},
-                {"phone": search_regex},
             ]
             try:
                 search_conditions.append({"_id": ObjectId(search)})
             except InvalidId:
                 pass
-            query = {"$and": [query, {"$or": search_conditions}]}
+            query["$and"].append({"$or": search_conditions})
 
         collection = settings.MONGODB[Customer.collection_name]
         total = collection.count_documents(query)
@@ -566,19 +632,26 @@ class OfficerCustomerProfilesListView(AccessControlMixin, APIView):
         for customer in customers:
             if not customer:
                 continue
-            personal_profile = CustomerProfile.find_by_customer(customer.id)
             customer_items.append(
                 {
                     "customer_id": customer.id,
                     "full_name": customer.full_name or "Unnamed customer",
                     "email": customer.email,
-                    "phone": (
-                        personal_profile.mobile_number
-                        if personal_profile and personal_profile.mobile_number
-                        else customer.phone or None
-                    ),
                 }
             )
+
+        if not _record_required_officer_audit(
+            request,
+            officer,
+            action="profile_directory_viewed",
+            details={
+                "search_applied": bool(search),
+                "page": page,
+                "page_size": page_size,
+                "result_count": len(customer_items),
+            },
+        ):
+            return _audit_unavailable_response()
 
         return success_response(
             data={
@@ -605,9 +678,9 @@ class OfficerProfileView(AccessControlMixin, APIView):
 
     def get(self, request, customer_id):
         """Return the allow-listed profile fields for the requested customer."""
-        has_permission, result = self.require_roles(request, {"loan_officer"})
+        has_permission, officer = self.require_roles(request, {"loan_officer"})
         if not has_permission:
-            return result
+            return officer
 
         try:
             customer_object_id = ObjectId(customer_id)
@@ -617,12 +690,47 @@ class OfficerProfileView(AccessControlMixin, APIView):
                 status_code=status.HTTP_400_BAD_REQUEST,
             )
 
-        customer = Customer.find_one({"_id": customer_object_id})
-        if not customer or customer.role != "customer":
+        has_scope, scope_result = self.require_customer_scope_for_officer(
+            request,
+            customer_id,
+            conceal_existence=True,
+        )
+        if not has_scope:
+            if not _record_required_officer_audit(
+                request,
+                officer,
+                action="profile_access_denied",
+                customer_id=customer_id,
+                details={"reason": "outside_officer_scope"},
+            ):
+                return _audit_unavailable_response()
+            return scope_result
+
+        customer_query = _active_customer_query()
+        customer_query["_id"] = customer_object_id
+        customer = Customer.find_one(customer_query)
+        if not customer:
+            if not _record_required_officer_audit(
+                request,
+                officer,
+                action="profile_access_denied",
+                customer_id=customer_id,
+                details={"reason": "customer_unavailable"},
+            ):
+                return _audit_unavailable_response()
             return error_response(
                 message="Customer not found",
                 status_code=status.HTTP_404_NOT_FOUND,
             )
+
+        if not _record_required_officer_audit(
+            request,
+            officer,
+            action="profile_sensitive_read",
+            customer_id=customer_id,
+            details={"scope_enforced": True},
+        ):
+            return _audit_unavailable_response()
 
         return success_response(
             data=build_officer_customer_profile(customer),

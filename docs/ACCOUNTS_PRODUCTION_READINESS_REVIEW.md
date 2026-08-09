@@ -47,7 +47,7 @@ recovery checks described in **Remaining Gaps and Release Conditions**.
 | Consent | Implemented | Current consent, append-only history, policy versioning, revocation, audit reporting, and AI enforcement are available. |
 | Account lifecycle | Implemented | Suspension, deactivation, email change, export, deletion scheduling, anonymization, unlock, and 2FA recovery are available. |
 | Field encryption | Implemented | Versioned Fernet encryption, strict production reads, previous-key support, rotation, and verification are available. |
-| Local automated tests | Passing | 888 passed and 14 opt-in integration tests skipped on 2026-08-09. |
+| Local automated tests | Passing | 899 passed and 14 opt-in integration tests skipped on 2026-08-09. |
 | Production environment validation | Pending | Hosted CI, real MongoDB/Redis/Celery, browser cookie/CORS, email, proxy, and recovery validation remain. |
 
 ## Module Responsibilities
@@ -404,9 +404,9 @@ Local validation on 2026-08-09 used `config.settings_test`, mongomock, in-memory
 cache/channel layers, eager Celery, local email, and disabled blockchain
 integration.
 
-- Full suite: **902 collected, 888 passed, 14 skipped**
+- Full suite: **913 collected, 899 passed, 14 skipped**
 - Focused Accounts API tests after token-contract changes: **24 passed**
-- Focused Profiles suite used during the same validation cycle: **66 passed**
+- Focused Profiles suite after Stage 2: **77 passed**
 - Changed Accounts view files and the new Profiles characterization module pass
   Ruff.
 - The 14 skips are opt-in external/integration tests, including five real-Mongo
@@ -445,11 +445,11 @@ These are release-evidence gaps, not missing Accounts API implementations:
 
 ### Cross-module release dependency
 
-Accounts-owned deletion and anonymization are implemented. The overall platform
-must still apply an approved retention or anonymization policy to customer-owned
-data in Profiles, Documents, Loans, blockchain records, and other domains. The
-known Profiles retention gap prevents treating customer deletion as system-wide
-erasure until that domain work is complete.
+Accounts-owned deletion and anonymization are implemented, and Profiles Stage 2
+now deletes personal, business, and alternative profile records with durable,
+retryable cleanup state. The overall platform must still apply approved retention
+or anonymization policies to Documents, Loans, blockchain records, and other
+domains before account deletion can be described as system-wide erasure.
 
 ### Maintainability notes
 

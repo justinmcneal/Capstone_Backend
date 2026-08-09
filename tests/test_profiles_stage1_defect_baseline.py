@@ -99,7 +99,7 @@ def test_numeric_financial_fields_currently_remain_plaintext(settings):
         _build_keyring.cache_clear()
 
 
-def test_account_finalization_currently_leaves_profile_pii(settings):
+def test_account_finalization_deletes_profile_domain_data(settings):
     customer = Customer(
         first_name="Delete",
         last_name="Profile",
@@ -115,13 +115,23 @@ def test_account_finalization_currently_leaves_profile_pii(settings):
         address_line1="Sensitive Address",
         mobile_number="+639171234567",
     ).save()
+    BusinessProfile(
+        customer_id=customer.id,
+        business_name="Sensitive Business",
+        business_type="retail_store",
+    ).save()
+    AlternativeData(
+        customer_id=customer.id,
+        household_income=50_000,
+    ).save()
 
     deleted = AccountLifecycleService.finalize_deletion(customer)
 
     assert deleted is not None
-    retained = CustomerProfile.find_by_customer(customer.id)
-    assert retained.address_line1 == "Sensitive Address"
-    assert retained.mobile_number == "+639171234567"
+    assert deleted.profile_cleanup_status == "complete"
+    assert CustomerProfile.find_by_customer(customer.id) is None
+    assert BusinessProfile.find_by_customer(customer.id) is None
+    assert AlternativeData.find_by_customer(customer.id) is None
 
 
 def test_full_document_save_currently_loses_a_concurrent_business_update():

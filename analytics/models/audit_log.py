@@ -46,6 +46,9 @@ AUDIT_ACTIONS = [
     "loan_officer_deactivated",
     # Profile
     "profile_updated",
+    "profile_directory_viewed",
+    "profile_sensitive_read",
+    "profile_access_denied",
     # Documents
     "document_uploaded",
     "document_verified",
@@ -68,6 +71,11 @@ AUDIT_ACTIONS = [
 # High-level action group mapping for analytics filtering.
 ACTION_GROUPS = {
     "login": ["user_login", "user_login_failed", "user_logout"],
+    "read": [
+        "profile_directory_viewed",
+        "profile_sensitive_read",
+        "profile_access_denied",
+    ],
     "create": [
         "user_registered",
         "admin_created",

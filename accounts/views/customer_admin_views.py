@@ -148,6 +148,28 @@ class CustomerDetailView(ManageUsersRequiredMixin, APIView):
                     if getattr(customer, "deletion_scheduled_for", None)
                     else None
                 ),
+                "profile_cleanup_status": getattr(
+                    customer, "profile_cleanup_status", None
+                ),
+                "profile_cleanup_counts": getattr(
+                    customer, "profile_cleanup_counts", {}
+                ),
+                "profile_cleanup_attempts": getattr(
+                    customer, "profile_cleanup_attempts", 0
+                ),
+                "profile_cleanup_last_error": getattr(
+                    customer, "profile_cleanup_last_error", ""
+                ),
+                "profile_cleanup_last_attempt_at": (
+                    customer.profile_cleanup_last_attempt_at.isoformat()
+                    if getattr(customer, "profile_cleanup_last_attempt_at", None)
+                    else None
+                ),
+                "profile_cleanup_completed_at": (
+                    customer.profile_cleanup_completed_at.isoformat()
+                    if getattr(customer, "profile_cleanup_completed_at", None)
+                    else None
+                ),
             },
             message="Customer retrieved successfully",
         )

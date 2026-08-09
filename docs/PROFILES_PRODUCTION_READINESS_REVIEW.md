@@ -1,6 +1,6 @@
 # Profiles Production Readiness Review
 
-Last updated: 2026-08-07
+Last updated: 2026-08-09
 
 Scope: `profiles/` plus profile routes, serializers, MongoDB persistence,
 field-level encryption, Celery risk scoring, notification preferences, account
@@ -42,20 +42,21 @@ field encryption; audit logging; rate limiting; and asynchronous risk scoring
 all exist. The codebase also contains substantially more profile tests than the
 previous version of this review recorded.
 
-Production release is blocked by unrestricted loan-officer access to all customer
-profiles, a mismatch between accepted API values and the risk-scoring engine,
-stale Celery tasks that can overwrite newer profile data, incomplete encryption
-of numeric financial fields, and account deletion that leaves profile PII and
-financial data behind. Profile completion and `ready_for_loan` also communicate a
-stronger readiness guarantee than their current minimal rules provide.
+Stage 2 closes the previously unrestricted loan-officer access and profile-data
+retention blockers. Production release remains blocked by a mismatch between
+accepted API values and the risk-scoring engine, stale Celery tasks that can
+overwrite newer profile data, and incomplete encryption of numeric financial
+fields. Profile completion and `ready_for_loan` also communicate a stronger
+readiness guarantee than their current minimal rules provide.
 
-This review was performed as a static code audit. Automated tests and live
-MongoDB/index behavior were not executed as part of the 2026-08-07 review.
+The original review was a static code audit. On 2026-08-09, the focused profile
+suite was executed after the Stage 2 implementation: all 77 profile tests passed.
+Live MongoDB/index and true concurrency behavior remain unverified.
 
 Current remediation status:
 
-- [ ] Stage 1 — API contract and regression baseline
-- [ ] Stage 2 — Officer privacy, authorization scope, and lifecycle retention
+- [x] Stage 1 — API contract and regression baseline
+- [x] Stage 2 — Officer privacy, authorization scope, and lifecycle retention
 - [ ] Stage 3 — Risk-scoring correctness, explainability, and task durability
 - [ ] Stage 4 — Encryption, persistence integrity, and concurrency
 - [ ] Stage 5 — Validation, completion, and readiness policy
@@ -93,16 +94,44 @@ Current remediation status:
 
 ### Staff API coverage
 
-- A paginated/searchable loan-officer customer directory is implemented at
+- A paginated/searchable and resource-scoped loan-officer customer directory is
+  implemented at
   `/api/officer/profiles/`.
 - A detailed loan-officer customer profile endpoint is implemented at
   `/api/officer/profiles/<customer_id>/`.
 - A legacy duplicate detail route remains at
   `/api/profile/officer/<customer_id>/`.
+- Directory queries use the shared loan-application/document-review scope. They
+  include assigned customers and the legitimate unassigned review queue while
+  excluding customers assigned to another officer.
+- Detail reads enforce the same scope and conceal out-of-scope customer existence
+  with `404`.
+- Inactive, suspended, deactivated, pending-deletion, and deleted customers are
+  hidden from both directory and detail access.
+- The directory returns only customer ID, name, and email. Phone search and phone
+  output were removed because randomized encrypted phone values cannot safely
+  support plaintext regex queries.
 - Detail responses use an explicit allowlist and omit account password/security
-  fields and the customer's wallet address.
+  fields, wallet address, and emergency-contact data.
+- Directory access, successful sensitive reads, and denied out-of-scope reads are
+  audited. Sensitive data fails closed with `503` when its required audit cannot
+  be written.
 - Administrator access is currently denied; the implementation is loan-officer
   only despite older documentation claiming officer-or-admin access.
+
+### Officer privacy and profile retention
+
+- Account finalization irreversibly deletes the customer's documents from
+  `customer_profiles`, `business_profiles`, and `alternative_data` under the
+  approved Profiles retention policy.
+- Cleanup supports both string and ObjectId legacy customer identifiers and is
+  idempotent.
+- Account anonymization records a durable `profile_cleanup_status`. An interrupted
+  cleanup remains `pending` and can be retried by the scheduled deletion task or
+  administrative finalization endpoint; attempt count, last attempt, and last
+  error type provide operational visibility.
+- `cleanup_deleted_customer_profiles` inventories legacy retained profile data in
+  dry-run mode by default and requires `--apply` for deletion.
 
 ### Validation and sanitization
 
@@ -162,48 +191,14 @@ Current remediation status:
   alternative-data round trips, and synchronous task execution under mongomock.
 - Business-age conversion tests cover direct model construction.
 - Blockchain/profile tests cover wallet-field serialization and validation.
-- At the time of this review, 73 profile-related test functions were present
-  across the five identified profile test files, including 28 in
-  `tests/test_profiles_api.py`. This is a static inventory, not a passing-test
-  claim.
+- On 2026-08-09, 77 focused tests passed across API, business-age, model/task,
+  scoring, Stage 1 characterization, and Stage 2 privacy/lifecycle modules.
+- The post-Stage 2 full suite collected 913 tests: 899 passed and 14 opt-in
+  integration tests skipped.
 
 ## Production Blockers
 
-### 1. Loan officers can enumerate and read every customer profile
-
-**Status: Blocked for production**
-
-`OfficerCustomerProfilesListView` queries the full customer collection for every
-loan officer. `OfficerProfileView` checks only that the actor has the
-`loan_officer` role and does not check whether the customer has an application
-assigned to that officer or is otherwise within the officer's review scope.
-
-The detail payload includes personal addresses, emergency contacts, registration
-information, income and expenses, household income, existing-loan information,
-bank/e-wallet indicators, payment history, and risk results. The directory also
-exposes names, email addresses, and telephone numbers across the customer base.
-
-`accounts/utils/access_control.py` already provides
-`require_customer_scope_for_officer()` and scoped customer-ID discovery for this
-purpose, but the profile views do not use them. Throttling does not replace
-authorization: at the current 500 requests/hour and maximum page size of 100, the
-directory could expose up to 50,000 records per hour to one officer account.
-
-Required work:
-
-- Scope directory results to customers assigned to or legitimately reviewable by
-  the requesting officer.
-- Apply `require_customer_scope_for_officer()` to profile detail access.
-- Return a concealed 404 for out-of-scope customer IDs.
-- Audit officer directory searches and detailed profile reads.
-- Minimize directory fields and evaluate whether all detailed financial fields
-  are necessary before an application is assigned.
-- Decide and document whether administrators require profile access; do not
-  silently broaden access while fixing officer scope.
-- Add cross-officer, assigned, unassigned, admin, deactivated-account, and
-  concealed-existence tests.
-
-### 2. API values and risk-scoring inputs are incompatible
+### 1. API values and risk-scoring inputs are incompatible
 
 **Status: Blocked for production**
 
@@ -233,7 +228,7 @@ Required work:
 - Review every downstream consumer before treating the heuristic as a credit
   decision or qualification result.
 
-### 3. Asynchronous risk scoring can overwrite newer customer data
+### 2. Asynchronous risk scoring can overwrite newer customer data
 
 **Status: Blocked for production**
 
@@ -253,7 +248,7 @@ Required work:
 - Make task behavior idempotent and define retry policy.
 - Add out-of-order task, duplicate task, concurrent update, and retry tests.
 
-### 4. Numeric financial fields are not encrypted by the current helper
+### 3. Numeric financial fields are not encrypted by the current helper
 
 **Status: Blocked for production**
 
@@ -268,11 +263,13 @@ Consequently:
 - `household_income` remains plaintext when stored as a number.
 - `existing_loan_amount` remains plaintext when stored as a number.
 
-The existing alternative-data encryption test verifies only model round-trip
-values. It does not enable a known encryption key and assert that raw MongoDB
-values use encrypted ciphertext markers. The legacy encryption management command
-also does not include the `alternative_data` collection and omits newer declared
-personal fields such as `mobile_number`.
+The shared encryption lifecycle now uses versioned ciphertext, previous-key reads,
+strict decryption, rotation, and verification. Its management command derives the
+field map from model declarations, so `alternative_data`, `mobile_number`, and
+other declared profile fields are no longer omitted. However, the helper still
+returns numeric values unchanged; the command reports those values as
+`unsupported`, and verification does not make unsupported numeric declarations
+encrypted.
 
 Required work:
 
@@ -280,34 +277,10 @@ Required work:
   type-preserving representation.
 - Add raw-database ciphertext and type-preserving round-trip tests under an
   enabled encryption key.
-- Reconcile each model's `encrypted_fields` with the backfill command field map.
-- Add a dry-run inventory for plaintext profile records and a reviewed migration
-  procedure.
+- Treat any populated `unsupported` count for a field declared encrypted as a
+  failed production-readiness condition.
 - Decide which encrypted fields require searching or sorting before encryption;
   randomized Fernet ciphertext cannot support ordinary equality/range queries.
-
-### 5. Account deletion leaves profile PII and financial data behind
-
-**Status: Blocked for production**
-
-`AccountLifecycleService.finalize_deletion()` anonymizes the customer account
-document but does not delete, anonymize, or apply retention state to
-`customer_profiles`, `business_profiles`, or `alternative_data`. Those records
-can retain addresses, emergency contacts, business registration details, income,
-debt, payment behavior, digital-footprint indicators, and derived risk scores
-under the original customer ID after the account reports an anonymized/deleted
-state.
-
-Required work:
-
-- Define retention requirements for profile, financial, document, loan, audit,
-  and blockchain records.
-- Add a coordinated deletion/anonymization service covering all customer-owned
-  profile collections.
-- Preserve only fields required by an explicit legal/financial retention policy.
-- Prevent deleted customers from appearing in the officer directory.
-- Add lifecycle tests proving retained records are appropriately anonymized and
-  non-retained profile data is removed or irreversibly de-identified.
 
 ## Partial Implementations and High-Priority Gaps
 
@@ -373,6 +346,8 @@ Remaining work:
 - Return machine-readable missing field codes instead of display strings alone.
 - Keep product-specific eligibility separate from generic profile completeness.
 - Add boundary tests for every required field and readiness transition.
+- Treat `risk_score=0` as an existing score; `bool(risk_score)` currently reports
+  zero as `has_risk_score=false`.
 
 ### Legacy business-age compatibility is not implemented through PUT
 
@@ -403,6 +378,9 @@ their controlling boolean/status changes.
 Remaining work:
 
 - Reject future dates of birth and define plausible minimum/maximum customer age.
+- Normalize stored BSON datetimes back to date-only API values; a reloaded birth
+  date can currently serialize as `YYYY-MM-DDT00:00:00` instead of `YYYY-MM-DD`.
+- Validate `emergency_contact_phone`, not only the customer's mobile number.
 - Validate Philippine ZIP codes where applicable.
 - Consider checksum-aware Ethereum address normalization if the wallet field
   remains part of the product.
@@ -418,6 +396,8 @@ Remaining work:
   location names.
 - Store monetary values as Decimal128 or integer centavos rather than binary
   floats.
+- Reject non-finite monetary values. DRF currently accepts `NaN` and positive
+  infinity for fields such as `household_income`.
 
 ### Notification preference validation and persistence are incomplete
 
@@ -426,11 +406,14 @@ Remaining work:
 The service enforces a fixed preference-key allowlist, but converts submitted
 values with Python `bool()`. A string such as `"false"` therefore becomes `True`
 instead of being rejected or parsed as false. Preference updates save the complete
-customer document and do not generate an audit event.
+customer document and do not generate an audit event. Reads also return an
+existing stored preference dictionary as-is, so older or partial dictionaries can
+omit documented default keys instead of being merged with the defaults.
 
 Remaining work:
 
 - Introduce a DRF serializer with strict BooleanFields and the fixed key set.
+- Merge stored preferences over the complete defaults on every read and update.
 - Atomically `$set` only `notification_preferences`.
 - Audit preference changes without storing unrelated customer data.
 - Test JSON booleans, invalid strings/numbers/nulls, partial updates, defaults,
@@ -455,20 +438,26 @@ Remaining work:
   scoring.
 - Test broker outage, timeout, duplicate enqueue, retry, and recovery behavior.
 
+The same partial-commit response problem applies to mutation audit failures:
+profile data is saved before `AuditLog.log_action()`, but the broad outer exception
+handler can then return `500`. A client retry may therefore repeat a mutation that
+already succeeded. Mutation persistence, audit requirements, and retry semantics
+must be made explicit and tested.
+
 ### Audit coverage is incomplete
 
 **Status: Partial**
 
 Personal, business, and alternative-data PUT operations create basic audit
-records. Notification changes, officer searches and reads, score recalculation,
-score failures, and automatic profile creation are not audited. IP capture uses
-`REMOTE_ADDR`; deployment proxy trust must be configured consistently with the
-rest of the application.
+records. Officer directory access, successful sensitive reads, and denied scoped
+reads now create required audit records using the shared trusted-proxy IP helper.
+Notification changes, score recalculation, score failures, and automatic profile
+creation are not audited. The three customer mutation paths still use
+`REMOTE_ADDR`; their proxy handling must be aligned with the shared helper.
 
 Remaining work:
 
 - Audit notification preference changes.
-- Audit access to detailed customer financial/profile information.
 - Record scoring policy version, input revision, result category, task identity,
   and failure state without storing raw sensitive inputs in logs.
 - Add audit success/failure tests and trusted-proxy operational guidance.
@@ -502,9 +491,6 @@ contracts are missing.
 
 Required additions:
 
-- Officer assignment/scope tests across two officers and multiple customers.
-- Officer directory privacy, pagination, enumeration, and sensitive-read audit
-  tests.
 - Serializer-to-risk-service integration tests using accepted API values.
 - Out-of-order and duplicate Celery task tests.
 - Broker outage and reconciliation tests.
@@ -514,10 +500,12 @@ Required additions:
 - GET side-effect tests proving reads do not create records.
 - Concurrent partial-update/lost-update tests.
 - Legacy business-age endpoint conversion and dual-field precedence tests.
-- Date-of-birth, ZIP, location edge-case, and cross-field validation tests.
+- Date-of-birth range and date-only response-shape tests.
+- Emergency-contact phone, ZIP, location edge-case, and cross-field validation
+  tests.
+- Non-finite and precision-boundary monetary-value tests.
 - Strict notification boolean and concurrent-update tests.
 - Completion/readiness transition and missing-field-code tests.
-- Account deletion/anonymization tests covering all profile collections.
 - Score version, explanation, stale status, and recalculation tests.
 - Tests proving business and alternative GET responses match the published API
   schema, including completion fields if those remain part of the contract.
@@ -538,50 +526,113 @@ match current code in several material areas:
 - Business and alternative GET responses do not currently include the documented
   completion fields.
 - There are seven throttled profile views, not six.
-- The canonical officer routes are `/api/officer/profiles/` and
-  `/api/officer/profiles/<customer_id>/`; the guide primarily documents the legacy
-  `/api/profile/officer/<customer_id>/` route.
-- Officer detail access is loan-officer only, not officer-or-admin.
-- Officer detail returns a full allowlisted profile, not the customer summary
-  structure.
-- The officer customer directory is not documented.
 - Notification preference boolean-like values are not strictly parsed or
   validated.
+- Partial stored notification preferences are not merged with documented
+  defaults.
+- A stored `risk_score` of zero is reported as though no score exists.
+- A reloaded MongoDB birth date may be returned as a datetime string rather than
+  the guide's date-only value.
+- `emergency_contact_phone` has no phone-format validation, and non-finite float
+  values can pass monetary serializers.
 - Celery broker failure is not guaranteed to be skipped gracefully.
-- The current 500/hour throttle reduces request volume but does not mitigate the
-  missing officer resource scope.
 
-The testing guide should be updated only after Stage 1 establishes the intended
-canonical contract, so documentation does not preserve accidental behavior.
+Stage 2 officer scope, payload, audit, and retention behavior is now reflected in
+the testing guide. The remaining mismatches must be corrected with their owning
+implementation stages so the guide does not preserve accidental behavior.
 
 ## Staged Remediation Plan
 
 ### Stage 1 — API contract and regression baseline
 
-**Status: Not started**
+**Status: Complete / contract decisions and defect baseline recorded**
 
-- [ ] Decide canonical customer and staff routes and legacy-route deprecation.
-- [ ] Decide whether admins may read profiles and under which permission.
-- [ ] Define canonical types/enums for income, payment history, and housing.
-- [ ] Define business-age alias precedence and deprecation behavior.
-- [ ] Define completion and `ready_for_loan` semantics.
-- [ ] Add regression tests that demonstrate every confirmed defect before fixes.
-- [ ] Record current client-impact decisions for customer mobile, officer web, and
-  admin web applications.
+- [x] ~~Decide canonical customer and staff routes and legacy-route deprecation.~~
+- [x] ~~Decide whether admins may read profiles and under which permission.~~
+- [x] ~~Define canonical types/enums for income, payment history, and housing.~~
+- [x] ~~Define business-age alias precedence and deprecation behavior.~~
+- [x] ~~Define completion and `ready_for_loan` semantics.~~
+- [x] ~~Add regression/characterization tests for every confirmed production-
+  blocker category before fixes.~~
+- [x] ~~Record current client-impact decisions for customer mobile, officer web,
+  and admin web applications.~~
+
+Stage 1 contract decisions:
+
+- Customer self-service remains canonical under `/api/profile/`. Staff directory
+  and detail access are canonical under `/api/officer/profiles/` and
+  `/api/officer/profiles/<customer_id>/`. The duplicate
+  `/api/profile/officer/<customer_id>/` route remains a temporary compatibility
+  alias and must be deprecated after the officer web client migrates.
+- Administrators do not inherit profile access merely from the `admin` role. The
+  current profile API continues to deny them. Any future administrative profile
+  access must use a separate endpoint, an explicit permission such as
+  `manage_users`, an allowlisted payload, a purpose, and a sensitive-read audit.
+- `household_income`, rent, and loan amounts are nonnegative PHP monetary values,
+  not income-band enum strings. `income_range` remains a separate optional band.
+  Canonical loan history values are `on_time`, `sometimes_late`, `often_late`,
+  `defaulted`, and `no_history`; canonical utility history values are `on_time`,
+  `sometimes_late`, and `often_late`; canonical housing values are `owned`,
+  `rented`, `living_with_family`, and `company_provided`. Scoring must consume
+  these exact values rather than undocumented legacy aliases.
+- `business_age_months` is the canonical stored and response field. The legacy
+  `years_in_operation` input remains temporarily accepted and converts years to
+  months. If both are supplied, they must agree after conversion or validation
+  must reject the request; the canonical field takes no silent precedence.
+- `profiles_complete` means the approved, versioned cross-section profile
+  requirements are satisfied. It does not include document approval or product
+  eligibility. The misleading `ready_for_loan` field will remain a deprecated
+  compatibility alias during client migration and will be replaced by
+  `profile_ready_for_application`; product qualification and document readiness
+  remain separate signals.
+- Customer mobile must migrate to canonical months, exact enums, and the renamed
+  readiness signal. Loan-officer web must migrate to the scoped officer routes
+  and treat concealed out-of-scope results as `404`. Admin web requires no profile
+  change because direct admin access is intentionally not part of this contract.
+
+Stage 1 validation adds nine passing characterization tests for GET-side writes,
+scoring type/enum fallback, stale-task overwrites, plaintext numeric financial
+fields, the former deletion-retention defect, lost updates, weak readiness,
+discarded business-age aliases, and string-to-boolean preference coercion. Stage
+2 converted the deletion assertion to the secure target behavior and added a
+dedicated privacy/lifecycle module. Remaining characterization assertions must be
+converted as Stages 3–6 fix each issue.
 
 ### Stage 2 — Officer privacy, authorization scope, and lifecycle retention
 
-**Status: Not started / production blocker**
+**Status: Complete**
 
-- [ ] Scope officer directory queries to authorized customer IDs.
-- [ ] Enforce officer customer scope on detail reads.
-- [ ] Conceal out-of-scope customer existence.
-- [ ] Minimize staff directory/detail payloads.
-- [ ] Audit sensitive staff reads and searches.
-- [ ] Exclude deleted/inactive customers from operational directories.
-- [ ] Integrate profile collections into account deletion/anonymization and
-  retention policy.
-- [ ] Add authorization, privacy, and lifecycle tests.
+- [x] ~~Scope officer directory queries to authorized customer IDs.~~
+- [x] ~~Enforce officer customer scope on detail reads.~~
+- [x] ~~Conceal out-of-scope customer existence.~~
+- [x] ~~Minimize staff directory/detail payloads and remove phone search.~~
+- [x] ~~Audit sensitive staff reads, directory access, and denied reads.~~
+- [x] ~~Exclude inactive, suspended, deactivated, pending-deletion, and deleted
+  customers from operational profile access.~~
+- [x] ~~Integrate all profile collections into retryable account finalization and
+  define irreversible deletion as the Profiles retention policy.~~
+- [x] ~~Add dry-run legacy cleanup and authorization, privacy, audit, lifecycle,
+  retry, and reconciliation tests.~~
+
+Stage 2 behavior:
+
+- Assigned customers are visible only to their assigned officer. Submitted or
+  under-review customers with no assigned officer remain visible in the shared
+  review queue. A customer actively assigned to someone else is excluded.
+- Out-of-scope detail requests return the same `404 Resource not found` response
+  regardless of whether the customer exists.
+- Directory output is limited to ID, name, and email. Detail output no longer
+  includes wallet, account-security, or emergency-contact data.
+- Required read audits fail closed: no sensitive payload is returned when the
+  audit record cannot be stored.
+- Final account deletion removes personal, business, and alternative profile
+  documents. A durable pending marker and idempotent cleanup make interruptions
+  retryable. Existing deleted accounts can be inventoried with
+  `cleanup_deleted_customer_profiles` and are changed only with `--apply`.
+- Eleven Stage 2 tests cover cross-officer concealment, assigned and unassigned
+  scope, inactive/deleted states, payload minimization, removed phone behavior,
+  audit success/failure, deletion of all collections, retry, and dry-run legacy
+  cleanup.
 
 ### Stage 3 — Risk-scoring correctness, explainability, and task durability
 
@@ -601,7 +652,8 @@ canonical contract, so documentation does not preserve accidental behavior.
 **Status: Not started / production blocker**
 
 - [ ] Add type-preserving encryption for numeric financial fields.
-- [ ] Reconcile model encryption declarations and encryption-backfill field maps.
+- [x] ~~Derive encryption migration and verification field maps from model
+  declarations, including profile collections and newer declared fields.~~
 - [ ] Add raw-ciphertext and round-trip tests with an enabled key.
 - [ ] Replace GET `get_or_create()` writes with side-effect-free reads or atomic
   registration-time creation.
@@ -614,9 +666,12 @@ canonical contract, so documentation does not preserve accidental behavior.
 **Status: Not started**
 
 - [ ] Add date-of-birth and identity validation.
+- [ ] Normalize birth-date responses to date-only values and validate emergency
+  contact phone numbers.
 - [ ] Add conditional field validation and stale-value clearing.
 - [ ] Review Philippine location validation and ZIP rules.
 - [ ] Replace monetary floats with a precise representation.
+- [ ] Reject NaN and infinite monetary inputs.
 - [ ] Implement the approved, versioned completion/readiness definition.
 - [ ] Add machine-readable missing-field codes and transition tests.
 - [ ] Keep product-specific eligibility distinct from profile completion.
@@ -627,8 +682,11 @@ canonical contract, so documentation does not preserve accidental behavior.
 
 - [ ] Implement and test legacy business-age conversion or remove the alias.
 - [ ] Make GET response fields consistent with the canonical schema.
-- [ ] Introduce strict notification preference serialization and atomic updates.
+- [ ] Introduce strict notification preference serialization, default merging,
+  and atomic updates.
 - [ ] Complete mutation, score, and sensitive-read audit coverage.
+- [ ] Define atomic/partial-commit behavior when audit recording or task enqueue
+  fails after profile persistence.
 - [ ] Update `docs/PROFILES_TESTING_GUIDE.md` to the verified contract.
 - [ ] Publish client migration notes for changed routes, fields, roles, and
   asynchronous score status.
@@ -672,9 +730,9 @@ canonical contract, so documentation does not preserve accidental behavior.
 
 ### Required before production
 
-- [ ] Officer access is resource-scoped and audited.
-- [ ] Deleted-account profile data follows an approved retention/anonymization
-  policy.
+- [x] ~~Officer access is resource-scoped, minimized, concealed, and audited.~~
+- [x] ~~Deleted-account profile data is irreversibly removed under the approved
+  Profiles retention policy with retry and legacy reconciliation support.~~
 - [ ] Risk-scoring inputs match serializer-accepted values.
 - [ ] Risk task writes are atomic, versioned, idempotent, and stale-safe.
 - [ ] Risk policy is explainable, governed, calibrated, and reviewed for fairness.
@@ -686,21 +744,23 @@ canonical contract, so documentation does not preserve accidental behavior.
 - [ ] Cross-field, date, location, and monetary validation is production-safe.
 - [ ] Legacy business-age behavior is implemented as documented or removed.
 - [ ] Notification preferences use strict booleans and atomic persistence.
-- [ ] Audit coverage includes preferences, scoring, and sensitive staff reads.
+- [ ] Audit coverage includes preferences and scoring; sensitive staff reads are
+  now covered.
 - [ ] Canonical API responses, roles, and routes match the testing guide.
-- [ ] Focused tests pass, and real-Mongo index/concurrency behavior is validated.
+- [x] ~~Focused profile and full local test suites pass.~~
+- [ ] Real-Mongo index/concurrency behavior is validated.
 
 ## Client Impact
 
 The customer mobile application, loan-officer web application, and potentially the
-admin web application will require coordinated changes once the canonical
-contract is decided:
+admin web application require coordinated changes as later stages complete:
 
 - Customer mobile may need canonical `business_age_months`, stricter validation,
   machine-readable missing fields, and asynchronous risk status rather than
   assuming an immediate score.
 - Loan-officer web must use `/api/officer/profiles/` routes, handle scoped/404
-  results, and display only the approved allowlisted profile fields.
+  results, stop relying on directory phone search/output or emergency-contact
+  detail fields, and display only the approved allowlisted profile fields.
 - Admin web requires a product decision: current code denies admins even though
   older documentation promises admin access. If access is required, it must use
   an explicit permission and sensitive-read audit trail.
@@ -716,5 +776,5 @@ contract is decided:
   review, and staging validation before use.
 - The current 500/hour profile throttle is documented as implemented behavior,
   not an endorsement of that value for production.
-- Optional avatar/export features should not be prioritized ahead of privacy,
-  scoring, encryption, deletion-lifecycle, and concurrency blockers.
+- Optional avatar/export features should not be prioritized ahead of scoring,
+  encryption, validation, and concurrency blockers.

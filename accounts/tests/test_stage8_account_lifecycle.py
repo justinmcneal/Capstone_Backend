@@ -227,6 +227,14 @@ def test_deletion_can_be_cancelled_with_credentials_and_finalized_after_retentio
     assert deleted.password == ""
     assert deleted.email.endswith("@deleted.local")
 
+    cleanup_status = admin_client.get(
+        reverse("accounts:admin-customer-detail", kwargs={"customer_id": customer.id})
+    )
+    assert cleanup_status.status_code == 200
+    assert cleanup_status.json()["data"]["profile_cleanup_status"] == "complete"
+    assert cleanup_status.json()["data"]["profile_cleanup_attempts"] == 1
+    assert cleanup_status.json()["data"]["profile_cleanup_last_error"] == ""
+
 
 @override_settings(SECURE_SSL_REDIRECT=False, WEBSOCKET_ENABLED=False)
 def test_deletion_finalization_is_blocked_before_retention_period():

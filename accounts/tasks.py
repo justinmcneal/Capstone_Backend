@@ -284,8 +284,16 @@ def finalize_scheduled_customer_deletions_task():
     now = datetime.now(timezone.utc)
     customers = Customer.find(
         {
-            "account_state": "pending_deletion",
-            "deletion_scheduled_for": {"$lte": now},
+            "$or": [
+                {
+                    "account_state": "pending_deletion",
+                    "deletion_scheduled_for": {"$lte": now},
+                },
+                {
+                    "account_state": "deleted",
+                    "profile_cleanup_status": "pending",
+                },
+            ]
         }
     )
 

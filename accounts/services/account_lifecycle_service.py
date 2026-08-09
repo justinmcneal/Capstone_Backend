@@ -326,6 +326,11 @@ class AccountLifecycleService:
 
     @staticmethod
     def is_deletion_due(customer):
+        if (
+            getattr(customer, "account_state", "active") == "deleted"
+            and getattr(customer, "profile_cleanup_status", None) == "pending"
+        ):
+            return True
         scheduled_for = EmailUtils.to_aware_utc(
             getattr(customer, "deletion_scheduled_for", None)
         )
@@ -337,11 +342,19 @@ class AccountLifecycleService:
 
     @staticmethod
     def finalize_deletion(customer, *, reason=""):
+        """Anonymize an account and irreversibly delete its profile-domain data.
+
+        Account anonymization is committed first with a durable pending cleanup
+        marker. Profile cleanup is idempotent and can be retried by the scheduled
+        task or administrative endpoint if a database error interrupts it.
+        """
+
         now = AccountLifecycleService._now()
         placeholder_email = (
             f"deleted-{customer.id}-{uuid.uuid4().hex[:8]}@deleted.local"
         )
-        document = settings.MONGODB[Customer.collection_name].find_one_and_update(
+        collection = settings.MONGODB[Customer.collection_name]
+        document = collection.find_one_and_update(
             {
                 "_id": customer._id,
                 "account_state": "pending_deletion",
@@ -396,6 +409,12 @@ class AccountLifecycleService:
                     "account_state_changed_at": now,
                     "deleted_at": now,
                     "anonymized_at": now,
+                    "profile_cleanup_status": "pending",
+                    "profile_cleanup_counts": {},
+                    "profile_cleanup_attempts": 0,
+                    "profile_cleanup_last_error": "",
+                    "profile_cleanup_last_attempt_at": None,
+                    "profile_cleanup_completed_at": None,
                     "active": False,
                     "updated_at": now,
                 },
@@ -404,10 +423,75 @@ class AccountLifecycleService:
             return_document=ReturnDocument.AFTER,
         )
         if not document:
-            return None
+            document = collection.find_one(
+                {
+                    "_id": customer._id,
+                    "account_state": "deleted",
+                    "profile_cleanup_status": "pending",
+                }
+            )
+            if not document:
+                return None
+
         updated = Customer.from_dict(document)
         TokenUtils.revoke_all_sessions(updated.id, "customer")
-        return updated
+
+        from profiles.services.lifecycle import delete_customer_profile_data
+
+        cleanup_attempted_at = AccountLifecycleService._now()
+        collection.update_one(
+            {
+                "_id": updated._id,
+                "account_state": "deleted",
+                "profile_cleanup_status": "pending",
+            },
+            {
+                "$set": {
+                    "profile_cleanup_last_attempt_at": cleanup_attempted_at,
+                    "updated_at": cleanup_attempted_at,
+                },
+                "$inc": {"profile_cleanup_attempts": 1},
+            },
+        )
+        try:
+            cleanup_counts = delete_customer_profile_data(
+                settings.MONGODB, updated.id
+            )
+        except Exception as exc:
+            collection.update_one(
+                {
+                    "_id": updated._id,
+                    "account_state": "deleted",
+                    "profile_cleanup_status": "pending",
+                },
+                {
+                    "$set": {
+                        "profile_cleanup_last_error": type(exc).__name__,
+                        "updated_at": AccountLifecycleService._now(),
+                    }
+                },
+            )
+            raise
+
+        cleanup_completed_at = AccountLifecycleService._now()
+        completed = collection.find_one_and_update(
+            {
+                "_id": updated._id,
+                "account_state": "deleted",
+                "profile_cleanup_status": "pending",
+            },
+            {
+                "$set": {
+                    "profile_cleanup_status": "complete",
+                    "profile_cleanup_counts": cleanup_counts,
+                    "profile_cleanup_last_error": "",
+                    "profile_cleanup_completed_at": cleanup_completed_at,
+                    "updated_at": cleanup_completed_at,
+                }
+            },
+            return_document=ReturnDocument.AFTER,
+        )
+        return Customer.from_dict(completed) if completed else None
 
     @staticmethod
     def request_two_factor_recovery(email, password):

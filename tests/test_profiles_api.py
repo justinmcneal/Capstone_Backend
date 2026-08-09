@@ -15,6 +15,7 @@ Coverage:
 from unittest.mock import MagicMock
 
 from bson import ObjectId
+from django.conf import settings
 from django.core.cache import cache
 from django.urls import resolve
 from rest_framework.test import APIRequestFactory, force_authenticate
@@ -96,6 +97,16 @@ def _auth_admin(admin):
         email=admin.email,
         verified=True,
         role="admin",
+    )
+
+
+def _assign_customer(officer, customer, *, status="under_review"):
+    settings.MONGODB["loan_applications"].insert_one(
+        {
+            "customer_id": str(customer.id),
+            "assigned_officer": str(officer.id),
+            "status": status,
+        }
     )
 
 
@@ -677,6 +688,7 @@ class TestOfficerProfileView:
     def test_officer_can_view_customer_profile(self, monkeypatch):
         officer = _create_officer()
         customer = _create_customer()
+        _assign_customer(officer, customer)
         profile = CustomerProfile(
             customer_id=str(customer.id),
             gender="male",
@@ -762,6 +774,13 @@ class TestOfficerProfileView:
     def test_missing_customer_returns_404(self, monkeypatch):
         officer = _create_officer()
         customer_id = str(ObjectId())
+        settings.MONGODB["loan_applications"].insert_one(
+            {
+                "customer_id": customer_id,
+                "assigned_officer": str(officer.id),
+                "status": "under_review",
+            }
+        )
         monkeypatch.setattr(
             Customer,
             "find_one",
@@ -787,6 +806,7 @@ class TestOfficerProfileView:
     def test_response_excludes_wallet_and_account_secrets(self, monkeypatch):
         officer = _create_officer()
         customer = _create_customer()
+        _assign_customer(officer, customer)
         profile = CustomerProfile(
             customer_id=str(customer.id),
             mobile_number="+639171234567",
@@ -815,6 +835,8 @@ class TestOfficerProfileView:
         assert response.status_code == 200
         assert data["personal_profile"]["mobile_number"] == "+639171234567"
         assert "wallet_address" not in data["personal_profile"]
+        assert "emergency_contact_name" not in data["personal_profile"]
+        assert "emergency_contact_phone" not in data["personal_profile"]
         assert "password" not in data
         assert "password_reset_otp" not in data
 
@@ -837,23 +859,13 @@ class TestOfficerProfileView:
         response = OfficerCustomerProfilesListView.as_view()(request)
         assert response.status_code == 403
 
-    def test_officer_can_search_customer_directory(self, monkeypatch):
+    def test_officer_directory_is_scoped_and_minimized(self, monkeypatch):
         officer = _create_officer()
         customer = _create_customer()
-        profile = CustomerProfile(
-            customer_id=str(customer.id),
-            mobile_number="+639196331559",
-        )
-        monkeypatch.setattr(
-            CustomerProfile,
-            "find_by_customer",
-            staticmethod(
-                lambda customer_id: profile
-                if str(customer_id) == str(customer.id)
-                else None
-            ),
-            raising=False,
-        )
+        out_of_scope_customer = _create_customer()
+        other_officer = _create_officer()
+        _assign_customer(officer, customer)
+        _assign_customer(other_officer, out_of_scope_customer)
         request = _get("/api/officer/profiles/", _auth_officer(officer))
         monkeypatch.setattr(
             OfficerCustomerProfilesListView,
@@ -870,8 +882,11 @@ class TestOfficerProfileView:
 
         response = OfficerCustomerProfilesListView.as_view()(request)
         assert response.status_code == 200
-        assert any(
-            item["customer_id"] == str(customer.id)
-            and item["phone"] == "+639196331559"
-            for item in response.data["data"]["customers"]
-        )
+        assert response.data["data"]["customers"] == [
+            {
+                "customer_id": str(customer.id),
+                "full_name": customer.full_name,
+                "email": customer.email,
+            }
+        ]
+        assert "phone" not in response.data["data"]["customers"][0]
