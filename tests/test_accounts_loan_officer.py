@@ -43,8 +43,10 @@ def test_loan_officer_login_success():
 
     assert response.status_code == 200
     data = response.json()["data"]
-    assert "access_token" in data
-    assert "refresh_token" in data
+    assert "access" in data
+    assert "refresh" in data
+    assert "access_token" not in data
+    assert "refresh_token" not in data
     assert data["user"]["email"] == officer.email
     assert data["must_change_password"] is False
 
@@ -86,7 +88,7 @@ def test_loan_officer_must_change_password_blocks_profile():
 
     login_url = reverse("accounts:loan-officer-login")
     login_resp = client.post(login_url, {"email": officer.email, "password": "InitialPass1!"}, format="json")
-    access_token = login_resp.json()["data"]["access_token"]
+    access_token = login_resp.json()["data"]["access"]
 
     client.credentials(HTTP_AUTHORIZATION=f"Bearer {access_token}")
     url = reverse("accounts:loan-officer-me")
@@ -104,10 +106,20 @@ def test_loan_officer_logout():
 
     login_url = reverse("accounts:loan-officer-login")
     login_resp = client.post(login_url, {"email": officer.email, "password": "Pass123!"}, format="json")
-    refresh_token = login_resp.json()["data"]["refresh_token"]
+    refresh_token = login_resp.json()["data"]["refresh"]
 
     logout_url = reverse("accounts:loan-officer-logout")
     response = client.post(logout_url, {"refresh_token": refresh_token}, format="json")
 
     assert response.status_code == 200
     assert response.json()["status"] == "success"
+
+
+@override_settings(SECURE_SSL_REDIRECT=False)
+def test_loan_officer_logout_requires_refresh_token():
+    response = APIClient().post(
+        reverse("accounts:loan-officer-logout"), {}, format="json"
+    )
+
+    assert response.status_code == 400
+    assert response.json()["message"] == "Refresh token is required"

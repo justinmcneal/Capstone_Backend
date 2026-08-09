@@ -90,6 +90,16 @@ def test_admin_profile_requires_auth():
 
 
 @override_settings(SECURE_SSL_REDIRECT=False)
+def test_admin_logout_requires_refresh_token():
+    response = APIClient().post(
+        reverse("accounts:admin-logout"), {}, format="json"
+    )
+
+    assert response.status_code == 400
+    assert response.json()["message"] == "Refresh token is required"
+
+
+@override_settings(SECURE_SSL_REDIRECT=False)
 def test_admin_create_and_list_loan_officers():
     """Super admin creates a loan officer, then lists all loan officers."""
     import pyotp

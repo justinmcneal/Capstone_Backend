@@ -230,7 +230,7 @@ def test_change_password_clears_must_change_flag():
     )
     assert login_resp.status_code == 200
     assert login_resp.json()["data"]["must_change_password"] is True
-    access = login_resp.json()["data"]["access_token"]
+    access = login_resp.json()["data"]["access"]
     client.credentials(HTTP_AUTHORIZATION=f"Bearer {access}")
 
     r = client.post(
@@ -258,7 +258,7 @@ def test_mandatory_change_rejects_reusing_temporary_password():
         {"email": officer.email, "password": "Initial123!"},
         format="json",
     )
-    access = login_resp.json()["data"]["access_token"]
+    access = login_resp.json()["data"]["access"]
     client.credentials(HTTP_AUTHORIZATION=f"Bearer {access}")
 
     r = client.post(

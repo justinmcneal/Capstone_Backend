@@ -1,0 +1,194 @@
+"""Stage 1 characterization tests for confirmed profile defects.
+
+These assertions intentionally describe current behavior. Later remediation stages
+must replace each characterization with the secure/correct target expectation.
+"""
+
+from datetime import date, datetime, timedelta, timezone
+from types import SimpleNamespace
+
+from bson import ObjectId
+from cryptography.fernet import Fernet
+
+from accounts.models import Customer
+from accounts.services.account_lifecycle_service import AccountLifecycleService
+from config.field_encryption import _build_keyring, _get_fernet
+from profiles.models import AlternativeData, BusinessProfile, CustomerProfile
+from profiles.serializers import BusinessProfileSerializer
+from profiles.services.notification_preferences import update_preferences
+from profiles.services.risk_scoring import _income_score, _loan_history_score
+from profiles.services.summary import get_profile_summary
+from profiles.tasks import calculate_risk_score_task
+
+
+def test_summary_get_path_currently_creates_three_profile_documents(settings):
+    customer_id = str(ObjectId())
+
+    summary = get_profile_summary(customer_id)
+
+    assert summary["customer_id"] == customer_id
+    assert settings.MONGODB["customer_profiles"].count_documents({}) == 1
+    assert settings.MONGODB["business_profiles"].count_documents({}) == 1
+    assert settings.MONGODB["alternative_data"].count_documents({}) == 1
+
+
+def test_numeric_income_and_canonical_late_values_currently_hit_score_fallbacks():
+    numeric_income = SimpleNamespace(household_income=50_000)
+    sometimes_late = SimpleNamespace(
+        has_existing_loans=True, loan_payment_history="sometimes_late"
+    )
+    often_late = SimpleNamespace(
+        has_existing_loans=True, loan_payment_history="often_late"
+    )
+
+    assert _income_score(numeric_income) == 50.0
+    assert _loan_history_score(sometimes_late) == 40.0
+    assert _loan_history_score(often_late) == 40.0
+
+
+def test_stale_risk_task_currently_overwrites_a_newer_profile_update(
+    settings, monkeypatch
+):
+    customer_id = str(ObjectId())
+    AlternativeData(
+        customer_id=customer_id,
+        education_level="college_graduate",
+        housing_status="owned",
+        household_income=50_000,
+    ).save()
+
+    def score_after_concurrent_update(_alternative):
+        settings.MONGODB["alternative_data"].update_one(
+            {"customer_id": customer_id},
+            {"$set": {"housing_status": "rented"}},
+        )
+        return {"total_score": 70, "category": "low"}
+
+    monkeypatch.setattr("profiles.tasks.calculate_risk_score", score_after_concurrent_update)
+    calculate_risk_score_task(customer_id)
+
+    stored = settings.MONGODB["alternative_data"].find_one(
+        {"customer_id": customer_id}
+    )
+    assert stored["housing_status"] == "owned"
+
+
+def test_numeric_financial_fields_currently_remain_plaintext(settings):
+    settings.FIELD_ENCRYPTION_KEY = Fernet.generate_key().decode()
+    settings.FIELD_ENCRYPTION_PREVIOUS_KEYS = ()
+    _get_fernet.cache_clear()
+    _build_keyring.cache_clear()
+    try:
+        customer_id = str(ObjectId())
+        AlternativeData(
+            customer_id=customer_id,
+            household_income=50_000,
+            existing_loan_amount=10_000,
+            existing_loan_source="bank",
+        ).save()
+
+        stored = settings.MONGODB["alternative_data"].find_one(
+            {"customer_id": customer_id}
+        )
+        assert stored["household_income"] == 50_000
+        assert stored["existing_loan_amount"] == 10_000
+        assert isinstance(stored["existing_loan_source"], str)
+        assert stored["existing_loan_source"].startswith("enc::")
+    finally:
+        _get_fernet.cache_clear()
+        _build_keyring.cache_clear()
+
+
+def test_account_finalization_currently_leaves_profile_pii(settings):
+    customer = Customer(
+        first_name="Delete",
+        last_name="Profile",
+        email="delete-profile@example.com",
+        verified=True,
+        account_state="pending_deletion",
+        deletion_scheduled_for=datetime.now(timezone.utc) - timedelta(minutes=1),
+    )
+    customer.set_password("OldPass123!")
+    customer.save()
+    CustomerProfile(
+        customer_id=customer.id,
+        address_line1="Sensitive Address",
+        mobile_number="+639171234567",
+    ).save()
+
+    deleted = AccountLifecycleService.finalize_deletion(customer)
+
+    assert deleted is not None
+    retained = CustomerProfile.find_by_customer(customer.id)
+    assert retained.address_line1 == "Sensitive Address"
+    assert retained.mobile_number == "+639171234567"
+
+
+def test_full_document_save_currently_loses_a_concurrent_business_update():
+    customer_id = str(ObjectId())
+    BusinessProfile(
+        customer_id=customer_id,
+        business_name="Original Name",
+        business_type="retail_store",
+        income_range="20000_30000",
+    ).save()
+    first = BusinessProfile.find_by_customer(customer_id)
+    second = BusinessProfile.find_by_customer(customer_id)
+
+    first.business_name = "New Name"
+    first.save()
+    second.business_type = "food_vendor"
+    second.save()
+
+    stored = BusinessProfile.find_by_customer(customer_id)
+    assert stored.business_name == "Original Name"
+    assert stored.business_type == "food_vendor"
+
+
+def test_minimal_fields_currently_report_ready_for_loan():
+    customer_id = str(ObjectId())
+    CustomerProfile(
+        customer_id=customer_id,
+        date_of_birth=date(1990, 1, 1),
+        gender="female",
+        civil_status="single",
+        address_line1="Address",
+        barangay="Barangay",
+        city_municipality="City",
+        province="Province",
+    ).save()
+    BusinessProfile(
+        customer_id=customer_id,
+        business_type="retail_store",
+        income_range="20000_30000",
+    ).save()
+    AlternativeData(
+        customer_id=customer_id,
+        education_level="college_graduate",
+        housing_status="owned",
+    ).save()
+
+    summary = get_profile_summary(customer_id)
+
+    assert summary["overall"]["profiles_complete"] is True
+    assert summary["overall"]["ready_for_loan"] is True
+
+
+def test_legacy_business_age_input_currently_is_not_mapped_by_serializer():
+    serializer = BusinessProfileSerializer(data={"years_in_operation": 2})
+
+    assert serializer.is_valid(), serializer.errors
+    assert serializer.validated_data == {"years_in_operation": 2.0}
+    assert "business_age_months" not in serializer.validated_data
+
+
+def test_string_notification_boolean_currently_coerces_to_true():
+    customer = SimpleNamespace(
+        id="customer-1",
+        notification_preferences={"email_promotions": False},
+        save=lambda: None,
+    )
+
+    updated = update_preferences(customer, {"email_promotions": "false"})
+
+    assert updated["email_promotions"] is True

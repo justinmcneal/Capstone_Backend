@@ -481,6 +481,12 @@ class AdminLogoutView(APIView):
             refresh_token = get_refresh_token_from_request(request)
             access_token = get_access_token_from_request(request)
 
+            if not refresh_token:
+                return error_response(
+                    message="Refresh token is required",
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                )
+
             # Extract user info from token before blacklisting
             user_id = None
             user_email = ""
@@ -526,7 +532,10 @@ class AdminLogoutView(APIView):
 
         except NON_FATAL_EXCEPTIONS as e:
             logger.error(f"Admin logout error: {e!s}")
-            response = success_response(message="Logged out successfully")
+            response = error_response(
+                message="Logout failed",
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
             clear_auth_cookies(response)
             return response
 

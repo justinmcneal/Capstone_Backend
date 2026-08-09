@@ -33,27 +33,12 @@ python init_db.py
 daphne -b 0.0.0.0 -p 8000 config.asgi:application
 
 # Or use Django's development ASGI server:
-# python manage.py runserver 0.0.0.0:8000
+python manage.py runserver 0.0.0.0:8000
 ```
-
-API available at: `http://localhost:8000/`
-
-WebSocket available at: `ws://localhost:8000/ws/notifications/`
 
 ### WebSocket Configuration
 
 The notification system uses Django Channels with Redis for real-time WebSocket messaging.
-
-**Required environment variables:**
-
-```env
-# Redis connection for Channel Layers
-REDIS_HOST=localhost
-REDIS_PORT=6379
-
-# WebSocket toggle (can disable if needed)
-WEBSOCKET_ENABLED=True
-```
 
 **Frontend WebSocket connection:**
 
@@ -109,55 +94,8 @@ Copy template first:
 cp .env.example .env
 ```
 
-Use these minimum values for local development:
-
-```env
-# Django
-DEBUG=True
-SECRET_KEY=your-secret-key
-ALLOWED_HOSTS=localhost,127.0.0.1
-SECRET_PEPPER=generate-a-64-char-hex-pepper
-FIELD_ENCRYPTION_KEY=generate-a-fernet-key
-FIELD_ENCRYPTION_PREVIOUS_KEYS=
-FIELD_ENCRYPTION_STRICT_DECRYPTION=False
-
-# MongoDB Atlas
-MONGODB_URI=mongodb+srv://user:pass@cluster.mongodb.net/
-MONGODB_NAME=capstone_db
-
-# Frontend origins
-CORS_ALLOWED_ORIGINS=http://localhost:3000,http://localhost:5173
-CSRF_TRUSTED_ORIGINS=http://localhost:3000,http://localhost:5173,http://127.0.0.1:3000,http://127.0.0.1:5173
-
-# Auth/session cookies (dev on HTTP)
-AUTH_COOKIE_HTTPONLY=True
-AUTH_COOKIE_SECURE=False
-AUTH_COOKIE_SAMESITE=Lax
-SESSION_COOKIE_SECURE=False
-CSRF_COOKIE_SECURE=False
-
-# Groq LLM (AI Chatbot)
-# Get free key at: https://console.groq.com
-GROQ_API_KEY=gsk_your_key_here
-GROQ_MODEL=llama-3.1-8b-instant
-GROQ_CHAT_MODEL=llama-3.1-8b-instant
-GROQ_QUALIFICATION_MODEL=llama-3.1-8b-instant
-
-# Email (Gmail)
-EMAIL_HOST_USER=your-email@gmail.com
-EMAIL_HOST_PASSWORD=your-app-password
-
-```
-
 For the full variable reference, see `.env.example`. For production procedures,
 see `docs/feats/DEPLOYMENT_AND_OPERATIONS_GUIDE.md`.
-
-### Field Encryption Key Rotation
-
-New encrypted values use `FIELD_ENCRYPTION_KEY`. During a rotation, set the new
-key as the primary value and keep the former key in the comma-separated
-`FIELD_ENCRYPTION_PREVIOUS_KEYS` list. Production should keep
-`FIELD_ENCRYPTION_STRICT_DECRYPTION=True`.
 
 ```bash
 # Dry run (default; no database writes)
@@ -183,46 +121,6 @@ The API caches static content (FAQs, education, suggestions, loan products) to i
 **Default: In-memory cache** — works out of the box, no setup required.
 
 **Optional but still do it: Redis cache** — for multi-server deployments:
-```bash
-# In .env
-USE_REDIS_CACHE=true
-REDIS_URL=redis://localhost:6379/0
-```
-
-**Verify caching is working:**
-```bash
-# Call an endpoint twice - second call should have "cached": true
-curl -H "Authorization: Bearer <token>" http://localhost:8000/api/ai/faqs/
-
-# Response will include:
-# { "data": { "faqs": [...], "cached": true }, ... }
-```
-
-**Cache TTLs:**
-| Content | TTL | Invalidation |
-|---------|-----|--------------|
-| FAQs | 24 hours | Restart server |
-| Education | 24 hours | Restart server |
-| Suggestions | 12 hours | Restart server |
-| Loan Products | 30 mins | Auto (on admin CRUD) |
-
----
-
-## Development vs Production
-
-| Setting | Development | Production |
-|---------|-------------|------------|
-| `DEBUG` | `True` | `False` |
-| `SECRET_KEY` | Any value | Strong random key |
-| `SECRET_PEPPER` | Set | Set (rotate securely) |
-| `FIELD_ENCRYPTION_KEY` | Optional | Required primary Fernet key |
-| `FIELD_ENCRYPTION_PREVIOUS_KEYS` | Empty normally | Former keys during rotation only |
-| `FIELD_ENCRYPTION_STRICT_DECRYPTION` | `False` | `True` |
-| `ALLOWED_HOSTS` | `localhost,127.0.0.1` | `your-app.railway.app` |
-| HTTPS | Off | On (automatic) |
-| Secure Cookies | Off | On (automatic) |
-| Server | `runserver` | `gunicorn` |
-| Static Files | Django | WhiteNoise |
 
 ---
 
@@ -242,34 +140,7 @@ git push origin main
 
 ### 3. Set Environment Variables
 
-In Railway dashboard, add:
-
-```env
-DEBUG=False
-SECRET_KEY=<generate-strong-key>
-SECRET_PEPPER=<generate-strong-pepper>
-FIELD_ENCRYPTION_KEY=<generate-fernet-key>
-FIELD_ENCRYPTION_PREVIOUS_KEYS=
-FIELD_ENCRYPTION_STRICT_DECRYPTION=True
-ALLOWED_HOSTS=your-app.railway.app
-MONGODB_URI=<your-mongodb-atlas-uri>
-MONGODB_NAME=capstone_db
-GROQ_API_KEY=<your-groq-key>
-GROQ_CHAT_MODEL=llama-3.1-8b-instant
-GROQ_QUALIFICATION_MODEL=llama-3.1-8b-instant
-EMAIL_HOST_USER=<your-email>
-EMAIL_HOST_PASSWORD=<your-app-password>
-CORS_ALLOWED_ORIGINS=https://your-frontend.vercel.app
-CSRF_TRUSTED_ORIGINS=https://your-frontend.vercel.app
-
-# Session/cookie security
-AUTH_COOKIE_HTTPONLY=True
-AUTH_COOKIE_SECURE=True
-AUTH_COOKIE_SAMESITE=None
-CSRF_COOKIE_SECURE=True
-CSRF_COOKIE_SAMESITE=None
-SESSION_COOKIE_SECURE=True
-```
+In Railway dashboard, add .env
 
 If frontend and backend share the same site, you can keep `AUTH_COOKIE_SAMESITE=Lax`.
 
@@ -284,32 +155,7 @@ beat: celery -A config beat --loglevel=info
 
 **Note:** Production uses `daphne` (ASGI server) instead of `gunicorn` (WSGI) because the backend supports real-time WebSocket notifications via Django Channels.
 
-### Production WebSocket Requirements
-
-1. **Redis** must be available for the Channels layer backend
-2. Set `WEBSOCKET_ENABLED=True` in production environment variables
-3. Configure `REDIS_HOST` and `REDIS_PORT` to point to your Redis instance
-4. The frontend must connect via `wss://` (secure WebSocket) in production
-5. Ensure CORS/CSRF origins allow your production frontend domain
-
-### Local Development with WebSockets
-
-```bash
-# Terminal 1: Start Redis
-redis-server
-
-# Terminal 2: Start Django ASGI server (supports HTTP + WebSocket)
-daphne -b 0.0.0.0 -p 8000 config.asgi:application
-
-# OR use Daphne with hot reload for development:
-# daphne --reload -b 0.0.0.0 -p 8000 config.asgi:application
-```
-
-```bash
-## Useful Commands (Production)
-
-```bash
-# 6. Run with production server (macOS requires OBJC flag)
+# 5. Run with production server (macOS requires OBJC flag)
 OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES gunicorn config.wsgi:application --bind 0.0.0.0:8000 --timeout 120
 
 # Collect static files (before deployment)
@@ -317,17 +163,6 @@ python manage.py collectstatic
 
 # Check health
 curl http://localhost:8000/api/health/
-```
-
-### Switch AI Provider
-
-```bash
-# Use Groq (cloud, free tier)
-# In .env: LLM_PROVIDER=groq
-
-# Use Ollama (local, no limits)
-# In .env: LLM_PROVIDER=ollama
-# Make sure Ollama is running: ollama serve
 ```
 
 ### Encrypted Backup and Restore
@@ -339,16 +174,6 @@ python scripts/create_encrypted_backup.py
 # Restore encrypted backup into restore test DB
 python scripts/restore_encrypted_backup.py /path/to/backup.archive.gz.enc
 ```
-
----
-
-## Documentation
-
-- [API Reference](docs/API_REFERENCE.md)
-- [Gap Analysis](docs/GAP_ANALYSIS.md)
-- [Deployment Guide](docs/DEPLOYMENT_GUIDE.md)
-- [Authentication](docs/AUTHENTICATION.md)
-- [CNN Document Analysis](docs/CNN_DOCUMENT_ANALYSIS.md)
 
 ---
 

@@ -74,13 +74,11 @@ dependency is unavailable.
   refresh cookie. `Authorization: Bearer <refresh_token>` is not a refresh input.
 - Customer logout requires a refresh token from JSON or the refresh cookie. Its
   optional access token may be JSON `access`, a Bearer header, or the access cookie.
-- Loan-officer and administrator logout read the same sources but currently do not
-  reject missing tokens; send the refresh token to ensure session revocation.
-- Customer login, email verification, refresh, and 2FA completion return
-  `access` and `refresh` in body mode. Loan-officer login currently returns
-  `access_token` and `refresh_token`. Cookie mode returns neither in JSON.
-- Public token response names are not fully standardized yet. Do not silently
-  rename fields in a client until the API and web/mobile clients are coordinated.
+- Loan-officer and administrator logout use the same sources and, like customer
+  logout, reject a missing refresh token with `400`.
+- Customer login, loan-officer login, email verification, refresh, and 2FA
+  completion return `access` and `refresh` in body mode. Cookie mode returns
+  neither in JSON.
 
 ## URL Reference
 
@@ -329,12 +327,12 @@ dependency is unavailable.
   - `remember_me` optional
 - Key response fields:
   - If 2FA is enabled: `requires_2fa`, `temp_token`, `must_change_password`
-  - Otherwise: `access_token`, `refresh_token`, `user`, `must_change_password`
+  - Otherwise: `access`, `refresh`, `user`, `must_change_password`
 
 26. `POST /loan-officer/logout/`
-- Auth: refresh token recommended from JSON `refresh`/`refresh_token` or cookie;
+- Auth: refresh token required from JSON `refresh`/`refresh_token` or cookie;
   access token may be sent by Bearer header or access cookie
-- Request fields: none required in body
+- Request fields: `refresh` or `refresh_token` when not using the refresh cookie
 - Key response fields: `message`
 
 27. `GET /loan-officer/me/`
@@ -362,9 +360,9 @@ dependency is unavailable.
   - If 2FA is enabled: `requires_2fa`, `temp_token`
 
 29. `POST /admin/logout/`
-- Auth: refresh token recommended from JSON `refresh`/`refresh_token` or cookie;
+- Auth: refresh token required from JSON `refresh`/`refresh_token` or cookie;
   access token may be sent by Bearer header or access cookie
-- Request fields: none required in body
+- Request fields: `refresh` or `refresh_token` when not using the refresh cookie
 - Key response fields: `message`
 
 30. `GET /admin/me/`
@@ -601,7 +599,7 @@ the old credential is no longer usable:
 
 ## Notes
 
-- Customer login returns `access` and `refresh`; loan officer login returns `access_token` and `refresh_token` in body mode.
+- Customer and loan-officer login return `access` and `refresh` in body mode.
 - Refresh uses JSON `refresh`/`refresh_token` or the refresh cookie, not `Authorization: Bearer` for the refresh token.
 - Cookie-mode login/verification requests must explicitly request `token_transport: "cookie"` or send `X-Token-Transport: cookie`; `withCredentials` alone does not select cookie delivery.
 - Admin login accepts `username` and `password`. The `username` field also supports email lookup.
