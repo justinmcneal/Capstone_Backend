@@ -15,6 +15,7 @@ class Customer:
 
     collection_name = "customer"
     encrypted_fields = (
+        "phone",
         "verification_token",
         "password_reset_otp",
         "pending_email_otp",

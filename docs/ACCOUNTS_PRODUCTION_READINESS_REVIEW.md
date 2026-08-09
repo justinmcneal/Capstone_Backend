@@ -80,6 +80,23 @@ Current remediation status:
 - `CustomJWTAuthentication` supports Bearer access tokens and HttpOnly access
   cookies and checks the custom access-token blacklist.
 
+### Resolved authentication boundary controls
+
+- Active sessions store only opaque session IDs and refresh-token hashes; public
+  serialization exposes neither credentials nor hashes. The approved 2026-08-02
+  scrub invalidated 91 legacy plaintext session records, and its verification run
+  found none remaining.
+- Temporary-password restrictions are enforced centrally for protected domain
+  requests and survive the 2FA flow. Only password-change and session-exit paths
+  remain available until the password is replaced.
+- Cookie-authenticated unsafe requests require a matching CSRF cookie and
+  `X-CSRFToken` value. Pure Bearer requests remain exempt unless a refresh cookie
+  can participate in refresh/logout.
+- Password changes/resets and account deactivation rotate security state and
+  revoke affected refresh membership and active sessions immediately.
+- Logout and session termination check durable blacklist/revocation results and
+  fail instead of reporting success when persistence fails.
+
 ### Password and OTP foundations
 
 - Passwords use HMAC-SHA256 with an application pepper before bcrypt hashing.
@@ -274,140 +291,39 @@ Current remediation status:
 
 - Account, token, consent, active-session, and login-activity index creation is
   included in `init_db.py`.
-- Email, phone, OTP, verification-token, and 2FA-secret encryption coverage exists
-  for the declared sensitive string fields.
-- Production startup rejects a missing or invalid `FIELD_ENCRYPTION_KEY`.
+- Customer/officer phone values, OTPs, verification tokens, 2FA secrets, and the
+  other account-model-declared sensitive fields use versioned Fernet ciphertext.
+- Production startup rejects a missing or invalid primary or previous
+  field-encryption key and enables fail-closed decryption by default.
+- New ciphertext embeds a non-secret key identifier. `FIELD_ENCRYPTION_PREVIOUS_KEYS`
+  permits old and new keys to coexist during online rotation while all new writes
+  use the primary key.
+- Invalid, corrupted, or unavailable-key ciphertext raises a clear
+  `FieldDecryptionError` in strict mode instead of being returned as application
+  data.
+- `encrypt_sensitive_fields` derives its field map from model declarations, is
+  dry-run by default, requires `--apply` for conditional writes, supports
+  `--rotate`, and provides a separate `--verify` pass.
+- Keeping the former key in the read keyring provides the rollback window. It may
+  be removed only after rotation verification and the approved rollback period.
+- Session metadata has a 30-day inactivity TTL and login activity has a 90-day
+  TTL. Further consent/audit retention policy remains an operational privacy
+  decision rather than a missing key-lifecycle mechanism.
 - Secure-cookie, HTTPS, HSTS, CORS, CSRF, security-header, and NoSQL payload-guard
   settings exist.
 
-## Production Blockers and Resolved Critical Findings
+The verified online rotation order is:
 
-### 1. Raw refresh tokens are stored and exposed
-
-**Status: Resolved in Stage 1 (`1ff3555` plus verified operational cleanup)**
-
-New `ActiveSession` records contain an opaque session ID and refresh-token hash,
-while public serialization omits all credential/hash material. Access and refresh
-JWTs share the session ID and revocation operates on durable membership. Dedicated
-tests prove new MongoDB session documents and API serialization contain no raw
-refresh token.
-
-On 2026-08-02, the approved `scrub_legacy_sessions --apply` procedure invalidated
-and removed `session_token` from all 91 legacy records in the configured MongoDB.
-A post-operation dry run reported zero remaining records, and all 15 focused
-session/security/authentication tests passed.
-
-### 2. Temporary-password enforcement is not global
-
-**Status: Resolved in Stage 2 (`1ff3555`)**
-
-`CustomJWTAuthentication` now reloads live account state and enforces
-`must_change_password` before every protected domain view. Only password change,
-logout, and session-exit workflows are allowed, using the established HTTP 423
-`password_change_required` contract. The state survives 2FA, and newly created
-administrators also receive mandatory first-password-change state.
-
-### 3. Cookie-authenticated unsafe requests can bypass custom CSRF enforcement
-
-**Status: Resolved in Stage 3**
-
-`CSRFSameSiteTokenMiddleware` now detects access/refresh auth cookies and requires
-both the CSRF cookie and matching `X-CSRFToken` header on unsafe API requests. It
-fails closed when either value is absent. Pure Bearer requests remain exempt even
-if an unrelated access cookie exists; refresh/logout paths still require CSRF
-when a refresh cookie can participate.
-
-Eleven Stage 3 tests cover absent cookie/header, mismatch, valid double-submit,
-Bearer exemption, refresh-cookie behavior, safe methods, cookie flags/paths,
-body-only delivery, cookie-only delivery, and invalid transport selection.
-
-### 4. Password and account-state changes do not revoke all sessions
-
-**Status: Resolved in Stage 1–2 (`1ff3555`)**
-
-Password reset/change and privileged-account deactivation revoke refresh
-membership and active sessions. Access authentication validates session identity,
-live active/deleted/verified state, and account `security_version` on every
-request, immediately invalidating older access tokens.
-
-### 5. Logout can report success without confirmed revocation
-
-**Status: Resolved in Stage 1 (`1ff3555`)**
-
-Blacklist insertion and session termination are idempotent, individual blacklist
-results are checked, and logout revokes durable refresh membership by session ID.
-Failed blacklist persistence returns an error rather than silently reporting a
-successful revocation.
-
-## Partial Implementations
-
-### Field encryption and key lifecycle
-
-**Status: Partial**
-
-Production startup correctly requires a valid field-encryption key. DEBUG mode
-allows plaintext pass-through by design. Additional production-hardening work is
-still needed:
-
-- Legacy `session_token` input is converted to a hash for compatibility, but
-  legacy-record cleanup and the long-term session metadata retention policy still
-  require operational validation.
-- Session IP/device information, consent IPs, and activity metadata remain
-  plaintext operational data and require an explicit retention/access policy.
-- Invalid encrypted values are returned unchanged rather than raising a clear
-  corruption/key-mismatch signal.
-- No key-version or key-rotation design is present.
-- The encryption migration command does not by itself provide online key
-  rotation, rollback, or rotation verification.
-
-## Stage 8 Implementation Status
-
-### Customer lifecycle administration
-
-**Status: Implemented and covered by focused regression tests**
-
-- `manage_users` now protects customer list/detail/state, lockout-unlock,
-  retention-finalization, and 2FA-recovery administration endpoints. Mutations
-  write audit records and security notifications.
-- Customer state transitions are persisted as active, suspended, or deactivated,
-  increment security version on change, revoke sessions, and reset lockout state
-  when an account is restored.
-- Email changes require the current password, deliver an OTP to the new address,
-  consume it atomically, enforce the global availability policy, and revoke
-  existing sessions after confirmation.
-- Customer export includes account, consent, session, login-activity, audit, and
-  in-app notification records without credential hashes.
-- Deletion uses a pending-deletion state, configurable retention period,
-  credentialed cancellation, scheduled finalization, anonymization, and session
-  revocation. Admin finalization cannot bypass the retention date.
-
-### Recovery and security operations
-
-**Status: Implemented and covered by focused regression tests**
-
-- 2FA-loss recovery requires the account password, a short-lived email OTP,
-  per-account issuance/attempt limits, and an explicit administrator decision.
-- Existing session management supports single-session, revoke-all, and
-  revoke-all-except-current operations.
-- Security events cover new-device sign-in, password changes/resets, email
-  changes, 2FA changes, customer lifecycle changes, privilege changes, and
-  session termination. Notifications remain best-effort secondary delivery.
-- A central authentication-risk or suspicious-session scoring service remains
-  outside Stage 8.
-
-### Global identity policy
-
-**Status: Implemented with an explicit-role fallback for legacy ambiguity**
-
-Customer, officer, and administrator accounts live in separate collections.
-Normal account creation and verified email changes reject an email already used
-by another role. If legacy data still contains the same email in more than one
-collection, password recovery requires an explicit role and never selects a
-role by search order.
-
-MongoDB unique email indexes are case-sensitive by default. Application-level
-normalization handles normal writes, but legacy/import/script writes can still
-produce case variants unless normalized storage or index collation is enforced.
+1. Deploy the new key as `FIELD_ENCRYPTION_KEY` while retaining the former key in
+   `FIELD_ENCRYPTION_PREVIOUS_KEYS`.
+2. Run `encrypt_sensitive_fields --rotate` to review the dry-run counts.
+3. Run `encrypt_sensitive_fields --rotate --apply` through the approved
+   state-changing operations process.
+4. Run `encrypt_sensitive_fields --verify`; keep both keys configured if any
+   verification or concurrency conflict is reported.
+5. Remove the former key only after verification, backups, and the rollback
+   window are approved. To roll back, reverse the primary/previous order and run
+   the same rotation sequence.
 
 ## API Contract and Documentation Status
 
@@ -527,14 +443,20 @@ Focused account validation:
   session/security and 2FA tests cover stable refresh identity, bounded
   `last_active` heartbeats, verification and officer activity coverage,
   role-specific session policy, revocation, and existing 2FA session metadata.
+- After the field-encryption lifecycle work, the expanded account/encryption/profile
+  validation passed 88 tests; the same five opt-in real-Mongo tests skipped.
+  Seven dedicated tests cover versioned envelopes, previous-key reads, rotation,
+  strict corruption handling, declared customer-phone encryption, safe dry-run/
+  apply behavior, verification, and field-map alignment.
 
 Full-suite validation:
 
-- 866 tests collected.
-- 851 passed and 12 skipped.
-- Two blockchain client tests errored while creating pytest temporary paths, and
-  one Prometheus command test failed while creating a temporary flag file; all
-  three were Windows temporary-directory permission failures outside accounts.
+- On 2026-08-09, 891 tests were collected: 877 passed and 14 skipped. The skips
+  are opt-in external/integration cases, including the five real-Mongo tests.
+- Ruff passed for every changed Python file. The Django test-settings check
+  completed with the existing django-axes warning about its isolated cache
+  configuration; production settings require shared Redis and do not use that
+  test cache.
 
 Current validation gaps:
 
@@ -581,10 +503,8 @@ run reported zero remaining plaintext session records.
 
 Verification note: centralized authentication returns the established HTTP 423
 `password_change_required` contract outside password/session exit workflows.
-Focused account/auth validation now passes 64 tests, including the dedicated
-Stage 1–3 security modules. The latest full suite reached 735 passed and 9
-skipped; six failures were outside accounts (five blockchain/client tests and one
-loans recent-payments test).
+This behavior remains covered by the dedicated Stage 1–3 security modules and the
+current full-suite evidence recorded in **Test Status and Coverage Gaps**.
 
 ### Stage 3 — Cookie authentication and CSRF integrity
 
@@ -713,11 +633,9 @@ values before importing base settings; the root fixtures use mongomock and force
 AnyIO tests onto asyncio. `requirements.lock` pins application and test
 dependencies, while `requirements-ci.lock` pins Black, Ruff, Bandit, and
 pip-audit. CI defines a dedicated real-Mongo service job and security gates.
-The current local full run collected 866 tests and reached 851 passed and 12
-skipped, but also hit two Windows temporary-directory errors and one unrelated
-Prometheus temporary-file failure. The focused account/security run passed 45
-tests. Real-Mongo tests intentionally skip without `REAL_MONGO_TEST_URI`; the
-hosted workflow and a clean dependency environment remain pending evidence.
+The 2026-08-09 local full run collected 891 tests: 877 passed and 14 skipped.
+Real-Mongo tests intentionally skip without `REAL_MONGO_TEST_URI`; the hosted
+workflow and a clean dependency environment remain pending evidence.
 
 ### Stage 10 — API contract and documentation alignment
 
@@ -737,6 +655,8 @@ hosted workflow and a clean dependency environment remain pending evidence.
 
 - [x] ~~Pepper + bcrypt password hashing~~
 - [x] ~~Production field-encryption key validation~~
+- [x] ~~Versioned field-encryption keyring, online rotation, rollback window,
+  strict decryption, and post-rotation verification~~
 - [x] ~~Customer/officer/admin login lockout foundations~~
 - [x] ~~Refresh-token membership for all three roles~~
 - [x] ~~Hashed blacklist and refresh membership storage~~
@@ -776,6 +696,6 @@ hosted workflow and a clean dependency environment remain pending evidence.
 - No sensitive `.env`, media, backup, log, credential, wallet, or uploaded-data
   contents were read.
 - Real browser CSRF/CORS behavior, real-Mongo concurrency, email deliverability,
-  rate-limit behavior across multiple workers, key rotation, clean dependency
-  reproducibility, hosted CI, and operational recovery still require staging or
-  CI validation.
+  rate-limit behavior across multiple workers, a live key-rotation rehearsal,
+  clean dependency reproducibility, hosted CI, and operational recovery still
+  require staging or CI validation.

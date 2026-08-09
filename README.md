@@ -118,6 +118,8 @@ SECRET_KEY=your-secret-key
 ALLOWED_HOSTS=localhost,127.0.0.1
 SECRET_PEPPER=generate-a-64-char-hex-pepper
 FIELD_ENCRYPTION_KEY=generate-a-fernet-key
+FIELD_ENCRYPTION_PREVIOUS_KEYS=
+FIELD_ENCRYPTION_STRICT_DECRYPTION=False
 
 # MongoDB Atlas
 MONGODB_URI=mongodb+srv://user:pass@cluster.mongodb.net/
@@ -147,7 +149,30 @@ EMAIL_HOST_PASSWORD=your-app-password
 
 ```
 
-For full variable reference (dev + production), see `.env.example` and `docs/DEPLOYMENT_GUIDE.md`.
+For the full variable reference, see `.env.example`. For production procedures,
+see `docs/feats/DEPLOYMENT_AND_OPERATIONS_GUIDE.md`.
+
+### Field Encryption Key Rotation
+
+New encrypted values use `FIELD_ENCRYPTION_KEY`. During a rotation, set the new
+key as the primary value and keep the former key in the comma-separated
+`FIELD_ENCRYPTION_PREVIOUS_KEYS` list. Production should keep
+`FIELD_ENCRYPTION_STRICT_DECRYPTION=True`.
+
+```bash
+# Dry run (default; no database writes)
+python manage.py encrypt_sensitive_fields --rotate
+
+# Apply the reviewed rotation
+python manage.py encrypt_sensitive_fields --rotate --apply
+
+# Verify every supported populated field uses the primary key
+python manage.py encrypt_sensitive_fields --verify
+```
+
+Do not remove a previous key until verification, backups, and the rollback window
+are approved. These commands also require the normal management-command
+environment, including `SECRET_PEPPER`.
 
 ---
 
@@ -190,6 +215,9 @@ curl -H "Authorization: Bearer <token>" http://localhost:8000/api/ai/faqs/
 | `DEBUG` | `True` | `False` |
 | `SECRET_KEY` | Any value | Strong random key |
 | `SECRET_PEPPER` | Set | Set (rotate securely) |
+| `FIELD_ENCRYPTION_KEY` | Optional | Required primary Fernet key |
+| `FIELD_ENCRYPTION_PREVIOUS_KEYS` | Empty normally | Former keys during rotation only |
+| `FIELD_ENCRYPTION_STRICT_DECRYPTION` | `False` | `True` |
 | `ALLOWED_HOSTS` | `localhost,127.0.0.1` | `your-app.railway.app` |
 | HTTPS | Off | On (automatic) |
 | Secure Cookies | Off | On (automatic) |
@@ -221,6 +249,8 @@ DEBUG=False
 SECRET_KEY=<generate-strong-key>
 SECRET_PEPPER=<generate-strong-pepper>
 FIELD_ENCRYPTION_KEY=<generate-fernet-key>
+FIELD_ENCRYPTION_PREVIOUS_KEYS=
+FIELD_ENCRYPTION_STRICT_DECRYPTION=True
 ALLOWED_HOSTS=your-app.railway.app
 MONGODB_URI=<your-mongodb-atlas-uri>
 MONGODB_NAME=capstone_db
@@ -361,4 +391,3 @@ Notes:
 - The Prometheus counters are optional and guarded; the code falls back gracefully if
 	`prometheus-client` is not installed.
 - Adjust `EMAIL_SENDER_THREADPOOL_MAX_WORKERS` based on workload and available CPU.
-

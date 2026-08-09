@@ -139,17 +139,31 @@ DATABASES = {
 MONGODB_URI = os.getenv('MONGODB_URI', '')
 MONGODB_NAME = os.getenv('MONGODB_NAME', 'capstone_db')
 FIELD_ENCRYPTION_KEY = os.getenv('FIELD_ENCRYPTION_KEY', '').strip()
+FIELD_ENCRYPTION_PREVIOUS_KEYS = tuple(
+    key.strip()
+    for key in os.getenv('FIELD_ENCRYPTION_PREVIOUS_KEYS', '').split(',')
+    if key.strip()
+)
+FIELD_ENCRYPTION_STRICT_DECRYPTION = env_bool(
+    'FIELD_ENCRYPTION_STRICT_DECRYPTION', not DEBUG
+)
 
 # Production must never store sensitive fields as plaintext.
 # In DEBUG/development, allow plaintext pass-through so local setups do not require key management.
-if not DEBUG:
-    if not FIELD_ENCRYPTION_KEY:
-        raise ImproperlyConfigured("FIELD_ENCRYPTION_KEY must be set when DEBUG=False")
+if not DEBUG and not FIELD_ENCRYPTION_KEY:
+    raise ImproperlyConfigured("FIELD_ENCRYPTION_KEY must be set when DEBUG=False")
+
+for configured_encryption_key in (
+    FIELD_ENCRYPTION_KEY,
+    *FIELD_ENCRYPTION_PREVIOUS_KEYS,
+):
+    if not configured_encryption_key:
+        continue
     try:
-        Fernet(FIELD_ENCRYPTION_KEY.encode('utf-8'))
+        Fernet(configured_encryption_key.encode('utf-8'))
     except Exception as exc:
         raise ImproperlyConfigured(
-            'FIELD_ENCRYPTION_KEY is invalid. Generate one with: '
+            'A configured field-encryption key is invalid. Generate one with: '
             'python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"'
         ) from exc
 

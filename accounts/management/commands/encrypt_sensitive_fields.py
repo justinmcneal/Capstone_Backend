@@ -1,66 +1,68 @@
 from django.conf import settings
 from django.core.management.base import BaseCommand, CommandError
 
-from config.field_encryption import encrypt_value, is_encrypted_value
+from accounts.models import Admin, Customer, LoanOfficer
+from config.field_encryption import (
+    FieldDecryptionError,
+    decrypt_value,
+    encrypt_value,
+    is_encrypted_value,
+    is_primary_encrypted_value,
+    reencrypt_value,
+)
+from documents.models import Document
+from loans.models import LoanApplication, LoanPayment, LoanProduct, RepaymentSchedule
+from profiles.models import AlternativeData, BusinessProfile, CustomerProfile
 
+ENCRYPTED_MODELS = (
+    Customer,
+    LoanOfficer,
+    Admin,
+    CustomerProfile,
+    BusinessProfile,
+    AlternativeData,
+    Document,
+    LoanApplication,
+    LoanPayment,
+    LoanProduct,
+    RepaymentSchedule,
+)
+
+# Retained as a public constant for operational tooling and tests. Deriving this
+# from model declarations prevents a backfill from encrypting fields that the
+# corresponding model cannot decrypt.
 FIELD_MAP = {
-    "customer": [
-        "verification_token",
-        "password_reset_otp",
-        "two_factor_secret",
-    ],
-    "loan_officers": [
-        "phone",
-        "two_factor_secret",
-        "password_reset_otp",
-    ],
-    "admins": [
-        "two_factor_secret",
-        "password_reset_otp",
-    ],
-    "customer_profiles": [
-        "address_line1",
-        "address_line2",
-        "barangay",
-        "city_municipality",
-        "province",
-        "zip_code",
-        "emergency_contact_name",
-        "emergency_contact_phone",
-    ],
-    "business_profiles": [
-        "business_address",
-        "business_barangay",
-        "business_city",
-        "business_province",
-        "registration_number",
-    ],
-    "documents": [
-        "original_filename",
-        "file_path",
-        "rejection_reason",
-        "notes",
-        "description",
-        "reupload_reason",
-    ],
-    "loan_applications": [
-        "purpose",
-        "officer_notes",
-        "rejection_reason",
-        "missing_documents_reason",
-        "disbursement_reference",
-    ],
+    model.collection_name: tuple(model.encrypted_fields)
+    for model in ENCRYPTED_MODELS
 }
 
 
 class Command(BaseCommand):
-    help = "Encrypts existing plaintext values for configured sensitive MongoDB fields."
+    help = (
+        "Safely backfill, rotate, or verify configured encrypted MongoDB fields. "
+        "Writes require --apply; the default is a dry run."
+    )
 
     def add_arguments(self, parser):
         parser.add_argument(
+            "--apply",
+            action="store_true",
+            help="Apply conditional writes. Without this flag, changes are only reported.",
+        )
+        parser.add_argument(
             "--dry-run",
             action="store_true",
-            help="Scan and report records that would be updated without writing changes.",
+            help="Explicit dry-run alias retained for compatibility.",
+        )
+        parser.add_argument(
+            "--rotate",
+            action="store_true",
+            help="Re-encrypt legacy/previous-key ciphertext with the primary key.",
+        )
+        parser.add_argument(
+            "--verify",
+            action="store_true",
+            help="Fail unless every populated supported field decrypts with the primary key.",
         )
 
     def handle(self, *args, **options):
@@ -68,64 +70,110 @@ class Command(BaseCommand):
             raise CommandError(
                 "FIELD_ENCRYPTION_KEY is not set. Configure it in your environment first."
             )
-
-        db = settings.MONGODB
-        if db is None:
+        if settings.MONGODB is None:
             raise CommandError(
                 "MongoDB connection is not available (settings.MONGODB is None)."
             )
+        if options["apply"] and options["dry_run"]:
+            raise CommandError("Use either --apply or --dry-run, not both.")
+        if options["verify"] and (options["apply"] or options["rotate"]):
+            raise CommandError("Run --verify separately after backfill or rotation.")
 
-        dry_run = options["dry_run"]
-        total_docs_scanned = 0
-        total_docs_updated = 0
-        total_fields_encrypted = 0
+        verify = options["verify"]
+        apply_changes = options["apply"]
+        rotate = options["rotate"]
+        totals = {
+            "scanned": 0,
+            "changed": 0,
+            "fields": 0,
+            "unsupported": 0,
+            "conflicts": 0,
+            "failures": 0,
+        }
 
         for collection_name, fields in FIELD_MAP.items():
-            collection = db[collection_name]
-            docs_scanned = 0
-            docs_updated = 0
-            fields_encrypted = 0
-
+            counts = {key: 0 for key in totals}
             projection = {field: 1 for field in fields}
-            cursor = collection.find({}, projection)
+            for document in settings.MONGODB[collection_name].find({}, projection):
+                counts["scanned"] += 1
+                if verify:
+                    self._verify_document(document, fields, counts)
+                    continue
 
-            for doc in cursor:
-                docs_scanned += 1
-                total_docs_scanned += 1
-
+                originals = {}
                 updates = {}
                 for field in fields:
-                    value = doc.get(field)
-                    if not isinstance(value, str) or value == "":
+                    value = document.get(field)
+                    if value is None or value == "":
                         continue
                     if is_encrypted_value(value):
+                        if not rotate or is_primary_encrypted_value(value):
+                            continue
+                        encrypted = reencrypt_value(value)
+                    else:
+                        encrypted = encrypt_value(value)
+                    if encrypted == value:
+                        counts["unsupported"] += 1
                         continue
-
-                    encrypted = encrypt_value(value)
-                    if encrypted != value:
-                        updates[field] = encrypted
+                    originals[field] = value
+                    updates[field] = encrypted
 
                 if not updates:
                     continue
+                counts["changed"] += 1
+                counts["fields"] += len(updates)
+                if apply_changes:
+                    query = {"_id": document["_id"]}
+                    query.update(originals)
+                    result = settings.MONGODB[collection_name].update_one(
+                        query, {"$set": updates}
+                    )
+                    if result.modified_count != 1:
+                        counts["conflicts"] += 1
 
-                docs_updated += 1
-                total_docs_updated += 1
-                fields_encrypted += len(updates)
-                total_fields_encrypted += len(updates)
-
-                if not dry_run:
-                    collection.update_one({"_id": doc["_id"]}, {"$set": updates})
-
-            mode = "DRY-RUN" if dry_run else "UPDATED"
+            for key in totals:
+                totals[key] += counts[key]
+            mode = "VERIFY" if verify else ("APPLIED" if apply_changes else "DRY-RUN")
             self.stdout.write(
-                f"[{mode}] {collection_name}: scanned={docs_scanned}, "
-                f"documents_changed={docs_updated}, fields_encrypted={fields_encrypted}"
+                f"[{mode}] {collection_name}: scanned={counts['scanned']}, "
+                f"documents_changed={counts['changed']}, fields_changed={counts['fields']}, "
+                f"unsupported={counts['unsupported']}, conflicts={counts['conflicts']}, "
+                f"failures={counts['failures']}"
             )
 
-        self.stdout.write(self.style.SUCCESS("Done"))
         self.stdout.write(
-            self.style.SUCCESS(
-                f"Summary: scanned={total_docs_scanned}, "
-                f"documents_changed={total_docs_updated}, fields_encrypted={total_fields_encrypted}"
-            )
+            "Summary: " + ", ".join(f"{key}={value}" for key, value in totals.items())
         )
+        if totals["conflicts"]:
+            raise CommandError(
+                "Encryption writes encountered concurrent changes; rerun the command."
+            )
+        if totals["failures"]:
+            raise CommandError(
+                "Encryption verification failed; keep previous keys configured and review the counts."
+            )
+        self.stdout.write(self.style.SUCCESS("Encryption operation completed"))
+
+    @staticmethod
+    def _verify_document(document, fields, counts):
+        for field in fields:
+            value = document.get(field)
+            if value is None or value == "":
+                continue
+            if not is_encrypted_value(value):
+                encrypted = encrypt_value(value)
+                if encrypted == value:
+                    counts["unsupported"] += 1
+                else:
+                    counts["failures"] += 1
+                continue
+            try:
+                decrypted = decrypt_value(value)
+            except FieldDecryptionError:
+                counts["failures"] += 1
+                continue
+            if decrypted == value:
+                counts["failures"] += 1
+                continue
+            if not is_primary_encrypted_value(value):
+                counts["failures"] += 1
