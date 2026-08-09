@@ -1,5 +1,12 @@
 # Documents Testing Guide
 
+> **Readiness notice (2026-08-09):** This guide documents the current API for
+> development and characterization testing. The Documents module is not yet
+> production-ready. See `docs/DOCUMENTS_PRODUCTION_READINESS_REVIEW.md` for the
+> verified gaps and staged remediation plan. In particular, a successful call to
+> `POST /presigned-upload/` plus an S3 POST does **not** create or validate a
+> `Document` record.
+
 ## Scope
 
 This guide documents the **Documents service API** under `/api/documents/` for API testing and implementation review. It covers:
@@ -149,6 +156,13 @@ Request presigned POST data for direct browser/client upload to S3.
 **Notes:**
 - Only S3-like backends currently implement `get_presigned_upload_for_new_object()`
 - Local development storage returns 400 for this endpoint
+- This is currently an object-upload grant, not a complete document-upload
+  workflow. There is no upload session or finalize endpoint, no server-side
+  object validation, no `Document` record, no AI/audit/reviewer processing, and
+  no abandoned-object cleanup.
+- Current presigned conditions do not enforce the application's 10 MB limit or
+  declared MIME type. Keep this route disabled outside isolated development
+  until Stage 2 in the production-readiness review is complete.
 
 ---
 
@@ -324,7 +338,8 @@ Request that a customer re-upload a document.
 **Side effects:**
 - Sets `reupload_requested=true`, `reupload_reason`, `reupload_requested_by`, `reupload_requested_at`
 - Sends email notification to customer
-- Writes audit log entry
+- Does **not currently write an audit log entry**; this is a documented
+  production-readiness gap.
 
 ---
 
@@ -359,6 +374,22 @@ Implemented in `documents/storage/backends.py`.
 ## AI Analysis & CNN Behavior
 
 Implemented in `documents/services/analyzer.py` and `documents/services/cnn_model.py`.
+
+**Current repository state (2026-08-09):**
+
+- `documents/ml/models/document_classifier.pth` is absent, so this checkout uses
+  quality-check mode and the CNN evaluation command exits with "No trained CNN
+  model found."
+- With `DOCUMENT_REQUIRE_CNN_FOR_TYPE_VALIDATION=True`, a consented image cannot
+  pass type validation while the model is unavailable and is routed to
+  `needs_review`.
+- Saved charts/configuration are historical artifacts and are not reproducible
+  evidence for the current runtime because they are not bound to a retained
+  model hash and dataset manifest.
+- The current dataset is severely imbalanced, contains exact duplicates including
+  a train/holdout duplicate group, and gives four classes only one to three
+  holdout examples. Do not use the displayed overall accuracy as a production
+  acceptance result. See the production-readiness review for the full ML audit.
 
 **Analysis modes:**
 - `cnn`: MobileNetV2 model loaded; returns classification and quality results
@@ -420,6 +451,10 @@ python manage.py train_document_classifier --fine-tune
 - `documents/ml/models/document_classifier.pth`
 - `documents/ml/models/model_config.json`
 - `documents/ml/reports/*` (if matplotlib installed)
+
+The `.pth` artifact is intentionally ignored by Git and is currently missing.
+A production model must be supplied through an approved, integrity-checked model
+artifact workflow; generating it locally is not by itself a deployment process.
 
 **Validation:**
 
@@ -499,6 +534,15 @@ Standard success shape:
 5. Document list pagination happens in Python after loading matching documents; expect `total` to reflect full matched set, not DB count.
 6. `customer_name` in list/response is resolved dynamically by querying the `Customer` collection.
 7. `file_url` depends on the active storage backend; in tests, ensure the storage backend is patched or mocked.
-8. Presigned uploads return 400 when the storage backend does not implement `get_presigned_upload_for_new_object()`.
-9. Reviewer notifications are triggered on upload for `pending` and `needs_review` documents; in tests, mock the email sender to avoid side effects.
-10. Audit logs for documents use actions `document_uploaded`, `document_verified`, and `document_rejected`.
+8. Presigned uploads return 400 when the storage backend does not implement `get_presigned_upload_for_new_object()`. With S3, test only the current grant response; do not assert that it creates a document.
+9. Reviewer notifications are requested on upload for `pending` and `needs_review` documents. The current asynchronous task calls a missing `Document.find_by_id` method and fails when executed; keep this as a characterization case until Stage 6 is complete.
+10. Audit logs currently use actions `document_uploaded`, `document_verified`, and `document_rejected`. Delete, re-upload, and staff reads are not yet audited.
+11. Invalid ObjectId strings currently produce a generic 500 in detail, delete,
+    and verify handlers. Record this as a known defect rather than the intended
+    contract; Stage 1 will define the canonical 400/404 behavior.
+12. The current list endpoint loads and decrypts the full matched result set
+    before Python pagination. Do not use development tests as evidence that the
+    endpoint is safe at production collection sizes.
+13. Endpoint tests commonly patch persistence, storage, access control, audit,
+    and email. Add real-Mongo concurrency and isolated object-storage tests as
+    the relevant remediation stages are implemented.
