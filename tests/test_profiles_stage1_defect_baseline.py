@@ -201,21 +201,20 @@ def test_minimal_legacy_fields_do_not_report_application_readiness():
     assert "alternative.employment_status" in summary["overall"]["missing_field_codes"]
 
 
-def test_legacy_business_age_input_currently_is_not_mapped_by_serializer():
+def test_legacy_business_age_input_maps_to_canonical_months():
     serializer = BusinessProfileSerializer(data={"years_in_operation": 2})
 
     assert serializer.is_valid(), serializer.errors
-    assert serializer.validated_data == {"years_in_operation": 2.0}
-    assert "business_age_months" not in serializer.validated_data
+    assert serializer.validated_data == {"business_age_months": 24}
+    assert "years_in_operation" not in serializer.validated_data
 
 
-def test_string_notification_boolean_currently_coerces_to_true():
+def test_string_notification_boolean_is_rejected():
     customer = SimpleNamespace(
         id="customer-1",
         notification_preferences={"email_promotions": False},
         save=lambda: None,
     )
 
-    updated = update_preferences(customer, {"email_promotions": "false"})
-
-    assert updated["email_promotions"] is True
+    with pytest.raises(TypeError, match="JSON booleans"):
+        update_preferences(customer, {"email_promotions": "false"})

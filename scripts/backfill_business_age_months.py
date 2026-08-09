@@ -1,77 +1,135 @@
-"""Backfill script to populate `business_age_months` from legacy `years_in_operation`.
+"""Safely reconcile legacy business years into canonical whole months.
 
 Usage:
-    ./venv/bin/python scripts/backfill_business_age_months.py
+    .venv/bin/python scripts/backfill_business_age_months.py
+    .venv/bin/python scripts/backfill_business_age_months.py --apply
 
-This will iterate `business_profiles` documents and set `business_age_months`
-when missing and `years_in_operation` is present. It will multiply years by 12.
+The default invocation is inventory-only. ``--apply`` is required for writes.
 """
 
 from __future__ import annotations
 
+import argparse
+import logging
 import os
 import sys
-import logging
+from datetime import datetime, timezone
+from decimal import Decimal, InvalidOperation
 
-# Ensure Django settings are configured before importing `settings`
-os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings")
-# Ensure project root is on sys.path so `config` package can be imported
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
-from django.conf import settings
+os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings")
+
 import django
+from django.conf import settings
 
 django.setup()
 
-logger = logging.getLogger("backfill")
-logging.basicConfig(level=logging.INFO)
+from profiles.models import BusinessProfile
+
+logger = logging.getLogger("profiles")
 
 
-def main(dry_run: bool = False):
-    db = settings.MONGODB
-    collection = db["business_profiles"]
+def _whole_months(years):
+    try:
+        value = Decimal(str(years)) * Decimal(12)
+    except (InvalidOperation, TypeError, ValueError):
+        return None
+    if not value.is_finite() or value < 0 or value != value.to_integral_value():
+        return None
+    return int(value)
+
+
+def _missing_canonical_age_query():
+    return {
+        "$or": [
+            {"business_age_months": {"$exists": False}},
+            {"business_age_months": None},
+            {"business_age_months": ""},
+        ]
+    }
+
+
+def main(*, apply=False):
+    collection = settings.MONGODB[BusinessProfile.collection_name]
     query = {
         "$and": [
-            {"business_age_months": {"$in": [None, "", []]}},
+            _missing_canonical_age_query(),
             {"years_in_operation": {"$exists": True}},
         ]
     }
-    total = collection.count_documents(query)
-    if total == 0:
-        logger.info("No documents to backfill")
-        return 0
+    documents = list(collection.find(query))
+    eligible = []
+    invalid = []
 
-    logger.info(f"Found {total} documents to backfill")
-    cursor = collection.find(query)
-    updated = 0
-    for doc in cursor:
-        years = doc.get("years_in_operation")
-        try:
-            years_val = float(years)
-            months = int(round(years_val * 12))
-        except Exception:
-            logger.warning(
-                f"Skipping doc {doc.get('_id')} - cannot parse years_in_operation={years}"
+    for document in documents:
+        months = _whole_months(document.get("years_in_operation"))
+        if months is None:
+            invalid.append(document.get("_id"))
+        else:
+            eligible.append((document, months))
+
+    logger.info(
+        "Business-age reconciliation: found=%s eligible=%s invalid=%s mode=%s",
+        len(documents),
+        len(eligible),
+        len(invalid),
+        "apply" if apply else "dry-run",
+    )
+    for document_id in invalid:
+        logger.warning("Invalid legacy business age requires review: %s", document_id)
+
+    if not apply:
+        for document, months in eligible:
+            logger.info(
+                "Would set business_age_months=%s for %s", months, document.get("_id")
             )
-            continue
+        return {"found": len(documents), "eligible": len(eligible), "updated": 0}
 
-        if dry_run:
-            logger.info(f"Would set business_age_months={months} for {doc.get('_id')}")
-            updated += 1
-            continue
-
-        result = collection.update_one(
-            {"_id": doc["_id"]}, {"$set": {"business_age_months": months}}
+    updated = 0
+    for document, months in eligible:
+        candidate = dict(document)
+        candidate["business_age_months"] = months
+        profile = BusinessProfile.from_dict(candidate)
+        revision = document.get("profile_revision")
+        revision_query = (
+            {"profile_revision": revision}
+            if revision is not None
+            else {"profile_revision": {"$exists": False}}
         )
-        if result.modified_count:
-            updated += 1
+        result = collection.update_one(
+            {
+                "_id": document["_id"],
+                "$and": [_missing_canonical_age_query(), revision_query],
+            },
+            {
+                "$set": {
+                    "business_age_months": months,
+                    "profile_completed": profile.profile_completed,
+                    "completion_percentage": profile.completion_percentage,
+                    "profile_completion_policy_version": (
+                        profile.profile_completion_policy_version
+                    ),
+                    "profile_missing_fields": profile.profile_missing_fields,
+                    "updated_at": datetime.now(timezone.utc),
+                },
+                "$inc": {"profile_revision": 1},
+            },
+        )
+        updated += result.modified_count
 
-    logger.info(f"Backfilled {updated} documents")
-    return 0
+    logger.info("Business-age reconciliation updated=%s", updated)
+    return {"found": len(documents), "eligible": len(eligible), "updated": updated}
 
 
 if __name__ == "__main__":
-    dry = "--dry" in sys.argv
-    sys.exit(main(dry_run=dry))
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--apply",
+        action="store_true",
+        help="Persist eligible conversions. Omit for an inventory-only dry run.",
+    )
+    arguments = parser.parse_args()
+    main(apply=arguments.apply)

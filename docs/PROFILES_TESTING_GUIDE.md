@@ -119,8 +119,8 @@ Content-Type: application/json
   - `business_city`
   - `business_province`
   - `business_age_months` (canonical unit: months)
-  - `years_in_operation` (legacy alias currently accepted by validation but not
-    persisted; do not use it—Stage 6 will implement conversion or remove it)
+  - `years_in_operation` (deprecated input-only alias; converted to exact whole
+    months and never returned)
   - `is_registered`
   - `registration_type` (`DTI`, `SEC`, `BIR`, `none`)
   - `registration_number`
@@ -139,6 +139,8 @@ Content-Type: application/json
     clears obsolete registration details.
   - Income and expenses allow at most two decimal places and reject non-finite
     values.
+  - When both business-age fields are supplied, they must describe the same age.
+    A legacy year value that cannot convert to a whole month is rejected.
 
 5. `GET /alternative-data/`
 - Auth: customer only
@@ -288,7 +290,13 @@ Content-Type: application/json
 - Validation:
   - `preferences` must be an object
   - Unknown keys are rejected
-  - Boolean-like values are parsed and validated
+  - Values must be actual JSON booleans; strings, numbers, `null`, arrays, and
+    objects are rejected
+- GET and PUT responses merge any partial stored preferences over the complete
+  documented defaults.
+- PUT changes only the submitted preference keys atomically and does not replace
+  unrelated customer fields or simultaneous updates to other preferences.
+- Successful changes are audited using the trusted-proxy client-IP policy.
 
 ### Officer Endpoints
 
@@ -345,6 +353,8 @@ Content-Type: application/json
 3. `400 Bad Request`
 - Invalid choice values.
 - Invalid notification preference payload.
+- Conflicting business months/legacy years, or legacy years that do not convert
+  to a whole month.
 - `business_type_other` missing when `business_type=other`.
 - Age outside 18–100, invalid emergency phone or ZIP, inconsistent conditional
   answers, non-finite money, or money with more than two decimal places.
@@ -373,6 +383,12 @@ Content-Type: application/json
   revision enables optimistic concurrency and produces `409` for a stale edit.
   Omitting it remains supported for older clients, but clients should adopt it.
 - Completion state is written only for the newest observed revision.
+- Customer profile mutations remain successful if their best-effort audit write
+  fails after the profile mutation is already durable. The server records an
+  operational exception instead of returning a misleading retryable `500`.
+- If risk-task enqueue fails after alternative data is saved, the response
+  remains successful and the persisted score state becomes `failed` for the
+  reconciler to retry.
 
 ## Profile Field Encryption
 
@@ -505,17 +521,18 @@ Some older records use the legacy `years_in_operation` field (years). The canoni
 Preview what would be changed without modifying the DB:
 
 ```bash
-./venv/bin/python scripts/backfill_business_age_months.py --dry
+.venv/bin/python scripts/backfill_business_age_months.py
 ```
 
 This prints each document `_id` and the months value that would be written.
 
 ### Full run
-After verifying the dry run and taking backups, run the real backfill:
+After verifying the default dry run and taking backups, run the state-changing
+form:
 
 ```bash
 # Ensure your environment is set (DJANGO_SETTINGS_MODULE, virtualenv activated)
-./venv/bin/python scripts/backfill_business_age_months.py
+.venv/bin/python scripts/backfill_business_age_months.py --apply
 ```
 
 ### Precautions
@@ -530,3 +547,4 @@ This backfill is additive (writes `business_age_months`). To roll back, restore 
 ### Next steps
 - After backfill, monitor logs and alerts for anomalies.
 - Deprecate `years_in_operation` in the API clients over a scheduled window (e.g., 2-4 weeks) and then remove alias support in a follow-up release.
+- Review `docs/PROFILES_CLIENT_MIGRATION.md` before removing the alias.

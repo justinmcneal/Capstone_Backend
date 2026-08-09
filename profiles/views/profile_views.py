@@ -28,9 +28,9 @@ from profiles.serializers import (
     AlternativeDataSerializer,
     BusinessProfileSerializer,
     CustomerProfileSerializer,
+    NotificationPreferencesUpdateSerializer,
 )
 from profiles.services.notification_preferences import (
-    UnknownPreferenceKeysError,
     get_preferences,
     update_preferences,
 )
@@ -100,6 +100,40 @@ def _audit_unavailable_response():
         message="Unable to record required profile access audit",
         status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
     )
+
+
+def _record_profile_mutation_audit(
+    request,
+    *,
+    customer_id,
+    action,
+    description,
+    resource_type,
+    resource_id=None,
+    details=None,
+):
+    """Record a customer mutation without changing an already-durable result."""
+
+    try:
+        AuditLog.log_action(
+            action=action,
+            user_id=customer_id,
+            user_type="customer",
+            user_email=getattr(request.user, "email", ""),
+            description=description,
+            resource_type=resource_type,
+            resource_id=resource_id,
+            details=details or {},
+            ip_address=get_client_ip(request),
+        )
+        return True
+    except Exception:
+        logger.exception(
+            "Profile mutation audit failed after durable %s mutation for customer %s",
+            resource_type,
+            customer_id,
+        )
+        return False
 
 
 class CustomerProfileAccessMixin(AccessControlMixin):
@@ -198,7 +232,8 @@ class CustomerProfileView(CustomerProfileAccessMixin, APIView):
                     status_code=status.HTTP_400_BAD_REQUEST,
                 )
 
-            if not profile._id:
+            created = not profile._id
+            if created:
                 profile = CustomerProfile.get_or_create(customer_id)
 
             # Update fields
@@ -208,16 +243,19 @@ class CustomerProfileView(CustomerProfileAccessMixin, APIView):
 
             logger.info(f"Profile updated for customer {customer_id}")
 
-            # Audit log
-            AuditLog.log_action(
-                action="profile_updated",
-                user_id=customer_id,
-                user_type="customer",
-                description="Personal profile updated",
-                resource_type="profile",
+            _record_profile_mutation_audit(
+                request,
+                customer_id=customer_id,
+                action="profile_created" if created else "profile_updated",
+                description=(
+                    "Personal profile created" if created else "Personal profile updated"
+                ),
+                resource_type="customer_profile",
                 resource_id=profile.id,
-                details={"completion": profile.completion_percentage},
-                ip_address=request.META.get("REMOTE_ADDR", ""),
+                details={
+                    "profile_revision": profile.profile_revision,
+                    "profile_completed": profile.profile_completed,
+                },
             )
 
             return success_response(
@@ -335,7 +373,8 @@ class BusinessProfileView(CustomerProfileAccessMixin, APIView):
                     status_code=status.HTTP_400_BAD_REQUEST,
                 )
 
-            if not profile._id:
+            created = not profile._id
+            if created:
                 profile = BusinessProfile.get_or_create(customer_id)
 
             data = dict(serializer.validated_data)
@@ -344,16 +383,19 @@ class BusinessProfileView(CustomerProfileAccessMixin, APIView):
 
             logger.info(f"Business profile updated for customer {customer_id}")
 
-            # Audit log
-            AuditLog.log_action(
-                action="profile_updated",
-                user_id=customer_id,
-                user_type="customer",
-                description="Business profile updated",
+            _record_profile_mutation_audit(
+                request,
+                customer_id=customer_id,
+                action="profile_created" if created else "profile_updated",
+                description=(
+                    "Business profile created" if created else "Business profile updated"
+                ),
                 resource_type="business_profile",
                 resource_id=profile.id,
-                details={"business_name": profile.business_name},
-                ip_address=request.META.get("REMOTE_ADDR", ""),
+                details={
+                    "profile_revision": profile.profile_revision,
+                    "profile_completed": profile.profile_completed,
+                },
             )
 
             return success_response(
@@ -509,7 +551,8 @@ class AlternativeDataView(CustomerProfileAccessMixin, APIView):
                     status_code=status.HTTP_400_BAD_REQUEST,
                 )
 
-            if not alt_data._id:
+            created = not alt_data._id
+            if created:
                 alt_data = AlternativeData.get_or_create(customer_id)
             data = dict(serializer.validated_data)
             expected_revision = data.pop("profile_revision", None)
@@ -522,12 +565,13 @@ class AlternativeDataView(CustomerProfileAccessMixin, APIView):
 
             logger.info(f"Alternative data updated for customer {customer_id}")
 
-            # Audit log
-            AuditLog.log_action(
-                action="profile_updated",
-                user_id=customer_id,
-                user_type="customer",
-                description="Alternative data updated",
+            _record_profile_mutation_audit(
+                request,
+                customer_id=customer_id,
+                action="profile_created" if created else "profile_updated",
+                description=(
+                    "Alternative data created" if created else "Alternative data updated"
+                ),
                 resource_type="alternative_data",
                 resource_id=alt_data.id,
                 details={
@@ -541,7 +585,6 @@ class AlternativeDataView(CustomerProfileAccessMixin, APIView):
                     ),
                     "profile_missing_fields": alt_data.profile_missing_fields,
                 },
-                ip_address=request.META.get("REMOTE_ADDR", ""),
             )
 
             return success_response(
@@ -549,6 +592,12 @@ class AlternativeDataView(CustomerProfileAccessMixin, APIView):
                     "risk_score_status": alt_data.risk_score_status,
                     "risk_input_revision": alt_data.risk_input_revision,
                     "profile_revision": alt_data.profile_revision,
+                    "profile_completed": alt_data.profile_completed,
+                    "completion_percentage": alt_data.completion_percentage,
+                    "profile_completion_policy_version": (
+                        alt_data.profile_completion_policy_version
+                    ),
+                    "profile_missing_fields": alt_data.profile_missing_fields,
                 },
                 message="Alternative data updated successfully",
             )
@@ -648,28 +697,36 @@ class NotificationPreferencesView(CustomerProfileAccessMixin, APIView):
                 message="Customer not found", status_code=status.HTTP_404_NOT_FOUND
             )
 
-        prefs = request.data.get("preferences", {})
-        if not isinstance(prefs, dict):
+        serializer = NotificationPreferencesUpdateSerializer(data=request.data)
+        if not serializer.is_valid():
             return error_response(
-                message="preferences must be an object",
+                message="Invalid notification preferences",
+                errors=serializer.errors,
                 status_code=status.HTTP_400_BAD_REQUEST,
             )
 
         try:
-            updated = update_preferences(customer, prefs)
-        except UnknownPreferenceKeysError as exc:
-            return error_response(
-                message="Unknown notification preference keys",
-                errors={
-                    "preferences": f"Unsupported keys: {', '.join(sorted(exc.unknown_keys))}"
-                },
-                status_code=status.HTTP_400_BAD_REQUEST,
+            updated = update_preferences(
+                customer,
+                serializer.validated_data["preferences"],
             )
-        except ValueError as exc:
+        except (TypeError, ValueError) as exc:
             return error_response(
                 message=str(exc),
                 status_code=status.HTTP_400_BAD_REQUEST,
             )
+
+        _record_profile_mutation_audit(
+            request,
+            customer_id=user.customer_id,
+            action="notification_preferences_updated",
+            description="Notification preferences updated",
+            resource_type="notification_preferences",
+            resource_id=customer.id,
+            details={
+                "changed_keys": sorted(serializer.validated_data["preferences"]),
+            },
+        )
 
         return success_response(
             data={"preferences": updated},

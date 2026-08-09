@@ -45,7 +45,9 @@ AUDIT_ACTIONS = [
     "loan_officer_updated",
     "loan_officer_deactivated",
     # Profile
+    "profile_created",
     "profile_updated",
+    "notification_preferences_updated",
     "profile_directory_viewed",
     "profile_sensitive_read",
     "profile_access_denied",
@@ -82,12 +84,14 @@ ACTION_GROUPS = {
     "create": [
         "user_registered",
         "admin_created",
+        "profile_created",
         "loan_submitted",
         "document_uploaded",
         "payment_recorded",
     ],
     "update": [
         "profile_updated",
+        "notification_preferences_updated",
         "risk_score_calculated",
         "risk_score_failed",
         "risk_score_stale",

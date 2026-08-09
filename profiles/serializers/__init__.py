@@ -3,6 +3,7 @@ from .profile_serializers import (
     BusinessProfileSerializer,
     CustomerProfileResponseSerializer,
     CustomerProfileSerializer,
+    NotificationPreferencesUpdateSerializer,
 )
 
 __all__ = [
@@ -10,4 +11,5 @@ __all__ = [
     "BusinessProfileSerializer",
     "CustomerProfileResponseSerializer",
     "CustomerProfileSerializer",
+    "NotificationPreferencesUpdateSerializer",
 ]

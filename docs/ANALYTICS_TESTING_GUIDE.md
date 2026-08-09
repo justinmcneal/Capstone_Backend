@@ -52,13 +52,17 @@ Content-Type: application/json
 | Group | Matching `action` values |
 |-------|--------------------------|
 | `login` | `user_login`, `user_login_failed`, `user_logout` |
-| `create` | `user_registered`, `loan_submitted`, `document_uploaded`, `payment_recorded` |
-| `update` | `profile_updated`, `document_verified`, `document_rejected`, `loan_approved`, `loan_rejected`, `loan_disbursed`, `penalty_applied`, `penalty_waived`, `consent_recorded`, `admin_action` |
+| `create` | Includes `user_registered`, `profile_created`, `loan_submitted`, `document_uploaded`, `payment_recorded` |
+| `update` | Includes `profile_updated`, `notification_preferences_updated`, `document_verified`, `document_rejected`, `loan_approved`, `loan_rejected`, `loan_disbursed`, `penalty_applied`, `penalty_waived`, `consent_recorded`, `admin_action` |
 | `delete` | `admin_action` entries whose description matches delete/deactivate/remove (regex) |
 
 ### Canonical Audit Actions (`AUDIT_ACTIONS` in code)
 
-`user_login`, `user_login_failed`, `user_logout`, `user_registered`, `profile_updated`, `document_uploaded`, `document_verified`, `document_rejected`, `loan_submitted`, `loan_approved`, `loan_rejected`, `loan_disbursed`, `payment_recorded`, `penalty_applied`, `penalty_waived`, `consent_recorded`, `admin_action`
+The canonical list is maintained by `AUDIT_ACTIONS` in code. Profile actions
+include `profile_created`, `profile_updated`,
+`notification_preferences_updated`, `profile_directory_viewed`,
+`profile_sensitive_read`, `profile_access_denied`, and the risk-score lifecycle
+actions.
 
 ### Extended Actions (also appear in logs from other modules)
 
@@ -177,7 +181,9 @@ Paginated, filterable audit logs (full system).
 | `payment_recorded` | `loan_id`, `amount`, `installment`, `method` |
 | `customer_payment_recorded` | `loan_id`, `amount`, `installment`, `method` |
 | `document_uploaded` | `document_type` |
-| `profile_updated` | `profile_type` |
+| `profile_updated` | `profile_revision`, `profile_completed`; alternative data also includes safe risk/completion state |
+| `profile_created` | `profile_revision`, `profile_completed` |
+| `notification_preferences_updated` | `changed_keys` |
 | `penalty_applied` | `loan_id`, `installment_number`, `amount`, `reason` |
 | `penalty_waived` | `loan_id`, `installment_number`, `amount`, `reason` |
 | `wallet_payment_verified` | `loan_id`, `installment_number`, `eth_amount`, `php_amount`, `eth_rate`, `tx_hash` |

@@ -629,16 +629,10 @@ class TestNotificationPreferencesView:
 
     def test_put_updates_preferences(self, monkeypatch):
         customer = _create_customer()
-        mock_customer = MagicMock()
-        mock_customer.notification_preferences = {
-            "email_loan_updates": True,
-            "email_payment_reminders": True,
-            "email_promotions": False,
-        }
 
         monkeypatch.setattr(
             "accounts.services.AuthService.get_customer_by_id",
-            staticmethod(lambda customer_id: mock_customer),
+            staticmethod(lambda customer_id: customer),
             raising=False,
         )
 
@@ -661,16 +655,15 @@ class TestNotificationPreferencesView:
 
         response = NotificationPreferencesView.as_view()(request)
         assert response.status_code == 200
-        assert mock_customer.notification_preferences["email_promotions"] is True
+        stored = Customer.find_one({"_id": customer._id})
+        assert stored.notification_preferences["email_promotions"] is True
 
     def test_put_rejects_unknown_keys(self, monkeypatch):
         customer = _create_customer()
-        mock_customer = MagicMock()
-        mock_customer.notification_preferences = {}
 
         monkeypatch.setattr(
             "accounts.services.AuthService.get_customer_by_id",
-            staticmethod(lambda customer_id: mock_customer),
+            staticmethod(lambda customer_id: customer),
             raising=False,
         )
 
@@ -692,8 +685,8 @@ class TestNotificationPreferencesView:
 
         response = NotificationPreferencesView.as_view()(request)
         assert response.status_code == 400
-        assert "unknown" in response.data["message"].lower()
-        assert "keys" in response.data["message"].lower()
+        assert "sms_promotions" not in response.data.get("errors", {})
+        assert "unknown_key" in response.data["errors"]["preferences"]
 
     def test_put_requires_preferences_object(self, monkeypatch):
         customer = _create_customer()
@@ -712,7 +705,7 @@ class TestNotificationPreferencesView:
 
         response = NotificationPreferencesView.as_view()(request)
         assert response.status_code == 400
-        assert "preferences must be an object" in response.data["message"].lower()
+        assert "preferences" in response.data["errors"]
 
 
 class TestOfficerProfileView:

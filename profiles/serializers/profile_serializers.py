@@ -1,4 +1,5 @@
 import re
+from decimal import Decimal
 
 from django.utils import timezone as django_timezone
 from rest_framework import serializers
@@ -256,10 +257,14 @@ class BusinessProfileSerializer(InputSanitizationMixin, serializers.Serializer):
         min_value=0,
         help_text="Business age in months (canonical unit). Minimum 0 months.",
     )
-    years_in_operation = serializers.FloatField(
+    years_in_operation = serializers.DecimalField(
+        max_digits=8,
+        decimal_places=4,
         required=False,
         allow_null=True,
         min_value=0,
+        coerce_to_string=False,
+        write_only=True,
         help_text="Legacy alias for business age in years. Converted to months.",
     )
     is_registered = serializers.BooleanField(required=False)
@@ -279,6 +284,35 @@ class BusinessProfileSerializer(InputSanitizationMixin, serializers.Serializer):
     number_of_employees = serializers.IntegerField(required=False, min_value=0)
 
     def validate(self, data):
+        if "years_in_operation" in data:
+            years = data.pop("years_in_operation")
+            converted_months = None
+            if years is not None:
+                month_value = years * Decimal(12)
+                if month_value != month_value.to_integral_value():
+                    raise serializers.ValidationError(
+                        {
+                            "years_in_operation": (
+                                "Business age must convert to a whole number of months."
+                            )
+                        }
+                    )
+                converted_months = int(month_value)
+
+            if (
+                "business_age_months" in data
+                and data["business_age_months"] != converted_months
+            ):
+                raise serializers.ValidationError(
+                    {
+                        "years_in_operation": (
+                            "Legacy years and canonical months must describe the "
+                            "same business age."
+                        )
+                    }
+                )
+            data["business_age_months"] = converted_months
+
         business_type = _merged(self, data, "business_type")
         business_type_other = _merged(self, data, "business_type_other", "")
         if business_type == "other":
@@ -309,6 +343,49 @@ class BusinessProfileSerializer(InputSanitizationMixin, serializers.Serializer):
             data["registration_type"] = None
             data["registration_number"] = ""
         return data
+
+
+class NotificationPreferenceValuesSerializer(serializers.Serializer):
+    """Strict JSON boolean values for the supported notification channels."""
+
+    email_loan_updates = serializers.BooleanField(required=False)
+    email_payment_reminders = serializers.BooleanField(required=False)
+    email_promotions = serializers.BooleanField(required=False)
+
+    def to_internal_value(self, data):
+        if not isinstance(data, dict):
+            raise serializers.ValidationError("Must be an object.")
+
+        unknown = sorted(set(data) - set(self.fields))
+        if unknown:
+            raise serializers.ValidationError(
+                {key: "Unsupported notification preference." for key in unknown}
+            )
+
+        invalid_types = {
+            key: "Must be a JSON boolean."
+            for key, value in data.items()
+            if type(value) is not bool
+        }
+        if invalid_types:
+            raise serializers.ValidationError(invalid_types)
+        return super().to_internal_value(data)
+
+
+class NotificationPreferencesUpdateSerializer(serializers.Serializer):
+    """Validated notification-preference update envelope."""
+
+    preferences = NotificationPreferenceValuesSerializer(required=True)
+
+    def to_internal_value(self, data):
+        if not isinstance(data, dict):
+            raise serializers.ValidationError("Request body must be an object.")
+        unknown = sorted(set(data) - set(self.fields))
+        if unknown:
+            raise serializers.ValidationError(
+                {key: "Unsupported request field." for key in unknown}
+            )
+        return super().to_internal_value(data)
 
 
 class AlternativeDataSerializer(InputSanitizationMixin, serializers.Serializer):

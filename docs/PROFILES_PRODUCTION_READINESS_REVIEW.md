@@ -35,18 +35,21 @@ atomic-update, index, encryption, concurrency, or data-type behavior.
 
 ## Executive Summary
 
-The Profiles module has functional foundations but is **not production-ready**.
+The Profiles module's planned production-readiness implementation is complete at
+the code and local-test level, but deployment remains gated on the documented
+live-environment validation.
 Personal, business, and alternative-data CRUD; customer-only access control;
 profile summaries; notification preferences; officer directory/detail views;
 field encryption; audit logging; rate limiting; and asynchronous risk scoring
 all exist. The codebase also contains substantially more profile tests than the
 previous version of this review recorded.
 
-Stages 2–5 close the previously unrestricted loan-officer access, profile-data
+Stages 2–6 close the previously unrestricted loan-officer access, profile-data
 retention, risk-input mismatch, stale-score publication, plaintext numeric-
 financial data, read-side mutation, lost-update, weak-validation, and misleading
-readiness blockers. Production release still requires Stage 6 API/audit cleanup
-and live environment validation.
+readiness, API inconsistency, notification-persistence, and audit-response
+blockers. Production release still requires isolated real-Mongo validation and
+review of dry-run operational inventories before production writes.
 
 The original review was a static code audit. On 2026-08-09, the focused profile
 suite is revalidated after every completed stage. Stage 4 adds opt-in real-Mongo
@@ -60,7 +63,7 @@ Current remediation status:
 - [x] Stage 3 — Risk-scoring correctness, explainability, and task durability
 - [x] Stage 4 — Encryption, persistence integrity, and concurrency
 - [x] Stage 5 — Validation, completion, and readiness policy
-- [ ] Stage 6 — API consistency, audit completeness, and documentation
+- [x] Stage 6 — API consistency, audit completeness, and documentation
 - [ ] Stage 7 — Optional customer capabilities and operational hardening
 
 ## Verified Implemented Foundations
@@ -76,8 +79,12 @@ Current remediation status:
 - Profile index creation is wired into `init_db.py`.
 - Lookups tolerate legacy customer IDs stored as either `ObjectId` or string and
   return the most recently updated matching record.
-- Business age is stored canonically as `business_age_months`, and direct model
-  construction can convert legacy `years_in_operation` values to months.
+- Business age is stored and returned canonically as `business_age_months`.
+  Legacy `years_in_operation` API input converts to exact whole months, matching
+  dual fields are accepted, and ambiguous values are rejected.
+- The legacy business-age reconciliation script is inventory-only by default,
+  requires `--apply`, rejects ambiguous values for manual review, and uses a
+  profile-revision guard when applying.
 - Missing-profile GET and summary responses use unsaved empty representations and
   do not create MongoDB documents.
 - PUT creation uses atomic upsert semantics. Validated updates `$set` only
@@ -182,7 +189,8 @@ Current remediation status:
 
 - `profiles/services/summary.py` centralizes profile summary construction.
 - `profiles/services/notification_preferences.py` centralizes notification
-  preference defaults, allowlisting, and persistence.
+  preference defaults, strict boolean validation, merging, and narrow atomic
+  persistence.
 - `profiles/services/officer_profile.py` builds an explicitly allowlisted officer
   response rather than serializing the account model wholesale.
 - `profiles/services/risk_scoring.py` implements a versioned weighted heuristic
@@ -229,7 +237,14 @@ Current remediation status:
   model declarations. Populated declared numeric fields are supported rather
   than reported as `unsupported`.
 - Personal, business, and alternative-data PUT operations create audit events.
-- Audit details avoid recording the complete submitted profile payload.
+- First mutations record profile creation; later changes record profile updates;
+  notification changes are separately audited.
+- Customer mutation audits use the shared trusted-proxy IP policy. Audit details
+  avoid recording profile payloads or preference values.
+- A profile mutation that is already durable remains a successful API operation
+  if the best-effort audit write subsequently fails. The failure is logged for
+  operations rather than returning a misleading `500` that invites duplicate
+  mutation retries.
 
 ### Test foundations
 
@@ -241,11 +256,11 @@ Current remediation status:
   alternative-data round trips, and synchronous task execution under mongomock.
 - Business-age conversion tests cover direct model construction.
 - Blockchain/profile tests cover wallet-field serialization and validation.
-- On 2026-08-09, 130 focused tests passed across API, business-age, model/task,
+- On 2026-08-09, 153 focused tests passed across API, business-age, model/task,
   scoring, Stage 1 characterization, Stage 2 privacy/lifecycle, Stage 3 risk
-  durability, Stage 4 persistence/encryption, and Stage 5 validation/readiness
-  modules.
-- The post-Stage 5 full suite collected 968 tests: 952 passed and 16 opt-in
+  durability, Stage 4 persistence/encryption, Stage 5 validation/readiness, and
+  Stage 6 API/audit modules.
+- The post-Stage 6 full suite collected 991 tests: 975 passed and 16 opt-in
   integration tests skipped, including two real-Mongo profile tests.
 
 ## Resolved Production Blockers
@@ -262,105 +277,27 @@ Randomized Fernet ciphertext cannot support ordinary equality or range queries.
 The newly encrypted financial fields are not used for MongoDB search or sorting;
 any future query requirement needs a separate reviewed indexing design.
 
-## Partial Implementations and High-Priority Gaps
+## Remaining Operational Validation
 
-### Legacy business-age compatibility is not implemented through PUT
+No known code-level Stage 1–6 blocker remains. Before production deployment:
 
-**Status: Partial / documented compatibility is false**
+- Execute the opt-in unique-index, concurrent-upsert, and optimistic-concurrency
+  tests against an isolated real MongoDB instance.
+- Review duplicate, completion, risk-score, retained-profile, encryption, and
+  business-age inventories in dry-run mode before authorizing any production
+  reconciliation or index operation.
+- Validate configured MongoDB transactions/index behavior, Redis/Celery delivery,
+  encryption keys, trusted-proxy depth, throttles, logging, and monitoring in the
+  deployment environment.
 
-The serializer accepts `years_in_operation`, but the update view only sets fields
-already present on `BusinessProfile`. The model has no `years_in_operation`
-attribute, so the validated legacy field is silently discarded. Conversion works
-only when constructing a model directly, which is what existing conversion tests
-cover.
+## API and Documentation Alignment
 
-Remaining work:
-
-- Convert `years_in_operation` to `business_age_months` inside serializer
-  validation and remove the alias before view assignment.
-- Define precedence or reject the request when both fields are supplied.
-- Add endpoint tests proving persisted conversion.
-- Return only canonical months from GET and publish a deprecation schedule.
-
-### Notification preference validation and persistence are incomplete
-
-**Status: Partial**
-
-The service enforces a fixed preference-key allowlist, but converts submitted
-values with Python `bool()`. A string such as `"false"` therefore becomes `True`
-instead of being rejected or parsed as false. Preference updates save the complete
-customer document and do not generate an audit event. Reads also return an
-existing stored preference dictionary as-is, so older or partial dictionaries can
-omit documented default keys instead of being merged with the defaults.
-
-Remaining work:
-
-- Introduce a DRF serializer with strict BooleanFields and the fixed key set.
-- Merge stored preferences over the complete defaults on every read and update.
-- Atomically `$set` only `notification_preferences`.
-- Audit preference changes without storing unrelated customer data.
-- Test JSON booleans, invalid strings/numbers/nulls, partial updates, defaults,
-  concurrent account updates, and unknown keys.
-
-The same partial-commit response problem applies to mutation audit failures:
-profile data is saved before `AuditLog.log_action()`, but the broad outer exception
-handler can then return `500`. A client retry may therefore repeat a mutation that
-already succeeded. Mutation persistence, audit requirements, and retry semantics
-must be made explicit and tested.
-
-### Audit coverage is incomplete
-
-**Status: Partial**
-
-Personal, business, and alternative-data PUT operations create basic audit
-records. Officer directory access, successful sensitive reads, and denied scoped
-reads now create required audit records using the shared trusted-proxy IP helper.
-Notification changes and automatic profile creation are not audited. Score
-success, failure, and stale-task outcomes now record policy/revision/task metadata
-without raw scoring inputs. The three customer mutation paths still use
-`REMOTE_ADDR`; their proxy handling must be aligned with the shared helper.
-
-Remaining work:
-
-- Audit notification preference changes.
-- Add audit success/failure tests and trusted-proxy operational guidance.
-
-## Test Coverage Gaps
-
-The prior review's statements that model, serializer, service, task, and
-encryption tests were entirely absent are no longer accurate. Tests now exist in
-all or most of those areas, but important assertions and realistic end-to-end
-contracts are missing.
-
-Required additions:
-
-- Execute the opt-in profile unique-index, concurrent-upsert, and optimistic-
-  concurrency tests against an isolated real MongoDB instance.
-- Legacy business-age endpoint conversion and dual-field precedence tests.
-- Strict notification boolean and concurrent-update tests.
-- Tests proving business and alternative GET responses match the published API
-  schema, including completion fields if those remain part of the contract.
-
-## API and Documentation Misalignment
-
-`docs/PROFILES_TESTING_GUIDE.md` and the previous version of this review do not
-match current code in several material areas:
-
-- `business_age_months` already accepts zero.
-- Model, API, task, risk, conversion, and encryption-related tests now exist.
-- `years_in_operation` is present in the serializer but is silently discarded by
-  the PUT view instead of converted.
-- Business GET does not return `years_in_operation`.
-- There are seven throttled profile views, not six.
-- Notification preference boolean-like values are not strictly parsed or
-  validated.
-- Partial stored notification preferences are not merged with documented
-  defaults.
-
-Stage 2 officer behavior, Stage 3 scoring, Stage 4 encryption/persistence, and
-Stage 5 validation/readiness behavior are now reflected in the testing guide. The
-remaining mismatches must be corrected with their owning implementation stages so
-the guide does not preserve accidental behavior.
+`docs/PROFILES_TESTING_GUIDE.md`, `docs/PROFILES_COMPLETION_POLICY.md`,
+`docs/PROFILES_RISK_SCORING_POLICY.md`, and
+`docs/PROFILES_CLIENT_MIGRATION.md` now describe the verified Stage 6 contract.
+Canonical responses, compatibility aliases, role boundaries, strict notification
+booleans, asynchronous scoring state, audit failure semantics, and client changes
+are explicitly documented.
 
 ## Staged Remediation Plan
 
@@ -420,7 +357,8 @@ converted scoring-contract and stale-task assertions and added a dedicated risk-
 durability module. Stage 4 converted plaintext-financial, read-side-write, and
 lost-update assertions. Stage 5 converted the weak-readiness assertion and added
 dedicated validation/readiness coverage. Remaining characterization assertions
-must be converted in Stage 6.
+were converted to the canonical business-age and strict notification targets in
+Stage 6.
 
 ### Stage 2 — Officer privacy, authorization scope, and lifecycle retention
 
@@ -569,20 +507,41 @@ Stage 5 behavior:
 
 ### Stage 6 — API consistency, audit completeness, and documentation
 
-**Status: Not started**
+**Status: Implementation complete / live MongoDB validation pending**
 
-- [ ] Implement and test legacy business-age conversion or remove the alias.
-- [ ] Make GET response fields consistent with the canonical schema.
-- [ ] Introduce strict notification preference serialization, default merging,
-  and atomic updates.
-- [ ] Complete mutation, score, and sensitive-read audit coverage.
-- [ ] Define atomic/partial-commit behavior when audit recording or task enqueue
-  fails after profile persistence.
-- [ ] Update `docs/PROFILES_TESTING_GUIDE.md` to the verified contract.
-- [ ] Publish client migration notes for changed routes, fields, roles, and
-  asynchronous score status.
-- [ ] Run focused profile tests, lint/static checks, and real-Mongo integration
-  validation.
+- [x] ~~Implement and test legacy business-age conversion or remove the alias.~~
+- [x] ~~Make GET response fields consistent with the canonical schema.~~
+- [x] ~~Introduce strict notification preference serialization, default merging,
+  and atomic updates.~~
+- [x] ~~Complete mutation, score, and sensitive-read audit coverage.~~
+- [x] ~~Define atomic/partial-commit behavior when audit recording or task enqueue
+  fails after profile persistence.~~
+- [x] ~~Update `docs/PROFILES_TESTING_GUIDE.md` to the verified contract.~~
+- [x] ~~Publish client migration notes for changed routes, fields, roles, and
+  asynchronous score status.~~
+- [x] ~~Run focused profile tests and lint/static checks.~~
+- [ ] Execute the opt-in integration tests against an isolated real MongoDB
+  instance before production index or reconciliation work.
+
+Stage 6 behavior:
+
+- `years_in_operation` is a deprecated input-only alias. It converts to exact
+  whole months, is removed before persistence, and must agree with canonical
+  months when both are sent. GET returns canonical months only.
+- The legacy age reconciliation script is dry-run by default and revision-guarded
+  under `--apply`; ambiguous values are left untouched for manual review.
+- Business and alternative-data GET key sets are tested against the documented
+  canonical schemas. Alternative PUT now returns the documented completion
+  metadata as well as risk and profile revisions.
+- Notification settings require actual JSON booleans and known keys. Partial
+  stored dictionaries merge with defaults, while partial PUT uses dot-field
+  updates so unrelated account and preference changes are preserved.
+- Profile creation, profile updates, notification changes, risk outcomes, and
+  scoped staff reads/denials have tested audit coverage using the shared client-IP
+  helper. Customer mutation audit failure after a durable write is logged but
+  does not change the API result to a misleading `500`.
+- Client changes and compatibility removal requirements are published in
+  `docs/PROFILES_CLIENT_MIGRATION.md`.
 
 ### Stage 7 — Optional customer capabilities and operational hardening
 
@@ -637,18 +596,18 @@ Stage 5 behavior:
 - [x] ~~Completion/readiness semantics are formally defined and accurately
   named.~~
 - [x] ~~Cross-field, date, location, and monetary validation is production-safe.~~
-- [ ] Legacy business-age behavior is implemented as documented or removed.
-- [ ] Notification preferences use strict booleans and atomic persistence.
-- [ ] Audit coverage includes preferences and automatic profile creation; scoring
-  and sensitive staff reads are now covered.
-- [ ] Canonical API responses, roles, and routes match the testing guide.
+- [x] ~~Legacy business-age behavior is implemented as documented.~~
+- [x] ~~Notification preferences use strict booleans and atomic persistence.~~
+- [x] ~~Audit coverage includes preferences, profile creation/updates, scoring,
+  and sensitive staff reads.~~
+- [x] ~~Canonical API responses, roles, and routes match the testing guide.~~
 - [x] ~~Focused profile and full local test suites pass.~~
 - [ ] Real-Mongo index/concurrency behavior is validated.
 
 ## Client Impact
 
-The customer mobile application, loan-officer web application, and potentially the
-admin web application require coordinated changes as later stages complete:
+The customer mobile and loan-officer web applications require the coordinated
+contract changes below. Admin web has no direct Profiles API integration:
 
 - Customer mobile must treat risk scoring as asynchronous, poll or refresh
   `risk_score_status`, display the score as informational with manual review, and
@@ -656,7 +615,8 @@ admin web application require coordinated changes as later stages complete:
   `profile_ready_for_application` as the profile-only signal, retain temporary
   compatibility with the deprecated `ready_for_loan` alias, render validation
   failures by field, and use `profile_missing_fields` for incomplete-section
-  guidance. It may also need canonical `business_age_months` in Stage 6.
+  guidance. It must send canonical `business_age_months`; the legacy years alias
+  is input-only and pending coordinated removal.
   For edit conflict protection it should store the returned `profile_revision`,
   send it on the next PUT, and reload the form after a `409` response.
 - Loan-officer web must use `/api/officer/profiles/` routes, handle scoped/404
@@ -667,6 +627,8 @@ admin web application require coordinated changes as later stages complete:
   an explicit permission and sensitive-read audit trail.
 - All clients must treat generic profile completion separately from product loan
   eligibility and approved-document requirements.
+- Detailed migration instructions are in
+  `docs/PROFILES_CLIENT_MIGRATION.md`.
 
 ## Notes
 
@@ -682,5 +644,5 @@ admin web application require coordinated changes as later stages complete:
   approval, backups, dry-run review, and staging validation before use.
 - The current 500/hour profile throttle is documented as implemented behavior,
   not an endorsement of that value for production.
-- Optional avatar/export features should not be prioritized ahead of validation,
-  readiness, API consistency, and audit work.
+- Optional avatar/export features should not be prioritized ahead of live
+  environment validation and operational monitoring.
