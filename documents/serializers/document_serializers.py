@@ -1,7 +1,8 @@
-from rest_framework import serializers
-from documents.models import DOCUMENT_TYPES, ALLOWED_MIME_TYPES, MAX_FILE_SIZE
-from accounts.serializers.base_serializers import InputSanitizationMixin
 from PIL import Image, UnidentifiedImageError
+from rest_framework import serializers
+
+from accounts.serializers.base_serializers import InputSanitizationMixin
+from documents.models import ALLOWED_MIME_TYPES, DOCUMENT_TYPES, MAX_FILE_SIZE
 
 FILE_SIGNATURES = {
     "image/jpeg": [b"\xff\xd8\xff"],
@@ -54,6 +55,42 @@ class DocumentUploadSerializer(InputSanitizationMixin, serializers.Serializer):
         return value
 
 
+class DocumentPresignedUploadSerializer(
+    InputSanitizationMixin, serializers.Serializer
+):
+    """Validate an immutable direct-upload session contract."""
+
+    document_type = serializers.ChoiceField(choices=DOCUMENT_TYPES)
+    original_filename = serializers.CharField(max_length=255)
+    description = serializers.CharField(
+        max_length=500, required=False, allow_blank=True, default=""
+    )
+    file_size = serializers.IntegerField(min_value=1, max_value=MAX_FILE_SIZE)
+    mime_type = serializers.ChoiceField(choices=ALLOWED_MIME_TYPES)
+    sha256 = serializers.RegexField(regex=r"^[A-Fa-f0-9]{64}$")
+
+    def validate_original_filename(self, value):
+        from accounts.utils.validation_utils import sanitize_filename
+
+        sanitized = sanitize_filename(value)
+        if not sanitized:
+            raise serializers.ValidationError("A valid filename is required")
+        return sanitized
+
+    def validate_sha256(self, value):
+        return value.lower()
+
+
+class DocumentPresignedFinalizeSerializer(serializers.Serializer):
+    """Validate the secret returned with a direct-upload session."""
+
+    finalize_token = serializers.CharField(
+        min_length=32,
+        max_length=256,
+        trim_whitespace=False,
+    )
+
+
 class DocumentResponseSerializer(serializers.Serializer):
     """Serializer for document response data"""
 
@@ -81,13 +118,19 @@ class DocumentResponseSerializer(serializers.Serializer):
     file_url = serializers.SerializerMethodField()
     created_at = serializers.DateTimeField(source="uploaded_at")
     uploaded_at = serializers.DateTimeField()
+    revision = serializers.IntegerField(default=0)
+    replaces_document_id = serializers.CharField(allow_null=True, required=False)
+    superseded_by_document_id = serializers.CharField(allow_null=True, required=False)
 
     def get_customer_id(self, obj):
         from documents.views.document_views import serialize_value
         return serialize_value(obj.customer_id)
 
     def get_customer_name(self, obj):
-        from documents.services.notification import get_customer_by_identifier, get_display_name
+        from documents.services.notification import (
+            get_customer_by_identifier,
+            get_display_name,
+        )
 
         customer = get_customer_by_identifier(obj.customer_id)
         return get_display_name(customer, fallback="Customer")
@@ -106,6 +149,8 @@ class DocumentResponseSerializer(serializers.Serializer):
 
     def get_file_url(self, obj):
         from documents.storage import get_storage_backend
+        if not self.context.get("include_file_url", True):
+            return None
         if getattr(obj, "file_path", None):
             return get_storage_backend().get_url(obj.file_path)
         return None
@@ -141,6 +186,7 @@ class DocumentVerifySerializer(InputSanitizationMixin, serializers.Serializer):
         allow_blank=True,
         help_text="Optional notes for the document",
     )
+    revision = serializers.IntegerField(min_value=0, required=False)
 
     def validate(self, data):
         # Get action from either 'action' or 'status' field

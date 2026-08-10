@@ -1,9 +1,21 @@
 from .document_views import (
-    DocumentUploadView,
-    DocumentListView,
     DocumentDetailView,
-    DocumentVerifyView,
-    DocumentTypesView,
-    RequestReuploadView,
+    DocumentListView,
+    DocumentPresignedFinalizeView,
     DocumentPresignedUploadView,
+    DocumentTypesView,
+    DocumentUploadView,
+    DocumentVerifyView,
+    RequestReuploadView,
 )
+
+__all__ = [
+    "DocumentDetailView",
+    "DocumentListView",
+    "DocumentPresignedFinalizeView",
+    "DocumentPresignedUploadView",
+    "DocumentTypesView",
+    "DocumentUploadView",
+    "DocumentVerifyView",
+    "RequestReuploadView",
+]

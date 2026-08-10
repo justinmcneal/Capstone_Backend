@@ -41,6 +41,7 @@ class LoanOfficer:
             "department", ""
         )  # e.g., "Loan Processing", "Risk Assessment"
         self.role = "loan_officer"  # Fixed role
+        self.permissions = kwargs.get("permissions", ["review_documents"])
         self.verified = kwargs.get(
             "verified", True
         )  # Admin-created, so verified by default
@@ -114,6 +115,9 @@ class LoanOfficer:
         """Username for Django compatibility"""
         return self.email
 
+    def has_permission(self, permission):
+        return permission in self.permissions
+
     @property
     def full_name(self):
         """Get full name"""
@@ -130,6 +134,7 @@ class LoanOfficer:
             "phone": self.phone,
             "department": self.department,
             "role": self.role,
+            "permissions": self.permissions,
             "verified": self.verified,
             "active": self.active,
             "deleted_at": self.deleted_at,

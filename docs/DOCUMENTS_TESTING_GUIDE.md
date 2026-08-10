@@ -3,9 +3,9 @@
 > **Readiness notice (2026-08-09):** This guide documents the current API for
 > development and characterization testing. The Documents module is not yet
 > production-ready. See `docs/DOCUMENTS_PRODUCTION_READINESS_REVIEW.md` for the
-> verified gaps and staged remediation plan. In particular, a successful call to
-> `POST /presigned-upload/` plus an S3 POST does **not** create or validate a
-> `Document` record.
+> verified gaps and staged remediation plan. A presigned S3 POST remains a
+> quarantined object until the separate finalize endpoint validates and creates
+> the `Document` record.
 
 ## Scope
 
@@ -43,13 +43,14 @@ Content-Type: application/json
 | Endpoint | Allowed Role | Notes |
 |----------|--------------|-------|
 | `POST /upload/` | Customer | Owner-only upload |
-| `POST /presigned-upload/` | Customer | Returns S3 presigned POST data when backend supports it |
+| `POST /presigned-upload/` | Customer | Creates a gated, short-lived quarantine session |
+| `POST /presigned-upload/<session_id>/finalize/` | Customer owner | Validates and creates the document once |
 | `GET /` | Customer, Loan Officer, Admin, Super Admin | Role-scoped results |
 | `GET /<document_id>/` | Customer (owner), scoped Officer, Admin, Super Admin | Concealed from unauthorized users |
 | `DELETE /<document_id>/` | Customer | Owner only; cannot delete verified docs |
-| `PUT /<document_id>/verify/` | Loan Officer, Admin | Approve/reject with `action` or `status` |
+| `PUT /<document_id>/verify/` | Permitted Loan Officer/Admin | Requires `review_documents` |
 | `GET /types/` | Customer, Loan Officer, Admin, Super Admin | Optional `product_id` for product-specific requirements |
-| `POST /<document_id>/request-reupload/` | Loan Officer, Admin | Flags document for another upload |
+| `POST /<document_id>/request-reupload/` | Permitted Loan Officer/Admin | Requires `review_documents` |
 
 ---
 
@@ -128,6 +129,9 @@ Upload a document for the authenticated customer.
 | `file_url` | string or null | Accessible URL from storage backend |
 | `created_at` | ISO datetime | Alias for `uploaded_at` |
 | `uploaded_at` | ISO datetime | When the document was uploaded |
+| `revision` | int | Optimistic-concurrency revision for later mutations |
+| `replaces_document_id` | string or null | Earlier document replaced by this upload |
+| `superseded_by_document_id` | string or null | Replacement document, when present |
 
 **Side effects:**
 - Creates a `Document` record in MongoDB
@@ -145,28 +149,60 @@ Request presigned POST data for direct browser/client upload to S3.
 ```json
 {
   "document_type": "valid_id",
-  "original_filename": "photo.jpg"
+  "original_filename": "photo.jpg",
+  "description": "Government ID",
+  "file_size": 245811,
+  "mime_type": "image/jpeg",
+  "sha256": "64-lowercase-or-uppercase-hex-characters"
 }
 ```
 
 **Response fields (`data`):**
-- Presigned `post` data including `url` and form `fields` when the active storage backend supports it
-- Error when the backend does not support presigned uploads
+
+- `upload_session_id`: owner-bound short-lived session ID
+- `finalize_token`: one-time secret; the server stores only its hash
+- `expires_at`: upload/finalization deadline
+- `post`: S3 form `url` and required `fields`
 
 **Notes:**
-- Only S3-like backends currently implement `get_presigned_upload_for_new_object()`
+- `DOCUMENT_PRESIGNED_UPLOAD_ENABLED` defaults to `False`; the route returns
+  `404` without touching storage while disabled.
+- Only the S3 backend currently advertises presigned-upload support.
 - Local development storage returns 400 for this endpoint
-- This is currently an object-upload grant, not a complete document-upload
-  workflow. There is no upload session or finalize endpoint, no server-side
-  object validation, no `Document` record, no AI/audit/reviewer processing, and
-  no abandoned-object cleanup.
-- Current presigned conditions do not enforce the application's 10 MB limit or
-  declared MIME type. Keep this route disabled outside isolated development
-  until Stage 2 in the production-readiness review is complete.
+- The request must be made before uploading because the server binds the exact
+  size, MIME type, SHA-256, key, session, and expiry into the policy.
+- Submit every returned form field unchanged along with the file.
+- The object remains in quarantine and is not a document until finalize succeeds.
+- Keep the route disabled until the deployment S3 configuration and isolated
+  workflow validation in the production-readiness review are complete.
+
+### 3. `POST /presigned-upload/<session_id>/finalize/`
+
+Finalize the quarantined object after the S3 POST succeeds.
+
+**Auth:** owning customer only
+
+```json
+{
+  "finalize_token": "token returned during session creation"
+}
+```
+
+The server verifies ownership, token, expiry, object metadata, exact size, MIME
+type, computed SHA-256, and normal content-scanning rules. Valid content is moved
+to durable document storage and a `Document` record is created.
+
+- First successful finalization returns `201` and `replayed: false`.
+- Repeating the same completed finalization returns `200`, the same document,
+  and `replayed: true`.
+- Wrong owner/token is concealed as `404`; expired sessions return `410`;
+  concurrent finalization returns `409`.
+- Validation failure removes the quarantine object or leaves it for the scheduled
+  cleanup retry when storage deletion fails.
 
 ---
 
-### 3. `GET /` (list documents)
+### 4. `GET /` (list documents)
 
 List documents scoped to the authenticated user.
 
@@ -213,7 +249,8 @@ List documents scoped to the authenticated user.
 | `documents[].reupload_requested` | bool |
 | `documents[].reupload_reason` | string or null |
 | `documents[].reupload_requested_by` | string or null |
-| `documents[].file_url` | string or null |
+| `documents[].file_url` | null (lists are metadata-only) |
+| `documents[].revision` | int |
 | `documents[].created_at` | ISO datetime |
 | `documents[].uploaded_at` | ISO datetime |
 | `total` | int |
@@ -227,7 +264,7 @@ List documents scoped to the authenticated user.
 
 ---
 
-### 4. `GET /<document_id>/` (detail)
+### 5. `GET /<document_id>/` (detail)
 
 Get a single document's metadata.
 
@@ -238,7 +275,8 @@ Get a single document's metadata.
 |-------|------|----------|------------|
 | `document_id` | string | yes | Valid MongoDB ObjectId |
 
-**Response fields (`data`):** Same document object shape as list detail entries.
+**Response fields (`data`):** Same document object shape as list entries, but an
+authorized detail response may issue `file_url` on demand.
 
 **Behavior:**
 - Customers can only fetch their own documents
@@ -247,30 +285,35 @@ Get a single document's metadata.
 
 ---
 
-### 5. `DELETE /<document_id>/`
+### 6. `DELETE /<document_id>/`
 
 Delete a document record and its stored file.
 
 **Auth:** customer (owner only)  
 **Constraints:**
-- Verified documents cannot be deleted; returns 400
-- File is removed from the storage backend
-- Document record is removed from MongoDB
+- Only unverified `pending`, `needs_review`, and `rejected` documents can be
+  deleted. Approved, verified, and expired documents return 400.
+- Optional JSON `revision` must match the current revision when sent.
+- The document is atomically claimed before storage deletion, preventing a
+  review/delete race.
+- A completed deletion returns `200`. If storage or metadata completion fails,
+  the endpoint returns `202` and the scheduled reconciler retries idempotently.
 
 **Response fields (`data`):**
 - `message`: success message
 
 ---
 
-### 6. `PUT /<document_id>/verify/`
+### 7. `PUT /<document_id>/verify/`
 
 Approve or reject a document.
 
-**Auth:** loan_officer or admin  
+**Auth:** loan_officer or admin with `review_documents`
 **Request body (JSON):**
 - `action` or `status`: `approve` or `reject` (either accepted)
 - `rejection_reason`: required when rejecting; non-empty
 - `notes`: optional officer notes
+- `revision`: optional non-negative revision; stale values return `409`
 
 **Response fields (`data`):**
 
@@ -279,16 +322,25 @@ Approve or reject a document.
 | `id` | string |
 | `status` | string |
 | `verified` | bool |
+| `revision` | int |
 
 **Side effects:**
 - On approve: sets `status=approved`, `verified=true`, `verified_by`, `verified_at`
 - On reject: sets `status=rejected`, `rejection_reason`
+- Review decisions clear incompatible stale rejection/re-upload/verification
+  compatibility fields.
 - Sends notification email to customer
 - Writes audit log entry with `action: document_verified` or `action: document_rejected`
 
+**State conflicts:**
+
+- `approved` and `expired` are terminal and return `409` for review transitions.
+- A rejected document must first receive an explicit re-upload request before it
+  can be reviewed again.
+
 ---
 
-### 7. `GET /types/`
+### 8. `GET /types/`
 
 Get available document types and whether each is required.
 
@@ -311,21 +363,23 @@ Get available document types and whether each is required.
 
 ---
 
-### 8. `POST /<document_id>/request-reupload/`
+### 9. `POST /<document_id>/request-reupload/`
 
 Request that a customer re-upload a document.
 
-**Auth:** loan_officer or admin  
+**Auth:** loan_officer or admin with `review_documents`
 **Request body (JSON):**
 ```json
 {
-  "reason": "Please upload a clearer image"
+  "reason": "Please upload a clearer image",
+  "revision": 0
 }
 ```
 
 **Validation:**
 - `reason` is required
 - `reason` max length is 1000 characters
+- Approved and expired documents are terminal and return `409`.
 
 **Response fields (`data`):**
 
@@ -334,12 +388,14 @@ Request that a customer re-upload a document.
 | `document_id` | string |
 | `status` | string | Set to `needs_review` |
 | `reupload_requested` | bool | `true` |
+| `revision` | int | Incremented concurrency revision |
 
 **Side effects:**
-- Sets `reupload_requested=true`, `reupload_reason`, `reupload_requested_by`, `reupload_requested_at`
+- Atomically sets `reupload_requested=true`, `reupload_reason`,
+  `reupload_requested_by`, and `reupload_requested_at`.
 - Sends email notification to customer
-- Does **not currently write an audit log entry**; this is a documented
-  production-readiness gap.
+- Writes an allowlisted `document_reupload_requested` audit event without the
+  reason text.
 
 ---
 
@@ -472,10 +528,13 @@ python scripts/test_cnn_model.py documents/ml/test_data --confusion
 2. Upload one image (`valid_id`) and one PDF to confirm both acceptance and AI-skip behavior for PDF.
 3. Call `GET /` and verify pagination/filter fields.
 4. Call `GET /<document_id>/` for uploaded items.
-5. Login as loan officer and verify one document via `PUT /<document_id>/verify/`.
+5. Login as a loan officer with `review_documents` and verify one document via
+   `PUT /<document_id>/verify/`, sending the latest `revision`.
 6. Request re-upload on another document via `POST /<document_id>/request-reupload/`.
 7. Login as customer and confirm verified docs cannot be deleted.
-8. Test `POST /presigned-upload/` to confirm 400 when local storage is active.
+8. Confirm the presigned routes return 404 while disabled. In an isolated S3
+   environment, create a session, upload with every returned field, finalize,
+   and repeat finalize to confirm the same document is returned.
 9. If retraining is needed, run `train_document_classifier` and validate with `scripts/test_cnn_model.py`.
 
 ---
@@ -484,10 +543,12 @@ python scripts/test_cnn_model.py documents/ml/test_data --confusion
 
 | Code | When |
 |------|------|
-| `400 Bad Request` | Missing `file`, invalid `document_type`, invalid filters, invalid verify payload, missing/blank re-upload reason, oversized file, invalid/unsafe file content, attempt to delete verified document |
+| `400 Bad Request` | Malformed document ID, missing `file`, invalid `document_type`, invalid filters, invalid verify payload, missing/blank re-upload reason, oversized file, invalid/unsafe file content, or disallowed customer deletion |
 | `401 Unauthorized` | Missing or invalid JWT |
-| `403 Forbidden` | Role mismatch, ownership/scope violation, missing AI consent where required |
+| `403 Forbidden` | Role mismatch, inactive staff account, or missing `review_documents` permission |
 | `404 Not Found` | Document not found in current scope |
+| `409 Conflict` | Invalid lifecycle transition or stale mutation `revision` |
+| `410 Gone` | A presigned upload session expired before finalization |
 
 Standard error shape:
 ```json
@@ -517,7 +578,11 @@ Standard success shape:
 | Views | `documents/views/document_views.py` |
 | Serializers/validation | `documents/serializers/document_serializers.py` |
 | Model | `documents/models/document.py` |
+| Presigned session model | `documents/models/upload_session.py` |
 | Storage backends | `documents/storage/backends.py` |
+| Presigned finalization | `documents/services/presigned_upload.py` |
+| Storage reconciliation | `documents/services/storage_reconciliation.py` |
+| Recoverable audit writer | `documents/services/audit.py` |
 | AI analysis service | `documents/services/analyzer.py` |
 | CNN model | `documents/services/cnn_model.py` |
 | Training command | `documents/management/commands/train_document_classifier.py` |
@@ -533,16 +598,31 @@ Standard success shape:
 4. Rejection requires `rejection_reason`; blank/whitespace-only values are rejected by the serializer.
 5. Document list pagination happens in Python after loading matching documents; expect `total` to reflect full matched set, not DB count.
 6. `customer_name` in list/response is resolved dynamically by querying the `Customer` collection.
-7. `file_url` depends on the active storage backend; in tests, ensure the storage backend is patched or mocked.
-8. Presigned uploads return 400 when the storage backend does not implement `get_presigned_upload_for_new_object()`. With S3, test only the current grant response; do not assert that it creates a document.
-9. Reviewer notifications are requested on upload for `pending` and `needs_review` documents. The current asynchronous task calls a missing `Document.find_by_id` method and fails when executed; keep this as a characterization case until Stage 6 is complete.
-10. Audit logs currently use actions `document_uploaded`, `document_verified`, and `document_rejected`. Delete, re-upload, and staff reads are not yet audited.
-11. Invalid ObjectId strings currently produce a generic 500 in detail, delete,
-    and verify handlers. Record this as a known defect rather than the intended
-    contract; Stage 1 will define the canonical 400/404 behavior.
+7. List responses deliberately return `file_url: null`; an authorized detail
+   request is the on-demand URL boundary.
+8. Presigned uploads return 404 while disabled, or 400 when enabled with an unsupported backend. With S3, test the full session → quarantine upload → finalize → idempotent replay flow; the S3 POST alone must not create a document.
+9. Reviewer notifications are requested on upload for `pending` and
+   `needs_review` documents. Recipients must be active, permitted, and within
+   the customer's assignment scope. Delivery retries/outbox work remains Stage 6.
+10. Document audit events cover upload/finalize, review, re-upload, delete,
+    privileged list/detail reads, and denied sensitive reads. Failed writes are
+    allowlisted and reconciled from `audit_write_failures`.
+11. Invalid ObjectId strings return `400 Invalid document_id format` in detail,
+    delete, verify, and request-reupload handlers. Well-formed but missing or
+    concealed IDs return `404`.
 12. The current list endpoint loads and decrypts the full matched result set
     before Python pagination. Do not use development tests as evidence that the
     endpoint is safe at production collection sizes.
-13. Endpoint tests commonly patch persistence, storage, access control, audit,
-    and email. Add real-Mongo concurrency and isolated object-storage tests as
-    the relevant remediation stages are implemented.
+13. Stage 3/4 tests exercise revision races, partial storage failures, permission
+    and real access-helper denials, URL privacy, audit recovery, and recipient
+    scope. Repeat concurrency and recovery against isolated real MongoDB/object
+    storage during Stage 7 deployment validation.
+
+Focused Stage 3/4 regression command:
+
+```bash
+pytest -q tests/test_documents_stage3_consistency.py \
+  tests/test_documents_stage4_authorization_audit.py \
+  tests/test_documents_stage1_contract.py \
+  tests/test_documents_stage2_presigned_upload.py tests/test_documents_api.py
+```

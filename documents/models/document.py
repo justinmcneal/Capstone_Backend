@@ -5,8 +5,11 @@ Stores document metadata and references to uploaded files.
 """
 
 from datetime import datetime, timezone
+
 from bson import ObjectId
 from django.conf import settings
+from pymongo import ReturnDocument
+
 from config.field_encryption import decrypt_fields, encrypt_fields
 
 
@@ -42,6 +45,10 @@ ALLOWED_MIME_TYPES = ["image/jpeg", "image/png", "image/jpg", "application/pdf"]
 MAX_FILE_SIZE = 10 * 1024 * 1024
 
 
+class DocumentRevisionConflict(RuntimeError):
+    """Raised when a stale document snapshot loses an atomic write race."""
+
+
 class Document:
     """
     Document model for storing uploaded files metadata.
@@ -67,6 +74,16 @@ class Document:
         self.file_path = kwargs.get("file_path", "")  # Storage path
         self.file_size = kwargs.get("file_size", 0)  # Bytes
         self.mime_type = kwargs.get("mime_type", "")
+        self.sha256 = kwargs.get("sha256", "")
+        self.upload_session_id = kwargs.get("upload_session_id")
+        self.revision = int(kwargs.get("revision", 0) or 0)
+        self.storage_state = kwargs.get("storage_state", "available")
+        self.deletion_requested_at = kwargs.get("deletion_requested_at")
+        self.deletion_attempts = int(kwargs.get("deletion_attempts", 0) or 0)
+        self.deletion_last_error = kwargs.get("deletion_last_error", "")
+        self.replaces_document_id = kwargs.get("replaces_document_id")
+        self.superseded_by_document_id = kwargs.get("superseded_by_document_id")
+        self.superseded_at = kwargs.get("superseded_at")
 
         # Status and verification
         self.status = kwargs.get("status", "pending")
@@ -116,6 +133,15 @@ class Document:
             "file_path": self.file_path,
             "file_size": self.file_size,
             "mime_type": self.mime_type,
+            "sha256": self.sha256,
+            "revision": self.revision,
+            "storage_state": self.storage_state,
+            "deletion_requested_at": self.deletion_requested_at,
+            "deletion_attempts": self.deletion_attempts,
+            "deletion_last_error": self.deletion_last_error,
+            "replaces_document_id": self.replaces_document_id,
+            "superseded_by_document_id": self.superseded_by_document_id,
+            "superseded_at": self.superseded_at,
             "status": self.status,
             "verified": self.verified,
             "verified_by": self.verified_by,
@@ -133,18 +159,208 @@ class Document:
             "uploaded_at": self.uploaded_at,
             "updated_at": self.updated_at,
         }
+        if self.upload_session_id:
+            data["upload_session_id"] = self.upload_session_id
         if self._id:
             data["_id"] = self._id
         return encrypt_fields(data, self.encrypted_fields)
 
-    def request_reupload(self, officer_id, reason):
+    def request_reupload(self, officer_id, reason, *, expected_revision=None):
         """Officer requests customer to re-upload this document"""
-        self.reupload_requested = True
-        self.reupload_reason = reason
-        self.reupload_requested_by = officer_id
-        self.reupload_requested_at = datetime.now(timezone.utc)
-        self.status = "needs_review"
-        return self.save()
+        from documents.services.state_machine import apply_reupload_request
+
+        apply_reupload_request(self, reviewer_id=officer_id, reason=reason)
+        return self._atomic_transition(
+            allowed_current_statuses={"pending", "needs_review", "rejected"},
+            expected_revision=expected_revision,
+        )
+
+    @classmethod
+    def _revision_query(cls, document_id, expected_revision):
+        query = {"_id": document_id}
+        revision = int(expected_revision or 0)
+        if revision == 0:
+            query["$or"] = [
+                {"revision": 0},
+                {"revision": {"$exists": False}},
+            ]
+        else:
+            query["revision"] = revision
+        return query
+
+    def _atomic_transition(self, *, allowed_current_statuses, expected_revision=None):
+        if not self._id:
+            raise ValueError("Document must be saved before transition")
+        if expected_revision is None:
+            expected_revision = self.revision
+        data = self.to_dict()
+        data.pop("_id", None)
+        data.pop("revision", None)
+        query = self._revision_query(self._id, expected_revision)
+        query.update(
+            {
+                "status": {"$in": list(allowed_current_statuses)},
+            }
+        )
+        # Legacy records have no storage_state field.
+        query["$and"] = [
+            {
+                "$or": [
+                    {"storage_state": "available"},
+                    {"storage_state": {"$exists": False}},
+                ]
+            }
+        ]
+        document = get_db()[self.collection_name].find_one_and_update(
+            query,
+            {"$set": data, "$inc": {"revision": 1}},
+            return_document=ReturnDocument.AFTER,
+        )
+        if not document:
+            raise DocumentRevisionConflict(
+                "Document was changed by another request; reload and retry"
+            )
+        refreshed = type(self).from_dict(document)
+        self.__dict__.update(refreshed.__dict__)
+        return self
+
+    def review(
+        self,
+        *,
+        action,
+        reviewer_id,
+        rejection_reason="",
+        notes=None,
+        expected_revision=None,
+    ):
+        """Apply one review decision with status and revision compare-and-set."""
+        from documents.services.state_machine import apply_review_decision
+
+        current_status = self.status
+        apply_review_decision(
+            self,
+            action=action,
+            reviewer_id=reviewer_id,
+            rejection_reason=rejection_reason,
+            notes=notes,
+        )
+        return self._atomic_transition(
+            allowed_current_statuses={current_status},
+            expected_revision=expected_revision,
+        )
+
+    def claim_deletion(self, *, expected_revision=None):
+        """Atomically prevent review writes while storage deletion is pending."""
+        if not self._id:
+            raise ValueError("Document must be saved before deletion")
+        now = datetime.now(timezone.utc)
+        if expected_revision is None:
+            expected_revision = self.revision
+        query = self._revision_query(self._id, expected_revision)
+        query.update(
+            {
+                "status": {"$in": ["pending", "needs_review", "rejected"]},
+                "verified": {"$ne": True},
+                "$and": [
+                    {
+                        "$or": [
+                            {"storage_state": "available"},
+                            {"storage_state": {"$exists": False}},
+                        ]
+                    }
+                ],
+            }
+        )
+        document = get_db()[self.collection_name].find_one_and_update(
+            query,
+            {
+                "$set": {
+                    "storage_state": "delete_pending",
+                    "deletion_requested_at": now,
+                    "deletion_last_error": "",
+                    "updated_at": now,
+                },
+                "$inc": {"revision": 1},
+            },
+            return_document=ReturnDocument.AFTER,
+        )
+        if not document:
+            raise DocumentRevisionConflict(
+                "Document was changed by another request; reload and retry"
+            )
+        refreshed = type(self).from_dict(document)
+        self.__dict__.update(refreshed.__dict__)
+        return self
+
+    def mark_superseded(self, replacement_document_id):
+        """Record the replacement without reopening or rewriting review history."""
+        if not self._id:
+            raise ValueError("Document must be saved before supersession")
+        now = datetime.now(timezone.utc)
+        query = self._revision_query(self._id, self.revision)
+        query["$and"] = [
+            {
+                "$or": [
+                    {"superseded_by_document_id": None},
+                    {"superseded_by_document_id": {"$exists": False}},
+                ]
+            }
+        ]
+        document = get_db()[self.collection_name].find_one_and_update(
+            query,
+            {
+                "$set": {
+                    "superseded_by_document_id": str(replacement_document_id),
+                    "superseded_at": now,
+                    "updated_at": now,
+                },
+                "$inc": {"revision": 1},
+            },
+            return_document=ReturnDocument.AFTER,
+        )
+        if not document:
+            raise DocumentRevisionConflict(
+                "Document replacement was changed by another request"
+            )
+        refreshed = type(self).from_dict(document)
+        self.__dict__.update(refreshed.__dict__)
+        return self
+
+    def mark_deletion_failed(self, error_code):
+        get_db()[self.collection_name].update_one(
+            {
+                "_id": self._id,
+                "storage_state": {"$in": ["delete_pending", "delete_failed"]},
+            },
+            {
+                "$set": {
+                    "storage_state": "delete_failed",
+                    "deletion_last_error": str(error_code)[:100],
+                    "updated_at": datetime.now(timezone.utc),
+                },
+                "$inc": {"deletion_attempts": 1},
+            },
+        )
+        self.storage_state = "delete_failed"
+
+    @classmethod
+    def find_deletion_candidates(cls, limit=100):
+        cursor = (
+            get_db()[cls.collection_name]
+            .find({"storage_state": {"$in": ["delete_pending", "delete_failed"]}})
+            .sort("updated_at", 1)
+            .limit(max(1, min(int(limit), 1000)))
+        )
+        return [cls.from_dict(item) for item in cursor]
+
+    def complete_deletion(self):
+        result = get_db()[self.collection_name].delete_one(
+            {
+                "_id": self._id,
+                "storage_state": {"$in": ["delete_pending", "delete_failed"]},
+            }
+        )
+        return result.deleted_count == 1
 
     @classmethod
     def from_dict(cls, data):
@@ -160,7 +376,19 @@ class Document:
         data = self.to_dict()
 
         if self._id:
-            collection.update_one({"_id": self._id}, {"$set": data})
+            data.pop("_id", None)
+            data.pop("revision", None)
+            document = collection.find_one_and_update(
+                self._revision_query(self._id, self.revision),
+                {"$set": data, "$inc": {"revision": 1}},
+                return_document=ReturnDocument.AFTER,
+            )
+            if not document:
+                raise DocumentRevisionConflict(
+                    "Document was changed by another request; reload and retry"
+                )
+            refreshed = type(self).from_dict(document)
+            self.__dict__.update(refreshed.__dict__)
         else:
             result = collection.insert_one(data)
             self._id = result.inserted_id
@@ -168,13 +396,10 @@ class Document:
         return self
 
     def delete(self):
-        """Delete document record from database"""
-        if self._id:
-            db = get_db()
-            collection = db[self.collection_name]
-            collection.delete_one({"_id": self._id})
-            return True
-        return False
+        """Complete an already-claimed deletion without bypassing storage state."""
+        if not self._id:
+            return False
+        return self.complete_deletion()
 
     @classmethod
     def _customer_id_candidates(cls, customer_id):
@@ -223,6 +448,37 @@ class Document:
         return cls.from_dict(doc)
 
     @classmethod
+    def find_by_id(cls, document_id):
+        """Find a document using either its ObjectId or canonical string form."""
+        try:
+            object_id = (
+                document_id
+                if isinstance(document_id, ObjectId)
+                else ObjectId(str(document_id))
+            )
+        except Exception:
+            return None
+        return cls.find_one({"_id": object_id})
+
+    @classmethod
+    def find_reupload_candidate(cls, customer_id, document_type):
+        query = cls._customer_query(customer_id)
+        query.update(
+            {
+                "document_type": document_type,
+                "reupload_requested": True,
+                "$or": [
+                    {"superseded_by_document_id": None},
+                    {"superseded_by_document_id": {"$exists": False}},
+                ],
+            }
+        )
+        document = get_db()[cls.collection_name].find_one(
+            query, sort=[("reupload_requested_at", -1), ("uploaded_at", -1)]
+        )
+        return cls.from_dict(document)
+
+    @classmethod
     def find(cls, query, sort=None):
         db = get_db()
         collection = db[cls.collection_name]
@@ -235,6 +491,14 @@ class Document:
     def find_by_customer(cls, customer_id, document_type=None):
         """Find all documents for a customer, optionally filtered by type"""
         query = cls._customer_query(customer_id)
+        query["$and"] = [
+            {
+                "$or": [
+                    {"storage_state": "available"},
+                    {"storage_state": {"$exists": False}},
+                ]
+            }
+        ]
         if document_type:
             query["document_type"] = document_type
         return cls.find(query, sort=[("uploaded_at", -1)])
@@ -245,6 +509,14 @@ class Document:
         db = get_db()
         collection = db[cls.collection_name]
         query = cls._customer_query(customer_id)
+        query["$and"] = [
+            {
+                "$or": [
+                    {"storage_state": "available"},
+                    {"storage_state": {"$exists": False}},
+                ]
+            }
+        ]
         if document_type:
             query["document_type"] = document_type
         return collection.count_documents(query)
@@ -258,3 +530,5 @@ class Document:
         collection.create_index([("customer_id", 1), ("document_type", 1)])
         collection.create_index("status")
         collection.create_index("uploaded_at")
+        collection.create_index("upload_session_id", unique=True, sparse=True)
+        collection.create_index([("storage_state", 1), ("updated_at", 1)])

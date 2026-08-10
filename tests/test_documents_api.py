@@ -2,25 +2,25 @@
 Documents API tests for /api/documents/ endpoints.
 """
 import io
-from datetime import datetime, timezone
 from types import SimpleNamespace
 
-from django.core.files.uploadedfile import SimpleUploadedFile
-from PIL import Image
 from bson import ObjectId
+from django.core.files.uploadedfile import SimpleUploadedFile
+from django.test import override_settings
+from PIL import Image
 from rest_framework.test import APIRequestFactory, force_authenticate
 
 from accounts.authentication import AuthenticatedUser
-from accounts.models import Admin, Consent, Customer, LoanOfficer
-from documents.models import DOCUMENT_TYPES, DOCUMENT_STATUSES, Document
+from accounts.models import Admin, Customer, LoanOfficer
+from documents.models import DOCUMENT_TYPES, Document
 from documents.views import (
     DocumentDetailView,
     DocumentListView,
     DocumentPresignedUploadView,
     DocumentTypesView,
+    DocumentUploadView,
     DocumentVerifyView,
     RequestReuploadView,
-    DocumentUploadView,
 )
 
 
@@ -155,7 +155,6 @@ class FakeEmailSender:
 
 class TestDocumentUpload:
     def test_upload_requires_customer(self, monkeypatch):
-        customer = _create_customer()
         officer = _create_officer()
 
         monkeypatch.setattr(
@@ -295,6 +294,7 @@ class TestDocumentPresignedUpload:
         response = DocumentPresignedUploadView.as_view()(request)
         assert response.status_code == 403
 
+    @override_settings(DOCUMENT_PRESIGNED_UPLOAD_ENABLED=True)
     def test_presigned_upload_returns_400_when_backend_unsupported(self, monkeypatch):
         customer = _create_customer()
 
@@ -306,7 +306,13 @@ class TestDocumentPresignedUpload:
 
         request = _post(
             "/api/documents/presigned-upload/",
-            {"document_type": "valid_id", "original_filename": "photo.jpg"},
+            {
+                "document_type": "valid_id",
+                "original_filename": "photo.jpg",
+                "file_size": 1024,
+                "mime_type": "image/jpeg",
+                "sha256": "a" * 64,
+            },
             _auth_customer(customer),
         )
         monkeypatch.setattr(

@@ -40,26 +40,28 @@ reads, officer approval/rejection, re-upload requests, local and S3 storage
 adapters, consent-gated image analysis, reviewer/customer email hooks, and loan
 qualification consumers are implemented.
 
-The highest-risk gap is the presigned upload route. It returns permission to
-write an object directly to S3 but has no upload-session record, restrictive
-size/type conditions, completion endpoint, server-side validation, `Document`
-creation, audit event, AI analysis, or abandoned-object cleanup. A successful
-presigned POST therefore creates an untrusted, untracked storage object rather
-than a usable document.
+Stage 2 replaces the original incomplete presigned object grant with a
+short-lived owner-bound upload session, exact size/type/hash policy, quarantine
+key, one-time idempotent finalize endpoint, server-side object/content
+validation, normal `Document` creation, AI/audit/notification integration, and
+scheduled abandoned-object cleanup. The feature remains disabled by default
+until S3 deployment configuration and isolated environment validation are
+complete.
 
-Other production blockers include non-atomic storage/database workflows, a
-broken asynchronous reviewer task (`Document.find_by_id` does not exist),
-unscoped reviewer broadcasts, contradictory review states, unbounded in-memory
-listing, incomplete audit coverage, missing document retention/account-deletion
-integration, and production storage settings that are advertised in
-`.env.example` but are not loaded by `config/settings.py`.
+Stages 3 and 4 add revision-guarded lifecycle writes, replacement lineage,
+durable storage cleanup, retryable deletion, explicit reviewer permissions,
+assignment-scoped reviewer recipients, metadata-only list responses, trusted
+client-IP handling, complete document audit coverage, and a recoverable
+allowlisted audit queue. Remaining blockers are concentrated in scalable query
+delivery, notification/AI operations, retention/account-deletion integration,
+and deployment-target configuration and validation.
 
 Current remediation status:
 
-- [ ] Stage 1 — Contract, state machine, and regression baseline
-- [ ] Stage 2 — Safe upload finalization and content security
-- [ ] Stage 3 — Atomic lifecycle transitions and storage consistency
-- [ ] Stage 4 — Authorization, privacy, and audit completeness
+- [x] Stage 1 — Contract, state machine, and regression baseline
+- [x] Stage 2 — Safe upload finalization and content security
+- [x] Stage 3 — Atomic lifecycle transitions and storage consistency
+- [x] Stage 4 — Authorization, privacy, and audit completeness
 - [ ] Stage 5 — Query scalability and response delivery
 - [ ] Stage 6 — Background work, notifications, and AI governance
 - [ ] Stage 7 — Retention, deployment configuration, and operations
@@ -71,6 +73,16 @@ Current remediation status:
 - A PyMongo-backed `Document` model stores records in `documents`.
 - The model supports insert/update, lookup, customer lookup, delete, approval,
   rejection, re-upload state, serialization, and index creation.
+- Document mutations carry a `revision`; review, re-upload, supersession, and
+  delete claims use narrow MongoDB compare-and-set writes and stale requests
+  receive `409`.
+- Replacement uploads retain forward/backward document lineage rather than
+  reopening or rewriting the earlier document's review history.
+- Deletion uses `delete_pending`/`delete_failed` storage states. A scheduled
+  reconciler retries object deletion and removes metadata only after the object
+  deletion is satisfied.
+- Failed direct/finalize rollback deletes are persisted in the encrypted
+  `document_storage_cleanup` queue and retried idempotently.
 - Index declarations cover customer ID, type, status, upload time, and common
   customer/type/status combinations; creation is wired into `init_db.py`.
 - Customer lookups tolerate legacy customer IDs stored as strings or
@@ -87,14 +99,15 @@ The following routes are registered under `/api/documents/`:
 
 | Route | Current role boundary | Implementation status |
 |---|---|---|
-| `POST upload/` | Customer | Partial; core upload works, consistency gaps remain |
-| `POST presigned-upload/` | Customer | Blocked; object grant only, not a completed upload |
-| `GET /` | Customer/officer/admin/super admin | Partial; scoped but unbounded |
-| `GET <document_id>/` | Role/resource scoped | Partial; invalid IDs return `500` |
-| `DELETE <document_id>/` | Owning customer | Partial; storage/DB deletion is non-atomic |
-| `PUT <document_id>/verify/` | Officer/admin | Partial; state/concurrency/audit gaps remain |
+| `POST upload/` | Customer | Implemented; rollback/replacement recovery included |
+| `POST presigned-upload/` | Customer | Stage 2 session issuance; disabled by default |
+| `POST presigned-upload/<session_id>/finalize/` | Customer owner | Stage 2 one-time validation/finalization |
+| `GET /` | Customer/officer/admin/super admin | Partial; authorized/audited but query remains unbounded |
+| `GET <document_id>/` | Role/resource scoped | Implemented; staff read is audit-gated |
+| `DELETE <document_id>/` | Owning customer | Implemented; revision-guarded and retryable |
+| `PUT <document_id>/verify/` | Permitted officer/admin | Implemented; atomic and audited |
 | `GET types/` | Authenticated supported roles | Implemented |
-| `POST <document_id>/request-reupload/` | Officer/admin | Partial; state/audit gaps remain |
+| `POST <document_id>/request-reupload/` | Permitted officer/admin | Implemented; atomic and audited |
 
 ### Upload validation
 
@@ -132,6 +145,34 @@ sandbox, quarantine, or content-disarm process.
   uploaded filename.
 - Upload responses can provide a local URL, custom-domain URL, or presigned S3
   URL through the backend abstraction.
+
+### Safe presigned upload workflow
+
+- `DocumentUploadSession` persists owner, document type, sanitized filename,
+  description, expected size/MIME/SHA-256, hashed finalize token, quarantine
+  object key, state, expiry, and resulting document ID.
+- The raw finalize token is returned once; only its SHA-256 digest is stored.
+- S3 presigned conditions bind the exact quarantine key, MIME type, expected
+  byte length, session metadata, and expected SHA-256 metadata.
+- Finalization is customer-owned, token-bound, expiry-checked, and atomically
+  claims an `issued` session before doing work.
+- The server heads and downloads the object, verifies metadata, exact length,
+  computed SHA-256, executable signature, MIME signature, image integrity, and
+  PDF active-content rules before promotion.
+- Valid content is copied from the quarantine prefix to a server-generated
+  durable document key; the quarantine object is removed.
+- `upload_session_id` has a sparse unique document index. Repeating finalize
+  returns the already-created document instead of creating a duplicate.
+- AI runs only under the existing global/consent/image gates. Analyzer failure
+  is stored as a safe failed/manual-review result without an internal exception
+  string.
+- Finalization attempts the normal upload audit and reviewer notification after
+  durable creation without returning a misleading mutation failure for an audit
+  failure.
+- A ten-minute Celery Beat task deletes expired/failed quarantine objects and
+  marks sessions expired. Completed/cleaned sessions receive a one-day TTL.
+- The workflow is feature-gated by
+  `DOCUMENT_PRESIGNED_UPLOAD_ENABLED=False`; local storage remains unsupported.
 
 ### Review and downstream behavior
 
@@ -196,10 +237,13 @@ image contents:
 - Dedicated tests cover representative upload, consent, list/scope, type,
   detail, verified-delete, approve/reject, re-upload, S3 upload, multipart retry,
   presigned POST, URL, and delete behavior.
-- On 2026-08-09, the focused suite collected and passed 21 tests:
+- Before Stage 1, the focused suite collected and passed 21 tests. After Stage 1,
+  it passed 31. After Stage 2, the expanded focused suite passed 39 tests:
 
   ```text
-  pytest -q tests/test_documents_ai_consent.py tests/test_documents_api.py \
+  pytest -q tests/test_documents_stage1_contract.py \
+    tests/test_documents_stage2_presigned_upload.py \
+    tests/test_documents_ai_consent.py tests/test_documents_api.py \
     tests/test_documents_integration_s3.py \
     tests/test_s3_multipart_and_retry.py \
     tests/test_s3_presigned_client_upload.py \
@@ -208,93 +252,81 @@ image contents:
 
 - Most endpoint tests are unit-style and replace authorization, persistence,
   storage, audit, or notification dependencies. There is no real-Mongo document
-  concurrency/index suite and no end-to-end presigned-finalization workflow.
+  concurrency/index suite and no deployment-target S3 finalization run yet.
+- The post-Stage 2 full suite collected 1,021 tests: 1,004 passed and 17 opt-in
+  integration tests were skipped.
+- After Stages 3 and 4, the focused suite covers 50 tests, including stale
+  review, review/delete race, replacement lineage, rollback/deletion recovery,
+  explicit permission denial, real access-helper scope denial, metadata-only
+  lists, recoverable audit failure, and notification recipient scope.
+- The post-Stage 4 full suite collected 1,032 tests: 1,015 passed and 17 opt-in
+  integration tests were skipped.
 
 ## Confirmed Production Blockers and Gaps
 
-### 1. Presigned upload is incomplete and unsafe as a document workflow
+### 1. Presigned upload code is remediated; deployment validation remains
 
-`POST presigned-upload/` creates a key and returns a generic presigned POST. It
-does not impose a maximum content length or required MIME type, issue a tracked
-single-use upload session, bind an expected hash, or create a pending document
-record. After the client uploads, no endpoint verifies object existence, size,
-signature, image/PDF safety, or ownership and no endpoint finalizes the
-`Document` record. The normal AI, audit, and reviewer-notification paths never
-run. Abandoned and malicious objects have no cleanup path.
+Stage 2 implements the tracked quarantine/finalize workflow described above and
+keeps it disabled by default. Remaining work belongs to the deployment gate:
+wire and validate S3 settings, private bucket encryption/IAM/CORS/lifecycle,
+exercise a real isolated S3-compatible target, and confirm Celery cleanup. Do
+not enable the feature merely because unit/moto tests pass.
 
-Until Stage 2 is complete, disable or do not expose this endpoint outside an
-isolated development environment.
+### 2. Storage/database consistency is remediated at code level
 
-### 2. Upload and deletion can leave storage and MongoDB inconsistent
+Direct-upload database failures now attempt an immediate object rollback and
+durably queue the path if rollback fails. Presigned finalization does not remove
+a committed object merely because its session completion marker failed; replay
+repairs that marker. Customer delete first atomically claims the document, then
+removes metadata only after idempotent storage deletion. Failed operations are
+retained for the five-minute storage reconciler.
 
-Direct upload writes storage before MongoDB. A database failure leaves an
-orphaned object. An audit failure after both writes returns `500` even though the
-upload already succeeded, inviting a retry and duplicate document.
+### 3. Review/re-upload/delete races are remediated at code level
 
-Delete removes storage first and ignores a false return from the S3 backend,
-then deletes MongoDB metadata. Storage failure can therefore report success and
-retain the object; database failure after storage removal can retain a broken
-record. No durable cleanup/reconciliation queue exists.
+All three mutation paths now compare the caller's optional `revision` with the
+stored revision while also checking the allowed current status and storage
+state. Only one concurrent transition wins; stale requests receive `409`.
+Compatibility fields are normalized in the same atomic update. Replacement
+uploads create a new record with lineage instead of reopening the old record.
 
-### 3. Review and re-upload transitions are not atomic
+### 4. Reviewer lookup and recipient scope are fixed; delivery durability remains
 
-Approval, rejection, and re-upload load a document and save the full snapshot.
-There is no revision or compare-and-set condition, so concurrent reviewers can
-overwrite one another. Terminal transitions are not constrained.
-
-State fields are not normalized during transitions. For example, requesting a
-re-upload on an approved document sets `status=needs_review` without clearing
-`verified`; approval can retain an old rejection or re-upload reason. These
-combinations can make the `verified`, `status`, and re-upload fields disagree.
-Customer delete also races with verification between its read and delete.
-
-### 4. Asynchronous reviewer notification is broken and over-broad
-
-`notify_reviewers_document_pending_task` calls `Document.find_by_id`, but the
-model does not define that method. With asynchronous notification enabled by
-default, queued work fails when executed.
-
-The notification service sends customer name, document type, and document ID to
-every active officer and admin, rather than only reviewers with resource scope
-and the required permission. The task has no retry/backoff, idempotency key,
-durable outbox, delivery state, or reconciliation process.
+`Document.find_by_id` now satisfies the Celery task contract. Reviewers must be
+active and have `review_documents`; when a customer has an assigned officer,
+only that officer is selected, while permitted admins retain oversight access.
+Bounded retry/backoff, idempotency, a durable delivery outbox, and notification
+reconciliation remain Stage 6 work.
 
 ### 5. Listing does not scale and performs excessive sensitive work
 
 The list endpoint loads every matching document, constructs/decrypts every
 model, applies search in Python, and only then paginates. Admin listings can be
 unbounded. Filename search cannot use a normal index because filename encryption
-is randomized. Customer-name resolution and file-URL generation can also cause
-per-row database and S3 calls.
+is randomized. Customer-name resolution still causes per-row database work.
+Stage 4 stopped list serialization from minting storage URLs; document detail is
+now the on-demand URL boundary.
 
 This is not an acceptable production risk merely because today's development
 collection is small. Server-side bounded pagination, an approved search design,
-bulk customer lookup, and controlled URL generation are required.
+bulk customer lookup, and bounded database work are required.
 
-### 6. Audit coverage and failure semantics are incomplete
+### 6. Audit coverage and recovery are remediated
 
-- Upload and approve/reject attempt audit writes, but audit happens after the
-  durable mutation and a failure is returned as `500`.
-- Delete and request-reupload do not create audit events.
-- Sensitive officer/admin list and detail reads are not audited.
-- Upload audit metadata includes the original filename, which may contain
-  personal information.
-- Document actions read raw `REMOTE_ADDR` rather than the shared trusted-proxy IP
-  policy.
-- There is no document-domain failed-audit queue/reconciler like the Profiles
-  module uses.
+Upload/finalize, review, re-upload, delete, staff list/detail reads, and denied
+sensitive reads use one allowlisted document audit writer and the shared trusted-
+proxy client-IP helper. Filenames, review notes, rejection reasons, and re-upload
+reasons are excluded from audit payloads. Failed writes are queued under the
+`documents` domain and replayed every minute. Required staff-read audits fail
+closed with `503`; post-commit mutation audit failures do not misreport the
+mutation as failed.
 
-The testing guide previously claimed re-upload was audited; the code does not do
-that today.
+### 7. Error handling can expose internals
 
-### 7. Error handling exposes internals or returns incorrect statuses
-
-- Malformed `document_id` values reach `ObjectId(...)` inside broad exception
-  handlers and produce generic `500` responses in detail, delete, and verify.
+- Stage 1 now returns `400 Invalid document_id format` for malformed IDs in
+  detail, delete, verify, and request-reupload handlers.
 - Upload stores `str(exception)` in `ai_analysis` and treats an analyzer exception
   as valid; that internal message can later be returned through the API.
-- Verification logs the authenticated email and full request payload, including
-  notes and rejection reason.
+- Verification no longer logs the authenticated email or request payload.
 - S3 URL generation can fall back to returning an internal `s3://` URI.
 - Unknown storage backend names silently fall back to local storage.
 
@@ -374,69 +406,109 @@ no separate Documents export policy documented.
 
 ### Stage 1 — Contract, state machine, and regression baseline
 
-**Status: PARTIAL**
+**Status: Complete**
 
 - [x] ~~Inventory routes, roles, persistence, storage, AI, downstream consumers,
   configuration, and existing tests.~~
-- [x] ~~Record the 21-test focused baseline.~~
-- [ ] Define the canonical state machine and allowed transitions for `pending`,
-  `needs_review`, `approved`, `rejected`, `expired`, and re-upload replacement.
-- [ ] Decide whether an approved document is immutable, superseded, or versioned
-  when a replacement is uploaded.
-- [ ] Define the canonical response/error contract and invalid-ID behavior.
-- [ ] Decide whether presigned upload is supported or temporarily removed.
-- [ ] Add characterization tests for every blocker above before implementation.
+- [x] ~~Record the original 21-test baseline and expanded 31-test Stage 1
+  baseline.~~
+- [x] ~~Define the canonical state machine and allowed transitions for `pending`,
+  `needs_review`, `approved`, `rejected`, and `expired`.~~
+- [x] ~~Treat approved and expired documents as terminal. A replacement will be
+  represented as a new document in Stage 3 rather than mutating the approved
+  record.~~
+- [x] ~~Define malformed document IDs as `400`, missing/inaccessible resources as
+  `404`, invalid lifecycle transitions as `409`, and serializer errors as
+  `400`.~~
+- [x] ~~Keep presigned upload registered for future compatibility but disabled by
+  default until the Stage 2 session/finalization workflow exists.~~
+- [x] ~~Add lifecycle normalization, terminal-state, invalid-ID, and disabled-
+  presigned-route regression tests.~~
+
+Stage 1 contract decisions:
+
+- `status` is canonical. The legacy `verified` fields remain in responses and
+  storage for compatibility but are normalized whenever a review/re-upload
+  transition occurs.
+- `pending` may move to `needs_review`, `approved`, or `rejected`.
+  `needs_review` may remain `needs_review` for a refreshed request or move to
+  `approved`/`rejected`. `rejected` may return to `needs_review` only through an
+  explicit re-upload request. `approved` and `expired` are terminal.
+- Customer deletion is permitted only for unverified `pending`, `needs_review`,
+  or `rejected` documents and is enforced atomically.
+- Approved-document replacement creates a new record linked through a Stage 3
+  supersession design; the approved record is not reopened.
+- The original incomplete presigned object grant was feature-gated off by
+  default. Stage 2 replaced it with a tracked, owner-bound, single-use session
+  and finalize protocol; the gate remains off pending deployment validation.
 
 ### Stage 2 — Safe upload finalization and content security
 
-**Status: Blocked for production**
+**Status: Complete at code and automated-test level; feature remains deployment-gated**
 
-- [ ] Introduce a short-lived, owner-bound, single-use upload-session record.
-- [ ] Generate restrictive presigned conditions for key, MIME type, and maximum
-  content length; require private ACL/encryption settings.
-- [ ] Add a finalize endpoint that validates session ownership and expiry, heads
-  the object, verifies exact key/size/type/hash, performs normal content scans,
-  creates the document once, audits it, and enqueues post-processing.
-- [ ] Make finalize idempotent and reject key substitution or replay.
-- [ ] Quarantine uploads until validation succeeds and delete failed/abandoned
-  objects with a scheduled reconciler.
-- [ ] Strengthen PDF/image defenses with decompression-bomb handling and a
-  reviewed malware/quarantine policy.
-- [ ] Add end-to-end mocked-S3 and deployment-target tests for success, replay,
-  expiry, oversize, wrong type/key, failed scan, and cleanup.
+- [x] ~~Introduce a short-lived, owner-bound, single-use upload-session record
+  with a hashed finalize secret.~~
+- [x] ~~Generate restrictive presigned conditions for quarantine key, MIME type,
+  exact content length, session metadata, and expected SHA-256.~~
+- [x] ~~Add a finalize endpoint that validates session ownership/token/expiry,
+  heads and downloads the object, verifies exact size/type/hash/session binding,
+  performs normal content scans, creates the document once, audits it, and
+  enqueues existing post-processing.~~
+- [x] ~~Make finalization atomically claimable and idempotent; conceal wrong-owner
+  and wrong-token sessions and reject concurrent claims.~~
+- [x] ~~Quarantine uploads until validation succeeds, promote valid content, and
+  delete failed/abandoned objects with a scheduled ten-minute cleanup task.~~
+- [x] ~~Add sparse unique `upload_session_id` indexing and session expiry/TTL
+  indexes to `init_db.py`.~~
+- [x] ~~Add automated tests for success, replay, owner/token isolation, mismatch
+  cleanup, expiry cleanup, endpoint issuance, and restrictive S3 policy.~~
+
+Full antivirus/sandbox/content-disarm policy and decompression-bomb hardening
+remain part of the broader content-security/operations release gate; the Stage 2
+workflow ensures unvalidated content is never promoted into document storage.
 
 ### Stage 3 — Atomic lifecycle transitions and storage consistency
 
-**Status: Blocked for production**
+**Status: Complete at code and automated-test level; real-service validation is a Stage 7 gate**
 
-- [ ] Add a `revision` and narrow compare-and-set updates for review, re-upload,
-  and delete transitions; return `409` on stale writes.
-- [ ] Enforce allowed transitions and clear incompatible verification/rejection/
-  re-upload fields atomically.
-- [ ] Model replacement/supersession rather than mutating contradictory flags.
-- [ ] Add durable storage-operation state and idempotent reconciliation for
-  failed upload, finalize, and delete steps.
-- [ ] Do not return mutation failure merely because a post-commit audit/email
-  side effect failed; record and reconcile the failed side effect.
-- [ ] Add concurrent-review, review/delete-race, duplicate-finalize, partial-
-  failure, and retry tests against an isolated real MongoDB instance.
+- [x] ~~Add a `revision` and narrow compare-and-set updates for review,
+  re-upload, and delete transitions; return `409` on stale writes.~~
+- [x] ~~Enforce allowed transitions and clear incompatible verification/
+  rejection/re-upload fields atomically.~~
+- [x] ~~Model replacement/supersession rather than mutating contradictory
+  flags.~~
+- [x] ~~Add durable storage-operation state and idempotent reconciliation for
+  failed upload, finalize, and delete steps.~~
+- [x] ~~Do not return mutation failure merely because a post-commit audit/email
+  side effect failed; persist audit failures and leave notification delivery
+  durability to Stage 6.~~
+- [x] ~~Add automated concurrent-review, review/delete-race, duplicate-finalize,
+  partial-failure, and retry tests using the isolated test database/storage.~~
+
+The same concurrency and retry cases must still be repeated against isolated
+real MongoDB and object storage during Stage 7 deployment validation. That
+environmental proof is not represented as incomplete Stage 3 application code.
 
 ### Stage 4 — Authorization, privacy, and audit completeness
 
-**Status: PARTIAL**
+**Status: Complete at code and automated-test level**
 
 - [x] ~~Enforce customer ownership and loan-officer resource scope on current
   API reads and mutations.~~
-- [ ] Require explicit document-review permissions for admin/officer mutations.
-- [ ] Scope reviewer notifications to recipients authorized for that customer.
-- [ ] Audit delete, re-upload, staff list/detail reads, denied sensitive reads,
-  and presigned-session/finalization events with allowlisted metadata.
-- [ ] Use the trusted-proxy IP helper and remove sensitive request-payload logs.
-- [ ] Add recoverable, allowlisted failed-audit persistence and reconciliation.
-- [ ] Define whether document URLs are issued separately/on demand so list calls
-  do not mint access URLs for every row.
-- [ ] Add negative cross-customer, cross-officer, inactive-account, and permission
-  matrix tests without bypassing the real access helpers.
+- [x] ~~Require explicit `review_documents` permission for admin/officer
+  mutations.~~
+- [x] ~~Scope reviewer notifications to active, permitted recipients authorized
+  for that customer's assignment.~~
+- [x] ~~Audit delete, re-upload, staff list/detail reads, denied sensitive reads,
+  and presigned-session/finalization events with allowlisted metadata.~~
+- [x] ~~Use the trusted-proxy IP helper and remove sensitive request-payload
+  logs.~~
+- [x] ~~Add recoverable, allowlisted failed-audit persistence and one-minute
+  reconciliation.~~
+- [x] ~~Make list responses metadata-only (`file_url: null`); issue a short-lived
+  URL only through the authorized detail response.~~
+- [x] ~~Add negative cross-customer, cross-officer, inactive-account, and
+  permission matrix tests without bypassing the real access helpers.~~
 
 ### Stage 5 — Query scalability and response delivery
 
@@ -447,7 +519,8 @@ no separate Documents export policy documented.
 - [ ] Decide an approved searchable-metadata design compatible with encryption;
   do not add plaintext filename search accidentally.
 - [ ] Bulk-resolve customer display names and eliminate per-row lookups.
-- [ ] Separate metadata listing from short-lived download URL issuance.
+- [x] ~~Separate metadata listing from short-lived URL issuance by returning no
+  URL from list calls and issuing it only from authorized detail calls.~~
 - [ ] Add deterministic ordering, stable empty-page semantics, and pagination
   boundary tests.
 - [ ] Load/performance-test customer, officer, and admin scopes at expected and
@@ -457,8 +530,9 @@ no separate Documents export policy documented.
 
 **Status: Blocked for production**
 
-- [ ] Fix the missing document lookup used by the Celery task and add a task test
-  that exercises the actual model contract.
+- [x] ~~Fix the missing `Document.find_by_id` lookup used by the Celery task.~~
+- [ ] Add a Celery task test that exercises the actual model contract plus
+  delivery failure/retry behavior.
 - [ ] Add bounded retries/backoff, idempotency/delivery state, and reconciliation
   for reviewer/customer notifications.
 - [ ] Move expensive analysis out of the request path or explicitly budget and
@@ -521,12 +595,12 @@ no separate Documents export policy documented.
 
 ## API and Client Impact Notes
 
-- Customer mobile must continue using `POST upload/` for complete uploads until
-  the finalized presigned protocol exists. Receiving a presigned POST does not
-  currently create a document visible to the customer or staff.
-- A safe presigned workflow will require customer-client changes: create upload
-  session, upload to S3, then finalize with the session token and integrity
-  metadata.
+- Customer mobile may continue using `POST upload/`. It must not use presigned
+  upload until the server feature is enabled after deployment validation.
+- The Stage 2 client protocol is: calculate file size/MIME/SHA-256, create an
+  upload session, submit the returned S3 fields and file, then finalize with the
+  session ID and one-time token. The S3 POST alone never creates a visible
+  document.
 - Loan-officer/admin clients should be prepared for `409` stale-transition
   responses once optimistic concurrency is added and should refresh the record.
 - Clients should use `status` as the future canonical state only after the state
@@ -536,10 +610,10 @@ no separate Documents export policy documented.
 
 ## Documentation and Test Alignment
 
-`docs/DOCUMENTS_TESTING_GUIDE.md` describes the current endpoint shapes and now
-explicitly marks the presigned route as incomplete, corrects the re-upload audit
-claim, and records known current defects. It is a current-behavior testing guide,
-not evidence of production readiness.
+`docs/DOCUMENTS_TESTING_GUIDE.md` describes the current endpoint shapes,
+documents the Stage 2 session/upload/finalize protocol, corrects the re-upload
+audit claim, and records known current defects. It is a current-behavior testing
+guide, not evidence of production readiness.
 
 The previous review's statements that no implementation gaps remained, in-memory
 pagination was an accepted risk, reviewer dispatch was complete, and all audit

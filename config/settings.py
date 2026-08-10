@@ -238,6 +238,28 @@ MEDIA_ROOT = BASE_DIR / 'media'
 # Document Storage Configuration
 # Options: 'local', 's3', 'gcs' (cloud backends to be implemented)
 DOCUMENT_STORAGE_BACKEND = 'local'
+DOCUMENT_PRESIGNED_UPLOAD_ENABLED = env_bool(
+    'DOCUMENT_PRESIGNED_UPLOAD_ENABLED', False
+)
+try:
+    DOCUMENT_PRESIGNED_UPLOAD_EXPIRY_SECONDS = int(
+        os.getenv('DOCUMENT_PRESIGNED_UPLOAD_EXPIRY_SECONDS', '900')
+    )
+    DOCUMENT_PRESIGNED_FINALIZE_LEASE_SECONDS = int(
+        os.getenv('DOCUMENT_PRESIGNED_FINALIZE_LEASE_SECONDS', '300')
+    )
+except ValueError as exc:
+    raise ImproperlyConfigured(
+        'Document presigned upload expiry and lease must be integers'
+    ) from exc
+if not 60 <= DOCUMENT_PRESIGNED_UPLOAD_EXPIRY_SECONDS <= 3600:
+    raise ImproperlyConfigured(
+        'DOCUMENT_PRESIGNED_UPLOAD_EXPIRY_SECONDS must be between 60 and 3600'
+    )
+if not 30 <= DOCUMENT_PRESIGNED_FINALIZE_LEASE_SECONDS <= 900:
+    raise ImproperlyConfigured(
+        'DOCUMENT_PRESIGNED_FINALIZE_LEASE_SECONDS must be between 30 and 900'
+    )
 DOCUMENT_UPLOAD_AI_ANALYSIS = os.getenv('DOCUMENT_UPLOAD_AI_ANALYSIS', 'True') == 'True'
 DOCUMENT_UPLOAD_NOTIFY_REVIEWERS = os.getenv('DOCUMENT_UPLOAD_NOTIFY_REVIEWERS', 'True') == 'True'
 DOCUMENT_UPLOAD_NOTIFY_ASYNC = os.getenv('DOCUMENT_UPLOAD_NOTIFY_ASYNC', 'True') == 'True'

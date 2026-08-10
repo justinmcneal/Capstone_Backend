@@ -18,6 +18,7 @@ ADMIN_PERMISSIONS = [
     "view_analytics",  # Can access system-wide analytics
     "view_logs",  # Can access audit logs
     "manage_system",  # Can modify system configurations
+    "review_documents",  # Can approve/reject documents and request replacements
 ]
 
 

@@ -26,7 +26,11 @@ from accounts.models import (  # noqa: E402
     LoginActivity,
     RefreshTokenEntry,
 )
-from documents.models import Document  # noqa: E402
+from documents.models import (  # noqa: E402
+    Document,
+    DocumentStorageCleanup,
+    DocumentUploadSession,
+)
 from loans.models import (  # noqa: E402
     LoanApplication,
     LoanPayment,
@@ -183,6 +187,17 @@ def create_indexes():
         print(f"✗ AuditLog error: {e}")
 
     try:
+        print("Creating indexes for audit failure recovery...")
+        settings.MONGODB["audit_write_failures"].create_index(
+            [("domain", 1), ("resolved_at", 1), ("occurred_at", 1)]
+        )
+        print("✓ Audit failure recovery indexes created")
+    except (DuplicateKeyError, OperationFailure):
+        print("⚠ Audit failure recovery indexes already exist, skipping")
+    except Exception as e:
+        print(f"✗ Audit failure recovery index error: {e}")
+
+    try:
         print("Creating indexes for AIInteraction collection...")
         AIInteraction.create_indexes()
         print("✓ AIInteraction indexes created")
@@ -246,6 +261,24 @@ def create_indexes():
         print("⚠ Document indexes already exist, skipping")
     except Exception as e:
         print(f"✗ Document error: {e}")
+
+    try:
+        print("Creating indexes for DocumentUploadSession collection...")
+        DocumentUploadSession.create_indexes()
+        print("✓ DocumentUploadSession indexes created")
+    except (DuplicateKeyError, OperationFailure):
+        print("⚠ DocumentUploadSession indexes already exist, skipping")
+    except Exception as e:
+        print(f"✗ DocumentUploadSession error: {e}")
+
+    try:
+        print("Creating indexes for DocumentStorageCleanup collection...")
+        DocumentStorageCleanup.create_indexes()
+        print("✓ DocumentStorageCleanup indexes created")
+    except (DuplicateKeyError, OperationFailure):
+        print("⚠ DocumentStorageCleanup indexes already exist, skipping")
+    except Exception as e:
+        print(f"✗ DocumentStorageCleanup error: {e}")
 
     # Notification indexes
     try:

@@ -39,6 +39,18 @@ app.conf.beat_schedule = {
         "task": "profiles.collect_operational_metrics",
         "schedule": crontab(minute="*/15"),
     },
+    "cleanup-expired-document-upload-sessions-every-10-minutes": {
+        "task": "documents.cleanup_expired_upload_sessions",
+        "schedule": crontab(minute="*/10"),
+    },
+    "reconcile-document-storage-operations-every-5-minutes": {
+        "task": "documents.reconcile_storage_operations",
+        "schedule": crontab(minute="*/5"),
+    },
+    "reconcile-document-audit-failures-every-minute": {
+        "task": "documents.reconcile_audit_failures",
+        "schedule": crontab(minute="*"),
+    },
     "check-overdue-daily": {
         "task": "loans.tasks.check_overdue_installments_task",
         "schedule": crontab(hour=0, minute=0),

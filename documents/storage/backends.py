@@ -4,17 +4,18 @@ Storage Backend for Document Upload
 Designed for easy migration from local filesystem to cloud storage (S3, GCS).
 """
 
+import logging
 import os
+import posixpath
+import time
 import uuid
 from datetime import datetime, timezone
-from django.conf import settings
-import logging
-import time
 
 import boto3
-from botocore.exceptions import BotoCoreError, ClientError
-from boto3.s3.transfer import TransferConfig, S3Transfer
+from boto3.s3.transfer import S3Transfer, TransferConfig
 from botocore.config import Config
+from botocore.exceptions import BotoCoreError, ClientError
+from django.conf import settings
 
 logger = logging.getLogger("documents")
 
@@ -24,6 +25,8 @@ class StorageBackend:
     Abstract base for storage backends.
     Implement this interface for different storage providers.
     """
+
+    supports_presigned_uploads = False
 
     def save(self, file, customer_id, document_type, original_filename):
         """Save file and return the storage path/URL"""
@@ -39,6 +42,16 @@ class StorageBackend:
 
     def get_file_bytes(self, file_path):
         """Read file contents as bytes for downstream processing."""
+        raise NotImplementedError
+
+    def get_object_metadata(self, file_path):
+        """Return trusted storage metadata for a pending object."""
+        raise NotImplementedError
+
+    def promote_quarantined_upload(
+        self, file_path, customer_id, document_type, original_filename
+    ):
+        """Move a validated quarantine object into durable document storage."""
         raise NotImplementedError
 
 
@@ -108,7 +121,8 @@ class LocalStorageBackend(StorageBackend):
             return True
 
         logger.warning(f"File not found for deletion: {file_path}")
-        return False
+        # Deletion is idempotent: an already-absent object satisfies the request.
+        return True
 
     def get_url(self, file_path):
         """Get URL for the file"""
@@ -127,6 +141,8 @@ class LocalStorageBackend(StorageBackend):
 
 class S3StorageBackend(StorageBackend):
     """AWS S3 storage backend."""
+
+    supports_presigned_uploads = True
 
     def __init__(self):
         self.bucket_name = getattr(settings, "AWS_STORAGE_BUCKET_NAME", "")
@@ -165,7 +181,16 @@ class S3StorageBackend(StorageBackend):
 
     def _build_object_key(self, customer_id, document_type, original_filename):
         filename = self._generate_filename(original_filename)
-        return os.path.join("documents", str(customer_id), document_type, filename)
+        return posixpath.join("documents", str(customer_id), document_type, filename)
+
+    def _build_quarantine_key(self, session_id, original_filename):
+        extension = os.path.splitext(original_filename)[1].lower()
+        return posixpath.join(
+            "document-uploads",
+            "quarantine",
+            str(session_id),
+            f"payload{extension}",
+        )
 
     def save(self, file, customer_id, document_type, original_filename):
         """Upload file to S3 and return the object key and size."""
@@ -327,6 +352,96 @@ class S3StorageBackend(StorageBackend):
             customer_id, document_type, original_filename
         )
         return self.generate_presigned_post(object_key, expires_in=expires_in)
+
+    def create_quarantined_presigned_upload(
+        self,
+        *,
+        session_id,
+        original_filename,
+        expected_size,
+        expected_mime_type,
+        expected_sha256,
+        expires_in,
+    ):
+        """Create an exact-size/type, session-bound presigned quarantine POST."""
+
+        if not self.bucket_name:
+            raise ValueError("AWS_STORAGE_BUCKET_NAME is required for S3 storage")
+        object_key = self._build_quarantine_key(session_id, original_filename)
+        metadata_fields = {
+            "Content-Type": expected_mime_type,
+            "x-amz-meta-upload-session": str(session_id),
+            "x-amz-meta-sha256": expected_sha256.lower(),
+        }
+        conditions = [
+            {"key": object_key},
+            {"Content-Type": expected_mime_type},
+            {"x-amz-meta-upload-session": str(session_id)},
+            {"x-amz-meta-sha256": expected_sha256.lower()},
+            ["content-length-range", expected_size, expected_size],
+        ]
+        post = self.generate_presigned_post(
+            object_key,
+            expires_in=expires_in,
+            fields=metadata_fields,
+            conditions=conditions,
+        )
+        if not post:
+            return None
+        return {"object_key": object_key, "post": post}
+
+    def get_object_metadata(self, file_path):
+        """Read authoritative size, type, and user metadata from S3."""
+
+        if not self.bucket_name:
+            raise ValueError("AWS_STORAGE_BUCKET_NAME is required for S3 storage")
+        response = self.s3.head_object(Bucket=self.bucket_name, Key=file_path)
+        return {
+            "size": int(response.get("ContentLength", 0)),
+            "mime_type": response.get("ContentType", ""),
+            "metadata": {
+                str(key).lower(): str(value)
+                for key, value in (response.get("Metadata") or {}).items()
+            },
+            "etag": str(response.get("ETag", "")).strip('"'),
+        }
+
+    def promote_quarantined_upload(
+        self, file_path, customer_id, document_type, original_filename
+    ):
+        """Copy a validated object to its durable key and remove quarantine."""
+
+        if not self.bucket_name:
+            raise ValueError("AWS_STORAGE_BUCKET_NAME is required for S3 storage")
+        destination_key = self._build_object_key(
+            customer_id, document_type, original_filename
+        )
+        copy_args = {
+            "Bucket": self.bucket_name,
+            "Key": destination_key,
+            "CopySource": {"Bucket": self.bucket_name, "Key": file_path},
+        }
+        copy_args.update(self.object_parameters)
+        if self.default_acl:
+            copy_args["ACL"] = self.default_acl
+        self.s3.copy_object(**copy_args)
+        try:
+            self.s3.delete_object(Bucket=self.bucket_name, Key=file_path)
+            metadata = self.get_object_metadata(destination_key)
+        except Exception:
+            try:
+                self.s3.delete_object(Bucket=self.bucket_name, Key=destination_key)
+            except Exception:
+                logger.exception(
+                    "Failed to roll back promoted S3 object %s", destination_key
+                )
+            raise
+        return {
+            "file_path": destination_key,
+            "filename": posixpath.basename(destination_key),
+            "size": metadata["size"],
+            "etag": metadata["etag"],
+        }
 
     def get_file_bytes(self, file_path):
         """Read file bytes from S3."""

@@ -6,9 +6,10 @@ Handles reviewer notifications for pending documents.
 
 import logging
 
-from accounts.models import Admin, Customer, LoanOfficer
+from bson import ObjectId
+from django.conf import settings
 
-from documents.models import DOCUMENT_STATUSES
+from accounts.models import Admin, Customer, LoanOfficer
 from notifications.services import get_email_sender
 
 logger = logging.getLogger("documents")
@@ -71,7 +72,27 @@ def notify_reviewers_document_pending(document):
     recipients = []
     seen_emails = set()
 
+    customer_value = str(document.customer_id or "")
+    customer_variants = [customer_value]
+    if ObjectId.is_valid(customer_value):
+        customer_variants.insert(0, ObjectId(customer_value))
+    assigned_officer_ids = {
+        str(row.get("assigned_officer"))
+        for row in settings.MONGODB["loan_applications"].find(
+            {
+                "customer_id": {"$in": customer_variants},
+                "assigned_officer": {"$nin": [None, ""]},
+            },
+            {"assigned_officer": 1},
+        )
+        if row.get("assigned_officer")
+    }
+
     for officer in LoanOfficer.find({"active": True}):
+        if not officer.has_permission("review_documents"):
+            continue
+        if assigned_officer_ids and str(officer.id) not in assigned_officer_ids:
+            continue
         email = (officer.email or "").strip()
         if not email:
             continue
@@ -89,6 +110,8 @@ def notify_reviewers_document_pending(document):
         )
 
     for admin in Admin.find({"active": True}):
+        if not admin.has_permission("review_documents"):
+            continue
         email = (admin.email or "").strip()
         if not email:
             continue
