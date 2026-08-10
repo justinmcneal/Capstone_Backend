@@ -21,6 +21,7 @@ ALLOWED_DETAIL_KEYS = {
     "reason_code",
     "replayed",
     "result_count",
+    "search_applied",
     "revision",
     "size",
     "status",

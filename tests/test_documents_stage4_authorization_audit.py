@@ -174,6 +174,7 @@ def test_required_read_audit_failure_is_queued_and_reconciled(
         "page",
         "page_size",
         "result_count",
+        "search_applied",
     }
 
     monkeypatch.setattr(

@@ -488,17 +488,52 @@ class Document:
         return [cls.from_dict(doc) for doc in cursor]
 
     @classmethod
-    def find_by_customer(cls, customer_id, document_type=None):
-        """Find all documents for a customer, optionally filtered by type"""
-        query = cls._customer_query(customer_id)
-        query["$and"] = [
+    def available_query(cls, query=None):
+        """Add the visible-storage condition while retaining existing clauses."""
+        visible_query = dict(query or {})
+        conditions = list(visible_query.pop("$and", []))
+        conditions.append(
             {
                 "$or": [
                     {"storage_state": "available"},
                     {"storage_state": {"$exists": False}},
                 ]
             }
-        ]
+        )
+        visible_query["$and"] = conditions
+        return visible_query
+
+    @classmethod
+    def paginate(
+        cls,
+        query,
+        *,
+        page,
+        page_size,
+        sort=None,
+    ):
+        """Count and load only one deterministic MongoDB result page."""
+        page = int(page)
+        page_size = int(page_size)
+        if page < 1 or page_size < 1:
+            raise ValueError("page and page_size must be positive")
+
+        collection = get_db()[cls.collection_name]
+        query = dict(query or {})
+        ordering = sort or [("uploaded_at", -1), ("_id", -1)]
+        total = collection.count_documents(query)
+        cursor = (
+            collection.find(query)
+            .sort(ordering)
+            .skip((page - 1) * page_size)
+            .limit(page_size)
+        )
+        return [cls.from_dict(document) for document in cursor], total
+
+    @classmethod
+    def find_by_customer(cls, customer_id, document_type=None):
+        """Find all documents for a customer, optionally filtered by type"""
+        query = cls.available_query(cls._customer_query(customer_id))
         if document_type:
             query["document_type"] = document_type
         return cls.find(query, sort=[("uploaded_at", -1)])
@@ -508,15 +543,7 @@ class Document:
         """Count documents for a customer"""
         db = get_db()
         collection = db[cls.collection_name]
-        query = cls._customer_query(customer_id)
-        query["$and"] = [
-            {
-                "$or": [
-                    {"storage_state": "available"},
-                    {"storage_state": {"$exists": False}},
-                ]
-            }
-        ]
+        query = cls.available_query(cls._customer_query(customer_id))
         if document_type:
             query["document_type"] = document_type
         return collection.count_documents(query)
@@ -532,3 +559,33 @@ class Document:
         collection.create_index("uploaded_at")
         collection.create_index("upload_session_id", unique=True, sparse=True)
         collection.create_index([("storage_state", 1), ("updated_at", 1)])
+        collection.create_index(
+            [("storage_state", 1), ("uploaded_at", -1), ("_id", -1)]
+        )
+        collection.create_index(
+            [
+                ("customer_id", 1),
+                ("storage_state", 1),
+                ("uploaded_at", -1),
+                ("_id", -1),
+            ]
+        )
+        collection.create_index(
+            [
+                ("customer_id", 1),
+                ("document_type", 1),
+                ("status", 1),
+                ("storage_state", 1),
+                ("uploaded_at", -1),
+                ("_id", -1),
+            ]
+        )
+        collection.create_index(
+            [
+                ("document_type", 1),
+                ("status", 1),
+                ("storage_state", 1),
+                ("uploaded_at", -1),
+                ("_id", -1),
+            ]
+        )

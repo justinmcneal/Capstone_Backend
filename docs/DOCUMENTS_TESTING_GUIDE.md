@@ -1,6 +1,6 @@
 # Documents Testing Guide
 
-> **Readiness notice (2026-08-09):** This guide documents the current API for
+> **Readiness notice (2026-08-10):** This guide documents the current API for
 > development and characterization testing. The Documents module is not yet
 > production-ready. See `docs/DOCUMENTS_PRODUCTION_READINESS_REVIEW.md` for the
 > verified gaps and staged remediation plan. A presigned S3 POST remains a
@@ -216,7 +216,7 @@ List documents scoped to the authenticated user.
 | `type` | string | | One of `DOCUMENT_TYPES` |
 | `status` | string | | One of `DOCUMENT_STATUSES` |
 | `customer_id` | string | | For officers/admins; scopes to a specific customer |
-| `search` | string | | Case-insensitive match on filename or document type, plus customer name |
+| `search` | string | | Exact document type, document ID, or customer ID; max 100 chars |
 
 **Scope rules:**
 - Customers: own documents only
@@ -259,8 +259,24 @@ List documents scoped to the authenticated user.
 | `total_pages` | int |
 
 **Search behavior:**
-- Matches `original_filename` and `document_type` case-insensitively
-- Also matches customer first/last names by querying `Customer` records
+
+- Document types accept their exact enum or label form, such as `valid_id` or
+  `Valid ID`.
+- A valid ObjectId searches both the exact document ID and customer ID.
+- Filename and free-text customer-name search return `400`; randomized filename
+  encryption cannot support safe indexed substring search.
+- Find customers by name through the scoped Profiles directory, then pass the
+  returned ID through `customer_id` or exact `search`.
+
+**Pagination behavior:**
+
+- Scope, filters, deletion visibility, count, sorting, skip, and limit run in
+  MongoDB before document decryption.
+- Ordering is deterministic: `uploaded_at` descending, then `_id` descending.
+- `page_size` outside 1–200 returns `400` rather than being silently clamped.
+- An empty result has `total_pages: 0`. A page beyond the final page returns an
+  empty `documents` array while preserving `total` and `total_pages`.
+- Customer names for one page are resolved with one bounded query.
 
 ---
 
@@ -543,7 +559,7 @@ python scripts/test_cnn_model.py documents/ml/test_data --confusion
 
 | Code | When |
 |------|------|
-| `400 Bad Request` | Malformed document ID, missing `file`, invalid `document_type`, invalid filters, invalid verify payload, missing/blank re-upload reason, oversized file, invalid/unsafe file content, or disallowed customer deletion |
+| `400 Bad Request` | Malformed document ID, missing `file`, invalid `document_type`, invalid filters or non-indexed search, invalid verify payload, missing/blank re-upload reason, oversized/unsafe content, or disallowed deletion |
 | `401 Unauthorized` | Missing or invalid JWT |
 | `403 Forbidden` | Role mismatch, inactive staff account, or missing `review_documents` permission |
 | `404 Not Found` | Document not found in current scope |
@@ -583,6 +599,7 @@ Standard success shape:
 | Presigned finalization | `documents/services/presigned_upload.py` |
 | Storage reconciliation | `documents/services/storage_reconciliation.py` |
 | Recoverable audit writer | `documents/services/audit.py` |
+| Bounded listing helpers | `documents/services/listing.py` |
 | AI analysis service | `documents/services/analyzer.py` |
 | CNN model | `documents/services/cnn_model.py` |
 | Training command | `documents/management/commands/train_document_classifier.py` |
@@ -596,8 +613,10 @@ Standard success shape:
 2. Customer-uploaded documents start as `pending` unless AI quality/type validation fails, which sets `needs_review`.
 3. Officer verify endpoints accept both `action` and `status` fields; tests should exercise both spellings.
 4. Rejection requires `rejection_reason`; blank/whitespace-only values are rejected by the serializer.
-5. Document list pagination happens in Python after loading matching documents; expect `total` to reflect full matched set, not DB count.
-6. `customer_name` in list/response is resolved dynamically by querying the `Customer` collection.
+5. Document list filtering, count, deterministic sorting, skip, and limit happen
+   in MongoDB; only the requested page is decrypted.
+6. `customer_name` values for a list page are bulk-resolved with one Customer
+   query. Detail responses retain single-resource resolution.
 7. List responses deliberately return `file_url: null`; an authorized detail
    request is the on-demand URL boundary.
 8. Presigned uploads return 404 while disabled, or 400 when enabled with an unsupported backend. With S3, test the full session → quarantine upload → finalize → idempotent replay flow; the S3 POST alone must not create a document.
@@ -610,19 +629,23 @@ Standard success shape:
 11. Invalid ObjectId strings return `400 Invalid document_id format` in detail,
     delete, verify, and request-reupload handlers. Well-formed but missing or
     concealed IDs return `404`.
-12. The current list endpoint loads and decrypts the full matched result set
-    before Python pagination. Do not use development tests as evidence that the
-    endpoint is safe at production collection sizes.
+12. `search` intentionally rejects filename and free-text name queries. Use an
+    exact type/ID or the Profiles directory plus `customer_id`.
 13. Stage 3/4 tests exercise revision races, partial storage failures, permission
     and real access-helper denials, URL privacy, audit recovery, and recipient
     scope. Repeat concurrency and recovery against isolated real MongoDB/object
     storage during Stage 7 deployment validation.
 
-Focused Stage 3/4 regression command:
+14. The Stage 5 real-Mongo 5,000-record load/explain test is opt-in through the
+    existing `REAL_MONGO_TEST_URI` isolated-test contract; do not point it at a
+    deployment database.
+
+Focused Stage 3–5 regression command:
 
 ```bash
 pytest -q tests/test_documents_stage3_consistency.py \
   tests/test_documents_stage4_authorization_audit.py \
+  tests/test_documents_stage5_scalable_listing.py \
   tests/test_documents_stage1_contract.py \
   tests/test_documents_stage2_presigned_upload.py tests/test_documents_api.py
 ```

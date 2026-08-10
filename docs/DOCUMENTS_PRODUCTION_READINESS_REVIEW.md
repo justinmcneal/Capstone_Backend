@@ -1,6 +1,6 @@
 # Documents Production Readiness Review
 
-Last updated: 2026-08-09
+Last updated: 2026-08-10
 
 Scope: `documents/` plus document routes, serializers, PyMongo persistence,
 local/S3 storage, presigned uploads, AI/CNN analysis, reviewer notifications,
@@ -52,9 +52,11 @@ Stages 3 and 4 add revision-guarded lifecycle writes, replacement lineage,
 durable storage cleanup, retryable deletion, explicit reviewer permissions,
 assignment-scoped reviewer recipients, metadata-only list responses, trusted
 client-IP handling, complete document audit coverage, and a recoverable
-allowlisted audit queue. Remaining blockers are concentrated in scalable query
-delivery, notification/AI operations, retention/account-deletion integration,
-and deployment-target configuration and validation.
+allowlisted audit queue. Stage 5 moves listing filters, counts, deterministic
+sorting, and bounded pagination into MongoDB, replaces unsafe substring search
+with indexed exact search, and bulk-resolves page customer names. Remaining
+blockers are concentrated in notification/AI operations, retention/account-
+deletion integration, and deployment-target configuration and validation.
 
 Current remediation status:
 
@@ -62,7 +64,7 @@ Current remediation status:
 - [x] Stage 2 — Safe upload finalization and content security
 - [x] Stage 3 — Atomic lifecycle transitions and storage consistency
 - [x] Stage 4 — Authorization, privacy, and audit completeness
-- [ ] Stage 5 — Query scalability and response delivery
+- [x] Stage 5 — Query scalability and response delivery
 - [ ] Stage 6 — Background work, notifications, and AI governance
 - [ ] Stage 7 — Retention, deployment configuration, and operations
 
@@ -85,6 +87,8 @@ Current remediation status:
   `document_storage_cleanup` queue and retried idempotently.
 - Index declarations cover customer ID, type, status, upload time, and common
   customer/type/status combinations; creation is wired into `init_db.py`.
+- Listing indexes cover global, customer, customer/type/status, and
+  type/status access paths with `uploaded_at`/`_id` ordering.
 - Customer lookups tolerate legacy customer IDs stored as strings or
   `ObjectId` values.
 - Original filename, storage path, description, notes, rejection reason, and
@@ -102,7 +106,7 @@ The following routes are registered under `/api/documents/`:
 | `POST upload/` | Customer | Implemented; rollback/replacement recovery included |
 | `POST presigned-upload/` | Customer | Stage 2 session issuance; disabled by default |
 | `POST presigned-upload/<session_id>/finalize/` | Customer owner | Stage 2 one-time validation/finalization |
-| `GET /` | Customer/officer/admin/super admin | Partial; authorized/audited but query remains unbounded |
+| `GET /` | Customer/officer/admin/super admin | Implemented; scoped, audited, bounded, and metadata-only |
 | `GET <document_id>/` | Role/resource scoped | Implemented; staff read is audit-gated |
 | `DELETE <document_id>/` | Owning customer | Implemented; revision-guarded and retryable |
 | `PUT <document_id>/verify/` | Permitted officer/admin | Implemented; atomic and audited |
@@ -261,6 +265,14 @@ image contents:
   lists, recoverable audit failure, and notification recipient scope.
 - The post-Stage 4 full suite collected 1,032 tests: 1,015 passed and 17 opt-in
   integration tests were skipped.
+- Stage 5 adds six focused tests for database pagination, stable tie-breaking,
+  empty/beyond-page behavior, deletion-state exclusion, indexed exact search,
+  one-query customer-name resolution, and listing index declarations. An opt-in
+  real-Mongo test loads 5,000 records across customer/officer/admin query shapes
+  and inspects execution statistics.
+- The post-Stage 5 full suite collected 1,039 tests: 1,021 passed and 18 opt-in
+  integration tests were skipped. The additional skip is the isolated
+  real-Mongo Stage 5 load/explain test.
 
 ## Confirmed Production Blockers and Gaps
 
@@ -297,18 +309,19 @@ only that officer is selected, while permitted admins retain oversight access.
 Bounded retry/backoff, idempotency, a durable delivery outbox, and notification
 reconciliation remain Stage 6 work.
 
-### 5. Listing does not scale and performs excessive sensitive work
+### 5. Listing scalability and sensitive response work are remediated
 
-The list endpoint loads every matching document, constructs/decrypts every
-model, applies search in Python, and only then paginates. Admin listings can be
-unbounded. Filename search cannot use a normal index because filename encryption
-is randomized. Customer-name resolution still causes per-row database work.
-Stage 4 stopped list serialization from minting storage URLs; document detail is
-now the on-demand URL boundary.
+The list endpoint now applies role scope, customer/type/status filters, storage
+visibility, count, deterministic `uploaded_at`/`_id` ordering, `skip`, and
+`limit` in MongoDB. Only one page is decrypted. Page size is explicitly bounded
+to 200, empty results report zero pages, and pages beyond the end are stable
+empty arrays with the same total.
 
-This is not an acceptable production risk merely because today's development
-collection is small. Server-side bounded pagination, an approved search design,
-bulk customer lookup, and bounded database work are required.
+Randomized encrypted filenames are not searched and no plaintext shadow field
+was added. `search` accepts only an exact document type, document ID, or customer
+ID; name discovery belongs to the scoped Profiles directory and then uses the
+indexed `customer_id` filter. Customer display names for one result page are
+resolved with one bounded query, and list calls never mint storage URLs.
 
 ### 6. Audit coverage and recovery are remediated
 
@@ -512,19 +525,24 @@ environmental proof is not represented as incomplete Stage 3 application code.
 
 ### Stage 5 — Query scalability and response delivery
 
-**Status: Blocked for production**
+**Status: Complete at code and automated-test level; real-service load validation is a Stage 7 gate**
 
-- [ ] Replace `Document.find()` list materialization with database-side sort,
-  bounded pagination, and count or cursor pagination.
-- [ ] Decide an approved searchable-metadata design compatible with encryption;
-  do not add plaintext filename search accidentally.
-- [ ] Bulk-resolve customer display names and eliminate per-row lookups.
+- [x] ~~Replace `Document.find()` list materialization with database-side count,
+  deterministic sort, skip, and bounded page pagination.~~
+- [x] ~~Restrict search to indexed exact document type/document/customer IDs;
+  do not add plaintext or in-memory filename search.~~
+- [x] ~~Bulk-resolve one page of customer display names with one query and
+  eliminate serializer-level per-row lookups.~~
 - [x] ~~Separate metadata listing from short-lived URL issuance by returning no
   URL from list calls and issuing it only from authorized detail calls.~~
-- [ ] Add deterministic ordering, stable empty-page semantics, and pagination
-  boundary tests.
-- [ ] Load/performance-test customer, officer, and admin scopes at expected and
-  worst-case collection sizes.
+- [x] ~~Add deterministic `uploaded_at`/`_id` ordering, stable empty/beyond-page
+  semantics, page-size validation, and pagination boundary tests.~~
+- [x] ~~Add an opt-in real-Mongo test covering 5,000 records across customer,
+  officer, and admin query shapes plus execution statistics.~~
+
+The opt-in load test must still be executed against an approved isolated real
+MongoDB target during Stage 7 validation. The normal test suite never reads
+deployment credentials or mutates an external database.
 
 ### Stage 6 — Background work, notifications, and AI governance
 

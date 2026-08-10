@@ -1,8 +1,9 @@
-"""Real-Mongo coverage for auth-critical indexes and concurrent uniqueness."""
+"""Real-Mongo coverage for production-critical indexes and behavior."""
 
 import os
 import uuid
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timezone
 
 import pytest
 from django.conf import settings
@@ -14,6 +15,7 @@ from accounts.models.activity import ActiveSession
 from accounts.models.tokens import RefreshTokenEntry
 from accounts.services.otp_service import OTPService
 from accounts.services.password_service import PasswordService
+from documents.models import Document
 from profiles.models import (
     CustomerProfile,
     ProfileRevisionConflict,
@@ -247,3 +249,68 @@ def test_real_mongo_risk_review_index_enforces_one_request_per_score(
 
     indexes = collection.index_information()
     assert indexes["unique_customer_scoring_review"]["unique"] is True
+
+
+@pytest.mark.real_mongo
+def test_real_mongo_document_listing_is_bounded_across_scopes(
+    real_mongo_database, monkeypatch
+):
+    """Exercise Stage 5 pagination/index behavior with a representative volume."""
+    monkeypatch.setattr(settings, "MONGODB", real_mongo_database)
+    Document.create_indexes()
+    collection = real_mongo_database[Document.collection_name]
+    customer_ids = [str(uuid.uuid4()) for _ in range(100)]
+    collection.insert_many(
+        [
+            {
+                "customer_id": customer_ids[index % len(customer_ids)],
+                "document_type": "valid_id" if index % 2 else "proof_of_address",
+                "original_filename": f"document-{index}.jpg",
+                "file_path": f"documents/load/{index}.jpg",
+                "file_size": 1024,
+                "mime_type": "image/jpeg",
+                "status": "pending",
+                "verified": False,
+                "revision": 0,
+                "storage_state": "available",
+                "uploaded_at": datetime.now(timezone.utc),
+                "updated_at": datetime.now(timezone.utc),
+            }
+            for index in range(5000)
+        ]
+    )
+
+    customer_query = Document.available_query({"customer_id": customer_ids[0]})
+    customer_page, customer_total = Document.paginate(
+        customer_query, page=1, page_size=25
+    )
+    officer_query = Document.available_query(
+        {"customer_id": {"$in": customer_ids[:10]}}
+    )
+    officer_page, officer_total = Document.paginate(
+        officer_query, page=2, page_size=50
+    )
+    admin_page, admin_total = Document.paginate(
+        Document.available_query({}), page=100, page_size=25
+    )
+
+    assert customer_total == 50
+    assert len(customer_page) == 25
+    assert officer_total == 500
+    assert len(officer_page) == 50
+    assert admin_total == 5000
+    assert len(admin_page) == 25
+
+    explain = real_mongo_database.command(
+        "explain",
+        {
+            "find": Document.collection_name,
+            "filter": customer_query,
+            "sort": {"uploaded_at": -1, "_id": -1},
+            "limit": 25,
+        },
+        verbosity="executionStats",
+    )
+    stats = explain["executionStats"]
+    assert stats["nReturned"] == 25
+    assert stats["totalDocsExamined"] <= customer_total

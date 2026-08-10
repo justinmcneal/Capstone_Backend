@@ -9,7 +9,6 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 
 from accounts.authentication import CustomJWTAuthentication
-from accounts.models import Customer
 from accounts.services.consent_service import ConsentService
 from accounts.utils.access_control import AccessControlMixin
 from accounts.utils.request_utils import get_client_ip
@@ -34,6 +33,11 @@ from documents.serializers import (
 from documents.services.audit import (
     DocumentAuditUnavailable,
     record_document_audit,
+)
+from documents.services.listing import (
+    append_query_condition,
+    bulk_customer_display_names,
+    indexed_search_condition,
 )
 from documents.services.notification import (
     get_customer_by_identifier,
@@ -351,8 +355,6 @@ class DocumentListView(AccessControlMixin, APIView):
 
     def get(self, request):
         """List documents based on user role"""
-        import re
-
         try:
             has_permission, result = self.require_roles(
                 request,
@@ -374,7 +376,7 @@ class DocumentListView(AccessControlMixin, APIView):
                     status_code=status.HTTP_400_BAD_REQUEST,
                 )
             try:
-                page_size = min(int(request.query_params.get("page_size", 20)), 200)
+                page_size = int(request.query_params.get("page_size", 20))
             except (TypeError, ValueError):
                 return error_response(
                     message="Invalid page_size parameter",
@@ -387,10 +389,10 @@ class DocumentListView(AccessControlMixin, APIView):
                     errors={"page": "page must be at least 1"},
                     status_code=status.HTTP_400_BAD_REQUEST,
                 )
-            if page_size < 1:
+            if page_size < 1 or page_size > 200:
                 return error_response(
                     message="Invalid page_size parameter",
-                    errors={"page_size": "page_size must be at least 1"},
+                    errors={"page_size": "page_size must be between 1 and 200"},
                     status_code=status.HTTP_400_BAD_REQUEST,
                 )
 
@@ -424,18 +426,18 @@ class DocumentListView(AccessControlMixin, APIView):
 
             # Optional search term
             search = sanitize_text(request.query_params.get("search", ""))
+            if len(search) > 100:
+                return error_response(
+                    message="Invalid search parameter",
+                    errors={"search": "search must be at most 100 characters"},
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                )
 
             # Determine which documents to show based on role
+            query = {}
             if user_role in ["admin", "super_admin"]:
-                # Admin and super admin can see all documents.
-                query = {}
-                if document_type:
-                    query["document_type"] = document_type
-                if status_filter in allowed_status_filters:
-                    query["status"] = status_filter
                 if customer_id_filter:
                     query.update(Document._customer_query(customer_id_filter))
-                documents = Document.find(query, sort=[("uploaded_at", -1)])
             elif user_role == "loan_officer":
                 # ABAC scope: officers can only see documents belonging to customers
                 # they are allowed to handle via application assignment scope.
@@ -449,100 +451,62 @@ class DocumentListView(AccessControlMixin, APIView):
                 scoped_customer_ids = scope_result or set()
                 if customer_id_filter:
                     if customer_id_filter not in scoped_customer_ids:
-                        documents = []
+                        query["_id"] = {"$in": []}
                     else:
-                        query = Document._customer_query(customer_id_filter)
-                        if document_type:
-                            query["document_type"] = document_type
-                        if status_filter in allowed_status_filters:
-                            query["status"] = status_filter
-                        documents = Document.find(query, sort=[("uploaded_at", -1)])
+                        query.update(Document._customer_query(customer_id_filter))
                 elif not scoped_customer_ids:
-                    documents = []
+                    query["_id"] = {"$in": []}
                 else:
                     scope_values = []
                     for customer_id in scoped_customer_ids:
                         scope_values.extend(self._id_variants(customer_id))
-                    query = {
-                        "customer_id": {"$in": scope_values},
-                    }
-                    if document_type:
-                        query["document_type"] = document_type
-                    if status_filter in allowed_status_filters:
-                        query["status"] = status_filter
-                    documents = Document.find(query, sort=[("uploaded_at", -1)])
+                    query["customer_id"] = {"$in": scope_values}
             else:
                 # Customers can only see their own documents
-                customer_id = user.customer_id
-                documents = Document.find_by_customer(
-                    customer_id, document_type or None
-                )
-                if status_filter in allowed_status_filters:
-                    documents = [
-                        doc for doc in documents if doc.status == status_filter
-                    ]
+                query.update(Document._customer_query(user.customer_id))
 
-            documents = [
-                doc
-                for doc in documents
-                if doc.storage_state not in {"delete_pending", "delete_failed"}
-            ]
+            if document_type:
+                query["document_type"] = document_type
+            if status_filter:
+                query["status"] = status_filter
+            query = Document.available_query(query)
 
-            # Filter by search term (filename, document type, or customer name)
+            # Randomized field encryption makes filename search intentionally
+            # unsupported. Only indexed exact document types and IDs are safe.
             if search:
-                search_regex = re.compile(re.escape(search), re.IGNORECASE)
-                customer_ids = []
-                search_terms = search.strip().split()
-                if len(search_terms) == 1:
-                    name_regex = re.compile(
-                        f".*{re.escape(search_terms[0])}.*", re.IGNORECASE
+                search_condition = indexed_search_condition(search)
+                if search_condition is None:
+                    return error_response(
+                        message="Unsupported document search",
+                        errors={
+                            "search": (
+                                "Use an exact document type, document ID, or "
+                                "customer ID. Use the scoped profile directory "
+                                "to find a customer by name."
+                            )
+                        },
+                        status_code=status.HTTP_400_BAD_REQUEST,
                     )
-                    matched_customers = Customer.find(
-                        {
-                            "$or": [
-                                {"first_name": name_regex},
-                                {"last_name": name_regex},
-                            ]
-                        }
-                    )
-                else:
-                    customer_and_conditions = []
-                    for term in search_terms:
-                        term_regex = re.compile(
-                            f".*{re.escape(term)}.*", re.IGNORECASE
-                        )
-                        customer_and_conditions.append(
-                            {
-                                "$or": [
-                                    {"first_name": term_regex},
-                                    {"last_name": term_regex},
-                                ]
-                            }
-                        )
-                    matched_customers = Customer.find(
-                        {"$and": customer_and_conditions}
-                    )
-                customer_ids = [c.id for c in matched_customers if c]
-                documents = [
-                    doc
-                    for doc in documents
-                    if search_regex.search(doc.original_filename or "")
-                    or search_regex.search(doc.document_type or "")
-                    or doc.customer_id in customer_ids
-                ]
+                append_query_condition(query, search_condition)
 
-            # Get total before pagination
-            total = len(documents)
-
-            # Paginate
-            start_idx = (page - 1) * page_size
-            end_idx = start_idx + page_size
-            paginated_documents = documents[start_idx:end_idx]
+            paginated_documents, total = Document.paginate(
+                query,
+                page=page,
+                page_size=page_size,
+                sort=[("uploaded_at", -1), ("_id", -1)],
+            )
+            customer_names = bulk_customer_display_names(
+                document.customer_id for document in paginated_documents
+            )
 
             from documents.serializers import DocumentResponseSerializer
             docs_data = [
                 DocumentResponseSerializer(
-                    doc, context={"include_file_url": False}
+                    doc,
+                    context={
+                        "include_file_url": False,
+                        "customer_names": customer_names,
+                    },
                 ).data
                 for doc in paginated_documents
             ]
@@ -560,6 +524,7 @@ class DocumentListView(AccessControlMixin, APIView):
                         "page": page,
                         "page_size": page_size,
                         "result_count": len(docs_data),
+                        "search_applied": bool(search),
                     },
                     **_audit_actor(request),
                 )
@@ -571,7 +536,7 @@ class DocumentListView(AccessControlMixin, APIView):
                     "page": page,
                     "page_size": page_size,
                     "total_pages": (
-                        (total + page_size - 1) // page_size if total > 0 else 1
+                        (total + page_size - 1) // page_size if total > 0 else 0
                     ),
                 },
                 message="Documents retrieved successfully",

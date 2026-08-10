@@ -404,7 +404,8 @@ class TestDocumentList:
 
         response = DocumentListView.as_view()(request)
         assert response.status_code == 200
-        assert response.data["data"]["total"] == len(docs)
+        assert response.data["data"]["total"] == 1
+        assert response.data["data"]["documents"][0]["document_type"] == DOCUMENT_TYPES[0]
 
     def test_officer_scope_retains_customer_after_document_approval(
         self, monkeypatch

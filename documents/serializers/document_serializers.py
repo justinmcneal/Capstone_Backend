@@ -127,6 +127,10 @@ class DocumentResponseSerializer(serializers.Serializer):
         return serialize_value(obj.customer_id)
 
     def get_customer_name(self, obj):
+        customer_names = self.context.get("customer_names")
+        if customer_names is not None:
+            return customer_names.get(str(obj.customer_id), "Customer")
+
         from documents.services.notification import (
             get_customer_by_identifier,
             get_display_name,
