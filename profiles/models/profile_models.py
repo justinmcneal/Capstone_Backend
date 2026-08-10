@@ -94,9 +94,19 @@ def _calculate_completion(profile, section, required_fields):
 
 def _serialize_profile_fields(data, encrypted_fields, monetary_fields=()):
     serialized = encrypt_fields(data, encrypted_fields)
+
     for field in monetary_fields:
         if isinstance(serialized.get(field), Decimal):
             serialized[field] = Decimal128(serialized[field])
+
+    for field, value in serialized.items():
+        if isinstance(value, date) and not isinstance(value, datetime):
+            serialized[field] = datetime.combine(
+                value,
+                time.min,
+                tzinfo=timezone.utc,
+            )
+
     return serialized
 
 
