@@ -7,14 +7,16 @@ from datetime import datetime, timezone
 from django.conf import settings
 from django.core.files.uploadedfile import SimpleUploadedFile
 
-from accounts.services.consent_service import ConsentService
 from analytics.models import AuditLog  # noqa: F401 - test integration compatibility
 from documents.models import Document, DocumentRevisionConflict, DocumentUploadSession
 from documents.serializers import validate_uploaded_file
+from documents.services.analysis import queue_document_analysis
 from documents.services.audit import record_document_audit
-from documents.services.notification import notify_reviewers_document_pending
+from documents.services.notification import (
+    notify_reviewers_document_pending,
+    queue_reviewer_notifications,
+)
 from documents.services.storage_reconciliation import enqueue_storage_cleanup
-from documents.tasks import notify_reviewers_document_pending_task
 
 logger = logging.getLogger("documents")
 
@@ -112,46 +114,6 @@ def _validate_object(session, storage):
     return contents
 
 
-def _analyze_image(session, contents):
-    if not getattr(settings, "DOCUMENT_UPLOAD_AI_ANALYSIS", True):
-        return None
-    if not session.expected_mime_type.startswith("image/"):
-        return None
-    try:
-        if not ConsentService.check_ai_consent(session.customer_id):
-            return None
-    except Exception:  # noqa: BLE001 - consent-store failure must fail closed
-        return None
-
-    try:
-        from documents.services import analyze_document
-
-        return analyze_document(contents, expected_type=session.document_type)
-    except Exception:
-        logger.exception("Document AI analysis failed during presigned finalization")
-        return {
-            "is_valid": False,
-            "quality_score": 0,
-            "quality_issues": ["Document analysis was unavailable"],
-            "analysis_mode": "failed",
-        }
-
-
-def _apply_analysis(document, analysis):
-    if not analysis:
-        return
-    document.confidence_score = analysis.get("quality_score", 0)
-    document.ai_analysis = analysis
-    document.ai_analyzed_at = datetime.now(timezone.utc)
-    quality_score = analysis.get("quality_score")
-    try:
-        quality_score = float(quality_score) if quality_score is not None else 1.0
-    except (TypeError, ValueError):
-        quality_score = 0.0
-    if not analysis.get("is_valid", True) or quality_score < 0.5:
-        document.status = "needs_review"
-
-
 def _notify_reviewers(document):
     if not getattr(settings, "DOCUMENT_UPLOAD_NOTIFY_REVIEWERS", True):
         return
@@ -159,7 +121,7 @@ def _notify_reviewers(document):
         return
     try:
         if getattr(settings, "DOCUMENT_UPLOAD_NOTIFY_ASYNC", True):
-            notify_reviewers_document_pending_task.delay(document.id)
+            queue_reviewer_notifications(document)
         else:
             notify_reviewers_document_pending(document)
     except Exception:
@@ -227,8 +189,7 @@ def finalize_presigned_upload(
     promoted = None
     document_committed = False
     try:
-        contents = _validate_object(session, storage)
-        analysis = _analyze_image(session, contents)
+        _validate_object(session, storage)
         promoted = storage.promote_quarantined_upload(
             session.object_key,
             session.customer_id,
@@ -250,9 +211,14 @@ def finalize_presigned_upload(
             description=session.description,
             replaces_document_id=(replacement_for.id if replacement_for else None),
         )
-        _apply_analysis(document, analysis)
         document.save()
         document_committed = True
+        try:
+            queue_document_analysis(document)
+        except Exception:
+            logger.exception(
+                "Failed to persist document analysis work for %s", document.id
+            )
         if replacement_for:
             try:
                 replacement_for.mark_superseded(document.id)
@@ -266,9 +232,7 @@ def finalize_presigned_upload(
         except Exception:
             # The document and durable object already agree. A replay finds the
             # document by upload_session_id and repairs the session marker.
-            logger.exception(
-                "Failed to mark completed upload session %s", session.id
-            )
+            logger.exception("Failed to mark completed upload session %s", session.id)
     except PresignedUploadError as exc:
         _cleanup_failed_object(session, storage, exc.failure_code)
         raise

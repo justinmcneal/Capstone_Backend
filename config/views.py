@@ -2,14 +2,14 @@
 Core views for health check and system status.
 """
 
-from rest_framework.views import APIView
-from rest_framework import status
-from django.conf import settings
-
-from accounts.utils.response_helpers import success_response
 import logging
 
+from django.conf import settings
+from rest_framework import status
+from rest_framework.views import APIView
+
 from accounts.utils.response_helpers import error_response as _error_response
+from accounts.utils.response_helpers import success_response
 
 logger = logging.getLogger("config")
 error_response = _error_response
@@ -59,6 +59,24 @@ class HealthCheckView(APIView):
             )
         except Exception:
             health["services"]["ai"] = "unavailable"
+
+        # The document classifier has its own approved-artifact boundary. In
+        # development it can be unavailable while quality-only checks remain
+        # usable; deployments may require an approved artifact explicitly.
+        try:
+            from documents.services.analyzer import get_document_model_health
+
+            document_ai = get_document_model_health()
+            health["services"]["document_ai"] = document_ai
+            if (
+                getattr(settings, "DOCUMENT_AI_REQUIRE_APPROVED_MODEL", False)
+                and not document_ai["model_available"]
+            ):
+                health["status"] = "degraded"
+        except Exception:
+            health["services"]["document_ai"] = {"status": "unavailable"}
+            if getattr(settings, "DOCUMENT_AI_REQUIRE_APPROVED_MODEL", False):
+                health["status"] = "degraded"
 
         status_code = (
             status.HTTP_200_OK

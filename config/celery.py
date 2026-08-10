@@ -51,6 +51,14 @@ app.conf.beat_schedule = {
         "task": "documents.reconcile_audit_failures",
         "schedule": crontab(minute="*"),
     },
+    "reconcile-document-ai-analyses-every-minute": {
+        "task": "documents.reconcile_ai_analyses",
+        "schedule": crontab(minute="*"),
+    },
+    "reconcile-document-reviewer-notifications-every-minute": {
+        "task": "documents.reconcile_reviewer_notifications",
+        "schedule": crontab(minute="*"),
+    },
     "check-overdue-daily": {
         "task": "loans.tasks.check_overdue_installments_task",
         "schedule": crontab(hour=0, minute=0),

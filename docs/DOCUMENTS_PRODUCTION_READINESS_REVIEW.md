@@ -54,9 +54,11 @@ assignment-scoped reviewer recipients, metadata-only list responses, trusted
 client-IP handling, complete document audit coverage, and a recoverable
 allowlisted audit queue. Stage 5 moves listing filters, counts, deterministic
 sorting, and bounded pagination into MongoDB, replaces unsafe substring search
-with indexed exact search, and bulk-resolves page customer names. Remaining
-blockers are concentrated in notification/AI operations, retention/account-
-deletion integration, and deployment-target configuration and validation.
+with indexed exact search, and bulk-resolves page customer names. Stage 6 moves
+image analysis out of upload requests, adds consent-aware leased retries,
+durable reviewer/customer notification delivery, artifact integrity gates, and
+fail-closed dataset validation. Remaining blockers are concentrated in approval
+of representative AI data/artifacts and Stage 7 retention/deployment operations.
 
 Current remediation status:
 
@@ -167,9 +169,9 @@ sandbox, quarantine, or content-disarm process.
   durable document key; the quarantine object is removed.
 - `upload_session_id` has a sparse unique document index. Repeating finalize
   returns the already-created document instead of creating a duplicate.
-- AI runs only under the existing global/consent/image gates. Analyzer failure
-  is stored as a safe failed/manual-review result without an internal exception
-  string.
+- Image analysis is scheduled after durable creation and runs through the same
+  leased/retryable worker path as direct uploads. Consent is re-checked before
+  the worker reads bytes; failure is recorded with a non-sensitive code.
 - Finalization attempts the normal upload audit and reviewer notification after
   durable creation without returning a misleading mutation failure for an audit
   failure.
@@ -192,11 +194,16 @@ sandbox, quarantine, or content-disarm process.
 
 - Image analysis is gated by a global feature flag and the customer's recorded
   AI consent. PDFs skip image analysis.
+- Upload requests no longer read document bytes for inference. MongoDB records
+  `pending`, `processing`, `retry_wait`, `completed`, `failed`, or
+  `skipped_no_consent`; Celery Beat republishes due work and stale processing
+  leases can be reclaimed.
 - Quality checks cover minimum dimensions, aspect ratio, brightness, and blur
   when optional image dependencies are available.
 - A MobileNetV2 classifier and training command exist for seven image classes.
-- Confidence, expected/predicted type, quality score, analysis mode, and issues
-  can be persisted with the document.
+- Confidence, expected/predicted type, quality score, operational state, model
+  version, preprocessing version, threshold policy, and manual-review flag can
+  be persisted with the document.
 - A failed quality/type result changes the initial status to `needs_review`.
 
 ### ML artifact and dataset inventory
@@ -231,10 +238,11 @@ image contents:
   related `.gitignore` dataset/report rules are commented out. Image provenance,
   licenses, consent, anonymization, retention, and Git-history disposition have
   not been proven by repository metadata.
-- `scripts/check_training_data.py` reports below-minimum classes as warnings but
-  still prints `MINIMUM REQUIREMENTS MET` and exits successfully unless a class
-  is empty or missing. It does not detect duplicates, train/test leakage,
-  provenance, subject/source grouping, or class-balance release gates.
+- Stage 6 replaces `scripts/check_training_data.py` with a fail-closed validator
+  for class minimums, corrupt/undersized images, exact duplicates, manifest
+  hashes, provenance/license-or-consent/anonymization metadata, subject-level
+  split leakage, and missing manifest files. It emits a JSON report. The current
+  repository dataset has not been altered or re-certified by that tooling.
 
 ### Automated test baseline
 
@@ -273,6 +281,16 @@ image contents:
 - The post-Stage 5 full suite collected 1,039 tests: 1,021 passed and 18 opt-in
   integration tests were skipped. The additional skip is the isolated
   real-Mongo Stage 5 load/explain test.
+- Stage 6 adds 15 focused tests for durable enqueue failure, consent re-check,
+  safe/traceable completion, bounded terminal failure, due-work reconciliation,
+  stale-lease recovery, encrypted notification outbox retry/idempotency,
+  fail-closed analyzer output, offline approved-artifact loading, dataset
+  manifest governance, explicit unknown/OOD rejection, aspect-preserving
+  preprocessing, evaluation/approval binding, idempotent in-app broadcast, and
+  analysis indexes.
+- The expanded focused Documents suite passed 71 tests. The post-Stage 6 full
+  suite collected 1,054 tests: 1,036 passed and 18 opt-in integration tests were
+  skipped.
 
 ## Confirmed Production Blockers and Gaps
 
@@ -301,13 +319,16 @@ state. Only one concurrent transition wins; stale requests receive `409`.
 Compatibility fields are normalized in the same atomic update. Replacement
 uploads create a new record with lineage instead of reopening the old record.
 
-### 4. Reviewer lookup and recipient scope are fixed; delivery durability remains
+### 4. Notification scope and delivery durability are remediated
 
 `Document.find_by_id` now satisfies the Celery task contract. Reviewers must be
 active and have `review_documents`; when a customer has an assigned officer,
 only that officer is selected, while permitted admins retain oversight access.
-Bounded retry/backoff, idempotency, a durable delivery outbox, and notification
-reconciliation remain Stage 6 work.
+Stage 6 writes encrypted, idempotent reviewer/customer delivery records before
+Celery publication. Claim leases, bounded backoff, terminal state, unique
+document/type/recipient keys, and a one-minute reconciler cover broker and
+delivery failures without failing the completed domain mutation. The delivery
+ID also deduplicates the in-app/push record across email retries.
 
 ### 5. Listing scalability and sensitive response work are remediated
 
@@ -493,8 +514,8 @@ workflow ensures unvalidated content is never promoted into document storage.
 - [x] ~~Add durable storage-operation state and idempotent reconciliation for
   failed upload, finalize, and delete steps.~~
 - [x] ~~Do not return mutation failure merely because a post-commit audit/email
-  side effect failed; persist audit failures and leave notification delivery
-  durability to Stage 6.~~
+  side effect failed; persist audit and notification failures for scheduled
+  reconciliation.~~
 - [x] ~~Add automated concurrent-review, review/delete-race, duplicate-finalize,
   partial-failure, and retry tests using the isolated test database/storage.~~
 
@@ -546,49 +567,70 @@ deployment credentials or mutates an external database.
 
 ### Stage 6 — Background work, notifications, and AI governance
 
-**Status: Blocked for production**
+**Status: Partial — runtime controls complete; dataset/model approval remains blocked**
 
 - [x] ~~Fix the missing `Document.find_by_id` lookup used by the Celery task.~~
-- [ ] Add a Celery task test that exercises the actual model contract plus
-  delivery failure/retry behavior.
-- [ ] Add bounded retries/backoff, idempotency/delivery state, and reconciliation
-  for reviewer/customer notifications.
-- [ ] Move expensive analysis out of the request path or explicitly budget and
-  monitor synchronous latency/memory.
-- [ ] Fail safely on analysis errors without exposing exception strings or
-  marking the result valid.
-- [ ] Load inference architecture without downloading pretrained weights and add
-  startup/health checks for the required artifact.
-- [ ] Create a versioned model registry entry containing artifact hash, code and
-  preprocessing versions, dataset-manifest hash, approval status, metrics,
-  threshold policy, deployment date, and rollback target.
-- [ ] Remove exact duplicates and create immutable grouped/stratified
-  train/validation/holdout manifests by source/document/subject. Never tune on
+- [x] ~~Add Celery/service tests that exercise the real `Document` contract,
+  consent transitions, stale leases, broker failure, and delivery retry.~~
+- [x] ~~Add bounded retries/backoff, encrypted idempotent delivery state, and
+  scheduled reconciliation for reviewer and customer notifications.~~
+- [x] ~~Move image analysis out of direct and presigned request paths into
+  bounded, leased, idempotent background work.~~
+- [x] ~~Fail safely on analysis errors without persisting/returning exception
+  strings or marking failed results valid.~~
+- [x] ~~Load inference architecture with `pretrained=False`, verify approved
+  artifact hashes, and expose document-model readiness through `/api/health/`.~~
+- [x] ~~Define a versioned registry schema and make training emit artifact hash,
+  code/preprocessing/dataset/threshold versions, approval state, metrics,
+  deployment date, and rollback fields without self-approval.~~
+- [ ] Approve a real registry entry only after an independently reproduced
+  evaluation; the current artifact is absent and the development registry is
+  deliberately `not_approved` with no artifact/dataset hash.
+- [x] ~~Add a dry-run-first deterministic manifest builder that requires source,
+  license/consent, anonymization, and subject metadata and keeps each subject in
+  one train/validation/holdout split.~~
+- [ ] Remove the inventoried exact duplicates and create an approved immutable
+  grouped/stratified
+  train/validation/holdout manifest by source/document/subject. Never tune on
   the final holdout set.
 - [ ] Collect materially more licensed, consented, anonymized, representative
   samples for every underrepresented class and a broader out-of-distribution
   set. Establish minimum independent sample counts before evaluating a class.
-- [ ] Replace generic augmentation/aspect distortion with a validated
-  document-photo preprocessing and augmentation policy.
-- [ ] Evaluate macro and per-class precision/recall/F1, confusion matrix,
+- [x] ~~Replace mirroring/aspect distortion with shared versioned
+  aspect-preserving letterbox preprocessing and conservative document-photo
+  augmentation.~~ Independent robustness evidence for this policy remains part
+  of the evaluation gate below.
+- [x] ~~Add reproducible evaluation tooling for macro and per-class
+  precision/recall/F1, confusion matrix,
   calibration, confidence intervals, subgroup/device robustness, false-accept
-  and false-reject costs, and open-set rejection. Set calibrated per-class or
-  risk-based thresholds rather than relying on headline accuracy.
-- [ ] Decide how `other` is represented and add an explicit unknown/OOD outcome
-  instead of forcing every image into a known class.
-- [ ] Persist model/policy/preprocessing versions and operational analysis
-  status with each inference.
-- [ ] Make the dataset checker fail on below-minimum classes, corrupt/undersized
+  and false-reject rates, latency, and open-set rejection, plus a dry-run-first
+  approval gate bound to artifact/dataset/policy hashes.~~
+- [ ] Run that evaluation on an approved independent holdout/OOD set, select and
+  document calibrated per-class or risk-based thresholds, and obtain human
+  approval rather than relying on headline accuracy.
+- [x] ~~Map below-threshold classifier results to explicit `unknown` and route
+  `other` uploads to manual review instead of forcing either into a known
+  class.~~
+- [x] ~~Persist model/policy/preprocessing versions, manual-review requirement,
+  and operational analysis status with each inference.~~
+- [x] ~~Make the dataset checker fail on below-minimum classes, corrupt/undersized
   files, exact/cross-split duplicates, missing provenance, and split-manifest
-  violations; emit a machine-readable report.
+  violations; emit a machine-readable report.~~
 - [ ] Complete privacy/license/consent/anonymization review for every dataset
   item. Keep approved datasets in access-controlled versioned storage rather
   than ordinary Git, and address existing Git history under an approved data-
   governance procedure.
-- [ ] Document AI intended use, human-review requirement, consent withdrawal,
+- [x] ~~Document AI intended use, human-review requirement, consent withdrawal,
   appeal/correction, acceptance metrics, deployment, rollback, and drift policy.
-- [ ] Add model-available/unavailable/error/stale-task and consent-transition
-  tests.
+  See `docs/documents/DOCUMENT_AI_GOVERNANCE.md`.~~
+- [x] ~~Add model-available/unavailable/error/stale-task and consent-transition
+  tests.~~
+
+Runtime Stage 6 is complete, but the unchecked data collection, independent
+holdout/OOD evaluation, privacy review, dataset reconciliation, and artifact
+approval items are evidence-producing governance work rather than code-only
+tasks. They remain a production blocker and must not be checked merely because
+enforcement tooling now exists.
 
 ### Stage 7 — Retention, deployment configuration, and operations
 
@@ -625,6 +667,9 @@ deployment credentials or mutates an external database.
   model is normalized; current `verified` and re-upload flags can conflict.
 - Separating download URL issuance from list responses will require clients to
   request a URL when the user opens/downloads a document.
+- Upload/finalize clients must treat `ai_analysis_status` as asynchronous. They
+  should not expect a quality score or `needs_review` decision in the initial
+  upload response and may refresh list/detail to observe completion.
 
 ## Documentation and Test Alignment
 

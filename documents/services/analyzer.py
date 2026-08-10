@@ -10,11 +10,19 @@ Future (after training data collected):
 - Document type prediction
 """
 
-import os
-import logging
-from pathlib import Path
-from PIL import Image
+import hashlib
 import io
+import json
+import logging
+import os
+from pathlib import Path
+
+from PIL import Image
+
+from documents.services.preprocessing import (
+    PREPROCESSING_VERSION,
+    build_inference_transform,
+)
 
 logger = logging.getLogger("documents")
 
@@ -29,6 +37,7 @@ ENFORCE_TYPE_MATCH = os.getenv("DOCUMENT_ENFORCE_TYPE_MATCH", "True") == "True"
 REQUIRE_CNN_FOR_TYPE_VALIDATION = (
     os.getenv("DOCUMENT_REQUIRE_CNN_FOR_TYPE_VALIDATION", "True") == "True"
 )
+THRESHOLD_POLICY_VERSION = "document-type-thresholds-v1"
 
 
 class DocumentAnalyzer:
@@ -43,6 +52,8 @@ class DocumentAnalyzer:
         self.model = None
         self.model_loaded = False
         self.class_names = None  # Loaded from model_config.json
+        self.model_metadata = {}
+        self.model_error_code = "artifact_missing"
         self._try_load_model()
 
     def _try_load_model(self):
@@ -51,36 +62,85 @@ class DocumentAnalyzer:
         model_path = model_dir / "document_classifier.pth"
         config_path = model_dir / "model_config.json"
 
-        if model_path.exists():
+        if config_path.exists():
             try:
-                import json
-                import torch
-                from .cnn_model import DocumentClassifier, DOCUMENT_CLASSES
+                with config_path.open("r", encoding="utf-8") as config_file:
+                    self.model_metadata = json.load(config_file)
+            except (OSError, ValueError):
+                logger.exception("Document model registry could not be read")
+                self.model_error_code = "registry_invalid"
+                return
 
-                # Load class mapping from config (saved during training)
-                if config_path.exists():
-                    with open(config_path, "r") as f:
-                        config = json.load(f)
-                    self.class_names = config.get("classes", DOCUMENT_CLASSES)
-                    logger.info(f"Loaded class mapping from config: {self.class_names}")
-                else:
-                    self.class_names = DOCUMENT_CLASSES
-                    logger.warning(
-                        "No model_config.json found, using default DOCUMENT_CLASSES"
-                    )
-
-                self.model = DocumentClassifier(num_classes=len(self.class_names))
-                self.model.load_state_dict(
-                    torch.load(model_path, map_location="cpu", weights_only=True)
-                )
-                self.model.eval()
-                self.model_loaded = True
-                logger.info("CNN model loaded successfully")
-            except Exception as e:
-                logger.warning(f"Could not load CNN model: {e}")
-                self.model_loaded = False
-        else:
+        if not model_path.exists():
             logger.info("No trained CNN model found - using quality-check mode")
+            return
+
+        try:
+            import torch
+
+            from .cnn_model import DOCUMENT_CLASSES, DocumentClassifier
+
+            expected_hash = self.model_metadata.get("artifact_sha256")
+            approval_status = self.model_metadata.get("approval_status")
+            if approval_status != "approved" or not expected_hash:
+                self.model_error_code = "artifact_not_approved"
+                logger.warning(
+                    "CNN artifact is present but not approved in its registry"
+                )
+                return
+            required_registry_fields = (
+                "model_version",
+                "dataset_manifest_sha256",
+                "evaluation_report_sha256",
+                "approved_by",
+                "approved_at",
+                "rollback_target",
+            )
+            if any(
+                not self.model_metadata.get(field) for field in required_registry_fields
+            ):
+                self.model_error_code = "registry_approval_incomplete"
+                logger.error("Approved CNN registry entry is incomplete")
+                return
+            if (
+                self.model_metadata.get("preprocessing_version")
+                != PREPROCESSING_VERSION
+                or self.model_metadata.get("threshold_policy_version")
+                != THRESHOLD_POLICY_VERSION
+            ):
+                self.model_error_code = "registry_policy_mismatch"
+                logger.error("CNN registry policy version does not match runtime")
+                return
+            actual_hash = hashlib.sha256(model_path.read_bytes()).hexdigest()
+            if actual_hash != expected_hash:
+                self.model_error_code = "artifact_hash_mismatch"
+                logger.error("CNN artifact hash does not match its registry entry")
+                return
+
+            self.class_names = self.model_metadata.get("classes", DOCUMENT_CLASSES)
+            if not self.class_names:
+                self.model_error_code = "class_mapping_missing"
+                return
+
+            # Inference must never attempt to download pretrained weights. The
+            # complete approved state dict is loaded immediately afterwards.
+            self.model = DocumentClassifier(
+                num_classes=len(self.class_names), pretrained=False
+            )
+            self.model.load_state_dict(
+                torch.load(model_path, map_location="cpu", weights_only=True)
+            )
+            self.model.eval()
+            self.model_loaded = True
+            self.model_error_code = ""
+            logger.info(
+                "Approved CNN model loaded: %s",
+                self.model_metadata.get("model_version", "unversioned"),
+            )
+        except Exception:
+            logger.exception("Could not load approved CNN model")
+            self.model_error_code = "artifact_load_failed"
+            self.model_loaded = False
 
     def analyze(self, file_path_or_bytes, expected_type=None):
         """
@@ -127,21 +187,40 @@ class DocumentAnalyzer:
                 "quality_issues": combined_issues,
                 "expected_type": expected_type,
                 "predicted_type": classification["predicted_type"],
+                "raw_predicted_type": classification.get("raw_predicted_type"),
+                "unknown_or_ood": classification.get("unknown_or_ood", True),
                 "type_confidence": classification.get("type_confidence"),
                 "type_matches_expected": type_validation["type_matches_expected"],
                 "type_validation_passed": type_validation["is_valid"],
                 "type_confidence_threshold": TYPE_CONFIDENCE_THRESHOLD,
                 "model_available": self.model_loaded,
+                "model_status": "available"
+                if self.model_loaded
+                else self.model_error_code,
+                "model_version": self.model_metadata.get("model_version"),
+                "preprocessing_version": PREPROCESSING_VERSION,
+                "threshold_policy_version": THRESHOLD_POLICY_VERSION,
                 "analysis_mode": "cnn" if self.model_loaded else "quality_check",
+                "analysis_status": "completed",
+                "manual_review_required": True,
             }
 
-        except Exception as e:
-            logger.error(f"Document analysis error: {str(e)}")
+        except Exception:
+            logger.exception("Document analysis failed")
             return {
                 "is_valid": False,
                 "quality_score": 0,
                 "quality_issues": ["Could not analyze image"],
-                "error": str(e),
+                "analysis_mode": "failed",
+                "analysis_status": "failed",
+                "model_available": self.model_loaded,
+                "model_status": "available"
+                if self.model_loaded
+                else self.model_error_code,
+                "model_version": self.model_metadata.get("model_version"),
+                "preprocessing_version": PREPROCESSING_VERSION,
+                "threshold_policy_version": THRESHOLD_POLICY_VERSION,
+                "manual_review_required": True,
             }
 
     def _check_quality(self, image):
@@ -235,20 +314,8 @@ class DocumentAnalyzer:
 
         try:
             import torch
-            from torchvision import transforms
 
-            # Preprocess
-            transform = transforms.Compose(
-                [
-                    transforms.Resize((224, 224)),
-                    transforms.ToTensor(),
-                    transforms.Normalize(
-                        mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]
-                    ),
-                ]
-            )
-
-            img_tensor = transform(image).unsqueeze(0)
+            img_tensor = build_inference_transform()(image).unsqueeze(0)
 
             # Predict
             with torch.no_grad():
@@ -263,14 +330,32 @@ class DocumentAnalyzer:
             else:
                 predicted_name = "unknown"
 
+            confidence_value = confidence.item()
+            raw_predicted_type = predicted_name
+            if confidence_value < TYPE_CONFIDENCE_THRESHOLD:
+                predicted_name = "unknown"
+
             return {
                 "predicted_type": predicted_name,
-                "type_confidence": confidence.item(),
+                "raw_predicted_type": raw_predicted_type,
+                "type_confidence": confidence_value,
+                "unknown_or_ood": predicted_name == "unknown",
             }
 
-        except Exception as e:
-            logger.error(f"Classification error: {e}")
-            return {"predicted_type": "unknown", "type_confidence": None}
+        except Exception:
+            logger.exception("Document classification failed")
+            raise
+
+    def health(self):
+        """Return non-sensitive artifact readiness for startup/health checks."""
+        return {
+            "model_available": self.model_loaded,
+            "status": "available" if self.model_loaded else self.model_error_code,
+            "model_version": self.model_metadata.get("model_version"),
+            "approval_status": self.model_metadata.get("approval_status", "missing"),
+            "preprocessing_version": PREPROCESSING_VERSION,
+            "threshold_policy_version": THRESHOLD_POLICY_VERSION,
+        }
 
     def _validate_type(self, expected_type, classification):
         """Validate predicted type against expected upload type."""
@@ -300,6 +385,14 @@ class DocumentAnalyzer:
                 }
             return {
                 "is_valid": True,
+                "issues": issues,
+                "type_matches_expected": None,
+            }
+
+        if expected_type == "other":
+            issues.append("Other document types require manual review")
+            return {
+                "is_valid": False,
                 "issues": issues,
                 "type_matches_expected": None,
             }
@@ -341,3 +434,8 @@ def get_analyzer():
 def analyze_document(file_path_or_bytes, expected_type=None):
     """Convenience function to analyze a document"""
     return get_analyzer().analyze(file_path_or_bytes, expected_type)
+
+
+def get_document_model_health():
+    """Return the singleton analyzer's artifact health without file contents."""
+    return get_analyzer().health()

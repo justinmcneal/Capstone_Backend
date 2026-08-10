@@ -7,10 +7,13 @@ Usage:
     python manage.py train_document_classifier --batch-size 16
 """
 
+import hashlib
 import json
+from datetime import datetime, timezone
 from pathlib import Path
-from django.core.management.base import BaseCommand
+
 from django.conf import settings
+from django.core.management.base import BaseCommand
 
 
 class Command(BaseCommand):
@@ -45,7 +48,7 @@ class Command(BaseCommand):
             import torch.nn as nn
             import torch.optim as optim
             from torch.utils.data import DataLoader, Subset
-            from torchvision import transforms, datasets
+            from torchvision import datasets
         except ImportError:
             self.stderr.write(
                 self.style.ERROR(
@@ -54,13 +57,19 @@ class Command(BaseCommand):
             )
             return
 
-        from documents.services.cnn_model import DocumentClassifier, DOCUMENT_CLASSES
+        from documents.services.cnn_model import DOCUMENT_CLASSES, DocumentClassifier
+        from documents.services.preprocessing import (
+            PREPROCESSING_VERSION,
+            build_inference_transform,
+            build_training_transform,
+        )
 
         # Paths
         base_path = Path(settings.BASE_DIR) / "documents" / "ml"
         data_path = base_path / "training_data"
         model_path = base_path / "models" / "document_classifier.pth"
         config_path = base_path / "models" / "model_config.json"
+        manifest_path = data_path / "dataset_manifest.json"
 
         # Check training data
         if not data_path.exists():
@@ -68,6 +77,21 @@ class Command(BaseCommand):
                 self.style.ERROR(f"Training data folder not found: {data_path}")
             )
             return
+
+        from scripts.check_training_data import validate_dataset
+
+        dataset_report = validate_dataset(data_path, manifest_path)
+        if not dataset_report["ready"]:
+            preview = "\n".join(
+                f"  - {issue}" for issue in dataset_report["issues"][:20]
+            )
+            self.stderr.write(
+                self.style.ERROR(
+                    "Dataset validation failed; training was not started.\n" + preview
+                )
+            )
+            return
+        dataset_manifest_sha256 = hashlib.sha256(manifest_path.read_bytes()).hexdigest()
 
         # Count samples
         total_samples = 0
@@ -97,30 +121,8 @@ class Command(BaseCommand):
         for cls, count in class_counts.items():
             self.stdout.write(f"  {cls}: {count}")
 
-        # Data transforms — strengthened augmentation
-        train_transforms = transforms.Compose(
-            [
-                transforms.Resize((256, 256)),
-                transforms.RandomCrop(224),
-                transforms.RandomHorizontalFlip(),
-                transforms.RandomRotation(15),
-                transforms.ColorJitter(
-                    brightness=0.3, contrast=0.3, saturation=0.2, hue=0.05
-                ),
-                transforms.RandomPerspective(distortion_scale=0.1, p=0.3),
-                transforms.GaussianBlur(kernel_size=3, sigma=(0.1, 1.0)),
-                transforms.ToTensor(),
-                transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),
-            ]
-        )
-
-        val_transforms = transforms.Compose(
-            [
-                transforms.Resize((224, 224)),
-                transforms.ToTensor(),
-                transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),
-            ]
-        )
+        train_transforms = build_training_transform()
+        val_transforms = build_inference_transform()
 
         # Load dataset with SEPARATE transforms for train and val
         # (Using Subset to avoid shared transform reference bug)
@@ -270,10 +272,10 @@ class Command(BaseCommand):
             history["lr"].append(optimizer.param_groups[0]["lr"])
 
             self.stdout.write(
-                f"Epoch {epoch+1}/{epochs} - "
-                f"Train Loss: {train_loss/len(train_loader):.4f}, "
+                f"Epoch {epoch + 1}/{epochs} - "
+                f"Train Loss: {train_loss / len(train_loader):.4f}, "
                 f"Train Acc: {train_acc:.2f}% - "
-                f"Val Loss: {val_loss/max(1,len(val_loader)):.4f}, "
+                f"Val Loss: {val_loss / max(1, len(val_loader)):.4f}, "
                 f"Val Acc: {val_acc:.2f}%"
             )
 
@@ -300,7 +302,22 @@ class Command(BaseCommand):
             scheduler.step()
 
         # Save config — include ACTUAL class-to-idx mapping from ImageFolder
+        artifact_sha256 = hashlib.sha256(model_path.read_bytes()).hexdigest()
         config = {
+            "registry_schema_version": 1,
+            "model_version": f"document-classifier-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}",
+            # Training never self-approves a model. Independent evaluation and
+            # governance review must change this before inference can load it.
+            "approval_status": "not_approved",
+            "artifact_sha256": artifact_sha256,
+            "dataset_manifest_sha256": dataset_manifest_sha256,
+            "code_version": "documents-cnn-mobilenetv2-v1",
+            "preprocessing_version": PREPROCESSING_VERSION,
+            "threshold_policy_version": "document-type-thresholds-v1",
+            "intended_use": "advisory_document_quality_and_type_triage",
+            "manual_review_required": True,
+            "deployed_at": None,
+            "rollback_target": None,
             "classes": list(train_full.classes),
             "class_to_idx": train_full.class_to_idx,
             "num_classes": len(train_full.classes),
@@ -436,7 +453,7 @@ class Command(BaseCommand):
         plt.tight_layout()
         fig.savefig(reports_dir / "training_curves.png", dpi=150, bbox_inches="tight")
         plt.close(fig)
-        self.stdout.write(f'\n📊 Saved: {reports_dir / "training_curves.png"}')
+        self.stdout.write(f"\n📊 Saved: {reports_dir / 'training_curves.png'}")
 
         # --- Figure 2: Training Data Distribution ---
         fig2, ax4 = plt.subplots(figsize=(10, 6))
@@ -480,7 +497,7 @@ class Command(BaseCommand):
             reports_dir / "data_distribution.png", dpi=150, bbox_inches="tight"
         )
         plt.close(fig2)
-        self.stdout.write(f'📊 Saved: {reports_dir / "data_distribution.png"}')
+        self.stdout.write(f"📊 Saved: {reports_dir / 'data_distribution.png'}")
 
         # --- Figure 3: Overfitting Gap ---
         fig3, ax5 = plt.subplots(figsize=(10, 6))
@@ -514,4 +531,4 @@ class Command(BaseCommand):
         plt.tight_layout()
         fig3.savefig(reports_dir / "overfitting_gap.png", dpi=150, bbox_inches="tight")
         plt.close(fig3)
-        self.stdout.write(f'📊 Saved: {reports_dir / "overfitting_gap.png"}')
+        self.stdout.write(f"📊 Saved: {reports_dir / 'overfitting_gap.png'}")

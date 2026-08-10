@@ -4,7 +4,7 @@ Document Model for MSME Pathways
 Stores document metadata and references to uploaded files.
 """
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from bson import ObjectId
 from django.conf import settings
@@ -96,6 +96,11 @@ class Document:
         self.confidence_score = kwargs.get("confidence_score")  # 0.0 - 1.0
         self.ai_analysis = kwargs.get("ai_analysis", {})  # CNN results
         self.ai_analyzed_at = kwargs.get("ai_analyzed_at")
+        self.ai_analysis_status = kwargs.get("ai_analysis_status", "not_requested")
+        self.ai_analysis_attempts = int(kwargs.get("ai_analysis_attempts", 0) or 0)
+        self.ai_analysis_next_attempt_at = kwargs.get("ai_analysis_next_attempt_at")
+        self.ai_analysis_started_at = kwargs.get("ai_analysis_started_at")
+        self.ai_analysis_last_error_code = kwargs.get("ai_analysis_last_error_code", "")
 
         # Notes
         self.notes = kwargs.get("notes", "")  # Officer notes
@@ -150,6 +155,11 @@ class Document:
             "confidence_score": self.confidence_score,
             "ai_analysis": self.ai_analysis,
             "ai_analyzed_at": self.ai_analyzed_at,
+            "ai_analysis_status": self.ai_analysis_status,
+            "ai_analysis_attempts": self.ai_analysis_attempts,
+            "ai_analysis_next_attempt_at": self.ai_analysis_next_attempt_at,
+            "ai_analysis_started_at": self.ai_analysis_started_at,
+            "ai_analysis_last_error_code": self.ai_analysis_last_error_code,
             "notes": self.notes,
             "description": self.description,
             "reupload_requested": self.reupload_requested,
@@ -342,6 +352,197 @@ class Document:
             },
         )
         self.storage_state = "delete_failed"
+
+    def schedule_ai_analysis(self):
+        """Durably mark an image for consent-aware background analysis."""
+        if not self._id:
+            raise ValueError("Document must be saved before analysis is scheduled")
+        now = datetime.now(timezone.utc)
+        result = get_db()[self.collection_name].update_one(
+            {
+                "_id": self._id,
+                "mime_type": {"$regex": "^image/", "$options": "i"},
+                "$and": [
+                    {
+                        "$or": [
+                            {"storage_state": "available"},
+                            {"storage_state": {"$exists": False}},
+                        ]
+                    },
+                    {
+                        "$or": [
+                            {"ai_analysis_status": {"$exists": False}},
+                            {
+                                "ai_analysis_status": {
+                                    "$in": [
+                                        "not_requested",
+                                        "failed",
+                                        "skipped_no_consent",
+                                    ]
+                                }
+                            },
+                        ]
+                    },
+                ],
+            },
+            {
+                "$set": {
+                    "ai_analysis_status": "pending",
+                    "ai_analysis_attempts": 0,
+                    "ai_analysis_next_attempt_at": now,
+                    "ai_analysis_started_at": None,
+                    "ai_analysis_last_error_code": "",
+                    "updated_at": now,
+                },
+                "$inc": {"revision": 1},
+            },
+        )
+        if result.modified_count:
+            self.ai_analysis_status = "pending"
+            self.ai_analysis_next_attempt_at = now
+            self.revision += 1
+        return result.modified_count == 1
+
+    @classmethod
+    def claim_ai_analysis(cls, document_id, *, lease_seconds=300):
+        """Claim one due analysis job, including an abandoned processing lease."""
+        try:
+            object_id = (
+                document_id
+                if isinstance(document_id, ObjectId)
+                else ObjectId(str(document_id))
+            )
+        except Exception:
+            return None
+        now = datetime.now(timezone.utc)
+        stale_before = now - timedelta(seconds=max(30, int(lease_seconds)))
+        claimed = get_db()[cls.collection_name].find_one_and_update(
+            {
+                "_id": object_id,
+                "$or": [
+                    {
+                        "ai_analysis_status": {"$in": ["pending", "retry_wait"]},
+                        "ai_analysis_next_attempt_at": {"$lte": now},
+                    },
+                    {
+                        "ai_analysis_status": "processing",
+                        "ai_analysis_started_at": {"$lte": stale_before},
+                    },
+                ],
+            },
+            {
+                "$set": {
+                    "ai_analysis_status": "processing",
+                    "ai_analysis_started_at": now,
+                    "ai_analysis_next_attempt_at": None,
+                    "updated_at": now,
+                },
+                "$inc": {"ai_analysis_attempts": 1, "revision": 1},
+            },
+            return_document=ReturnDocument.AFTER,
+        )
+        return cls.from_dict(claimed)
+
+    def complete_ai_analysis(self, analysis):
+        """Persist a traceable result without overriding a human review decision."""
+        now = datetime.now(timezone.utc)
+        result = get_db()[self.collection_name].update_one(
+            {"_id": self._id, "ai_analysis_status": "processing"},
+            {
+                "$set": {
+                    "ai_analysis": dict(analysis),
+                    "confidence_score": analysis.get("quality_score"),
+                    "ai_analyzed_at": now,
+                    "ai_analysis_status": "completed",
+                    "ai_analysis_started_at": None,
+                    "ai_analysis_next_attempt_at": None,
+                    "ai_analysis_last_error_code": "",
+                    "updated_at": now,
+                },
+                "$inc": {"revision": 1},
+            },
+        )
+        if result.modified_count and not analysis.get("is_valid", False):
+            get_db()[self.collection_name].update_one(
+                {"_id": self._id, "status": "pending"},
+                {
+                    "$set": {"status": "needs_review", "updated_at": now},
+                    "$inc": {"revision": 1},
+                },
+            )
+        return result.modified_count == 1
+
+    def defer_ai_analysis(self, error_code, *, max_attempts=3, backoff_seconds=60):
+        """Record a bounded retry or terminal failure using a non-sensitive code."""
+        now = datetime.now(timezone.utc)
+        exhausted = self.ai_analysis_attempts >= max(1, int(max_attempts))
+        next_attempt = None
+        if not exhausted:
+            next_attempt = now + timedelta(
+                seconds=max(1, int(backoff_seconds))
+                * (2 ** max(0, self.ai_analysis_attempts - 1))
+            )
+        result = get_db()[self.collection_name].update_one(
+            {"_id": self._id, "ai_analysis_status": "processing"},
+            {
+                "$set": {
+                    "ai_analysis_status": "failed" if exhausted else "retry_wait",
+                    "ai_analysis_started_at": None,
+                    "ai_analysis_next_attempt_at": next_attempt,
+                    "ai_analysis_last_error_code": str(error_code)[:64],
+                    "updated_at": now,
+                },
+                "$inc": {"revision": 1},
+            },
+        )
+        return result.modified_count == 1
+
+    def skip_ai_analysis(self, reason="consent_unavailable"):
+        """Fail closed when current AI consent cannot be established."""
+        now = datetime.now(timezone.utc)
+        result = get_db()[self.collection_name].update_one(
+            {"_id": self._id, "ai_analysis_status": "processing"},
+            {
+                "$set": {
+                    "ai_analysis_status": "skipped_no_consent",
+                    "ai_analysis_started_at": None,
+                    "ai_analysis_next_attempt_at": None,
+                    "ai_analysis_last_error_code": str(reason)[:64],
+                    "updated_at": now,
+                },
+                "$inc": {"revision": 1},
+            },
+        )
+        return result.modified_count == 1
+
+    @classmethod
+    def find_due_ai_analyses(cls, limit=100):
+        now = datetime.now(timezone.utc)
+        lease_seconds = max(
+            30, int(getattr(settings, "DOCUMENT_AI_LEASE_SECONDS", 300))
+        )
+        stale_before = now - timedelta(seconds=lease_seconds)
+        cursor = (
+            get_db()[cls.collection_name]
+            .find(
+                {
+                    "$or": [
+                        {
+                            "ai_analysis_status": {"$in": ["pending", "retry_wait"]},
+                            "ai_analysis_next_attempt_at": {"$lte": now},
+                        },
+                        {
+                            "ai_analysis_status": "processing",
+                            "ai_analysis_started_at": {"$lte": stale_before},
+                        },
+                    ]
+                },
+                {"_id": 1},
+            )
+            .sort("ai_analysis_next_attempt_at", 1)
+            .limit(max(1, min(int(limit), 1000)))
+        )
+        return [str(item["_id"]) for item in cursor]
 
     @classmethod
     def find_deletion_candidates(cls, limit=100):
@@ -559,6 +760,14 @@ class Document:
         collection.create_index("uploaded_at")
         collection.create_index("upload_session_id", unique=True, sparse=True)
         collection.create_index([("storage_state", 1), ("updated_at", 1)])
+        collection.create_index(
+            [("ai_analysis_status", 1), ("ai_analysis_next_attempt_at", 1)],
+            name="document_ai_analysis_reconciliation",
+        )
+        collection.create_index(
+            [("ai_analysis_status", 1), ("ai_analysis_started_at", 1)],
+            name="document_ai_analysis_stale_lease",
+        )
         collection.create_index(
             [("storage_state", 1), ("uploaded_at", -1), ("_id", -1)]
         )

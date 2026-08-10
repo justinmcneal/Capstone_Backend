@@ -35,6 +35,7 @@ Content-Type: application/json
 |----------|---------|
 | `docs/AUTH_ACCESS_SECURITY_GUIDE.md` | Account roles, permissions, and JWT auth |
 | `docs/DOCUMENTS_PRODUCTION_READINESS_REVIEW.md` | Documents module review, risks, and roadmap |
+| `docs/documents/DOCUMENT_AI_GOVERNANCE.md` | AI intended use, consent, approval, rollback, and monitoring gates |
 | `docs/ANALYTICS_TESTING_GUIDE.md` | Audit log endpoints that record document actions |
 | `docs/LOANS_TESTING_GUIDE.md` | Loan APIs that generate dependent document requirements |
 
@@ -99,7 +100,8 @@ Upload a document for the authenticated customer.
 - Allowed MIME types: `image/jpeg`, `image/jpg`, `image/png`, `application/pdf`
 - Max file size: 10 MB
 - File content is scanned for signature match, executable signatures, image integrity, and dangerous PDF patterns
-- If `DOCUMENT_UPLOAD_AI_ANALYSIS` is enabled and the customer has `ai_consent`, image uploads receive AI analysis
+- Eligible image analysis is persisted and queued after upload; the worker
+  re-checks current `ai_consent` before reading bytes
 
 **Response fields (`data`):**
 
@@ -123,6 +125,8 @@ Upload a document for the authenticated customer.
 | `rejection_reason` | string or null | Reason if rejected |
 | `description` | string or null | Customer-provided description |
 | `ai_analysis` | object or null | Quality/CNN results if analysis ran |
+| `ai_analysis_status` | string | `not_requested`, `pending`, `processing`, `retry_wait`, `completed`, `failed`, or `skipped_no_consent` |
+| `ai_analyzed_at` | ISO datetime or null | Completion time of the latest successful analysis |
 | `reupload_requested` | bool | Whether re-upload was requested |
 | `reupload_reason` | string or null | Reason for re-upload request |
 | `reupload_requested_by` | string or null | Officer who requested re-upload |
@@ -428,8 +432,11 @@ Implemented in `documents/serializers/document_serializers.py`.
 
 **AI analysis gating:**
 - Skips analysis when `DOCUMENT_UPLOAD_AI_ANALYSIS` is false
-- Skips analysis when the customer has not given `ai_consent`
+- The worker skips without reading bytes when current `ai_consent` is absent,
+  withdrawn, or cannot be confirmed
 - Only runs for image uploads (`image/*`); PDFs skip AI image analysis
+- Upload/finalize responses do not wait for inference; poll list/detail for the
+  operational status and result
 
 ---
 
@@ -447,7 +454,7 @@ Implemented in `documents/storage/backends.py`.
 
 Implemented in `documents/services/analyzer.py` and `documents/services/cnn_model.py`.
 
-**Current repository state (2026-08-09):**
+**Current repository state (2026-08-10):**
 
 - `documents/ml/models/document_classifier.pth` is absent, so this checkout uses
   quality-check mode and the CNN evaluation command exits with "No trained CNN
@@ -455,9 +462,9 @@ Implemented in `documents/services/analyzer.py` and `documents/services/cnn_mode
 - With `DOCUMENT_REQUIRE_CNN_FOR_TYPE_VALIDATION=True`, a consented image cannot
   pass type validation while the model is unavailable and is routed to
   `needs_review`.
-- Saved charts/configuration are historical artifacts and are not reproducible
-  evidence for the current runtime because they are not bound to a retained
-  model hash and dataset manifest.
+- The development registry is deliberately `not_approved`; it has no artifact
+  or approved dataset-manifest hash. Historical charts/configuration are not
+  reproducible production evidence.
 - The current dataset is severely imbalanced, contains exact duplicates including
   a train/holdout duplicate group, and gives four classes only one to three
   holdout examples. Do not use the displayed overall accuracy as a production
@@ -466,6 +473,11 @@ Implemented in `documents/services/analyzer.py` and `documents/services/cnn_mode
 **Analysis modes:**
 - `cnn`: MobileNetV2 model loaded; returns classification and quality results
 - `quality_check`: model unavailable; returns quality checks only
+- `failed`: safe failure result; no exception string is returned or persisted
+
+Analysis runs in Celery with MongoDB claim leases, bounded exponential backoff,
+and a one-minute reconciliation schedule. Duplicate/stale tasks cannot analyze
+the same active claim, and an abandoned `processing` lease is reclaimable.
 
 **Quality checks:**
 - Minimum dimensions: 200x200
@@ -484,6 +496,11 @@ Implemented in `documents/services/analyzer.py` and `documents/services/cnn_mode
   - `selfie_with_id`
   - `valid_id`
 
+The shared `document-photo-letterbox-v2` preprocessing preserves aspect ratio
+and pads to a square. Training no longer mirrors documents or stretches them.
+A maximum class confidence below the threshold becomes `unknown`; uploads typed
+as `other` require human review because `other` is not a classifier class.
+
 **Type validation controls:**
 - `DOCUMENT_TYPE_CONFIDENCE_THRESHOLD` (default `0.75`)
 - `DOCUMENT_ENFORCE_TYPE_MATCH` (default `True`)
@@ -501,7 +518,13 @@ Implemented in `documents/services/analyzer.py` and `documents/services/cnn_mode
 | `type_matches_expected` | bool or null |
 | `type_validation_passed` | bool |
 | `analysis_mode` | string | `cnn` or `quality_check` |
+| `analysis_status` | string | `completed` or `failed` |
 | `model_available` | bool |
+| `model_status` | string | Safe artifact readiness/error code |
+| `model_version` | string or null |
+| `preprocessing_version` | string |
+| `threshold_policy_version` | string |
+| `manual_review_required` | bool |
 | `quality_score` | float 0–1 |
 | `quality_issues` | array of strings |
 
@@ -510,6 +533,27 @@ Implemented in `documents/services/analyzer.py` and `documents/services/cnn_mode
 ## CNN Training & Testing Commands
 
 **Training:**
+
+Training is refused unless `documents/ml/training_data/dataset_manifest.json`
+passes the fail-closed validator. Training writes a SHA-bound registry entry as
+`not_approved`; independent governance approval is still required.
+
+```bash
+python scripts/build_document_dataset_manifest.py \
+  --data-root /approved/dataset \
+  --provenance /approved/provenance.json
+python scripts/check_training_data.py
+python scripts/evaluate_document_model.py predictions.json \
+  --output evaluation-report.json
+python scripts/approve_document_model.py \
+  --config documents/ml/models/model_config.json \
+  --artifact documents/ml/models/document_classifier.pth \
+  --evaluation evaluation-report.json
+```
+
+The approval command is dry-run by default. Its explicit `--apply` mode also
+requires `--approved-by`; do not run it until the independent report, privacy
+review, and rollback target are approved.
 
 ```bash
 python manage.py train_document_classifier
@@ -601,6 +645,10 @@ Standard success shape:
 | Recoverable audit writer | `documents/services/audit.py` |
 | Bounded listing helpers | `documents/services/listing.py` |
 | AI analysis service | `documents/services/analyzer.py` |
+| Background analysis orchestration | `documents/services/analysis.py` |
+| Shared preprocessing policy | `documents/services/preprocessing.py` |
+| Notification outbox | `documents/models/notification_delivery.py` |
+| AI governance | `docs/documents/DOCUMENT_AI_GOVERNANCE.md` |
 | CNN model | `documents/services/cnn_model.py` |
 | Training command | `documents/management/commands/train_document_classifier.py` |
 | Test script | `scripts/test_cnn_model.py` |
@@ -610,7 +658,10 @@ Standard success shape:
 ## Notes for API Test Automation
 
 1. Upload endpoints expect `multipart/form-data`; all others are JSON `GET` or `PUT`/`POST` with JSON bodies.
-2. Customer-uploaded documents start as `pending` unless AI quality/type validation fails, which sets `needs_review`.
+2. Customer uploads return after durable storage/metadata creation. Eligible AI
+   work starts as `pending`; an invalid completed result may later change an
+   unreviewed `pending` document to `needs_review`, but never overrides a human
+   approval/rejection.
 3. Officer verify endpoints accept both `action` and `status` fields; tests should exercise both spellings.
 4. Rejection requires `rejection_reason`; blank/whitespace-only values are rejected by the serializer.
 5. Document list filtering, count, deterministic sorting, skip, and limit happen
@@ -620,9 +671,10 @@ Standard success shape:
 7. List responses deliberately return `file_url: null`; an authorized detail
    request is the on-demand URL boundary.
 8. Presigned uploads return 404 while disabled, or 400 when enabled with an unsupported backend. With S3, test the full session → quarantine upload → finalize → idempotent replay flow; the S3 POST alone must not create a document.
-9. Reviewer notifications are requested on upload for `pending` and
-   `needs_review` documents. Recipients must be active, permitted, and within
-   the customer's assignment scope. Delivery retries/outbox work remains Stage 6.
+9. Reviewer and customer outcome notifications are persisted in the encrypted
+   `document_notification_deliveries` outbox before task publication. Unique
+   document/type/recipient keys, leases, bounded backoff, and scheduled
+   reconciliation make broker and delivery failures recoverable.
 10. Document audit events cover upload/finalize, review, re-upload, delete,
     privileged list/detail reads, and denied sensitive reads. Failed writes are
     allowlisted and reconciled from `audit_write_failures`.
@@ -640,12 +692,13 @@ Standard success shape:
     existing `REAL_MONGO_TEST_URI` isolated-test contract; do not point it at a
     deployment database.
 
-Focused Stage 3–5 regression command:
+Focused Stage 3–6 regression command:
 
 ```bash
 pytest -q tests/test_documents_stage3_consistency.py \
   tests/test_documents_stage4_authorization_audit.py \
   tests/test_documents_stage5_scalable_listing.py \
+  tests/test_documents_stage6_background_ai_notifications.py \
   tests/test_documents_stage1_contract.py \
   tests/test_documents_stage2_presigned_upload.py tests/test_documents_api.py
 ```

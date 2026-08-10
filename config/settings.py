@@ -261,8 +261,48 @@ if not 30 <= DOCUMENT_PRESIGNED_FINALIZE_LEASE_SECONDS <= 900:
         'DOCUMENT_PRESIGNED_FINALIZE_LEASE_SECONDS must be between 30 and 900'
     )
 DOCUMENT_UPLOAD_AI_ANALYSIS = os.getenv('DOCUMENT_UPLOAD_AI_ANALYSIS', 'True') == 'True'
+DOCUMENT_AI_REQUIRE_APPROVED_MODEL = env_bool(
+    'DOCUMENT_AI_REQUIRE_APPROVED_MODEL', not DEBUG
+)
 DOCUMENT_UPLOAD_NOTIFY_REVIEWERS = os.getenv('DOCUMENT_UPLOAD_NOTIFY_REVIEWERS', 'True') == 'True'
 DOCUMENT_UPLOAD_NOTIFY_ASYNC = os.getenv('DOCUMENT_UPLOAD_NOTIFY_ASYNC', 'True') == 'True'
+try:
+    DOCUMENT_AI_MAX_ATTEMPTS = int(os.getenv('DOCUMENT_AI_MAX_ATTEMPTS') or '3')
+    DOCUMENT_AI_RETRY_BACKOFF_SECONDS = int(
+        os.getenv('DOCUMENT_AI_RETRY_BACKOFF_SECONDS') or '60'
+    )
+    DOCUMENT_AI_LEASE_SECONDS = int(os.getenv('DOCUMENT_AI_LEASE_SECONDS') or '300')
+    DOCUMENT_NOTIFICATION_MAX_ATTEMPTS = int(
+        os.getenv('DOCUMENT_NOTIFICATION_MAX_ATTEMPTS') or '5'
+    )
+    DOCUMENT_NOTIFICATION_RETRY_BACKOFF_SECONDS = int(
+        os.getenv('DOCUMENT_NOTIFICATION_RETRY_BACKOFF_SECONDS') or '60'
+    )
+    DOCUMENT_NOTIFICATION_LEASE_SECONDS = int(
+        os.getenv('DOCUMENT_NOTIFICATION_LEASE_SECONDS') or '300'
+    )
+except ValueError as exc:
+    raise ImproperlyConfigured('Document AI worker settings must be integers') from exc
+if not 1 <= DOCUMENT_AI_MAX_ATTEMPTS <= 10:
+    raise ImproperlyConfigured('DOCUMENT_AI_MAX_ATTEMPTS must be between 1 and 10')
+if not 1 <= DOCUMENT_AI_RETRY_BACKOFF_SECONDS <= 3600:
+    raise ImproperlyConfigured(
+        'DOCUMENT_AI_RETRY_BACKOFF_SECONDS must be between 1 and 3600'
+    )
+if not 30 <= DOCUMENT_AI_LEASE_SECONDS <= 3600:
+    raise ImproperlyConfigured('DOCUMENT_AI_LEASE_SECONDS must be between 30 and 3600')
+if not 1 <= DOCUMENT_NOTIFICATION_MAX_ATTEMPTS <= 10:
+    raise ImproperlyConfigured(
+        'DOCUMENT_NOTIFICATION_MAX_ATTEMPTS must be between 1 and 10'
+    )
+if not 1 <= DOCUMENT_NOTIFICATION_RETRY_BACKOFF_SECONDS <= 3600:
+    raise ImproperlyConfigured(
+        'DOCUMENT_NOTIFICATION_RETRY_BACKOFF_SECONDS must be between 1 and 3600'
+    )
+if not 30 <= DOCUMENT_NOTIFICATION_LEASE_SECONDS <= 3600:
+    raise ImproperlyConfigured(
+        'DOCUMENT_NOTIFICATION_LEASE_SECONDS must be between 30 and 3600'
+    )
 
 # Cache Configuration
 # Development may use process-local memory. Production requires Redis so DRF

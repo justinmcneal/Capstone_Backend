@@ -7,14 +7,16 @@ Usage:
 """
 
 import os
+
 import django
 
 # Setup Django environment
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings")
 django.setup()
 
-from analytics.models import AuditLog  # noqa: E402
-from ai_assistant.models import AIInteraction  # noqa: E402
+from django.conf import settings  # noqa: E402
+from pymongo.errors import DuplicateKeyError, OperationFailure  # noqa: E402
+
 from accounts.models import (  # noqa: E402
     ActiveSession,
     Admin,
@@ -26,22 +28,23 @@ from accounts.models import (  # noqa: E402
     LoginActivity,
     RefreshTokenEntry,
 )
+from ai_assistant.models import AIInteraction  # noqa: E402
+from analytics.models import AuditLog  # noqa: E402
 from documents.models import (  # noqa: E402
     Document,
+    DocumentNotificationDelivery,
     DocumentStorageCleanup,
     DocumentUploadSession,
 )
+from loans.blockchain.models import BlockchainTransaction  # noqa: E402
 from loans.models import (  # noqa: E402
     LoanApplication,
     LoanPayment,
     LoanProduct,
     RepaymentSchedule,
 )
-from loans.blockchain.models import BlockchainTransaction  # noqa: E402
 from notifications.models import Notification  # noqa: E402
 from notifications.models.device_token import DeviceToken  # noqa: E402
-from pymongo.errors import DuplicateKeyError, OperationFailure  # noqa: E402
-from django.conf import settings  # noqa: E402
 from profiles.models import (  # noqa: E402
     AlternativeData,
     BusinessProfile,
@@ -261,6 +264,15 @@ def create_indexes():
         print("⚠ Document indexes already exist, skipping")
     except Exception as e:
         print(f"✗ Document error: {e}")
+
+    try:
+        print("Creating document notification delivery indexes...")
+        DocumentNotificationDelivery.create_indexes()
+        print("✓ Document notification delivery indexes created")
+    except (DuplicateKeyError, OperationFailure):
+        print("⚠ Document notification delivery indexes already exist, skipping")
+    except Exception as e:
+        print(f"✗ Document notification delivery error: {e}")
 
     try:
         print("Creating indexes for DocumentUploadSession collection...")

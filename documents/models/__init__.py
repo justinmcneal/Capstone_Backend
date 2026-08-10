@@ -6,6 +6,7 @@ from .document import (
     Document,
     DocumentRevisionConflict,
 )
+from .notification_delivery import DocumentNotificationDelivery
 from .storage_cleanup import DocumentStorageCleanup
 from .upload_session import UPLOAD_SESSION_STATUSES, DocumentUploadSession
 
@@ -18,5 +19,6 @@ __all__ = [
     "Document",
     "DocumentRevisionConflict",
     "DocumentStorageCleanup",
+    "DocumentNotificationDelivery",
     "DocumentUploadSession",
 ]

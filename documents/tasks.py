@@ -1,6 +1,7 @@
 """
 Background tasks for document processing.
 """
+
 import logging
 
 from celery import shared_task
@@ -47,6 +48,38 @@ def reconcile_document_audit_failures_task(limit=100):
     return reconcile_document_audit_failures(limit=limit)
 
 
+@shared_task(name="documents.analyze_document")
+def analyze_document_task(document_id: str):
+    """Run one idempotent, consent-aware document analysis attempt."""
+    from documents.services.analysis import process_document_analysis
+
+    return process_document_analysis(document_id)
+
+
+@shared_task(name="documents.reconcile_ai_analyses")
+def reconcile_document_ai_analyses_task(limit=100):
+    """Republish due or retryable AI work after broker/worker failures."""
+    from documents.services.analysis import reconcile_due_document_analyses
+
+    return reconcile_due_document_analyses(limit=max(1, min(int(limit), 1000)))
+
+
+@shared_task(name="documents.reconcile_reviewer_notifications")
+def reconcile_reviewer_notifications_task(limit=100):
+    """Retry a bounded batch of durable reviewer-notification deliveries."""
+    from documents.services.notification import reconcile_reviewer_notifications
+
+    return reconcile_reviewer_notifications(limit=max(1, min(int(limit), 1000)))
+
+
+@shared_task(name="documents.deliver_reviewer_notification")
+def deliver_reviewer_notification_task(delivery_id: str):
+    """Deliver one claimed document notification outbox record."""
+    from documents.services.notification import deliver_reviewer_notification
+
+    return deliver_reviewer_notification(delivery_id)
+
+
 @shared_task
 def notify_reviewers_document_pending_task(document_id: str):
     """Notify active officers/admins that a document needs review."""
@@ -55,7 +88,9 @@ def notify_reviewers_document_pending_task(document_id: str):
 
         document = Document.find_by_id(document_id)
         if not document:
-            logger.warning("Document not found for reviewer notification: %s", document_id)
+            logger.warning(
+                "Document not found for reviewer notification: %s", document_id
+            )
             return
 
         notify_reviewers_document_pending(document)

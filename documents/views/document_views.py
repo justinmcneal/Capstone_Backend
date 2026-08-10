@@ -9,7 +9,9 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 
 from accounts.authentication import CustomJWTAuthentication
-from accounts.services.consent_service import ConsentService
+from accounts.services.consent_service import (  # noqa: F401 - test patch boundary
+    ConsentService,
+)
 from accounts.utils.access_control import AccessControlMixin
 from accounts.utils.request_utils import get_client_ip
 from accounts.utils.response_helpers import error_response, success_response
@@ -30,6 +32,7 @@ from documents.serializers import (
     DocumentVerifySerializer,
     validate_uploaded_file,
 )
+from documents.services.analysis import queue_document_analysis
 from documents.services.audit import (
     DocumentAuditUnavailable,
     record_document_audit,
@@ -41,8 +44,9 @@ from documents.services.listing import (
 )
 from documents.services.notification import (
     get_customer_by_identifier,
-    get_display_name,
     notify_reviewers_document_pending,
+    queue_customer_document_notification,
+    queue_reviewer_notifications,
 )
 from documents.services.presigned_upload import (
     PresignedUploadError,
@@ -54,7 +58,6 @@ from documents.services.state_machine import (
 )
 from documents.services.storage_reconciliation import enqueue_storage_cleanup
 from documents.storage import get_storage_backend
-from documents.tasks import notify_reviewers_document_pending_task
 
 logger = logging.getLogger("documents")
 
@@ -179,45 +182,6 @@ class DocumentUploadView(AccessControlMixin, APIView):
             )
             stored_file_path = file_info["file_path"]
 
-            ai_analysis = None
-            run_ai_analysis = getattr(settings, "DOCUMENT_UPLOAD_AI_ANALYSIS", True)
-            file_content_type = (file.content_type or "").lower()
-            is_image_upload = file_content_type.startswith("image/")
-
-            # Respect global toggle and per-user AI consent. If the global
-            # setting is enabled but the customer has not given AI consent,
-            # skip analysis.
-            try:
-                user_ai_consent = ConsentService.check_ai_consent(customer_id)
-            except Exception:
-                user_ai_consent = False
-
-            if run_ai_analysis and is_image_upload and user_ai_consent:
-                # Run AI analysis on the document
-                try:
-                    from documents.services import analyze_document
-
-                    # Read storage-agnostic bytes so S3 and local backends both work.
-                    document_bytes = storage.get_file_bytes(file_info["file_path"])
-                    ai_analysis = analyze_document(
-                        document_bytes, expected_type=document_type
-                    )
-
-                    logger.info(
-                        f"AI analysis complete: quality={ai_analysis.get('quality_score', 0):.2f}"
-                    )
-                except Exception as e:
-                    logger.warning(f"AI analysis failed (continuing anyway): {e}")
-                    ai_analysis = {"error": str(e), "is_valid": True}
-            elif run_ai_analysis and not user_ai_consent:
-                logger.info(
-                    f"Skipping AI analysis for document upload: customer {customer_id} has not given AI consent"
-                )
-            elif run_ai_analysis:
-                logger.info(
-                    f"Skipping AI analysis for non-image upload: content_type={file_content_type or 'unknown'}"
-                )
-
             # Create document record
             replacement_lookup = getattr(Document, "find_reupload_candidate", None)
             replacement_for = (
@@ -236,24 +200,17 @@ class DocumentUploadView(AccessControlMixin, APIView):
                 replaces_document_id=(replacement_for.id if replacement_for else None),
             )
 
-            # Add AI analysis results if available
-            if ai_analysis:
-                document.confidence_score = ai_analysis.get("quality_score", 0)
-                document.ai_analysis = ai_analysis
-
-                # Auto-flag for review when image quality/type validation fails.
-                quality_score = ai_analysis.get("quality_score")
-
-                try:
-                    quality_score = float(quality_score) if quality_score is not None else 1.0
-                except (TypeError, ValueError):
-                    quality_score = 0.0
-
-                if (not ai_analysis.get("is_valid", True)) or quality_score < 0.5:
-                    document.status = "needs_review"
-
             document.save()
             document_committed = True
+
+            # Analysis is durable background work. Consent is checked again by
+            # the worker immediately before it reads the document bytes.
+            try:
+                queue_document_analysis(document)
+            except Exception:
+                logger.exception(
+                    "Failed to persist document analysis work for %s", document.id
+                )
 
             if replacement_for:
                 try:
@@ -299,14 +256,7 @@ class DocumentUploadView(AccessControlMixin, APIView):
             ]:
                 try:
                     if notify_async:
-                        try:
-                            notify_reviewers_document_pending_task.delay(
-                                str(document.id)
-                            )
-                        except (RuntimeError, ImportError):
-                            logger.debug(
-                                "Reviewer notification skipped: Celery broker unavailable"
-                            )
+                        queue_reviewer_notifications(document)
                     else:
                         notify_reviewers_document_pending(document)
                 except Exception as notify_error:
@@ -315,6 +265,7 @@ class DocumentUploadView(AccessControlMixin, APIView):
                     )
 
             from documents.serializers import DocumentResponseSerializer
+
             response_data = DocumentResponseSerializer(document).data
 
             return success_response(
@@ -500,6 +451,7 @@ class DocumentListView(AccessControlMixin, APIView):
             )
 
             from documents.serializers import DocumentResponseSerializer
+
             docs_data = [
                 DocumentResponseSerializer(
                     doc,
@@ -636,6 +588,7 @@ class DocumentDetailView(AccessControlMixin, APIView):
                     )
 
             from documents.serializers import DocumentResponseSerializer
+
             return success_response(
                 data=DocumentResponseSerializer(document).data,
                 message="Document retrieved successfully",
@@ -1021,33 +974,24 @@ class DocumentVerifyView(AccessControlMixin, APIView):
             # Notify customer for document status outcomes.
             if action in ["approve", "reject"]:
                 try:
-                    from notifications.services import get_email_sender
-
                     if customer and customer.email:
-                        sender = get_email_sender()
-                        customer_name = get_display_name(customer, fallback="Customer")
-
                         if action == "approve":
-                            sender.send_document_approved(
-                                customer_email=customer.email,
-                                customer_name=customer_name,
-                                document_type=document.document_type,
-                                document_id=document.id,
-                                customer_id=customer.id,
+                            queue_customer_document_notification(
+                                document,
+                                customer,
+                                delivery_type="approved",
                                 notes=document.notes or "",
                             )
                         else:
-                            sender.send_document_flagged(
-                                customer_email=customer.email,
-                                customer_name=customer_name,
-                                document_type=document.document_type,
+                            queue_customer_document_notification(
+                                document,
+                                customer,
+                                delivery_type="rejected",
                                 issues=(
                                     [document.rejection_reason]
                                     if document.rejection_reason
                                     else ["Document was rejected during verification."]
                                 ),
-                                document_id=document.id,
-                                customer_id=customer.id,
                             )
                     else:
                         logger.warning(
@@ -1230,9 +1174,7 @@ class RequestReuploadView(AccessControlMixin, APIView):
         try:
             doc.request_reupload(
                 officer_id=(
-                    user.customer_id
-                    if hasattr(user, "customer_id")
-                    else str(user._id)
+                    user.customer_id if hasattr(user, "customer_id") else str(user._id)
                 ),
                 reason=reason,
                 expected_revision=expected_revision,
@@ -1260,18 +1202,13 @@ class RequestReuploadView(AccessControlMixin, APIView):
 
         # Send email notification to customer
         try:
-            from notifications.services import get_email_sender
-
             customer = get_customer_by_identifier(doc.customer_id)
             if customer and customer.email:
-                sender = get_email_sender()
-                sender.send_document_flagged(
-                    customer_email=customer.email,
-                    customer_name=get_display_name(customer, fallback="Customer"),
-                    document_type=doc.document_type,
-                    issues=[reason],  # Pass reason as list of issues
-                    document_id=doc.id,
-                    customer_id=customer.id,
+                queue_customer_document_notification(
+                    doc,
+                    customer,
+                    delivery_type="reupload_requested",
+                    issues=[reason],
                 )
             else:
                 logger.warning(

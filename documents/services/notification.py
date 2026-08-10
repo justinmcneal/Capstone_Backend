@@ -10,9 +10,26 @@ from bson import ObjectId
 from django.conf import settings
 
 from accounts.models import Admin, Customer, LoanOfficer
+from documents.models import DocumentNotificationDelivery
 from notifications.services import get_email_sender
 
 logger = logging.getLogger("documents")
+
+
+def _delivery_settings():
+    return {
+        "max_attempts": max(
+            1, int(getattr(settings, "DOCUMENT_NOTIFICATION_MAX_ATTEMPTS", 5))
+        ),
+        "backoff_seconds": max(
+            1,
+            int(getattr(settings, "DOCUMENT_NOTIFICATION_RETRY_BACKOFF_SECONDS", 60)),
+        ),
+        "lease_seconds": max(
+            30,
+            int(getattr(settings, "DOCUMENT_NOTIFICATION_LEASE_SECONDS", 300)),
+        ),
+    }
 
 
 def get_customer_by_identifier(customer_id):
@@ -63,9 +80,8 @@ def get_display_name(user, fallback="User"):
     return fallback
 
 
-def notify_reviewers_document_pending(document):
-    """Notify active officers/admins that a document needs review."""
-    sender = get_email_sender()
+def prepare_reviewer_notification_deliveries(document):
+    """Persist one idempotent outbox record for each currently scoped reviewer."""
     customer = get_customer_by_identifier(document.customer_id)
     customer_name = get_display_name(customer, fallback="Customer")
 
@@ -133,23 +149,147 @@ def notify_reviewers_document_pending(document):
             "No active reviewers found to notify for pending document %s",
             document.id,
         )
-        return
+        return []
 
+    delivery_ids = []
     for recipient in recipients:
+        delivery = DocumentNotificationDelivery.ensure(
+            document=document,
+            recipient=recipient,
+            customer_name=customer_name,
+        )
+        delivery_ids.append(delivery.id)
+    return delivery_ids
+
+
+def notify_reviewers_document_pending(document):
+    """Persist and synchronously attempt each pending-review notification."""
+    outcomes = {"created": 0, "delivered": 0, "retryable": 0}
+    delivery_ids = prepare_reviewer_notification_deliveries(document)
+    outcomes["created"] = len(delivery_ids)
+    for delivery_id in delivery_ids:
+        outcome = deliver_reviewer_notification(delivery_id)
+        outcomes["delivered"] += outcome == "delivered"
+        outcomes["retryable"] += outcome == "retry_wait"
+    return outcomes
+
+
+def queue_reviewer_notifications(document):
+    """Persist deliveries before publishing tasks to the Celery broker."""
+    from documents.tasks import deliver_reviewer_notification_task
+
+    delivery_ids = prepare_reviewer_notification_deliveries(document)
+    queued = 0
+    for delivery_id in delivery_ids:
         try:
-            sender.send_document_pending_review(
-                reviewer_email=recipient["email"],
-                reviewer_name=recipient["name"],
-                customer_name=customer_name,
-                document_type=document.document_type,
-                document_id=document.id,
-                reviewer_user_id=recipient["user_id"],
-                reviewer_user_type=recipient["user_type"],
+            deliver_reviewer_notification_task.delay(delivery_id)
+            queued += 1
+        except Exception:
+            logger.exception(
+                "Reviewer notification remains pending after enqueue failure: %s",
+                delivery_id,
             )
-        except Exception as e:
-            logger.warning(
-                "Failed pending-review email to %s for document %s: %s",
-                recipient["email"],
-                document.id,
-                e,
+    return {"created": len(delivery_ids), "queued": queued}
+
+
+def deliver_document_notification(delivery_id):
+    """Claim and deliver one outbox record without duplicating completed work."""
+    options = _delivery_settings()
+    delivery = DocumentNotificationDelivery.claim(
+        delivery_id, lease_seconds=options["lease_seconds"]
+    )
+    if not delivery:
+        return "not_due"
+    try:
+        sender = get_email_sender()
+        if delivery.delivery_type == "pending_review":
+            sent = sender.send_document_pending_review(
+                reviewer_email=delivery.recipient_email,
+                reviewer_name=delivery.recipient_name,
+                customer_name=delivery.customer_name,
+                document_type=delivery.document_type,
+                document_id=delivery.document_id,
+                reviewer_user_id=delivery.recipient_user_id,
+                reviewer_user_type=delivery.recipient_user_type,
+                delivery_key=delivery.id,
             )
+        elif delivery.delivery_type == "approved":
+            sent = sender.send_document_approved(
+                customer_email=delivery.recipient_email,
+                customer_name=delivery.recipient_name,
+                document_type=delivery.document_type,
+                document_id=delivery.document_id,
+                customer_id=delivery.recipient_user_id,
+                notes=delivery.notes,
+                delivery_key=delivery.id,
+            )
+        elif delivery.delivery_type in {"rejected", "reupload_requested"}:
+            sent = sender.send_document_flagged(
+                customer_email=delivery.recipient_email,
+                customer_name=delivery.recipient_name,
+                document_type=delivery.document_type,
+                issues=delivery.issues,
+                document_id=delivery.document_id,
+                customer_id=delivery.recipient_user_id,
+                delivery_key=delivery.id,
+            )
+        else:
+            delivery.defer("delivery_type_invalid", max_attempts=1)
+            return "failed"
+        if sent is False:
+            raise RuntimeError("delivery_rejected")
+        delivery.mark_delivered()
+        return "delivered"
+    except Exception:  # noqa: BLE001 - persisted as a non-sensitive error code
+        logger.exception(
+            "Pending-review notification delivery failed for document %s",
+            delivery.document_id,
+        )
+        delivery.defer(
+            "delivery_failed",
+            max_attempts=options["max_attempts"],
+            backoff_seconds=options["backoff_seconds"],
+        )
+        return (
+            "failed"
+            if delivery.attempt_count >= options["max_attempts"]
+            else "retry_wait"
+        )
+
+
+def reconcile_reviewer_notifications(limit=100):
+    """Retry a bounded batch of due document-notification outbox records."""
+    outcomes = {"delivered": 0, "retry_wait": 0, "failed": 0, "not_due": 0}
+    for delivery_id in DocumentNotificationDelivery.due_ids(limit=limit):
+        outcome = deliver_reviewer_notification(delivery_id)
+        outcomes[outcome] = outcomes.get(outcome, 0) + 1
+    return outcomes
+
+
+def deliver_reviewer_notification(delivery_id):
+    """Backward-compatible name for the generic document outbox delivery."""
+    return deliver_document_notification(delivery_id)
+
+
+def queue_customer_document_notification(
+    document, customer, *, delivery_type, issues=None, notes=""
+):
+    """Persist a customer outcome before publishing its delivery task."""
+    from documents.tasks import deliver_reviewer_notification_task
+
+    delivery = DocumentNotificationDelivery.ensure_customer_outcome(
+        document=document,
+        customer=customer,
+        delivery_type=delivery_type,
+        issues=issues,
+        notes=notes,
+    )
+    try:
+        deliver_reviewer_notification_task.delay(delivery.id)
+        return True
+    except Exception:
+        logger.exception(
+            "Customer document notification remains pending after enqueue failure: %s",
+            delivery.id,
+        )
+        return False

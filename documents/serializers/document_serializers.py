@@ -112,6 +112,8 @@ class DocumentResponseSerializer(serializers.Serializer):
     rejection_reason = serializers.CharField(allow_blank=True, allow_null=True)
     description = serializers.CharField(allow_blank=True, allow_null=True)
     ai_analysis = serializers.SerializerMethodField()
+    ai_analysis_status = serializers.CharField(default="not_requested")
+    ai_analyzed_at = serializers.DateTimeField(allow_null=True, required=False)
     reupload_requested = serializers.BooleanField()
     reupload_reason = serializers.CharField(allow_blank=True, allow_null=True)
     reupload_requested_by = serializers.SerializerMethodField()
