@@ -1,3 +1,6 @@
+import warnings
+
+from django.conf import settings
 from PIL import Image, UnidentifiedImageError
 from rest_framework import serializers
 
@@ -293,18 +296,33 @@ def _scan_uploaded_file(file, content_type):
     if content_type in ("image/jpeg", "image/jpg", "image/png"):
         try:
             file.seek(0)
-            with Image.open(file) as img:
-                img.verify()
-            file.seek(0)
-        except (UnidentifiedImageError, OSError):
+            with warnings.catch_warnings():
+                warnings.simplefilter("error", Image.DecompressionBombWarning)
+                with Image.open(file) as img:
+                    width, height = img.size
+                    if (
+                        width > settings.DOCUMENT_MAX_IMAGE_WIDTH
+                        or height > settings.DOCUMENT_MAX_IMAGE_HEIGHT
+                        or width * height > settings.DOCUMENT_MAX_IMAGE_PIXELS
+                    ):
+                        return False, "Image dimensions exceed the allowed limit"
+                    img.verify()
+        except (
+            Image.DecompressionBombError,
+            Image.DecompressionBombWarning,
+            UnidentifiedImageError,
+            OSError,
+        ):
             return False, "Corrupted or invalid image file"
+        finally:
+            file.seek(0)
 
     if content_type == "application/pdf":
         try:
             file.seek(0)
-            pdf_sample = (
-                file.read(2 * 1024 * 1024).decode("latin-1", errors="ignore").lower()
-            )
+            pdf_sample = file.read(MAX_FILE_SIZE + 1).decode(
+                "latin-1", errors="ignore"
+            ).lower()
             file.seek(0)
         except Exception:
             return False, "Unable to scan PDF content"

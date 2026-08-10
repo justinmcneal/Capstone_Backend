@@ -430,7 +430,14 @@ Implemented in `documents/serializers/document_serializers.py`.
 - **File-signature validation:** content bytes must match declared MIME type
 - **Executable rejection:** blocks PE, ELF, Mach-O, and Java class signatures
 - **Image integrity:** PIL `Image.verify()` for JPEG/PNG
-- **PDF active-content scan:** rejects PDFs containing `/javascript`, `/js`, `/openaction`, `/launch`, `/aa`, `/richmedia`, `/embeddedfile`
+- **Image resource limits:** rejects configured width, height, pixel-count, and
+  Pillow decompression-bomb violations before storage
+- **PDF active-content scan:** scans the complete bounded upload and rejects
+  `/javascript`, `/js`, `/openaction`, `/launch`, `/aa`, `/richmedia`, and
+  `/embeddedfile`
+
+These structural checks do not replace an approved malware scanner or PDF
+content-disarm policy. That production policy remains a release gate.
 
 **AI analysis gating:**
 - Skips analysis when `DOCUMENT_UPLOAD_AI_ANALYSIS` is false
@@ -486,6 +493,8 @@ the same active claim, and an abandoned `processing` lease is reclaimable.
 - Blur detection: Laplacian variance threshold
 - Aspect ratio warning: >5:1
 - Brightness checks: too dark (<40) or overexposed (>240)
+- `DOCUMENT_AI_REQUIRE_BLUR_CHECK=True` makes missing OpenCV/NumPy fail analysis
+  and degrade `/api/health/` instead of silently skipping blur detection
 
 **CNN classification:**
 - Model class: `MobileNetV2` with custom classifier head
@@ -507,6 +516,10 @@ as `other` require human review because `other` is not a classifier class.
 - `DOCUMENT_TYPE_CONFIDENCE_THRESHOLD` (default `0.75`)
 - `DOCUMENT_ENFORCE_TYPE_MATCH` (default `True`)
 - `DOCUMENT_REQUIRE_CNN_FOR_TYPE_VALIDATION` (default `True`)
+- `DOCUMENT_AI_REQUIRE_APPROVED_MODEL` (production default `True`)
+- `DOCUMENT_AI_REQUIRE_BLUR_CHECK` (production default `True`)
+- `DOCUMENT_MAX_IMAGE_PIXELS`, `DOCUMENT_MAX_IMAGE_WIDTH`, and
+  `DOCUMENT_MAX_IMAGE_HEIGHT` (startup-validated resource limits)
 
 **Auto-flagging:**
 - Upload status becomes `needs_review` when analysis fails validation or quality score is below `0.5`
@@ -690,20 +703,25 @@ Standard success shape:
     scope. Repeat concurrency and recovery against isolated real MongoDB/object
     storage during Stage 7 deployment validation.
 
-14. The Stage 5 real-Mongo 5,000-record load/explain test is opt-in through the
-    existing `REAL_MONGO_TEST_URI` isolated-test contract; do not point it at a
-    deployment database.
+14. Real-Mongo load/explain, document-index, and concurrent-review tests are
+    opt-in through `REAL_MONGO_TEST_URI`; they create and drop a randomly named
+    database and must never target a production database account.
 
 15. Stage 7 tests cover versioned deadlines, rejected/superseded retention,
     legal-hold exclusion/release, account cleanup reconciliation, safe customer
     export, count-only inventory, fail-closed storage behavior, and operational
-    backlog metrics. They do not inspect the real bucket.
+    backlog metrics, image/PDF resource hardening, and legacy lifecycle
+    contradictions. They do not inspect the real bucket.
 
 Stage 7 focused command:
 
 ```bash
 pytest -q tests/test_documents_stage7_retention_operations.py
 ```
+
+Latest local result: the Documents/S3/analyzer run passed 85 tests and skipped
+the explicitly gated real-S3 test. The full suite passed 1,049 tests and skipped
+20 opt-in integration tests.
 
 Read-only deployment checks (run only after selecting the intended isolated
 Mongo/S3 environment):
@@ -712,6 +730,23 @@ Mongo/S3 environment):
 python manage.py validate_document_storage
 python manage.py inventory_document_storage
 ```
+
+Opt-in real-service validation requires explicit mutation permission and an
+isolated target. These commands are intentionally not part of the normal suite:
+
+```bash
+REAL_MONGO_TEST_URI='mongodb://isolated-test-host/' \
+pytest -q -m real_mongo tests/test_stage9_real_mongo.py
+
+REAL_S3_TEST_BUCKET='isolated-documents-bucket' \
+REAL_S3_TEST_REGION='us-east-1' \
+REAL_S3_TEST_ALLOW_MUTATION=yes \
+pytest -q -m real_s3 tests/test_documents_real_s3.py
+```
+
+The S3 test creates only UUID-scoped quarantine/final objects, validates replay,
+and removes both objects in `finally`. The bucket itself is never created or
+deleted by the test.
 
 Focused Stage 3–7 regression command:
 

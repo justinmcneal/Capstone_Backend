@@ -57,13 +57,14 @@ sorting, and bounded pagination into MongoDB, replaces unsafe substring search
 with indexed exact search, and bulk-resolves page customer names. Stage 6 moves
 image analysis out of upload requests, adds consent-aware leased retries,
 durable reviewer/customer notification delivery, artifact integrity gates, and
-fail-closed dataset validation. Remaining blockers are concentrated in approval
-of representative AI data/artifacts and Stage 7 retention/deployment operations.
+fail-closed dataset validation. Stage 7 implements retention and operational
+controls. Remaining blockers are representative AI data/artifact approval,
+production content-scanning policy, and isolated deployment validation.
 
 Current remediation status:
 
 - [x] Stage 1 — Contract, state machine, and regression baseline
-- [x] Stage 2 — Safe upload finalization and content security
+- [x] Stage 2 — Safe upload finalization and structural content validation
 - [x] Stage 3 — Atomic lifecycle transitions and storage consistency
 - [x] Stage 4 — Authorization, privacy, and audit completeness
 - [x] Stage 5 — Query scalability and response delivery
@@ -121,15 +122,18 @@ The following routes are registered under `/api/documents/`:
   and PDF MIME types.
 - File signatures are compared with the declared MIME type.
 - Common executable signatures are rejected.
-- JPEG/PNG data is opened and verified by Pillow.
-- PDFs receive a heuristic scan for selected active-content markers.
+- JPEG/PNG data is opened and verified by Pillow with configured dimension,
+  pixel-count, and decompression-bomb limits.
+- The complete bounded PDF upload receives a heuristic scan for selected active-
+  content markers.
 - Document type and description are validated and text fields are sanitized.
 - Upload endpoints use `DocumentUploadRateThrottle`, currently configured at
   100 requests per hour per authenticated user.
 
-These are useful defenses, not a malware-scanning boundary. PDF scanning reads
-only the first portion of the file and uses substring matching; there is no AV,
-sandbox, quarantine, or content-disarm process.
+These are useful defenses, not a malware-scanning boundary. PDF matching remains
+heuristic; there is no external AV/sandbox/content-disarm service. Presigned
+uploads are quarantined, while direct uploads are structurally validated before
+durable save.
 
 ### Authorization foundations
 
@@ -291,16 +295,26 @@ image contents:
 - The expanded focused Documents suite passed 71 tests. The post-Stage 6 full
   suite collected 1,054 tests: 1,036 passed and 18 opt-in integration tests were
   skipped.
+- Stage 7 adds nine tests for retention deadlines, legal holds, account-deletion
+  cleanup, safe export, storage inventory, private-storage validation, and
+  operational metrics. The Documents/S3 suite passed 79 tests. The post-Stage 7
+  full suite collected 1,063 tests: 1,045 passed and 18 opt-in integration tests
+  were skipped.
+- Follow-on content/configuration hardening adds four local tests plus explicitly
+  gated real-Mongo concurrency and real-S3 workflow tests. The latest focused
+  Documents/S3/analyzer run passed 85 tests with one real-S3 skip. The full suite
+  collected 1,069 tests: 1,049 passed and 20 opt-in integration tests were
+  skipped.
 
 ## Confirmed Production Blockers and Gaps
 
 ### 1. Presigned upload code is remediated; deployment validation remains
 
 Stage 2 implements the tracked quarantine/finalize workflow described above and
-keeps it disabled by default. Remaining work belongs to the deployment gate:
-wire and validate S3 settings, private bucket encryption/IAM/CORS/lifecycle,
-exercise a real isolated S3-compatible target, and confirm Celery cleanup. Do
-not enable the feature merely because unit/moto tests pass.
+keeps it disabled by default. Settings and a read-only bucket validator are now
+wired. Remaining work belongs to the deployment gate: review least-privilege
+IAM, exercise a real isolated S3-compatible target, and confirm Celery cleanup.
+Do not enable the feature merely because unit/moto tests pass.
 
 ### 2. Storage/database consistency is remediated at code level
 
@@ -377,8 +391,8 @@ server-side encryption fail startup validation.
 
 The read-only `validate_document_storage` command checks the deployment bucket's
 public-access block, default encryption, object ownership, CORS origins/methods,
-and URL expiry. IAM policy and bucket lifecycle evidence still require review in
-the isolated deployment target.
+URL expiry, versioning, and quarantine lifecycle. IAM policy and execution
+evidence still require review in the isolated deployment target.
 
 ### 9. Document retention and customer lifecycle are implemented
 
@@ -392,57 +406,38 @@ metadata. Customer exports contain allowlisted metadata but exclude filenames,
 paths, hashes, URLs, review notes, and AI output. Count-only inventory and a
 dry-run legal-hold command support operations without printing storage IDs.
 
-### 10. AI operational governance is incomplete
+### 10. Production content-scanning policy remains open
 
-- The trained weight artifact is missing, so CNN inference is not available in
-  this checkout despite retained configuration and evaluation charts. With the
-  default `DOCUMENT_REQUIRE_CNN_FOR_TYPE_VALIDATION=True`, a consented image
-  analyzed without the model fails type validation and is sent to
-  `needs_review`; this fail-safe behavior needs explicit product/operations
-  handling and monitoring.
-- Analysis runs inline during upload and reads the uploaded object back into
-  memory, increasing latency and memory use.
-- Analyzer errors are swallowed into a nominally valid result.
-- Optional dependency absence silently removes blur checks.
-- Model loading constructs MobileNetV2 with pretrained weights before loading the
-  saved state, which can attempt an unnecessary network download and cause an
-  otherwise valid local model to be treated as unavailable. Inference should
-  construct the exact architecture without downloading base weights.
-- Model load/health/version, artifact hash, preprocessing version, and dataset
-  version are not exposed operationally in stored results.
-- Training uses a single random, non-stratified image-level 80/20 split. Closely
-  related images and exact duplicates can enter different splits, and very small
-  classes may be nearly absent from validation. A grouped, stratified split by
-  source/document/subject is required before reporting accuracy.
-- The holdout evaluator prints `Production-ready` from overall accuracy alone.
-  It has no minimum per-class sample size, macro-F1/recall gate, confidence
-  interval, calibration/error-cost gate, leakage check, or machine-readable
-  signed evaluation report.
-- The training augmentation includes horizontal flips, which create mirrored
-  text/documents that are generally unlike valid uploads. Forced 224-by-224
-  resizing also distorts aspect ratio. Domain-appropriate rotation, perspective,
-  exposure, compression, blur, occlusion, and aspect-preserving padding should
-  be validated instead of assuming generic image augmentation improves accuracy.
-- Softmax always chooses one known class. A single broad `invalid` class is not
-  sufficient open-set/out-of-distribution detection, and the global 0.75
-  threshold has not been calibrated per class. The evaluation chart also marks
-  0.80, so documented and evaluated thresholds disagree.
-- `other` uploads have no CNN class and will normally conflict with a forced
-  known-class prediction when matching is enforced.
-- The dataset is severely imbalanced and several classes have too few independent
-  training/holdout examples to establish reliable recall. Class-weighted loss
-  does not replace collecting representative independent data.
-- Hundreds of dataset images are tracked in Git while provenance, licenses,
-  consent, anonymization, and retention are unverified. This requires a privacy
-  and data-governance review before any retraining or distribution.
-- The CNN only predicts a visual category. It does not prove authenticity,
-  ownership, document expiry, readable fields, tampering, selfie/ID face match,
-  or malware safety and must never be described as document verification.
-- Fairness and robustness across camera devices, compression, lighting,
-  geography, document templates, age/skin-tone groups for selfies, and adversarial
-  or out-of-distribution inputs have not been evaluated.
-- AI output is advisory but the exact manual-review and appeal policy is not
-  documented in this module.
+Signature/type checks, image verification, active-PDF marker checks, quarantine,
+size limits, and executable-header rejection are implemented. They are not a
+malware-scanning or content-disarm boundary. Before production, explicitly
+approve one of these policies:
+
+- require a fail-closed malware scanner for direct and presigned uploads, with
+  health checks, timeout/retry behavior, and sanitized operational metrics; or
+- temporarily disallow content types that cannot meet the approved scanning
+  policy.
+
+Independent of that policy decision, image pixel/decompression limits and
+fail-closed required image-analysis dependencies are code-enforceable work.
+
+### 11. AI evidence and artifact approval remain incomplete
+
+- The trained weight artifact is absent and the registry is deliberately
+  `not_approved`; production health therefore fails closed when an approved
+  model is required.
+- Runtime analysis is background, consent-aware, retryable, versioned, and
+  fail-safe. Artifact loading is offline and hash/registry gated; low-confidence
+  and `other` inputs require manual review.
+- Dataset manifest construction, validation, evaluation, and approval tools are
+  implemented, but they do not create governance evidence by themselves.
+- The inventoried dataset remains imbalanced, contains duplicates, lacks proven
+  item-level provenance/privacy approval, and is not an approved independent
+  holdout/OOD evaluation set.
+- Calibrated thresholds, subgroup/device robustness, fairness, open-set
+  performance, and false-accept/false-reject evidence have not been approved.
+- The classifier is advisory only and cannot establish authenticity, ownership,
+  expiry, readable fields, tampering, face match, or malware safety.
 
 ## Staged Remediation Plan
 
@@ -484,7 +479,7 @@ Stage 1 contract decisions:
   default. Stage 2 replaced it with a tracked, owner-bound, single-use session
   and finalize protocol; the gate remains off pending deployment validation.
 
-### Stage 2 — Safe upload finalization and content security
+### Stage 2 — Safe upload finalization and structural content validation
 
 **Status: Complete at code and automated-test level; feature remains deployment-gated**
 
@@ -504,10 +499,13 @@ Stage 1 contract decisions:
   indexes to `init_db.py`.~~
 - [x] ~~Add automated tests for success, replay, owner/token isolation, mismatch
   cleanup, expiry cleanup, endpoint issuance, and restrictive S3 policy.~~
+- [x] ~~Reject configured image width/height/pixel limits and Pillow
+  decompression-bomb findings before storage; scan the complete bounded PDF for
+  prohibited active-content markers.~~
 
-Full antivirus/sandbox/content-disarm policy and decompression-bomb hardening
-remain part of the broader content-security/operations release gate; the Stage 2
-workflow ensures unvalidated content is never promoted into document storage.
+The approved antivirus/sandbox/content-disarm policy remains part of the broader
+content-security/operations release gate; the Stage 2 workflow ensures
+unvalidated presigned content is never promoted into document storage.
 
 ### Stage 3 — Atomic lifecycle transitions and storage consistency
 
@@ -633,6 +631,9 @@ deployment credentials or mutates an external database.
   See `docs/documents/DOCUMENT_AI_GOVERNANCE.md`.~~
 - [x] ~~Add model-available/unavailable/error/stale-task and consent-transition
   tests.~~
+- [x] ~~Move type-match, threshold, approved-model, and required-blur behavior
+  into validated Django settings; make missing required blur dependencies
+  degrade health and fail analysis safely.~~
 
 Runtime Stage 6 is complete, but the unchecked data collection, independent
 holdout/OOD evaluation, privacy review, dataset reconciliation, and artifact
@@ -659,6 +660,9 @@ enforcement tooling now exists.
   review backlog/age, notification failures, AI failures, audit backlog,
   retention/legal holds, and URL-generation errors, with alert guidance in the
   runbook. Orphan/missing counts come from the deliberate inventory command.~~
+- [x] ~~Add explicitly gated real-Mongo document concurrency/index and real-S3
+  quarantine/finalize/replay/cleanup harnesses. They remain skipped until an
+  approved isolated target is supplied.~~
 - [ ] Validate real MongoDB indexes/concurrency, object storage, Redis/Celery,
   encryption keys, proxies, throttles, logging, restore, and monitoring in an
   isolated deployment-like environment before production release.
@@ -675,22 +679,22 @@ cannot be satisfied by mocked tests or development configuration.
   upload session, submit the returned S3 fields and file, then finalize with the
   session ID and one-time token. The S3 POST alone never creates a visible
   document.
-- Loan-officer/admin clients should be prepared for `409` stale-transition
-  responses once optimistic concurrency is added and should refresh the record.
-- Clients should use `status` as the future canonical state only after the state
-  model is normalized; current `verified` and re-upload flags can conflict.
-- Separating download URL issuance from list responses will require clients to
-  request a URL when the user opens/downloads a document.
+- Loan-officer/admin clients must handle the implemented `409` stale-transition
+  response by refreshing the record before retrying.
+- Clients should treat `status` as canonical. Compatibility fields are normalized
+  by current writes; deployment inventory must still identify contradictory
+  legacy records.
+- List responses intentionally omit download URLs. Clients request authorized
+  detail when the user opens/downloads a document.
 - Upload/finalize clients must treat `ai_analysis_status` as asynchronous. They
   should not expect a quality score or `needs_review` decision in the initial
   upload response and may refresh list/detail to observe completion.
 
 ## Documentation and Test Alignment
 
-`docs/DOCUMENTS_TESTING_GUIDE.md` describes the current endpoint shapes,
-documents the Stage 2 session/upload/finalize protocol, corrects the re-upload
-audit claim, and records known current defects. It is a current-behavior testing
-guide, not evidence of production readiness.
+`docs/DOCUMENTS_TESTING_GUIDE.md` describes the current endpoint shapes and the
+session/upload/finalize protocol. It is a current-behavior testing guide, not
+evidence of production readiness.
 
 The previous review's statements that no implementation gaps remained, in-memory
 pagination was an accepted risk, reviewer dispatch was complete, and all audit
@@ -699,6 +703,7 @@ lifecycle actions were covered are superseded by this evidence-based review.
 ## Release Gate
 
 Do not classify the Documents module as production-ready until all seven stages
-are complete, focused and full suites pass, real MongoDB concurrency/index tests
-pass, an isolated object-storage workflow proves upload/finalize/cleanup, and the
-deployment configuration plus retention/audit/monitoring runbooks are validated.
+are complete, the approved content-scanning policy is enforced, focused and full
+suites pass, real MongoDB concurrency/index tests pass, an isolated object-
+storage workflow proves upload/finalize/cleanup, and deployment configuration,
+restore, retention, audit, metrics, and alerts are validated.

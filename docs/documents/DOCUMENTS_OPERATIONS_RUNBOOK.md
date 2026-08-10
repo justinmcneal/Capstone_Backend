@@ -71,10 +71,11 @@ after restore, and during incident investigation:
 python manage.py inventory_document_storage
 ```
 
-It reports aggregate missing/orphan objects, expired upload sessions,
-contradictory states, deleted-customer records, retention-due records, and legal
-holds. It never prints keys, paths, filenames, or customer IDs and performs no
-correction. Investigate non-zero findings before an approved corrective action.
+It reports aggregate missing/orphan objects, expired upload sessions, storage and
+lifecycle contradictions, missing retention metadata, incomplete legal holds,
+deleted-customer records, retention-due records, and legal holds. It never
+prints keys, paths, filenames, or customer IDs and performs no correction.
+Investigate non-zero findings before an approved corrective action.
 
 ## Monitoring and alerts
 
@@ -119,3 +120,16 @@ Redis/Celery leases and retries, encryption-key access/rotation, trusted
 proxies, throttles, sanitized logging, backup restore, metrics, and alerts. Only
 then enable `DOCUMENT_PRESIGNED_UPLOAD_ENABLED=True`. Unit tests do not satisfy
 this environmental gate.
+
+Opt-in harnesses exist for the destructive portions and remain skipped unless
+their explicit environment gates are present:
+
+```bash
+REAL_MONGO_TEST_URI='mongodb://isolated-test-host/' \
+pytest -q -m real_mongo tests/test_stage9_real_mongo.py
+
+REAL_S3_TEST_BUCKET='isolated-documents-bucket' \
+REAL_S3_TEST_REGION='us-east-1' \
+REAL_S3_TEST_ALLOW_MUTATION=yes \
+pytest -q -m real_s3 tests/test_documents_real_s3.py
+```

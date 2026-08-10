@@ -1,5 +1,6 @@
 """Stage 7 retention, account lifecycle, inventory, and storage safeguards."""
 
+import io
 from datetime import datetime, timedelta, timezone
 from io import StringIO
 from types import SimpleNamespace
@@ -7,12 +8,15 @@ from types import SimpleNamespace
 import pytest
 from bson import ObjectId
 from django.conf import settings
+from django.core.files.uploadedfile import SimpleUploadedFile
 from django.core.management import call_command
 from django.core.management.base import CommandError
+from PIL import Image
 
 from accounts.models import Customer
 from accounts.services.account_lifecycle_service import AccountLifecycleService
 from documents.models import Document
+from documents.serializers import validate_uploaded_file
 from documents.services.retention import (
     collect_document_operational_metrics,
     enforce_document_retention,
@@ -276,3 +280,85 @@ def test_read_only_s3_validator_checks_bucket_security_controls(
     backend.s3.get_bucket_versioning = lambda **kwargs: {}
     with pytest.raises(CommandError, match="checks failed"):
         call_command("validate_document_storage", stdout=StringIO())
+
+
+def test_image_pixel_limit_rejects_compressed_large_dimensions(settings):
+    image_bytes = io.BytesIO()
+    Image.new("RGB", (400, 400), color=(255, 255, 255)).save(
+        image_bytes, format="PNG"
+    )
+    settings.DOCUMENT_MAX_IMAGE_PIXELS = 100_000
+    settings.DOCUMENT_MAX_IMAGE_WIDTH = 1_000
+    settings.DOCUMENT_MAX_IMAGE_HEIGHT = 1_000
+    upload = SimpleUploadedFile(
+        "large.png", image_bytes.getvalue(), content_type="image/png"
+    )
+
+    valid, message = validate_uploaded_file(upload)
+
+    assert valid is False
+    assert message == "Image dimensions exceed the allowed limit"
+
+
+def test_pdf_active_content_is_detected_after_old_partial_scan_boundary():
+    contents = b"%PDF-1.7\n" + (b"0" * (2 * 1024 * 1024 + 100)) + b"/JavaScript"
+    upload = SimpleUploadedFile(
+        "active.pdf", contents, content_type="application/pdf"
+    )
+
+    valid, message = validate_uploaded_file(upload)
+
+    assert valid is False
+    assert message == "Potentially unsafe PDF content detected"
+
+
+def test_required_blur_dependency_degrades_health_and_fails_analysis(monkeypatch):
+    from documents.services import analyzer as analyzer_module
+
+    monkeypatch.setattr(analyzer_module, "REQUIRE_BLUR_CHECK", True)
+    monkeypatch.setattr(
+        analyzer_module.DocumentAnalyzer, "_try_load_model", lambda self: None
+    )
+    monkeypatch.setattr(analyzer_module.importlib.util, "find_spec", lambda name: None)
+    analyzer = analyzer_module.DocumentAnalyzer()
+    analyzer.model_error_code = "artifact_missing"
+    monkeypatch.setattr(
+        analyzer, "_check_blur", lambda image: (_ for _ in ()).throw(ImportError())
+    )
+    image_bytes = io.BytesIO()
+    Image.new("RGB", (320, 320), color=(128, 128, 128)).save(
+        image_bytes, format="JPEG"
+    )
+
+    health = analyzer.health()
+    result = analyzer.analyze(image_bytes.getvalue(), expected_type="valid_id")
+
+    assert health["ready"] is False
+    assert health["status"] == "dependency_missing"
+    assert result["analysis_status"] == "failed"
+
+
+def test_inventory_counts_legacy_lifecycle_and_retention_contradictions():
+    settings.MONGODB[Document.collection_name].insert_one(
+        {
+            "customer_id": str(ObjectId()),
+            "document_type": "valid_id",
+            "original_filename": "legacy.jpg",
+            "file_path": "documents/legacy/valid_id/legacy.jpg",
+            "file_size": 100,
+            "mime_type": "image/jpeg",
+            "status": "approved",
+            "verified": False,
+            "storage_state": "available",
+            "legal_hold": True,
+        }
+    )
+
+    result = inventory_document_storage(
+        settings.MONGODB,
+        InventoryStorage({"documents/legacy/valid_id/legacy.jpg"}),
+    )
+
+    assert result["lifecycle_contradictions"] == 1
+    assert result["missing_retention_metadata"] == 1
+    assert result["incomplete_legal_holds"] == 1

@@ -376,13 +376,32 @@ if not DEBUG and DOCUMENT_STORAGE_BACKEND == 's3':
         raise ImproperlyConfigured(
             'Production aws:kms document encryption requires SSEKMSKeyId'
         )
-DOCUMENT_UPLOAD_AI_ANALYSIS = os.getenv('DOCUMENT_UPLOAD_AI_ANALYSIS', 'True') == 'True'
+DOCUMENT_UPLOAD_AI_ANALYSIS = env_bool('DOCUMENT_UPLOAD_AI_ANALYSIS', True)
 DOCUMENT_AI_REQUIRE_APPROVED_MODEL = env_bool(
     'DOCUMENT_AI_REQUIRE_APPROVED_MODEL', not DEBUG
 )
-DOCUMENT_UPLOAD_NOTIFY_REVIEWERS = os.getenv('DOCUMENT_UPLOAD_NOTIFY_REVIEWERS', 'True') == 'True'
-DOCUMENT_UPLOAD_NOTIFY_ASYNC = os.getenv('DOCUMENT_UPLOAD_NOTIFY_ASYNC', 'True') == 'True'
+DOCUMENT_AI_REQUIRE_BLUR_CHECK = env_bool(
+    'DOCUMENT_AI_REQUIRE_BLUR_CHECK', not DEBUG
+)
+DOCUMENT_ENFORCE_TYPE_MATCH = env_bool('DOCUMENT_ENFORCE_TYPE_MATCH', True)
+DOCUMENT_REQUIRE_CNN_FOR_TYPE_VALIDATION = env_bool(
+    'DOCUMENT_REQUIRE_CNN_FOR_TYPE_VALIDATION', True
+)
+DOCUMENT_UPLOAD_NOTIFY_REVIEWERS = env_bool('DOCUMENT_UPLOAD_NOTIFY_REVIEWERS', True)
+DOCUMENT_UPLOAD_NOTIFY_ASYNC = env_bool('DOCUMENT_UPLOAD_NOTIFY_ASYNC', True)
 try:
+    DOCUMENT_TYPE_CONFIDENCE_THRESHOLD = float(
+        os.getenv('DOCUMENT_TYPE_CONFIDENCE_THRESHOLD') or '0.75'
+    )
+    DOCUMENT_MAX_IMAGE_PIXELS = int(
+        os.getenv('DOCUMENT_MAX_IMAGE_PIXELS') or '40000000'
+    )
+    DOCUMENT_MAX_IMAGE_WIDTH = int(
+        os.getenv('DOCUMENT_MAX_IMAGE_WIDTH') or '12000'
+    )
+    DOCUMENT_MAX_IMAGE_HEIGHT = int(
+        os.getenv('DOCUMENT_MAX_IMAGE_HEIGHT') or '12000'
+    )
     DOCUMENT_AI_MAX_ATTEMPTS = int(os.getenv('DOCUMENT_AI_MAX_ATTEMPTS') or '3')
     DOCUMENT_AI_RETRY_BACKOFF_SECONDS = int(
         os.getenv('DOCUMENT_AI_RETRY_BACKOFF_SECONDS') or '60'
@@ -398,7 +417,25 @@ try:
         os.getenv('DOCUMENT_NOTIFICATION_LEASE_SECONDS') or '300'
     )
 except ValueError as exc:
-    raise ImproperlyConfigured('Document AI worker settings must be integers') from exc
+    raise ImproperlyConfigured(
+        'Document AI, image, and worker numeric settings are invalid'
+    ) from exc
+if not 0.5 <= DOCUMENT_TYPE_CONFIDENCE_THRESHOLD <= 0.99:
+    raise ImproperlyConfigured(
+        'DOCUMENT_TYPE_CONFIDENCE_THRESHOLD must be between 0.5 and 0.99'
+    )
+if not 1_000_000 <= DOCUMENT_MAX_IMAGE_PIXELS <= 100_000_000:
+    raise ImproperlyConfigured(
+        'DOCUMENT_MAX_IMAGE_PIXELS must be between 1000000 and 100000000'
+    )
+if not 1000 <= DOCUMENT_MAX_IMAGE_WIDTH <= 30000:
+    raise ImproperlyConfigured(
+        'DOCUMENT_MAX_IMAGE_WIDTH must be between 1000 and 30000'
+    )
+if not 1000 <= DOCUMENT_MAX_IMAGE_HEIGHT <= 30000:
+    raise ImproperlyConfigured(
+        'DOCUMENT_MAX_IMAGE_HEIGHT must be between 1000 and 30000'
+    )
 if not 1 <= DOCUMENT_AI_MAX_ATTEMPTS <= 10:
     raise ImproperlyConfigured('DOCUMENT_AI_MAX_ATTEMPTS must be between 1 and 10')
 if not 1 <= DOCUMENT_AI_RETRY_BACKOFF_SECONDS <= 3600:

@@ -11,12 +11,13 @@ Future (after training data collected):
 """
 
 import hashlib
+import importlib.util
 import io
 import json
 import logging
-import os
 from pathlib import Path
 
+from django.conf import settings
 from PIL import Image
 
 from documents.services.preprocessing import (
@@ -30,13 +31,10 @@ logger = logging.getLogger("documents")
 MIN_IMAGE_SIZE = (200, 200)  # Minimum dimensions
 MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB
 BLUR_THRESHOLD = 100  # Laplacian variance threshold
-TYPE_CONFIDENCE_THRESHOLD = float(
-    os.getenv("DOCUMENT_TYPE_CONFIDENCE_THRESHOLD", "0.75")
-)
-ENFORCE_TYPE_MATCH = os.getenv("DOCUMENT_ENFORCE_TYPE_MATCH", "True") == "True"
-REQUIRE_CNN_FOR_TYPE_VALIDATION = (
-    os.getenv("DOCUMENT_REQUIRE_CNN_FOR_TYPE_VALIDATION", "True") == "True"
-)
+TYPE_CONFIDENCE_THRESHOLD = settings.DOCUMENT_TYPE_CONFIDENCE_THRESHOLD
+ENFORCE_TYPE_MATCH = settings.DOCUMENT_ENFORCE_TYPE_MATCH
+REQUIRE_CNN_FOR_TYPE_VALIDATION = settings.DOCUMENT_REQUIRE_CNN_FOR_TYPE_VALIDATION
+REQUIRE_BLUR_CHECK = settings.DOCUMENT_AI_REQUIRE_BLUR_CHECK
 THRESHOLD_POLICY_VERSION = "document-type-thresholds-v1"
 
 
@@ -252,12 +250,13 @@ class DocumentAnalyzer:
         # Check blur using Laplacian variance (requires numpy/cv2)
         try:
             blur_score = self._check_blur(image)
+        except ImportError:
+            if REQUIRE_BLUR_CHECK:
+                raise
+        else:
             if blur_score < BLUR_THRESHOLD:
                 issues.append(f"Image appears blurry (score: {blur_score:.0f})")
                 score -= 25
-        except ImportError:
-            # cv2 not available, skip blur check
-            pass
 
         # Check brightness
         brightness = self._check_brightness(image)
@@ -278,21 +277,13 @@ class DocumentAnalyzer:
 
     def _check_blur(self, image):
         """Check blur using Laplacian variance"""
-        try:
-            import cv2
-            import numpy as np
+        import cv2
+        import numpy as np
 
-            # Convert PIL to cv2
-            img_array = np.array(image)
-            gray = cv2.cvtColor(img_array, cv2.COLOR_RGB2GRAY)
-
-            # Laplacian variance
-            laplacian = cv2.Laplacian(gray, cv2.CV_64F)
-            variance = laplacian.var()
-
-            return variance
-        except ImportError:
-            return BLUR_THRESHOLD + 1  # Skip if cv2 not available
+        img_array = np.array(image)
+        gray = cv2.cvtColor(img_array, cv2.COLOR_RGB2GRAY)
+        laplacian = cv2.Laplacian(gray, cv2.CV_64F)
+        return laplacian.var()
 
     def _check_brightness(self, image):
         """Check average brightness"""
@@ -348,13 +339,27 @@ class DocumentAnalyzer:
 
     def health(self):
         """Return non-sensitive artifact readiness for startup/health checks."""
+        blur_available = all(
+            importlib.util.find_spec(name) is not None for name in ("cv2", "numpy")
+        )
+        model_required = bool(settings.DOCUMENT_AI_REQUIRE_APPROVED_MODEL)
+        ready = (not model_required or self.model_loaded) and (
+            not REQUIRE_BLUR_CHECK or blur_available
+        )
         return {
+            "ready": ready,
             "model_available": self.model_loaded,
-            "status": "available" if self.model_loaded else self.model_error_code,
+            "status": (
+                "dependency_missing"
+                if REQUIRE_BLUR_CHECK and not blur_available
+                else "available" if self.model_loaded else self.model_error_code
+            ),
             "model_version": self.model_metadata.get("model_version"),
             "approval_status": self.model_metadata.get("approval_status", "missing"),
             "preprocessing_version": PREPROCESSING_VERSION,
             "threshold_policy_version": THRESHOLD_POLICY_VERSION,
+            "blur_check_required": REQUIRE_BLUR_CHECK,
+            "blur_check_available": blur_available,
         }
 
     def _validate_type(self, expected_type, classification):

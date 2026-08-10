@@ -69,13 +69,13 @@ class HealthCheckView(APIView):
             document_ai = get_document_model_health()
             health["services"]["document_ai"] = document_ai
             if (
-                getattr(settings, "DOCUMENT_AI_REQUIRE_APPROVED_MODEL", False)
-                and not document_ai["model_available"]
+                getattr(settings, "DOCUMENT_UPLOAD_AI_ANALYSIS", True)
+                and not document_ai.get("ready", False)
             ):
                 health["status"] = "degraded"
         except Exception:
             health["services"]["document_ai"] = {"status": "unavailable"}
-            if getattr(settings, "DOCUMENT_AI_REQUIRE_APPROVED_MODEL", False):
+            if getattr(settings, "DOCUMENT_UPLOAD_AI_ANALYSIS", True):
                 health["status"] = "degraded"
 
         status_code = (

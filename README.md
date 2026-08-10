@@ -280,8 +280,9 @@ environment:
 python manage.py validate_document_storage
 ```
 
-It validates public-access blocking, encryption, object ownership, CORS, and URL
-expiry. IAM policy and backup/restore evidence require separate operator review.
+It validates public-access blocking, encryption, object ownership, CORS, URL
+expiry, versioning, and quarantine lifecycle. IAM policy and backup/restore
+evidence require separate operator review.
 
 ## Testing and Static Validation
 
@@ -311,6 +312,16 @@ account can create and remove temporary databases:
 ```bash
 REAL_MONGO_TEST_URI='mongodb://isolated-test-host/' \
 pytest -q -m real_mongo tests/test_stage9_real_mongo.py
+```
+
+Real-S3 validation is separately opt-in and mutates unique objects in an
+explicitly approved isolated bucket:
+
+```bash
+REAL_S3_TEST_BUCKET='isolated-documents-bucket' \
+REAL_S3_TEST_REGION='us-east-1' \
+REAL_S3_TEST_ALLOW_MUTATION=yes \
+pytest -q -m real_s3 tests/test_documents_real_s3.py
 ```
 
 Never point the opt-in test suite at a production database account.

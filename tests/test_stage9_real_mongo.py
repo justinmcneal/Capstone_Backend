@@ -15,7 +15,7 @@ from accounts.models.activity import ActiveSession
 from accounts.models.tokens import RefreshTokenEntry
 from accounts.services.otp_service import OTPService
 from accounts.services.password_service import PasswordService
-from documents.models import Document
+from documents.models import Document, DocumentRevisionConflict
 from profiles.models import (
     CustomerProfile,
     ProfileRevisionConflict,
@@ -314,3 +314,44 @@ def test_real_mongo_document_listing_is_bounded_across_scopes(
     stats = explain["executionStats"]
     assert stats["nReturned"] == 25
     assert stats["totalDocsExamined"] <= customer_total
+
+
+@pytest.mark.real_mongo
+def test_real_mongo_document_indexes_and_concurrent_review_have_one_winner(
+    real_mongo_database, monkeypatch
+):
+    """Prove document uniqueness and compare-and-set behavior on real MongoDB."""
+    monkeypatch.setattr(settings, "MONGODB", real_mongo_database)
+    Document.create_indexes()
+    document = Document(
+        customer_id=str(uuid.uuid4()),
+        document_type="valid_id",
+        original_filename="concurrency.jpg",
+        file_path=f"documents/real-mongo/{uuid.uuid4().hex}.jpg",
+        file_size=1024,
+        mime_type="image/jpeg",
+        upload_session_id=str(uuid.uuid4()),
+    ).save()
+    snapshots = [Document.find_by_id(document.id) for _ in range(8)]
+
+    def approve(snapshot):
+        try:
+            snapshot.review(
+                action="approve",
+                reviewer_id=str(uuid.uuid4()),
+                expected_revision=snapshot.revision,
+            )
+            return "approved"
+        except DocumentRevisionConflict:
+            return "conflict"
+
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        outcomes = list(executor.map(approve, snapshots))
+
+    assert outcomes.count("approved") == 1
+    assert outcomes.count("conflict") == 7
+    stored = Document.find_by_id(document.id)
+    assert stored.status == "approved"
+    assert stored.verified is True
+    indexes = real_mongo_database[Document.collection_name].index_information()
+    assert indexes["upload_session_id_1"]["unique"] is True
