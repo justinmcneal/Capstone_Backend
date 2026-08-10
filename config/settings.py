@@ -236,21 +236,79 @@ MEDIA_URL = '/media/'
 MEDIA_ROOT = BASE_DIR / 'media'
 
 # Document Storage Configuration
-# Options: 'local', 's3', 'gcs' (cloud backends to be implemented)
-DOCUMENT_STORAGE_BACKEND = 'local'
+# Local storage is development-only. Production must select and fully configure
+# private S3-compatible object storage explicitly.
+DOCUMENT_STORAGE_BACKEND = (
+    os.getenv('DOCUMENT_STORAGE_BACKEND') or 'local'
+).strip().lower()
+if DOCUMENT_STORAGE_BACKEND not in {'local', 's3'}:
+    raise ImproperlyConfigured(
+        'DOCUMENT_STORAGE_BACKEND must be either local or s3'
+    )
+if not DEBUG and DOCUMENT_STORAGE_BACKEND != 's3':
+    raise ImproperlyConfigured(
+        'Production document storage must use an explicitly configured s3 backend'
+    )
+
+AWS_ACCESS_KEY_ID = (os.getenv('AWS_ACCESS_KEY_ID') or '').strip()
+AWS_SECRET_ACCESS_KEY = (os.getenv('AWS_SECRET_ACCESS_KEY') or '').strip()
+AWS_STORAGE_BUCKET_NAME = (os.getenv('AWS_STORAGE_BUCKET_NAME') or '').strip()
+AWS_S3_REGION_NAME = (os.getenv('AWS_S3_REGION_NAME') or 'us-east-1').strip()
+AWS_S3_ENDPOINT_URL = (os.getenv('AWS_S3_ENDPOINT_URL') or '').strip() or None
+AWS_S3_CUSTOM_DOMAIN = (os.getenv('AWS_S3_CUSTOM_DOMAIN') or '').strip() or None
+AWS_DEFAULT_ACL = (os.getenv('AWS_DEFAULT_ACL') or '').strip() or None
+AWS_S3_FILE_OVERWRITE = env_bool('AWS_S3_FILE_OVERWRITE', False)
+AWS_S3_SIGNATURE_VERSION = (
+    os.getenv('AWS_S3_SIGNATURE_VERSION') or 's3v4'
+).strip()
+try:
+    AWS_S3_OBJECT_PARAMETERS = json.loads(
+        os.getenv('AWS_S3_OBJECT_PARAMETERS')
+        or '{"ServerSideEncryption":"AES256"}'
+    )
+except (TypeError, ValueError) as exc:
+    raise ImproperlyConfigured('AWS_S3_OBJECT_PARAMETERS must be valid JSON') from exc
+if not isinstance(AWS_S3_OBJECT_PARAMETERS, dict):
+    raise ImproperlyConfigured('AWS_S3_OBJECT_PARAMETERS must be a JSON object')
+
 DOCUMENT_PRESIGNED_UPLOAD_ENABLED = env_bool(
     'DOCUMENT_PRESIGNED_UPLOAD_ENABLED', False
 )
 try:
     DOCUMENT_PRESIGNED_UPLOAD_EXPIRY_SECONDS = int(
-        os.getenv('DOCUMENT_PRESIGNED_UPLOAD_EXPIRY_SECONDS', '900')
+        os.getenv('DOCUMENT_PRESIGNED_UPLOAD_EXPIRY_SECONDS') or '900'
     )
     DOCUMENT_PRESIGNED_FINALIZE_LEASE_SECONDS = int(
-        os.getenv('DOCUMENT_PRESIGNED_FINALIZE_LEASE_SECONDS', '300')
+        os.getenv('DOCUMENT_PRESIGNED_FINALIZE_LEASE_SECONDS') or '300'
+    )
+    AWS_S3_PRESIGNED_URL_EXPIRY_SECONDS = int(
+        os.getenv('AWS_S3_PRESIGNED_URL_EXPIRY_SECONDS') or '300'
+    )
+    AWS_S3_MULTIPART_THRESHOLD_BYTES = int(
+        os.getenv('AWS_S3_MULTIPART_THRESHOLD_BYTES') or str(5 * 1024 * 1024)
+    )
+    AWS_S3_MULTIPART_CHUNKSIZE_BYTES = int(
+        os.getenv('AWS_S3_MULTIPART_CHUNKSIZE_BYTES') or str(5 * 1024 * 1024)
+    )
+    AWS_S3_UPLOAD_MAX_ATTEMPTS = int(
+        os.getenv('AWS_S3_UPLOAD_MAX_ATTEMPTS') or '3'
+    )
+    AWS_S3_UPLOAD_BASE_BACKOFF = float(
+        os.getenv('AWS_S3_UPLOAD_BASE_BACKOFF') or '0.5'
+    )
+    DOCUMENT_RETENTION_DAYS = int(os.getenv('DOCUMENT_RETENTION_DAYS') or '2555')
+    DOCUMENT_SUPERSEDED_RETENTION_DAYS = int(
+        os.getenv('DOCUMENT_SUPERSEDED_RETENTION_DAYS') or '90'
+    )
+    DOCUMENT_REJECTED_RETENTION_DAYS = int(
+        os.getenv('DOCUMENT_REJECTED_RETENTION_DAYS') or '90'
+    )
+    DOCUMENT_QUARANTINE_RETENTION_DAYS = int(
+        os.getenv('DOCUMENT_QUARANTINE_RETENTION_DAYS') or '1'
     )
 except ValueError as exc:
     raise ImproperlyConfigured(
-        'Document presigned upload expiry and lease must be integers'
+        'Document storage, upload, and retention numeric settings are invalid'
     ) from exc
 if not 60 <= DOCUMENT_PRESIGNED_UPLOAD_EXPIRY_SECONDS <= 3600:
     raise ImproperlyConfigured(
@@ -260,6 +318,64 @@ if not 30 <= DOCUMENT_PRESIGNED_FINALIZE_LEASE_SECONDS <= 900:
     raise ImproperlyConfigured(
         'DOCUMENT_PRESIGNED_FINALIZE_LEASE_SECONDS must be between 30 and 900'
     )
+if not 60 <= AWS_S3_PRESIGNED_URL_EXPIRY_SECONDS <= 3600:
+    raise ImproperlyConfigured(
+        'AWS_S3_PRESIGNED_URL_EXPIRY_SECONDS must be between 60 and 3600'
+    )
+if AWS_S3_FILE_OVERWRITE:
+    raise ImproperlyConfigured('AWS_S3_FILE_OVERWRITE must remain disabled')
+if AWS_S3_SIGNATURE_VERSION != 's3v4':
+    raise ImproperlyConfigured('AWS_S3_SIGNATURE_VERSION must be s3v4')
+if AWS_DEFAULT_ACL not in {None, 'private'}:
+    raise ImproperlyConfigured('AWS_DEFAULT_ACL must be empty or private')
+if DOCUMENT_PRESIGNED_UPLOAD_ENABLED and DOCUMENT_STORAGE_BACKEND != 's3':
+    raise ImproperlyConfigured(
+        'DOCUMENT_PRESIGNED_UPLOAD_ENABLED requires DOCUMENT_STORAGE_BACKEND=s3'
+    )
+if not all(1 <= days <= 3650 for days in (
+    DOCUMENT_RETENTION_DAYS,
+    DOCUMENT_SUPERSEDED_RETENTION_DAYS,
+    DOCUMENT_REJECTED_RETENTION_DAYS,
+)):
+    raise ImproperlyConfigured('Document retention days must be between 1 and 3650')
+if not 1 <= DOCUMENT_QUARANTINE_RETENTION_DAYS <= 30:
+    raise ImproperlyConfigured(
+        'DOCUMENT_QUARANTINE_RETENTION_DAYS must be between 1 and 30'
+    )
+if AWS_S3_MULTIPART_THRESHOLD_BYTES < 5 * 1024 * 1024:
+    raise ImproperlyConfigured('AWS_S3_MULTIPART_THRESHOLD_BYTES must be at least 5 MiB')
+if AWS_S3_MULTIPART_CHUNKSIZE_BYTES < 5 * 1024 * 1024:
+    raise ImproperlyConfigured('AWS_S3_MULTIPART_CHUNKSIZE_BYTES must be at least 5 MiB')
+if not 1 <= AWS_S3_UPLOAD_MAX_ATTEMPTS <= 10:
+    raise ImproperlyConfigured('AWS_S3_UPLOAD_MAX_ATTEMPTS must be between 1 and 10')
+if not 0.1 <= AWS_S3_UPLOAD_BASE_BACKOFF <= 30:
+    raise ImproperlyConfigured('AWS_S3_UPLOAD_BASE_BACKOFF must be between 0.1 and 30')
+DOCUMENT_RETENTION_POLICY_VERSION = (
+    os.getenv('DOCUMENT_RETENTION_POLICY_VERSION') or '2026-08-10-v1'
+).strip()
+if not DEBUG and DOCUMENT_STORAGE_BACKEND == 's3':
+    if not AWS_STORAGE_BUCKET_NAME or not AWS_S3_REGION_NAME:
+        raise ImproperlyConfigured(
+            'Production S3 document storage requires bucket name and region'
+        )
+    if AWS_S3_CUSTOM_DOMAIN:
+        raise ImproperlyConfigured(
+            'AWS_S3_CUSTOM_DOMAIN must be empty so document downloads stay presigned'
+        )
+    if AWS_S3_OBJECT_PARAMETERS.get('ServerSideEncryption') not in {
+        'AES256',
+        'aws:kms',
+    }:
+        raise ImproperlyConfigured(
+            'Production S3 documents require AES256 or aws:kms server-side encryption'
+        )
+    if (
+        AWS_S3_OBJECT_PARAMETERS.get('ServerSideEncryption') == 'aws:kms'
+        and not AWS_S3_OBJECT_PARAMETERS.get('SSEKMSKeyId')
+    ):
+        raise ImproperlyConfigured(
+            'Production aws:kms document encryption requires SSEKMSKeyId'
+        )
 DOCUMENT_UPLOAD_AI_ANALYSIS = os.getenv('DOCUMENT_UPLOAD_AI_ANALYSIS', 'True') == 'True'
 DOCUMENT_AI_REQUIRE_APPROVED_MODEL = env_bool(
     'DOCUMENT_AI_REQUIRE_APPROVED_MODEL', not DEBUG

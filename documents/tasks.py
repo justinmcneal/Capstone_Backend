@@ -39,6 +39,22 @@ def reconcile_storage_operations_task(limit=100):
     )
 
 
+@shared_task(name="documents.enforce_retention")
+def enforce_document_retention_task(limit=100):
+    """Claim a bounded batch of due, non-held documents for durable deletion."""
+    from documents.services.retention import enforce_document_retention
+
+    return enforce_document_retention(limit=max(1, min(int(limit), 1000)))
+
+
+@shared_task(name="documents.collect_operational_metrics")
+def collect_document_operational_metrics_task():
+    """Refresh document workflow gauges without modifying domain records."""
+    from documents.services.retention import collect_document_operational_metrics
+
+    return collect_document_operational_metrics()
+
+
 @shared_task(name="documents.reconcile_audit_failures")
 def reconcile_document_audit_failures_task(limit=100):
     """Replay allowlisted document audit events that failed inline."""

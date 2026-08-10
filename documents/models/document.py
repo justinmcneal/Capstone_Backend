@@ -62,6 +62,7 @@ class Document:
         "notes",
         "description",
         "reupload_reason",
+        "legal_hold_reason",
     )
 
     def __init__(self, **kwargs):
@@ -84,6 +85,13 @@ class Document:
         self.replaces_document_id = kwargs.get("replaces_document_id")
         self.superseded_by_document_id = kwargs.get("superseded_by_document_id")
         self.superseded_at = kwargs.get("superseded_at")
+        self.retention_policy_version = kwargs.get("retention_policy_version")
+        self.retention_expires_at = kwargs.get("retention_expires_at")
+        self.legal_hold = bool(kwargs.get("legal_hold", False))
+        self.legal_hold_reason = kwargs.get("legal_hold_reason", "")
+        self.legal_hold_set_at = kwargs.get("legal_hold_set_at")
+        self.legal_hold_set_by = kwargs.get("legal_hold_set_by")
+        self.deletion_reason_code = kwargs.get("deletion_reason_code", "")
 
         # Status and verification
         self.status = kwargs.get("status", "pending")
@@ -116,6 +124,14 @@ class Document:
         self.uploaded_at = kwargs.get("uploaded_at", datetime.now(timezone.utc))
         self.updated_at = kwargs.get("updated_at", datetime.now(timezone.utc))
 
+        if self._id is None and self.retention_expires_at is None:
+            self.retention_policy_version = getattr(
+                settings, "DOCUMENT_RETENTION_POLICY_VERSION", "unversioned"
+            )
+            self.retention_expires_at = self.uploaded_at + timedelta(
+                days=int(getattr(settings, "DOCUMENT_RETENTION_DAYS", 2555))
+            )
+
     @property
     def id(self):
         return str(self._id) if self._id else None
@@ -147,6 +163,13 @@ class Document:
             "replaces_document_id": self.replaces_document_id,
             "superseded_by_document_id": self.superseded_by_document_id,
             "superseded_at": self.superseded_at,
+            "retention_policy_version": self.retention_policy_version,
+            "retention_expires_at": self.retention_expires_at,
+            "legal_hold": self.legal_hold,
+            "legal_hold_reason": self.legal_hold_reason,
+            "legal_hold_set_at": self.legal_hold_set_at,
+            "legal_hold_set_by": self.legal_hold_set_by,
+            "deletion_reason_code": self.deletion_reason_code,
             "status": self.status,
             "verified": self.verified,
             "verified_by": self.verified_by,
@@ -322,6 +345,19 @@ class Document:
                 "$set": {
                     "superseded_by_document_id": str(replacement_document_id),
                     "superseded_at": now,
+                    "retention_expires_at": now
+                    + timedelta(
+                        days=int(
+                            getattr(
+                                settings,
+                                "DOCUMENT_SUPERSEDED_RETENTION_DAYS",
+                                90,
+                            )
+                        )
+                    ),
+                    "retention_policy_version": getattr(
+                        settings, "DOCUMENT_RETENTION_POLICY_VERSION", "unversioned"
+                    ),
                     "updated_at": now,
                 },
                 "$inc": {"revision": 1},
@@ -335,6 +371,105 @@ class Document:
         refreshed = type(self).from_dict(document)
         self.__dict__.update(refreshed.__dict__)
         return self
+
+    def set_legal_hold(self, *, reason, set_by):
+        """Place a document on legal hold using an atomic metadata update."""
+        reason = str(reason or "").strip()
+        if not reason:
+            raise ValueError("A legal-hold reason is required")
+        now = datetime.now(timezone.utc)
+        encrypted_reason = encrypt_fields(
+            {"legal_hold_reason": reason}, ("legal_hold_reason",)
+        )["legal_hold_reason"]
+        result = get_db()[self.collection_name].update_one(
+            {"_id": self._id, "storage_state": {"$nin": ["delete_pending", "delete_failed"]}},
+            {
+                "$set": {
+                    "legal_hold": True,
+                    "legal_hold_reason": encrypted_reason,
+                    "legal_hold_set_at": now,
+                    "legal_hold_set_by": str(set_by),
+                    "updated_at": now,
+                },
+                "$inc": {"revision": 1},
+            },
+        )
+        return result.modified_count == 1
+
+    def release_legal_hold(self, *, released_by):
+        """Release a legal hold while retaining a non-sensitive audit marker."""
+        now = datetime.now(timezone.utc)
+        result = get_db()[self.collection_name].update_one(
+            {"_id": self._id, "legal_hold": True},
+            {
+                "$set": {
+                    "legal_hold": False,
+                    "legal_hold_reason": "",
+                    "legal_hold_set_at": None,
+                    "legal_hold_set_by": None,
+                    "legal_hold_released_at": now,
+                    "legal_hold_released_by": str(released_by),
+                    "updated_at": now,
+                },
+                "$inc": {"revision": 1},
+            },
+        )
+        return result.modified_count == 1
+
+    @classmethod
+    def claim_retention_deletion(cls, document_id):
+        """Atomically route one due, non-held record through storage cleanup."""
+        if isinstance(document_id, ObjectId):
+            object_id = document_id
+        elif ObjectId.is_valid(str(document_id)):
+            object_id = ObjectId(str(document_id))
+        else:
+            return None
+        now = datetime.now(timezone.utc)
+        row = get_db()[cls.collection_name].find_one_and_update(
+            {
+                "_id": object_id,
+                "retention_expires_at": {"$lte": now},
+                "legal_hold": {"$ne": True},
+                "$or": [
+                    {"storage_state": "available"},
+                    {"storage_state": {"$exists": False}},
+                ],
+            },
+            {
+                "$set": {
+                    "storage_state": "delete_pending",
+                    "deletion_requested_at": now,
+                    "deletion_reason_code": "retention_expired",
+                    "deletion_last_error": "",
+                    "updated_at": now,
+                },
+                "$inc": {"revision": 1},
+            },
+            return_document=ReturnDocument.AFTER,
+        )
+        return cls.from_dict(row)
+
+    @classmethod
+    def find_due_retention_ids(cls, limit=100):
+        now = datetime.now(timezone.utc)
+        cursor = (
+            get_db()[cls.collection_name]
+            .find(
+                {
+                    "retention_expires_at": {"$lte": now},
+                    "legal_hold": {"$ne": True},
+                    "$or": [
+                        {"storage_state": "available"},
+                        {"storage_state": {"$exists": False}},
+                    ],
+                },
+                {"_id": 1},
+            )
+            .sort("retention_expires_at", 1)
+            .limit(max(1, min(int(limit), 1000)))
+        )
+        return [str(row["_id"]) for row in cursor]
 
     def mark_deletion_failed(self, error_code):
         get_db()[self.collection_name].update_one(
@@ -760,6 +895,10 @@ class Document:
         collection.create_index("uploaded_at")
         collection.create_index("upload_session_id", unique=True, sparse=True)
         collection.create_index([("storage_state", 1), ("updated_at", 1)])
+        collection.create_index(
+            [("legal_hold", 1), ("retention_expires_at", 1), ("storage_state", 1)],
+            name="document_retention_cleanup",
+        )
         collection.create_index(
             [("ai_analysis_status", 1), ("ai_analysis_next_attempt_at", 1)],
             name="document_ai_analysis_reconciliation",

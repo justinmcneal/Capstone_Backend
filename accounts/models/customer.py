@@ -52,6 +52,18 @@ class Customer:
         self.profile_cleanup_completed_at = kwargs.get(
             "profile_cleanup_completed_at"
         )
+        self.document_cleanup_status = kwargs.get("document_cleanup_status")
+        self.document_cleanup_counts = kwargs.get("document_cleanup_counts", {})
+        self.document_cleanup_attempts = kwargs.get("document_cleanup_attempts", 0)
+        self.document_cleanup_last_error = kwargs.get(
+            "document_cleanup_last_error", ""
+        )
+        self.document_cleanup_last_attempt_at = kwargs.get(
+            "document_cleanup_last_attempt_at"
+        )
+        self.document_cleanup_completed_at = kwargs.get(
+            "document_cleanup_completed_at"
+        )
         self.security_version = kwargs.get("security_version", 1)
         self.created_at = kwargs.get("created_at", datetime.now(timezone.utc))
         self.updated_at = kwargs.get("updated_at", datetime.now(timezone.utc))
@@ -198,6 +210,12 @@ class Customer:
             "profile_cleanup_last_error": self.profile_cleanup_last_error,
             "profile_cleanup_last_attempt_at": self.profile_cleanup_last_attempt_at,
             "profile_cleanup_completed_at": self.profile_cleanup_completed_at,
+            "document_cleanup_status": self.document_cleanup_status,
+            "document_cleanup_counts": self.document_cleanup_counts,
+            "document_cleanup_attempts": self.document_cleanup_attempts,
+            "document_cleanup_last_error": self.document_cleanup_last_error,
+            "document_cleanup_last_attempt_at": self.document_cleanup_last_attempt_at,
+            "document_cleanup_completed_at": self.document_cleanup_completed_at,
             "security_version": self.security_version,
             "created_at": self.created_at,
             "updated_at": self.updated_at,

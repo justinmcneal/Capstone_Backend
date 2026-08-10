@@ -18,6 +18,7 @@ from accounts.utils.response_helpers import error_response, success_response
 from accounts.utils.throttles import DocumentUploadRateThrottle
 from accounts.utils.validation_utils import sanitize_filename, sanitize_text
 from analytics.models import AuditLog  # noqa: F401 - test integration compatibility
+from documents.metrics import DOCUMENT_OPERATIONS, increment
 from documents.models import (
     DOCUMENT_STATUSES,
     DOCUMENT_TYPES,
@@ -267,6 +268,7 @@ class DocumentUploadView(AccessControlMixin, APIView):
             from documents.serializers import DocumentResponseSerializer
 
             response_data = DocumentResponseSerializer(document).data
+            increment(DOCUMENT_OPERATIONS, operation="upload", outcome="completed")
 
             return success_response(
                 data=response_data,
@@ -275,6 +277,7 @@ class DocumentUploadView(AccessControlMixin, APIView):
             )
 
         except Exception as e:
+            increment(DOCUMENT_OPERATIONS, operation="upload", outcome="failed")
             if stored_file_path and not document_committed:
                 try:
                     if not storage.delete(stored_file_path):
@@ -859,6 +862,7 @@ class DocumentPresignedFinalizeView(AccessControlMixin, APIView):
                 ip_address=get_client_ip(request),
             )
         except PresignedUploadError as exc:
+            increment(DOCUMENT_OPERATIONS, operation="finalize", outcome="failed")
             record_document_audit(
                 action="document_upload_finalized",
                 description="Document upload finalization rejected",
@@ -880,6 +884,11 @@ class DocumentPresignedFinalizeView(AccessControlMixin, APIView):
                 "upload_session_id": str(session_id),
             },
             **_audit_actor(request),
+        )
+        increment(
+            DOCUMENT_OPERATIONS,
+            operation="finalize",
+            outcome="replayed" if replayed else "completed",
         )
 
         from documents.serializers import DocumentResponseSerializer

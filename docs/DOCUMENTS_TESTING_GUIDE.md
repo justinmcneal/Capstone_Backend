@@ -16,6 +16,7 @@ This guide documents the **Documents service API** under `/api/documents/` for A
 - Presigned direct-upload support for S3-like backends
 - Upload validation, file scanning, and storage backend abstraction
 - AI/CNN document analysis behavior, training, and validation tooling
+- Retention, legal holds, account-deletion cleanup, storage inventory, and metrics
 
 Documents are **mutable** — upload, verify, reject, delete, and re-upload all change state and trigger side effects (audit logs, emails, reviewer notifications).
 
@@ -36,6 +37,7 @@ Content-Type: application/json
 | `docs/AUTH_ACCESS_SECURITY_GUIDE.md` | Account roles, permissions, and JWT auth |
 | `docs/DOCUMENTS_PRODUCTION_READINESS_REVIEW.md` | Documents module review, risks, and roadmap |
 | `docs/documents/DOCUMENT_AI_GOVERNANCE.md` | AI intended use, consent, approval, rollback, and monitoring gates |
+| `docs/documents/DOCUMENTS_OPERATIONS_RUNBOOK.md` | S3, retention, legal hold, inventory, monitoring, and restore operations |
 | `docs/ANALYTICS_TESTING_GUIDE.md` | Audit log endpoints that record document actions |
 | `docs/LOANS_TESTING_GUIDE.md` | Loan APIs that generate dependent document requirements |
 
@@ -692,13 +694,33 @@ Standard success shape:
     existing `REAL_MONGO_TEST_URI` isolated-test contract; do not point it at a
     deployment database.
 
-Focused Stage 3–6 regression command:
+15. Stage 7 tests cover versioned deadlines, rejected/superseded retention,
+    legal-hold exclusion/release, account cleanup reconciliation, safe customer
+    export, count-only inventory, fail-closed storage behavior, and operational
+    backlog metrics. They do not inspect the real bucket.
+
+Stage 7 focused command:
+
+```bash
+pytest -q tests/test_documents_stage7_retention_operations.py
+```
+
+Read-only deployment checks (run only after selecting the intended isolated
+Mongo/S3 environment):
+
+```bash
+python manage.py validate_document_storage
+python manage.py inventory_document_storage
+```
+
+Focused Stage 3–7 regression command:
 
 ```bash
 pytest -q tests/test_documents_stage3_consistency.py \
   tests/test_documents_stage4_authorization_audit.py \
   tests/test_documents_stage5_scalable_listing.py \
   tests/test_documents_stage6_background_ai_notifications.py \
+  tests/test_documents_stage7_retention_operations.py \
   tests/test_documents_stage1_contract.py \
   tests/test_documents_stage2_presigned_upload.py tests/test_documents_api.py
 ```

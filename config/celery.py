@@ -59,6 +59,14 @@ app.conf.beat_schedule = {
         "task": "documents.reconcile_reviewer_notifications",
         "schedule": crontab(minute="*"),
     },
+    "enforce-document-retention-daily": {
+        "task": "documents.enforce_retention",
+        "schedule": crontab(hour=1, minute=0),
+    },
+    "collect-document-operational-metrics-every-15-minutes": {
+        "task": "documents.collect_operational_metrics",
+        "schedule": crontab(minute="*/15"),
+    },
     "check-overdue-daily": {
         "task": "loans.tasks.check_overdue_installments_task",
         "schedule": crontab(hour=0, minute=0),

@@ -291,7 +291,11 @@ def finalize_scheduled_customer_deletions_task():
                 },
                 {
                     "account_state": "deleted",
-                    "profile_cleanup_status": "pending",
+                    "$or": [
+                        {"profile_cleanup_status": "pending"},
+                        {"document_cleanup_status": "pending"},
+                        {"document_cleanup_status": {"$exists": False}},
+                    ],
                 },
             ]
         }

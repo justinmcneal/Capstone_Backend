@@ -2,6 +2,8 @@
 
 import logging
 
+from django.conf import settings
+
 from documents.models import Document, DocumentStorageCleanup
 
 logger = logging.getLogger("documents")
@@ -30,10 +32,30 @@ def reconcile_storage_operations(*, storage, limit=100):
     }
 
     for document in Document.find_deletion_candidates(limit=limit):
+        customer_id = document.customer_id
         try:
             if storage.delete(document.file_path):
+                from documents.models import DocumentNotificationDelivery
+
+                settings.MONGODB[
+                    DocumentNotificationDelivery.collection_name
+                ].delete_many({"document_id": document.id})
                 if document.complete_deletion():
+                    from documents.services.lifecycle import (
+                        refresh_customer_document_cleanup,
+                    )
+
                     result["document_deletions_completed"] += 1
+                    try:
+                        refresh_customer_document_cleanup(
+                            settings.MONGODB, customer_id
+                        )
+                    except Exception:
+                        # The scheduled account lifecycle pass recomputes this
+                        # marker; do not misreport a completed object deletion.
+                        logger.exception(
+                            "Document account-cleanup marker refresh failed"
+                        )
             else:
                 document.mark_deletion_failed("storage_delete_failed")
                 result["document_deletions_failed"] += 1

@@ -10,6 +10,7 @@ import posixpath
 import time
 import uuid
 from datetime import datetime, timezone
+from pathlib import Path
 
 import boto3
 from boto3.s3.transfer import S3Transfer, TransferConfig
@@ -54,6 +55,14 @@ class StorageBackend:
         """Move a validated quarantine object into durable document storage."""
         raise NotImplementedError
 
+    def object_exists(self, file_path):
+        """Return whether an object exists without returning its contents."""
+        raise NotImplementedError
+
+    def list_keys(self, prefix="documents"):
+        """Yield object keys for read-only reconciliation inventories."""
+        raise NotImplementedError
+
 
 class LocalStorageBackend(StorageBackend):
     """
@@ -63,8 +72,14 @@ class LocalStorageBackend(StorageBackend):
     """
 
     def __init__(self):
-        self.base_path = getattr(settings, "MEDIA_ROOT", "media")
+        self.base_path = Path(getattr(settings, "MEDIA_ROOT", "media")).resolve()
         self.base_url = getattr(settings, "MEDIA_URL", "/media/")
+
+    def _full_path(self, file_path):
+        candidate = (self.base_path / str(file_path)).resolve()
+        if candidate != self.base_path and self.base_path not in candidate.parents:
+            raise ValueError("Document path escapes configured local storage")
+        return candidate
 
     def _generate_filename(self, original_filename):
         """Generate unique filename while preserving extension"""
@@ -92,13 +107,13 @@ class LocalStorageBackend(StorageBackend):
         """
         # Create directory structure
         relative_dir = os.path.join("documents", str(customer_id), document_type)
-        full_dir = os.path.join(self.base_path, relative_dir)
+        full_dir = self._full_path(relative_dir)
         self._ensure_directory(full_dir)
 
         # Generate unique filename
         new_filename = self._generate_filename(original_filename)
         relative_path = os.path.join(relative_dir, new_filename)
-        full_path = os.path.join(self.base_path, relative_path)
+        full_path = self._full_path(relative_path)
 
         # Save file
         with open(full_path, "wb+") as destination:
@@ -113,7 +128,7 @@ class LocalStorageBackend(StorageBackend):
 
     def delete(self, file_path):
         """Delete file from local filesystem"""
-        full_path = os.path.join(self.base_path, file_path)
+        full_path = self._full_path(file_path)
 
         if os.path.exists(full_path):
             os.remove(full_path)
@@ -130,13 +145,24 @@ class LocalStorageBackend(StorageBackend):
 
     def get_full_path(self, file_path):
         """Get full filesystem path for internal use (e.g., CNN analysis)"""
-        return os.path.join(self.base_path, file_path)
+        return str(self._full_path(file_path))
 
     def get_file_bytes(self, file_path):
         """Read file bytes from local filesystem."""
         full_path = self.get_full_path(file_path)
         with open(full_path, "rb") as source:
             return source.read()
+
+    def object_exists(self, file_path):
+        return self._full_path(file_path).is_file()
+
+    def list_keys(self, prefix="documents"):
+        root = self._full_path(prefix)
+        if not root.exists():
+            return
+        for path in root.rglob("*"):
+            if path.is_file():
+                yield path.relative_to(self.base_path).as_posix()
 
 
 class S3StorageBackend(StorageBackend):
@@ -155,7 +181,14 @@ class S3StorageBackend(StorageBackend):
         self.object_parameters = getattr(settings, "AWS_S3_OBJECT_PARAMETERS", {}) or {}
         self.url_expiry = getattr(settings, "AWS_S3_PRESIGNED_URL_EXPIRY_SECONDS", 3600)
         # Configure client with conservative retry policy
-        botocore_config = Config(retries={"max_attempts": 3, "mode": "standard"})
+        botocore_config = Config(
+            retries={
+                "max_attempts": int(
+                    getattr(settings, "AWS_S3_UPLOAD_MAX_ATTEMPTS", 3)
+                ),
+                "mode": "standard",
+            }
+        )
         self.s3 = boto3.client(
             "s3",
             region_name=self.region_name,
@@ -290,7 +323,7 @@ class S3StorageBackend(StorageBackend):
             return f"https://{self.custom_domain}/{file_path}"
 
         if not self.bucket_name:
-            return file_path
+            return None
 
         try:
             return self.s3.generate_presigned_url(
@@ -302,7 +335,10 @@ class S3StorageBackend(StorageBackend):
             logger.warning(
                 "Failed to generate presigned URL for %s: %s", file_path, exc
             )
-            return f"s3://{self.bucket_name}/{file_path}"
+            from documents.metrics import DOCUMENT_URL_ERRORS, increment
+
+            increment(DOCUMENT_URL_ERRORS)
+            return None
 
     def generate_presigned_get_url(self, file_path, expires_in=None):
         """Generate a presigned GET URL for the given object key."""
@@ -380,6 +416,18 @@ class S3StorageBackend(StorageBackend):
             {"x-amz-meta-sha256": expected_sha256.lower()},
             ["content-length-range", expected_size, expected_size],
         ]
+        server_side_encryption = self.object_parameters.get("ServerSideEncryption")
+        if server_side_encryption:
+            metadata_fields["x-amz-server-side-encryption"] = server_side_encryption
+            conditions.append(
+                {"x-amz-server-side-encryption": server_side_encryption}
+            )
+        kms_key_id = self.object_parameters.get("SSEKMSKeyId")
+        if kms_key_id:
+            metadata_fields["x-amz-server-side-encryption-aws-kms-key-id"] = kms_key_id
+            conditions.append(
+                {"x-amz-server-side-encryption-aws-kms-key-id": kms_key_id}
+            )
         post = self.generate_presigned_post(
             object_key,
             expires_in=expires_in,
@@ -456,6 +504,24 @@ class S3StorageBackend(StorageBackend):
             logger.exception("Failed to read file bytes from S3: %s", exc)
             raise
 
+    def object_exists(self, file_path):
+        try:
+            self.s3.head_object(Bucket=self.bucket_name, Key=file_path)
+            return True
+        except ClientError as exc:
+            code = str(exc.response.get("Error", {}).get("Code", ""))
+            if code in {"404", "NoSuchKey", "NotFound"}:
+                return False
+            raise
+
+    def list_keys(self, prefix="documents"):
+        paginator = self.s3.get_paginator("list_objects_v2")
+        for page in paginator.paginate(Bucket=self.bucket_name, Prefix=prefix):
+            for item in page.get("Contents", []):
+                key = item.get("Key")
+                if key:
+                    yield key
+
 
 def get_storage_backend():
     """
@@ -472,6 +538,4 @@ def get_storage_backend():
         return LocalStorageBackend()
     if backend_type == "s3":
         return S3StorageBackend()
-    else:
-        logger.warning(f"Unknown storage backend '{backend_type}', using local")
-        return LocalStorageBackend()
+    raise ValueError(f"Unsupported document storage backend: {backend_type}")

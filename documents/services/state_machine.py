@@ -4,7 +4,9 @@ Stage 1 centralized the contract. Stage 3 made these transitions atomic at the
 MongoDB write boundary with revision guards.
 """
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+
+from django.conf import settings
 
 
 class DocumentTransitionError(ValueError):
@@ -67,6 +69,12 @@ def apply_review_decision(
         document.verified_by = None
         document.verified_at = None
         document.rejection_reason = rejection_reason
+        document.retention_expires_at = decision_time + timedelta(
+            days=int(getattr(settings, "DOCUMENT_REJECTED_RETENTION_DAYS", 90))
+        )
+        document.retention_policy_version = getattr(
+            settings, "DOCUMENT_RETENTION_POLICY_VERSION", "unversioned"
+        )
 
     if notes is not None:
         document.notes = notes

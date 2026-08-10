@@ -27,6 +27,9 @@ database initialization mechanism.
 - Profiles: implementation, local tests, real-Mongo concurrency/index tests, and
   development inventories complete. Only deployment-target inventories and
   infrastructure validation remain for release.
+- Documents: Stages 1–7 are complete at code and local-test level. Representative
+  AI data/artifact approval and isolated MongoDB/S3/Redis/Celery/restore/
+  monitoring evidence remain deployment release gates.
 
 ## Development Quick Start
 
@@ -243,6 +246,43 @@ python scripts/backfill_business_age_months.py --apply
 
 Ambiguous legacy values remain unchanged for manual review.
 
+### Documents Commands
+
+#### Inventory storage consistency
+
+This command is read-only and prints aggregate counts, never object keys,
+filenames, paths, or customer identifiers:
+
+```bash
+python manage.py inventory_document_storage
+```
+
+#### Manage a document legal hold
+
+```bash
+# Preview only
+python manage.py manage_document_legal_hold DOCUMENT_ID --action set \
+  --reason "CASE_REFERENCE" --operator "ADMIN_ID"
+
+# Apply an approved hold or release
+python manage.py manage_document_legal_hold DOCUMENT_ID --action set \
+  --reason "CASE_REFERENCE" --operator "ADMIN_ID" --apply
+python manage.py manage_document_legal_hold DOCUMENT_ID --action release \
+  --operator "ADMIN_ID" --apply
+```
+
+#### Validate private S3 configuration
+
+Run this read-only check only after selecting the intended isolated/deployment
+environment:
+
+```bash
+python manage.py validate_document_storage
+```
+
+It validates public-access blocking, encryption, object ownership, CORS, and URL
+expiry. IAM policy and backup/restore evidence require separate operator review.
+
 ## Testing and Static Validation
 
 ```bash
@@ -251,6 +291,9 @@ pytest -q
 
 # Profiles-focused suite
 pytest -q tests/test_profiles*.py
+
+# Documents-focused suite
+pytest -q tests/test_documents*.py tests/test_s3*.py
 
 # Accounts-focused suites
 pytest -q accounts/tests tests/test_accounts*.py
@@ -340,5 +383,9 @@ thread pool and defaults to `4`. Tune it only after observing workload and CPU.
 - [Profiles completion policy](docs/profiles/PROFILES_COMPLETION_POLICY.md)
 - [Profiles risk-scoring policy](docs/profiles/PROFILES_RISK_SCORING_POLICY.md)
 - [Profiles operations](docs/profiles/PROFILES_OPERATIONS.md)
+- [Documents production readiness](docs/DOCUMENTS_PRODUCTION_READINESS_REVIEW.md)
+- [Documents testing guide](docs/DOCUMENTS_TESTING_GUIDE.md)
+- [Documents operations](docs/documents/DOCUMENTS_OPERATIONS_RUNBOOK.md)
+- [Documents AI governance](docs/documents/DOCUMENT_AI_GOVERNANCE.md)
 - [API reference](docs/feats/API_REFERENCE.md)
 - [Deployment and operations](docs/feats/DEPLOYMENT_AND_OPERATIONS_GUIDE.md)

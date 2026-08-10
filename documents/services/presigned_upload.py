@@ -288,6 +288,20 @@ def cleanup_expired_upload_sessions(*, storage, limit=100):
             deleted = not session.object_key or storage.delete(session.object_key)
             if deleted and session.mark_expired_and_cleaned():
                 cleaned += 1
+                try:
+                    from documents.services.lifecycle import (
+                        refresh_customer_document_cleanup,
+                    )
+
+                    refresh_customer_document_cleanup(
+                        settings.MONGODB, session.customer_id
+                    )
+                except Exception:
+                    # Account lifecycle retries this aggregate marker. The
+                    # quarantine object/session cleanup already succeeded.
+                    logger.exception(
+                        "Upload-session account-cleanup marker refresh failed"
+                    )
             elif not deleted:
                 failed += 1
         except Exception:

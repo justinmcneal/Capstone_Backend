@@ -354,35 +354,43 @@ reasons are excluded from audit payloads. Failed writes are queued under the
 closed with `503`; post-commit mutation audit failures do not misreport the
 mutation as failed.
 
-### 7. Error handling can expose internals
+### 7. Error handling and storage fallback are remediated
 
 - Stage 1 now returns `400 Invalid document_id format` for malformed IDs in
   detail, delete, verify, and request-reupload handlers.
-- Upload stores `str(exception)` in `ai_analysis` and treats an analyzer exception
-  as valid; that internal message can later be returned through the API.
+- Background analysis stores allowlisted error codes and does not expose raw
+  exception messages through document responses.
 - Verification no longer logs the authenticated email or request payload.
-- S3 URL generation can fall back to returning an internal `s3://` URI.
-- Unknown storage backend names silently fall back to local storage.
+- S3 URL failures return no URL and increment an operational counter; internal
+  `s3://` identifiers are never returned to clients.
+- Unknown storage backend names fail closed, and local paths are constrained to
+  the configured media root.
 
-### 8. Production storage configuration is not wired
+### 8. Production storage configuration is implemented at code level
 
-`config/settings.py` hard-codes `DOCUMENT_STORAGE_BACKEND = 'local'` and does not
-load the AWS settings consumed by `S3StorageBackend`. `.env.example` lists those
-variables, but setting them does not configure this Django settings module.
-Local media serving is only wired through Django in debug mode, so this is a
-deployment blocker rather than a harmless default.
+Settings now load and validate the selected backend, S3 bucket/region,
+credentials or workload identity inputs, endpoint, ACL, signature version,
+encryption parameters, URL expiry, multipart sizing, and retry controls. Local
+storage is rejected when `DEBUG=False`; S3 overwrite, public ACLs/custom-domain
+downloads, unsupported signatures, missing bucket configuration, and absent
+server-side encryption fail startup validation.
 
-Production must fail closed on an unknown/missing backend, validate bucket and
-region configuration at startup, require private objects and encryption at
-rest, and define presigned URL expiry/CORS/lifecycle behavior.
+The read-only `validate_document_storage` command checks the deployment bucket's
+public-access block, default encryption, object ownership, CORS origins/methods,
+and URL expiry. IAM policy and bucket lifecycle evidence still require review in
+the isolated deployment target.
 
-### 9. Document retention and customer lifecycle are missing
+### 9. Document retention and customer lifecycle are implemented
 
-The Profiles lifecycle cleanup removes profile-domain records but does not
-remove document metadata or stored document objects. No document retention,
-legal-hold, expiry, account-deletion, orphan inventory, or cleanup command was
-found. Document data is also absent from the profile-only customer export, with
-no separate Documents export policy documented.
+New records receive a versioned retention deadline. Rejected and superseded
+records receive configured shorter deadlines, while legal holds prevent
+retention deletion until explicit release. A daily bounded task claims due
+records into the retryable storage deletion workflow. Account deletion has a
+separate durable document-cleanup marker, expires active upload sessions, claims
+non-held objects, and remains pending until reconciliation removes object and
+metadata. Customer exports contain allowlisted metadata but exclude filenames,
+paths, hashes, URLs, review notes, and AI output. Count-only inventory and a
+dry-run legal-hold command support operations without printing storage IDs.
 
 ### 10. AI operational governance is incomplete
 
@@ -634,24 +642,30 @@ enforcement tooling now exists.
 
 ### Stage 7 — Retention, deployment configuration, and operations
 
-**Status: Blocked for production**
+**Status: Complete at code and automated-test level; deployment validation pending**
 
-- [ ] Load `DOCUMENT_STORAGE_BACKEND` and all required S3 options from validated
-  settings; fail closed outside development.
-- [ ] Define and test private bucket, server-side encryption, CORS, URL expiry,
-  object ownership, and least-privilege IAM requirements.
-- [ ] Integrate document metadata and objects with customer account deletion,
-  including retryable partial-cleanup state.
-- [ ] Define retention periods, legal hold, expiry, superseded-document cleanup,
-  customer export, and backup/restore behavior.
-- [ ] Add dry-run-by-default orphan, missing-object, expired-upload-session,
-  contradictory-state, and deleted-customer retention inventories.
-- [ ] Add metrics/alerts for upload/finalize failures, orphan counts, storage
-  reconciliation, review backlog/age, notification failures, AI failures, audit
-  backlog, and URL-generation errors.
+- [x] ~~Load `DOCUMENT_STORAGE_BACKEND` and all required S3 options from validated
+  settings; fail closed outside development.~~
+- [x] ~~Define private bucket, server-side encryption, CORS, URL expiry, object
+  ownership, and least-privilege IAM requirements; add a read-only validator for
+  bucket controls. Deployed IAM proof remains in the environmental gate.~~
+- [x] ~~Integrate document metadata and objects with customer account deletion,
+  including retryable partial-cleanup state.~~
+- [x] ~~Define retention periods, legal hold, expiry, superseded-document cleanup,
+  customer export, and backup/restore behavior in the operations runbook.~~
+- [x] ~~Add read-only orphan, missing-object, expired-upload-session,
+  contradictory-state, and deleted-customer retention inventories.~~
+- [x] ~~Add metrics for upload/finalize failures, storage reconciliation,
+  review backlog/age, notification failures, AI failures, audit backlog,
+  retention/legal holds, and URL-generation errors, with alert guidance in the
+  runbook. Orphan/missing counts come from the deliberate inventory command.~~
 - [ ] Validate real MongoDB indexes/concurrency, object storage, Redis/Celery,
   encryption keys, proxies, throttles, logging, restore, and monitoring in an
   isolated deployment-like environment before production release.
+
+Stage 7's implementation is complete. The final unchecked item is intentionally
+environmental: it must produce evidence from the actual deployment topology and
+cannot be satisfied by mocked tests or development configuration.
 
 ## API and Client Impact Notes
 
