@@ -164,3 +164,20 @@ synthetic content. Validate fail-closed outage behavior separately by making the
 scanner unavailable in the isolated environment and confirming `/api/health/`
 and uploads return `503`; do not stop a shared or production scanner for this
 test.
+
+## Development Stage 7 evidence
+
+On 2026-08-11, the Documents real-Mongo pagination/index and concurrent-review
+tests passed against randomly named temporary databases. A temporary
+loopback-only Redis with persistence disabled and a Celery worker restricted to
+a dedicated validation queue returned a successful control ping; both were then
+stopped. A process-only production configuration profile passed Django's
+deployment check with S3, non-CNN mode, required ClamAV, Redis cache, HTTPS,
+HSTS, and secure cookies selected.
+
+The count-only development inventory reported one orphaned local-storage object
+and no other consistency, retention, legal-hold, or deleted-customer findings.
+Do not delete the orphan without resolving its exact ownership and retention
+requirements. This development evidence does not satisfy S3 IAM/bucket,
+ClamAV, encryption-key rotation, proxy, restore, logging, metrics, or alert
+validation in the eventual deployment environment.
