@@ -226,6 +226,7 @@ Content-Type: application/json
   - `personal_profile.profile_revision`
   - `personal_profile.completion_policy_version`
   - `personal_profile.missing_fields`
+
   - `business_profile.completed`
   - `business_profile.has_business_type`
   - `business_profile.has_income_info`
@@ -233,6 +234,7 @@ Content-Type: application/json
   - `business_profile.completion_percentage`
   - `business_profile.completion_policy_version`
   - `business_profile.missing_fields`
+
   - `alternative_data.completed`
   - `alternative_data.has_risk_score`
   - `alternative_data.risk_category`
@@ -246,6 +248,7 @@ Content-Type: application/json
   - `alternative_data.completion_percentage`
   - `alternative_data.completion_policy_version`
   - `alternative_data.missing_fields`
+
   - `documents.total`
   - `documents.approved`
   - `documents.pending`
@@ -253,6 +256,7 @@ Content-Type: application/json
   - `documents.reupload_requested`
   - `documents.all_approved`
   - `documents.has_documents`
+  
   - `overall.profiles_complete`
   - `overall.sections_complete`
   - `overall.total_sections`
