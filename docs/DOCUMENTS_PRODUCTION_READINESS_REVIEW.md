@@ -1,6 +1,6 @@
 # Documents Production Readiness Review
 
-Last updated: 2026-08-10
+Last updated: 2026-08-11
 
 Scope: `documents/` plus document routes, serializers, PyMongo persistence,
 local/S3 storage, presigned uploads, AI/CNN analysis, reviewer notifications,
@@ -58,8 +58,10 @@ with indexed exact search, and bulk-resolves page customer names. Stage 6 moves
 image analysis out of upload requests, adds consent-aware leased retries,
 durable reviewer/customer notification delivery, artifact integrity gates, and
 fail-closed dataset validation. Stage 7 implements retention and operational
-controls. Remaining blockers are representative AI data/artifact approval,
-production content-scanning policy, and isolated deployment validation.
+controls. Fail-closed ClamAV streaming now covers direct and presigned uploads,
+with a production-safe PDF policy. Remaining blockers are representative AI
+data/artifact approval and isolated deployment validation, including a live
+private scanner.
 
 Current remediation status:
 
@@ -126,14 +128,21 @@ The following routes are registered under `/api/documents/`:
   pixel-count, and decompression-bomb limits.
 - The complete bounded PDF upload receives a heuristic scan for selected active-
   content markers.
+- When enabled, every structurally valid direct or presigned upload is streamed
+  to ClamAV before durable storage or quarantine promotion. A detection is
+  rejected with a generic message and a missing/invalid scanner verdict fails
+  closed with `503`.
+- Production startup requires malware scanning to be enabled and required.
+  Development may disable it. Production defaults PDF uploads to `disabled`;
+  operators may select `scan` only after approving the scanner-only PDF risk.
 - Document type and description are validated and text fields are sanitized.
 - Upload endpoints use `DocumentUploadRateThrottle`, currently configured at
   100 requests per hour per authenticated user.
 
-These are useful defenses, not a malware-scanning boundary. PDF matching remains
-heuristic; there is no external AV/sandbox/content-disarm service. Presigned
-uploads are quarantined, while direct uploads are structurally validated before
-durable save.
+ClamAV supplies the malware-scanning boundary when deployed. It is not a sandbox
+or content-disarm-and-reconstruction (CDR) service, so PDF active-content
+matching remains heuristic. The safe production default rejects PDFs unless an
+explicitly approved policy changes `DOCUMENT_PDF_UPLOAD_POLICY` to `scan`.
 
 ### Authorization foundations
 
@@ -179,6 +188,9 @@ durable save.
 - Finalization attempts the normal upload audit and reviewer notification after
   durable creation without returning a misleading mutation failure for an audit
   failure.
+- Scanner outages return the claimed session to `issued`, extend its retry
+  window, return `503`, and leave the object quarantined. Malware detections and
+  other permanent content failures invalidate the session and clean the object.
 - A ten-minute Celery Beat task deletes expired/failed quarantine objects and
   marks sessions expired. Completed/cleaned sessions receive a one-day TTL.
 - The workflow is feature-gated by
@@ -305,6 +317,11 @@ image contents:
   Documents/S3/analyzer run passed 85 tests with one real-S3 skip. The full suite
   collected 1,069 tests: 1,049 passed and 20 opt-in integration tests were
   skipped.
+- Malware-scanning hardening adds nine focused tests for the ClamAV protocol,
+  fail-closed errors, health, generic detection, PDF policy, direct-upload `503`,
+  and retry-safe presigned finalization. The Documents/S3 run passed 93 tests
+  with one gated real-S3 skip. The full suite collected 1,078 tests: 1,058
+  passed and 20 opt-in integration tests were skipped.
 
 ## Confirmed Production Blockers and Gaps
 
@@ -406,20 +423,22 @@ metadata. Customer exports contain allowlisted metadata but exclude filenames,
 paths, hashes, URLs, review notes, and AI output. Count-only inventory and a
 dry-run legal-hold command support operations without printing storage IDs.
 
-### 10. Production content-scanning policy remains open
+### 10. Production content-scanning enforcement is implemented; deployment proof remains
 
-Signature/type checks, image verification, active-PDF marker checks, quarantine,
-size limits, and executable-header rejection are implemented. They are not a
-malware-scanning or content-disarm boundary. Before production, explicitly
-approve one of these policies:
+Direct and presigned uploads use the same fail-closed ClamAV INSTREAM service
+after signature/type, executable-header, image-resource, and active-PDF checks.
+Scanner failures return a sanitized `503`; presigned objects remain quarantined
+and retryable. Health reports only availability, required state, and a generic
+status. Low-cardinality metrics record clean, detected, unavailable, or disabled
+outcomes without content, filenames, signatures, or customer data.
 
-- require a fail-closed malware scanner for direct and presigned uploads, with
-  health checks, timeout/retry behavior, and sanitized operational metrics; or
-- temporarily disallow content types that cannot meet the approved scanning
-  policy.
-
-Independent of that policy decision, image pixel/decompression limits and
-fail-closed required image-analysis dependencies are code-enforceable work.
+Outside development, startup rejects disabled or optional malware scanning and
+defaults `DOCUMENT_PDF_UPLOAD_POLICY` to `disabled`. ClamAV is not a PDF CDR or
+sandbox. Enabling PDFs with `scan` therefore requires an explicit risk approval,
+or deployment of a separately approved disarm/sandbox boundary. The remaining
+release work is environmental: deploy ClamAV privately, verify signature updates
+and stream-size policy, exercise clean/detected/outage behavior, and alert on
+readiness and unavailable outcomes.
 
 ### 11. AI evidence and artifact approval remain incomplete
 
@@ -502,10 +521,13 @@ Stage 1 contract decisions:
 - [x] ~~Reject configured image width/height/pixel limits and Pillow
   decompression-bomb findings before storage; scan the complete bounded PDF for
   prohibited active-content markers.~~
+- [x] ~~Apply fail-closed ClamAV streaming to direct and presigned uploads; add
+  sanitized health/metrics, safe `503` behavior, retryable quarantine on scanner
+  outage, and a production-default PDF deny policy.~~
 
-The approved antivirus/sandbox/content-disarm policy remains part of the broader
-content-security/operations release gate; the Stage 2 workflow ensures
-unvalidated presigned content is never promoted into document storage.
+Live-scanner validation remains part of the deployment gate. ClamAV does not
+claim sandbox/CDR protection; PDFs remain disabled by production default unless
+that residual risk is explicitly approved.
 
 ### Stage 3 — Atomic lifecycle transitions and storage consistency
 
@@ -663,9 +685,12 @@ enforcement tooling now exists.
 - [x] ~~Add explicitly gated real-Mongo document concurrency/index and real-S3
   quarantine/finalize/replay/cleanup harnesses. They remain skipped until an
   approved isolated target is supplied.~~
+- [x] ~~Require fail-closed malware scanning outside development and expose a
+  sanitized scanner readiness component and low-cardinality scan metrics.~~
 - [ ] Validate real MongoDB indexes/concurrency, object storage, Redis/Celery,
-  encryption keys, proxies, throttles, logging, restore, and monitoring in an
-  isolated deployment-like environment before production release.
+  ClamAV clean/detected/outage behavior, encryption keys, proxies, throttles,
+  logging, restore, and monitoring in an isolated deployment-like environment
+  before production release.
 
 Stage 7's implementation is complete. The final unchecked item is intentionally
 environmental: it must produce evidence from the actual deployment topology and
@@ -689,6 +714,9 @@ cannot be satisfied by mocked tests or development configuration.
 - Upload/finalize clients must treat `ai_analysis_status` as asynchronous. They
   should not expect a quality score or `needs_review` decision in the initial
   upload response and may refresh list/detail to observe completion.
+- Direct and finalize clients must treat `503` as a temporary scanning outage.
+  Direct uploads resend the file; presigned clients retry finalization with the
+  same session/token while it remains valid and must not upload a second object.
 
 ## Documentation and Test Alignment
 
@@ -703,7 +731,7 @@ lifecycle actions were covered are superseded by this evidence-based review.
 ## Release Gate
 
 Do not classify the Documents module as production-ready until all seven stages
-are complete, the approved content-scanning policy is enforced, focused and full
-suites pass, real MongoDB concurrency/index tests pass, an isolated object-
-storage workflow proves upload/finalize/cleanup, and deployment configuration,
-restore, retention, audit, metrics, and alerts are validated.
+are complete, focused and full suites pass, real MongoDB concurrency/index tests
+pass, an isolated object-storage workflow proves upload/finalize/cleanup, the
+private ClamAV deployment proves clean/detected/outage behavior, and deployment
+configuration, restore, retention, audit, metrics, and alerts are validated.

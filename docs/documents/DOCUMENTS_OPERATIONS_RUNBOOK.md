@@ -1,6 +1,6 @@
 # Documents Operations Runbook
 
-Last updated: 2026-08-10
+Last updated: 2026-08-11
 
 This runbook covers private object storage, retention, legal holds, account
 deletion cleanup, consistency inventory, monitoring, backup/restore, and the
@@ -77,6 +77,26 @@ deleted-customer records, retention-due records, and legal holds. It never
 prints keys, paths, filenames, or customer IDs and performs no correction.
 Investigate non-zero findings before an approved corrective action.
 
+## Malware scanner and PDF policy
+
+Production requires `DOCUMENT_MALWARE_SCAN_ENABLED=True` and
+`DOCUMENT_MALWARE_SCAN_REQUIRED=True`. Run the configured ClamAV daemon on a
+private application network; do not expose TCP 3310 publicly. Restrict network
+access to the API workloads, keep signatures updated, and set ClamAV's stream
+maximum above the application's 10 MB upload limit. The application timeout and
+chunk settings must remain within the startup-validated bounds.
+
+`/api/health/` reports a sanitized `document_malware_scanner` component. Verify
+clean, detected, timeout, invalid-response, and unavailable cases in the
+isolated deployment environment. Alert when required readiness fails or
+`documents_operations_total{operation="malware_scan",outcome="unavailable"}`
+increases. Neither metrics nor logs may contain content, filenames, scanner
+signatures, hashes, or customer identifiers.
+
+Keep `DOCUMENT_PDF_UPLOAD_POLICY=disabled` unless security owners explicitly
+approve scanner-only PDFs or provide a separate approved sandbox/CDR boundary.
+ClamAV detects known malware but does not disarm arbitrary active PDF content.
+
 ## Monitoring and alerts
 
 Scrape the `documents_*` Prometheus metrics. Alert when:
@@ -116,10 +136,11 @@ access-controlled recovery environment and retain the evidence/change record.
 
 Before release, use an isolated deployment-like environment to validate real
 MongoDB indexes/concurrency, full S3 session/upload/finalize/replay/cleanup,
-Redis/Celery leases and retries, encryption-key access/rotation, trusted
-proxies, throttles, sanitized logging, backup restore, metrics, and alerts. Only
-then enable `DOCUMENT_PRESIGNED_UPLOAD_ENABLED=True`. Unit tests do not satisfy
-this environmental gate.
+Redis/Celery leases and retries, ClamAV clean/detected/outage behavior and
+signature updates, encryption-key access/rotation, trusted proxies, throttles,
+sanitized logging, backup restore, metrics, and alerts. Only then enable
+`DOCUMENT_PRESIGNED_UPLOAD_ENABLED=True`. Unit tests do not satisfy this
+environmental gate.
 
 Opt-in harnesses exist for the destructive portions and remain skipped unless
 their explicit environment gates are present:

@@ -389,6 +389,17 @@ DOCUMENT_REQUIRE_CNN_FOR_TYPE_VALIDATION = env_bool(
 )
 DOCUMENT_UPLOAD_NOTIFY_REVIEWERS = env_bool('DOCUMENT_UPLOAD_NOTIFY_REVIEWERS', True)
 DOCUMENT_UPLOAD_NOTIFY_ASYNC = env_bool('DOCUMENT_UPLOAD_NOTIFY_ASYNC', True)
+DOCUMENT_MALWARE_SCAN_ENABLED = env_bool('DOCUMENT_MALWARE_SCAN_ENABLED', not DEBUG)
+DOCUMENT_MALWARE_SCAN_REQUIRED = env_bool('DOCUMENT_MALWARE_SCAN_REQUIRED', not DEBUG)
+DOCUMENT_MALWARE_SCANNER = (
+    os.getenv('DOCUMENT_MALWARE_SCANNER') or 'clamav'
+).strip().lower()
+DOCUMENT_MALWARE_SCAN_HOST = (
+    os.getenv('DOCUMENT_MALWARE_SCAN_HOST') or '127.0.0.1'
+).strip()
+DOCUMENT_PDF_UPLOAD_POLICY = (
+    os.getenv('DOCUMENT_PDF_UPLOAD_POLICY') or ('scan' if DEBUG else 'disabled')
+).strip().lower()
 try:
     DOCUMENT_TYPE_CONFIDENCE_THRESHOLD = float(
         os.getenv('DOCUMENT_TYPE_CONFIDENCE_THRESHOLD') or '0.75'
@@ -401,6 +412,15 @@ try:
     )
     DOCUMENT_MAX_IMAGE_HEIGHT = int(
         os.getenv('DOCUMENT_MAX_IMAGE_HEIGHT') or '12000'
+    )
+    DOCUMENT_MALWARE_SCAN_PORT = int(
+        os.getenv('DOCUMENT_MALWARE_SCAN_PORT') or '3310'
+    )
+    DOCUMENT_MALWARE_SCAN_TIMEOUT_SECONDS = float(
+        os.getenv('DOCUMENT_MALWARE_SCAN_TIMEOUT_SECONDS') or '10'
+    )
+    DOCUMENT_MALWARE_SCAN_CHUNK_BYTES = int(
+        os.getenv('DOCUMENT_MALWARE_SCAN_CHUNK_BYTES') or str(64 * 1024)
     )
     DOCUMENT_AI_MAX_ATTEMPTS = int(os.getenv('DOCUMENT_AI_MAX_ATTEMPTS') or '3')
     DOCUMENT_AI_RETRY_BACKOFF_SECONDS = int(
@@ -418,7 +438,7 @@ try:
     )
 except ValueError as exc:
     raise ImproperlyConfigured(
-        'Document AI, image, and worker numeric settings are invalid'
+        'Document AI, image, malware scanner, and worker numeric settings are invalid'
     ) from exc
 if not 0.5 <= DOCUMENT_TYPE_CONFIDENCE_THRESHOLD <= 0.99:
     raise ImproperlyConfigured(
@@ -435,6 +455,32 @@ if not 1000 <= DOCUMENT_MAX_IMAGE_WIDTH <= 30000:
 if not 1000 <= DOCUMENT_MAX_IMAGE_HEIGHT <= 30000:
     raise ImproperlyConfigured(
         'DOCUMENT_MAX_IMAGE_HEIGHT must be between 1000 and 30000'
+    )
+if DOCUMENT_MALWARE_SCANNER != 'clamav':
+    raise ImproperlyConfigured('DOCUMENT_MALWARE_SCANNER must be clamav')
+if not DOCUMENT_MALWARE_SCAN_HOST:
+    raise ImproperlyConfigured('DOCUMENT_MALWARE_SCAN_HOST is required')
+if not 1 <= DOCUMENT_MALWARE_SCAN_PORT <= 65535:
+    raise ImproperlyConfigured('DOCUMENT_MALWARE_SCAN_PORT must be a valid TCP port')
+if not 0.5 <= DOCUMENT_MALWARE_SCAN_TIMEOUT_SECONDS <= 60:
+    raise ImproperlyConfigured(
+        'DOCUMENT_MALWARE_SCAN_TIMEOUT_SECONDS must be between 0.5 and 60'
+    )
+if not 4096 <= DOCUMENT_MALWARE_SCAN_CHUNK_BYTES <= 1024 * 1024:
+    raise ImproperlyConfigured(
+        'DOCUMENT_MALWARE_SCAN_CHUNK_BYTES must be between 4096 and 1048576'
+    )
+if DOCUMENT_PDF_UPLOAD_POLICY not in {'scan', 'disabled'}:
+    raise ImproperlyConfigured(
+        'DOCUMENT_PDF_UPLOAD_POLICY must be scan or disabled'
+    )
+if DOCUMENT_MALWARE_SCAN_REQUIRED and not DOCUMENT_MALWARE_SCAN_ENABLED:
+    raise ImproperlyConfigured(
+        'Required document malware scanning cannot be disabled'
+    )
+if not DEBUG and not DOCUMENT_MALWARE_SCAN_REQUIRED:
+    raise ImproperlyConfigured(
+        'Production document uploads require fail-closed malware scanning'
     )
 if not 1 <= DOCUMENT_AI_MAX_ATTEMPTS <= 10:
     raise ImproperlyConfigured('DOCUMENT_AI_MAX_ATTEMPTS must be between 1 and 10')

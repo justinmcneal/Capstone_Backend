@@ -1,6 +1,6 @@
 # Documents Testing Guide
 
-> **Readiness notice (2026-08-10):** This guide documents the current API for
+> **Readiness notice (2026-08-11):** This guide documents the current API for
 > development and characterization testing. The Documents module is not yet
 > production-ready. See `docs/DOCUMENTS_PRODUCTION_READINESS_REVIEW.md` for the
 > verified gaps and staged remediation plan. A presigned S3 POST remains a
@@ -101,7 +101,8 @@ Upload a document for the authenticated customer.
 **Validation rules:**
 - Allowed MIME types: `image/jpeg`, `image/jpg`, `image/png`, `application/pdf`
 - Max file size: 10 MB
-- File content is scanned for signature match, executable signatures, image integrity, and dangerous PDF patterns
+- File content is scanned for signature match, executable signatures, image
+  integrity, dangerous PDF patterns, and—when enabled—a ClamAV malware verdict
 - Eligible image analysis is persisted and queued after upload; the worker
   re-checks current `ai_consent` before reading bytes
 
@@ -203,6 +204,8 @@ to durable document storage and a `Document` record is created.
   and `replayed: true`.
 - Wrong owner/token is concealed as `404`; expired sessions return `410`;
   concurrent finalization returns `409`.
+- A scanner outage returns `503`, leaves the object in quarantine, and restores
+  the session to a retryable state. Retry finalize with the same session/token.
 - Validation failure removes the quarantine object or leaves it for the scheduled
   cleanup retry when storage deletion fails.
 
@@ -435,9 +438,23 @@ Implemented in `documents/serializers/document_serializers.py`.
 - **PDF active-content scan:** scans the complete bounded upload and rejects
   `/javascript`, `/js`, `/openaction`, `/launch`, `/aa`, `/richmedia`, and
   `/embeddedfile`
+- **Malware scan:** when `DOCUMENT_MALWARE_SCAN_ENABLED=True`, streams the whole
+  structurally valid upload to the private ClamAV daemon before direct storage
+  or presigned promotion. Detected content receives a generic rejection.
+- **Fail-closed behavior:** required scanner connection, timeout, or protocol
+  failures return `503`; they never allow the document through.
+- **PDF policy:** `DOCUMENT_PDF_UPLOAD_POLICY=disabled` rejects PDFs. `scan`
+  permits structurally valid PDFs only after a clean malware verdict.
 
-These structural checks do not replace an approved malware scanner or PDF
-content-disarm policy. That production policy remains a release gate.
+Production startup requires malware scanning to be both enabled and required.
+ClamAV does not replace a PDF sandbox/CDR service, so production defaults PDFs
+to disabled unless scanner-only PDF handling receives explicit approval.
+
+Relevant settings are `DOCUMENT_MALWARE_SCAN_ENABLED`,
+`DOCUMENT_MALWARE_SCAN_REQUIRED`, `DOCUMENT_MALWARE_SCAN_HOST`,
+`DOCUMENT_MALWARE_SCAN_PORT`, `DOCUMENT_MALWARE_SCAN_TIMEOUT_SECONDS`,
+`DOCUMENT_MALWARE_SCAN_CHUNK_BYTES`, and `DOCUMENT_PDF_UPLOAD_POLICY`. Keep the
+ClamAV port private and configure its stream limit above the 10 MB app limit.
 
 **AI analysis gating:**
 - Skips analysis when `DOCUMENT_UPLOAD_AI_ANALYSIS` is false
@@ -624,6 +641,7 @@ python scripts/test_cnn_model.py documents/ml/test_data --confusion
 | `404 Not Found` | Document not found in current scope |
 | `409 Conflict` | Invalid lifecycle transition or stale mutation `revision` |
 | `410 Gone` | A presigned upload session expired before finalization |
+| `503 Service Unavailable` | Required malware scanner or another fail-closed dependency is unavailable |
 
 Standard error shape:
 ```json
@@ -656,6 +674,7 @@ Standard success shape:
 | Presigned session model | `documents/models/upload_session.py` |
 | Storage backends | `documents/storage/backends.py` |
 | Presigned finalization | `documents/services/presigned_upload.py` |
+| Malware scanning | `documents/services/malware.py` |
 | Storage reconciliation | `documents/services/storage_reconciliation.py` |
 | Recoverable audit writer | `documents/services/audit.py` |
 | Bounded listing helpers | `documents/services/listing.py` |
@@ -713,15 +732,23 @@ Standard success shape:
     backlog metrics, image/PDF resource hardening, and legacy lifecycle
     contradictions. They do not inspect the real bucket.
 
+16. Malware tests cover the ClamAV streaming protocol, generic verdicts,
+    fail-closed outages, readiness, PDF disable policy, direct-upload `503`, and
+    retryable presigned finalization:
+
+```bash
+pytest -q tests/test_documents_malware_scanning.py
+```
+
 Stage 7 focused command:
 
 ```bash
 pytest -q tests/test_documents_stage7_retention_operations.py
 ```
 
-Latest local result: the Documents/S3/analyzer run passed 85 tests and skipped
-the explicitly gated real-S3 test. The full suite passed 1,049 tests and skipped
-20 opt-in integration tests.
+Latest local result: the Documents/S3 run passed 93 tests and skipped the
+explicitly gated real-S3 test. The full suite passed 1,058 tests and skipped 20
+opt-in integration tests.
 
 Read-only deployment checks (run only after selecting the intended isolated
 Mongo/S3 environment):

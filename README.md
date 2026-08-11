@@ -28,8 +28,9 @@ database initialization mechanism.
   development inventories complete. Only deployment-target inventories and
   infrastructure validation remain for release.
 - Documents: Stages 1–7 are complete at code and local-test level. Representative
-  AI data/artifact approval and isolated MongoDB/S3/Redis/Celery/restore/
-  monitoring evidence remain deployment release gates.
+  AI data/artifact approval and isolated MongoDB/S3/Redis/Celery/ClamAV/restore/
+  monitoring evidence remain deployment release gates. Production uploads fail
+  closed unless private malware scanning is required and enabled.
 
 ## Development Quick Start
 

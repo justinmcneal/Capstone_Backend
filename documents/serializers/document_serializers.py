@@ -254,11 +254,22 @@ def validate_uploaded_file(file):
     content_type = file.content_type
     if content_type not in ALLOWED_MIME_TYPES:
         return False, "Invalid file type. Allowed types: JPEG, PNG, PDF"
+    if (
+        content_type == "application/pdf"
+        and settings.DOCUMENT_PDF_UPLOAD_POLICY == "disabled"
+    ):
+        return False, "PDF uploads are not enabled"
 
     # Scan file content for malicious or mismatched content.
     safe, scan_error = _scan_uploaded_file(file, content_type)
     if not safe:
         return False, scan_error
+
+    from documents.services.malware import scan_uploaded_file
+
+    malware_result = scan_uploaded_file(file)
+    if not malware_result.clean:
+        return False, "Potentially unsafe file content detected"
 
     return True, None
 

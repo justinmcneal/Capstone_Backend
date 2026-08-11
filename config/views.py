@@ -78,6 +78,27 @@ class HealthCheckView(APIView):
             if getattr(settings, "DOCUMENT_UPLOAD_AI_ANALYSIS", True):
                 health["status"] = "degraded"
 
+        # Malware scanning is fail-closed when required. Keep the scanner on a
+        # private network and expose only this readiness verdict, never scan
+        # responses or uploaded content.
+        try:
+            from documents.services.malware import get_malware_scanner_health
+
+            malware_scanner = get_malware_scanner_health()
+            health["services"]["document_malware_scanner"] = malware_scanner
+            if malware_scanner.get("required") and not malware_scanner.get("ready"):
+                health["status"] = "degraded"
+        except Exception:
+            health["services"]["document_malware_scanner"] = {
+                "ready": False,
+                "status": "unavailable",
+                "required": bool(
+                    getattr(settings, "DOCUMENT_MALWARE_SCAN_REQUIRED", False)
+                ),
+            }
+            if getattr(settings, "DOCUMENT_MALWARE_SCAN_REQUIRED", False):
+                health["status"] = "degraded"
+
         status_code = (
             status.HTTP_200_OK
             if health["status"] == "healthy"

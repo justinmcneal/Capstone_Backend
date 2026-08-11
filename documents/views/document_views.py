@@ -43,6 +43,7 @@ from documents.services.listing import (
     bulk_customer_display_names,
     indexed_search_condition,
 )
+from documents.services.malware import MalwareScanUnavailable
 from documents.services.notification import (
     get_customer_by_identifier,
     notify_reviewers_document_pending,
@@ -276,6 +277,12 @@ class DocumentUploadView(AccessControlMixin, APIView):
                 status_code=status.HTTP_201_CREATED,
             )
 
+        except MalwareScanUnavailable:
+            increment(DOCUMENT_OPERATIONS, operation="upload", outcome="failed")
+            return error_response(
+                message="Document scanning is temporarily unavailable",
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
         except Exception as e:
             increment(DOCUMENT_OPERATIONS, operation="upload", outcome="failed")
             if stored_file_path and not document_committed:

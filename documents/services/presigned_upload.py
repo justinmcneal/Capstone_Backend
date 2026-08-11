@@ -12,6 +12,7 @@ from documents.models import Document, DocumentRevisionConflict, DocumentUploadS
 from documents.serializers import validate_uploaded_file
 from documents.services.analysis import queue_document_analysis
 from documents.services.audit import record_document_audit
+from documents.services.malware import MalwareScanUnavailable
 from documents.services.notification import (
     notify_reviewers_document_pending,
     queue_reviewer_notifications,
@@ -236,6 +237,19 @@ def finalize_presigned_upload(
     except PresignedUploadError as exc:
         _cleanup_failed_object(session, storage, exc.failure_code)
         raise
+    except MalwareScanUnavailable as exc:
+        try:
+            session.release_finalization_for_retry("malware_scanner_unavailable")
+        except Exception:
+            logger.exception(
+                "Failed to release upload session %s after scanner outage",
+                session.id,
+            )
+        raise PresignedUploadError(
+            "Document scanning is temporarily unavailable",
+            status_code=503,
+            failure_code="malware_scanner_unavailable",
+        ) from exc
     except Exception as exc:
         if promoted and promoted.get("file_path") and not document_committed:
             try:

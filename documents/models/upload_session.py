@@ -205,6 +205,54 @@ class DocumentUploadSession:
         self.failure_code = str(failure_code)[:100]
         self.expires_at = now
 
+    def release_finalization_for_retry(self, failure_code):
+        """Return a claimed session to issued after a transient dependency failure."""
+        now = datetime.now(timezone.utc)
+        retry_seconds = max(
+            60,
+            int(
+                getattr(
+                    settings,
+                    "DOCUMENT_PRESIGNED_FINALIZE_LEASE_SECONDS",
+                    300,
+                )
+            ),
+        )
+        maximum_lifetime = (
+            int(
+                getattr(
+                    settings,
+                    "DOCUMENT_PRESIGNED_UPLOAD_EXPIRY_SECONDS",
+                    900,
+                )
+            )
+            + retry_seconds
+        )
+        created_at = self.created_at
+        if created_at.tzinfo is None:
+            created_at = created_at.replace(tzinfo=timezone.utc)
+        retry_deadline = min(
+            now + timedelta(seconds=retry_seconds),
+            created_at + timedelta(seconds=maximum_lifetime),
+        )
+        result = settings.MONGODB[self.collection_name].update_one(
+            {"_id": self._id, "status": "finalizing"},
+            {
+                "$set": {
+                    "status": "issued",
+                    "failure_code": str(failure_code)[:100],
+                    "finalizing_at": None,
+                    "expires_at": retry_deadline,
+                }
+            },
+        )
+        if result.modified_count:
+            self.status = "issued"
+            self.failure_code = str(failure_code)[:100]
+            self.finalizing_at = None
+            self.expires_at = retry_deadline
+        return result.modified_count == 1
+
     @classmethod
     def find_cleanup_candidates(cls, *, limit=100, now=None):
         now = now or datetime.now(timezone.utc)
