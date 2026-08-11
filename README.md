@@ -390,7 +390,7 @@ installed. Notification counters include:
 
 Profiles metrics cover scoring outcomes/backlogs, duplicate records, encryption
 coverage, audit recovery, review queues, and denied access. See
-[`docs/profiles/PROFILES_OPERATIONS.md`](docs/profiles/PROFILES_OPERATIONS.md).
+[`docs/profiles/PROFILES_PRODUCTION_READINESS_REVIEW.md`](docs/profiles/PROFILES_PRODUCTION_READINESS_REVIEW.md).
 
 `EMAIL_SENDER_THREADPOOL_MAX_WORKERS` controls the internal notification email
 thread pool and defaults to `4`. Tune it only after observing workload and CPU.
@@ -401,10 +401,6 @@ thread pool and defaults to `4`. Tune it only after observing workload and CPU.
 - [Accounts testing guide](docs/accounts/ACCOUNTS_TESTING_GUIDE.md)
 - [Profiles production readiness](docs/profiles/PROFILES_PRODUCTION_READINESS_REVIEW.md)
 - [Profiles testing guide](docs/profiles/PROFILES_TESTING_GUIDE.md)
-- [Profiles client migration](docs/profiles/PROFILES_CLIENT_MIGRATION.md)
-- [Profiles completion policy](docs/profiles/PROFILES_COMPLETION_POLICY.md)
-- [Profiles risk-scoring policy](docs/profiles/PROFILES_RISK_SCORING_POLICY.md)
-- [Profiles operations](docs/profiles/PROFILES_OPERATIONS.md)
 - [Documents production readiness](docs/documents/DOCUMENTS_PRODUCTION_READINESS_REVIEW.md)
 - [Documents testing guide](docs/documents/DOCUMENTS_TESTING_GUIDE.md)
 - [Documents operations](docs/documents/DOCUMENTS_OPERATIONS_RUNBOOK.md)

@@ -46,7 +46,7 @@ Content-Type: application/json
 | `docs/NOTIFICATIONS_PRODUCTION_READINESS_REVIEW.md` | Notifications module review, risks, and roadmap |
 | `docs/NOTIFICATIONS_METRICS.md` | Prometheus metrics deployment patterns |
 | `docs/LOANS_TESTING_GUIDE.md` | Loan APIs that trigger notifications |
-| `docs/PROFILES_API_TESTING_GUIDE.md` | Notification **preferences** (`/api/profile/notifications/`) |
+| `docs/profiles/PROFILES_TESTING_GUIDE.md` | Notification **preferences** (`/api/profile/notifications/`) |
 
 ---
 

@@ -36,7 +36,7 @@ Content-Type: application/json
 | `smartcontracts/docs/TESTING_GUIDE.md` | On-chain contract unit tests |
 | `smartcontracts/docs/TESTNET_DEPLOYMENT_GUIDE.md` | Local testnet setup |
 | `docs/LOAN_LIFECYCLE_TESTING_GUIDE.md` | End-to-end loan lifecycle |
-| `docs/PROFILES_API_TESTING_GUIDE.md` | Profile prerequisites for loan eligibility |
+| `docs/profiles/PROFILES_TESTING_GUIDE.md` | Profile prerequisites for loan eligibility |
 
 ## Reference Values
 

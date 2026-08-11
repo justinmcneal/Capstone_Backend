@@ -1,5 +1,7 @@
 # Profiles API Testing Guide
 
+Last updated: 2026-08-11
+
 ## Scope
 
 Profiles covers customer profile data used for loan readiness:
@@ -447,8 +449,7 @@ Content-Type: application/json
 ## Completion and Application Readiness
 
 - Completion policy version `2026-08-09-v1` replaces the former minimal 7/2/2-
-  field rules. Exact core and conditional requirements are documented in
-  `docs/profiles/PROFILES_COMPLETION_POLICY.md`.
+  field rules.
 - `profile_ready_for_application` means all three profile sections satisfy that
   policy. It does not evaluate documents, consent, identity verification, risk-
   score approval, or a loan product's eligibility requirements.
@@ -456,6 +457,67 @@ Content-Type: application/json
   is marked deprecated in the response.
 - False boolean answers and numeric zero values count as answered. Missing values
   are returned as stable field codes rather than inferred from display text.
+
+### Required personal fields
+
+- `date_of_birth`
+- `gender`
+- `civil_status`
+- `nationality`
+- `mobile_number`
+- `address_line1`
+- `barangay`
+- `city_municipality`
+- `province`
+- `zip_code`
+
+Address line 2, emergency-contact fields, and wallet address are optional for
+completion. Supplied optional values must still pass validation.
+
+### Required business fields
+
+- `business_name`
+- `business_type`
+- `business_address`
+- `business_barangay`
+- `business_city`
+- `business_province`
+- `business_age_months`
+- `is_registered`
+- `estimated_monthly_income`
+- `income_range`
+- `estimated_monthly_expenses`
+- `number_of_employees`
+
+`business_type=other` additionally requires `business_type_other`.
+`is_registered=true` additionally requires `registration_type` and
+`registration_number`.
+
+### Required alternative-data fields
+
+- `education_level`
+- `employment_status`
+- `years_of_experience`
+- `housing_status`
+- `years_at_current_address`
+- `number_of_dependents`
+- `household_income`
+- `has_existing_loans`
+- `has_bank_account`
+- `has_ewallet`
+- `pays_utilities`
+- `is_coop_member`
+
+Conditional requirements:
+
+- rented housing requires `monthly_rent`;
+- existing loans require positive `existing_loan_amount`, a non-`none`
+  `existing_loan_source`, and `loan_payment_history`;
+- a bank account requires `bank_account_duration`;
+- an e-wallet requires `ewallet_usage`; and
+- utility payment requires `utility_payment_history`.
+
+Selecting false/non-applicable controllers clears obsolete dependent values.
 
 Inventory legacy stored completion metadata without writing:
 
@@ -495,9 +557,45 @@ python manage.py recalculate_profile_completion --apply
   input revision, and its policy version is current.
 - Policy `2026-08-09-v1` is `informational_only` and requires manual review. It
   must not be treated as approval, pricing, a limit, eligibility, or an adverse
-  decision. See `docs/profiles/PROFILES_RISK_SCORING_POLICY.md`.
-- Metric definitions and suggested starting alerts are documented in
-  `docs/profiles/PROFILES_OPERATIONS.md`.
+  decision.
+
+### Risk policy dimensions
+
+| Dimension | Weight | Main signals |
+| --- | ---: | --- |
+| Financial stability | 25% | Numeric household income and existing-loan payment history. |
+| Payment behavior | 20% | Loan and utility payment histories. |
+| Social capital | 15% | Cooperative membership and community involvement. |
+| Housing stability | 25% | Housing status, address duration, and rent burden. |
+| Digital footprint | 15% | Bank/e-wallet access, duration, and usage. |
+
+The result is bounded to 0–100: at least 70 is `low`, 40–69.99 is `medium`,
+and below 40 is `high`. Tests must verify canonical serializer values, boundary
+scores, policy version, revisions, non-sensitive reason codes, stale-task
+rejection, idempotency, and the manual-review-only intended-use fields.
+
+Any proposal to use the score for approval, rejection, pricing, limits,
+prioritization, eligibility, or adverse action requires a new policy version,
+representative calibration/fairness evidence, legal/product approval, client
+review, and controlled recalculation.
+
+## Operational Metrics and Alerts
+
+| Metric | Expected use |
+| --- | --- |
+| `profiles_audit_write_failures_total{action}` | Detect initial audit-write failures. |
+| `profiles_operations_total{operation,outcome}` | Track exports, history, reviews, reconciliation, and denied access. |
+| `profiles_risk_score_events_total{outcome}` | Track completed, failed, stale, and enqueue-failed scoring. |
+| `profiles_risk_score_backlog{status}` | Detect failed or abandoned score work. |
+| `profiles_duplicate_records{collection}` | Detect duplicate profile records. |
+| `profiles_unprotected_sensitive_fields{collection}` | Detect populated declared fields outside the encryption envelope. |
+| `profiles_audit_failure_backlog` | Detect unresolved audit replay work. |
+| `profiles_risk_review_backlog{status}` | Track pending and in-review correction requests. |
+
+Starting alert expressions must be calibrated to real traffic. During
+deployment validation, verify that duplicate and unprotected-field gauges remain
+zero, persistent audit/scoring backlogs alert, denied-access spikes are visible,
+and review backlog thresholds match the approved operational SLA.
 
 ## Risk-Score Recalculation
 
@@ -605,4 +703,61 @@ This backfill is additive (writes `business_age_months`). To roll back, restore 
 ### Next steps
 - After backfill, monitor logs and alerts for anomalies.
 - Deprecate `years_in_operation` in the API clients over a scheduled window (e.g., 2-4 weeks) and then remove alias support in a follow-up release.
-- Review `docs/profiles/PROFILES_CLIENT_MIGRATION.md` before removing the alias.
+- Confirm deployed-client telemetry or a coordinated mobile/web release before
+  removing the alias.
+
+## Client Compatibility Tests
+
+Customer mobile must:
+
+- send `business_age_months` rather than the input-only years alias;
+- use `profile_ready_for_application`, policy version, and missing-field codes;
+- preserve/send `profile_revision` and reload after `409`;
+- send actual JSON booleans for notification preferences;
+- treat risk scoring as asynchronous, informational, and manually reviewable;
+- describe export as profile-only and history as metadata-only; and
+- keep document approval and product eligibility separate from profile
+  completion.
+
+Loan-officer web must:
+
+- use `/api/officer/profiles/` and its canonical detail route;
+- treat inaccessible customers/reviews as concealed `404`;
+- stop relying on phone search/output, wallet, account-security, or emergency
+  contact fields;
+- display policy/status/reason/manual-review metadata without turning the score
+  into a credit decision; and
+- submit the latest `review_revision` for review transitions.
+
+Admin web has no direct Profiles API integration. Compatibility aliases may be
+removed only after telemetry or coordinated releases confirm no supported
+client still uses them.
+
+## Deliberately Unsupported Features
+
+- Profile avatars are deferred until an approved requirement defines media
+  validation, moderation, storage, retention, and privacy controls.
+- A bundled Philippine address-reference dataset is deferred until an
+  authoritative maintained source, stable identifiers, version policy, and
+  migration plan exist.
+- Direct administrator profile access is unsupported; a future feature requires
+  a separate permissioned and audited contract.
+
+## Related Documentation
+
+- `docs/profiles/PROFILES_PRODUCTION_READINESS_REVIEW.md` — Profiles technical
+  architecture, implementation status, security, operations, clients, and
+  release conditions.
+- `docs/accounts/ACCOUNTS_PRODUCTION_READINESS_REVIEW.md` — authentication,
+  account lifecycle, encryption keys, and shared authorization.
+- `docs/documents/DOCUMENTS_PRODUCTION_READINESS_REVIEW.md` — separate document
+  completion and review behavior.
+- `docs/LOANS_TESTING_GUIDE.md` — downstream qualification and loan workflows.
+
+## Validation Baseline
+
+On 2026-08-11, `pytest -q tests/test_profiles*.py` collected and passed 164
+tests. The most recent repository-wide suite passed 1,058 tests and skipped 21
+explicitly gated integrations. The opt-in real-Mongo profile tests separately
+cover atomic creation, concurrent profile revisions, and the unique risk-review
+index; they must use an approved non-production target.
