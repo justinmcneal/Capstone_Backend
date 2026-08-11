@@ -480,6 +480,13 @@ Implemented in `documents/storage/backends.py`.
 
 Implemented in `documents/services/analyzer.py` and `documents/services/cnn_model.py`.
 
+**Production baseline:** deploy with `DOCUMENT_UPLOAD_AI_ANALYSIS=False`.
+Production uploads do not run CNN or quality-only inference and must be reviewed
+by an authorized officer/admin. Signature validation, image-resource checks,
+PDF policy, and ClamAV scanning remain active. The CNN sections below document
+development behavior and the controls required for any future separately
+approved enablement; they are not production setup instructions.
+
 **Current repository state (2026-08-10):**
 
 - `documents/ml/models/document_classifier.pth` is absent, so this checkout uses
@@ -533,7 +540,8 @@ as `other` require human review because `other` is not a classifier class.
 - `DOCUMENT_TYPE_CONFIDENCE_THRESHOLD` (default `0.75`)
 - `DOCUMENT_ENFORCE_TYPE_MATCH` (default `True`)
 - `DOCUMENT_REQUIRE_CNN_FOR_TYPE_VALIDATION` (default `True`)
-- `DOCUMENT_AI_REQUIRE_APPROVED_MODEL` (production default `True`)
+- `DOCUMENT_AI_REQUIRE_APPROVED_MODEL` (must remain `True` if CNN is ever
+  enabled in production; inactive while analysis is disabled)
 - `DOCUMENT_AI_REQUIRE_BLUR_CHECK` (production default `True`)
 - `DOCUMENT_MAX_IMAGE_PIXELS`, `DOCUMENT_MAX_IMAGE_WIDTH`, and
   `DOCUMENT_MAX_IMAGE_HEIGHT` (startup-validated resource limits)
@@ -601,8 +609,9 @@ python manage.py train_document_classifier --fine-tune
 - `documents/ml/reports/*` (if matplotlib installed)
 
 The `.pth` artifact is intentionally ignored by Git and is currently missing.
-A production model must be supplied through an approved, integrity-checked model
-artifact workflow; generating it locally is not by itself a deployment process.
+If CNN is later proposed for production, its model must come through an
+approved, integrity-checked artifact workflow; generating it locally is not by
+itself a deployment process.
 
 **Validation:**
 
@@ -617,7 +626,9 @@ python scripts/test_cnn_model.py documents/ml/test_data --confusion
 ## Smoke Test Sequence
 
 1. Authenticate as a customer and call `GET /types/`.
-2. Upload one image (`valid_id`) and one PDF to confirm both acceptance and AI-skip behavior for PDF.
+2. With `DOCUMENT_UPLOAD_AI_ANALYSIS=False`, upload an image and confirm no CNN
+   or quality-only result is created. Test PDF behavior according to
+   `DOCUMENT_PDF_UPLOAD_POLICY`.
 3. Call `GET /` and verify pagination/filter fields.
 4. Call `GET /<document_id>/` for uploaded items.
 5. Login as a loan officer with `review_documents` and verify one document via
@@ -627,7 +638,8 @@ python scripts/test_cnn_model.py documents/ml/test_data --confusion
 8. Confirm the presigned routes return 404 while disabled. In an isolated S3
    environment, create a session, upload with every returned field, finalize,
    and repeat finalize to confirm the same document is returned.
-9. If retraining is needed, run `train_document_classifier` and validate with `scripts/test_cnn_model.py`.
+9. Confirm an authorized officer/admin must review and approve the uploaded
+   document. Do not train or enable CNN as part of the production smoke test.
 
 ---
 

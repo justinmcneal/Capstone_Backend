@@ -1,6 +1,22 @@
 # Document AI Governance
 
-Last updated: 2026-08-10
+Last updated: 2026-08-11
+
+## Production Decision
+
+Document CNN and image-quality inference are disabled for the approved
+production baseline. Deploy with `DOCUMENT_UPLOAD_AI_ANALYSIS=False`. The
+system continues structural validation, resource limits, PDF policy, fail-closed
+malware scanning, and authorized human review; it must not use quality-only
+analysis as a production fallback when a CNN artifact is absent.
+
+The remaining sections govern development and any future proposal to enable
+document AI. Dataset remediation, independent evaluation, artifact approval,
+threshold calibration, and drift monitoring are mandatory before that optional
+feature can be enabled, but are not blockers for the non-CNN Documents module.
+Disabling the feature does not authorize use or distribution of the inventoried
+dataset; it must be excluded from production artifacts and handled under a
+separate approved privacy and repository-history process.
 
 ## Intended Use and Prohibited Use
 
@@ -37,7 +53,7 @@ it cannot self-approve its output.
 approved artifact cannot load. Disable analysis or roll back to the recorded
 approved artifact if integrity, latency, drift, or safety gates fail.
 
-## Release Acceptance Gates
+## Optional CNN Enablement Gates
 
 Before approval, an independent immutable holdout evaluation must publish:
 

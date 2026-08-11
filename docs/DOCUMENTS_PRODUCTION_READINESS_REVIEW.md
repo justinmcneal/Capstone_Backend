@@ -34,7 +34,8 @@ object-storage, broker, or failure-recovery behavior.
 
 ## Executive Summary
 
-The Documents module has a useful core but is **not production-ready yet**.
+The Documents module is **complete at code and local-test level**, but still
+requires isolated deployment validation before production release.
 Authenticated direct uploads, file validation, encrypted metadata, role-scoped
 reads, officer approval/rejection, re-upload requests, local and S3 storage
 adapters, consent-gated image analysis, reviewer/customer email hooks, and loan
@@ -59,9 +60,11 @@ image analysis out of upload requests, adds consent-aware leased retries,
 durable reviewer/customer notification delivery, artifact integrity gates, and
 fail-closed dataset validation. Stage 7 implements retention and operational
 controls. Fail-closed ClamAV streaming now covers direct and presigned uploads,
-with a production-safe PDF policy. Remaining blockers are representative AI
-data/artifact approval and isolated deployment validation, including a live
-private scanner.
+with a production-safe PDF policy. The approved production baseline disables
+document AI/CNN analysis and relies on structural validation, malware scanning,
+and authorized human review. Dataset/artifact approval is therefore deferred
+optional-CNN work, not a Documents release blocker. The remaining blocker is
+isolated deployment validation, including a live private scanner.
 
 Current remediation status:
 
@@ -70,7 +73,7 @@ Current remediation status:
 - [x] Stage 3 — Atomic lifecycle transitions and storage consistency
 - [x] Stage 4 — Authorization, privacy, and audit completeness
 - [x] Stage 5 — Query scalability and response delivery
-- [ ] Stage 6 — Background work, notifications, and AI governance
+- [x] Stage 6 — Background work, notifications, and optional-AI governance
 - [ ] Stage 7 — Retention, deployment configuration, and operations
 
 ## Verified Implemented Foundations
@@ -207,6 +210,14 @@ explicitly approved policy changes `DOCUMENT_PDF_UPLOAD_POLICY` to `scan`.
 - Loan qualification can gate applications on approved required documents.
 
 ### AI/CNN foundations
+
+Production decision: CNN and image-quality inference are not part of the
+approved production baseline. Deploy with `DOCUMENT_UPLOAD_AI_ANALYSIS=False`.
+Uploads continue through signature, image-resource, PDF-policy, and ClamAV
+validation, then remain subject to authorized human review. An absent or
+unapproved model must never cause production to fall back to quality-only
+inference. The implementation below remains available only for development and
+future separately approved enablement.
 
 - Image analysis is gated by a global feature flag and the customer's recorded
   AI consent. PDFs skip image analysis.
@@ -440,11 +451,16 @@ release work is environmental: deploy ClamAV privately, verify signature updates
 and stream-size policy, exercise clean/detected/outage behavior, and alert on
 readiness and unavailable outcomes.
 
-### 11. AI evidence and artifact approval remain incomplete
+### 11. CNN is disabled for production; optional enablement evidence is incomplete
 
+- The production baseline sets `DOCUMENT_UPLOAD_AI_ANALYSIS=False`; CNN and
+  quality-only inference do not run and model readiness does not determine
+  Documents health.
+- Every production document still requires the existing authorized human review
+  before it can become approved or satisfy approval-gated loan qualification.
 - The trained weight artifact is absent and the registry is deliberately
-  `not_approved`; production health therefore fails closed when an approved
-  model is required.
+  `not_approved`. It must remain unusable unless the optional feature completes
+  all approval gates below.
 - Runtime analysis is background, consent-aware, retryable, versioned, and
   fail-safe. Artifact loading is offline and hash/registry gated; low-confidence
   and `other` inputs require manual review.
@@ -457,6 +473,10 @@ readiness and unavailable outcomes.
   performance, and false-accept/false-reject evidence have not been approved.
 - The classifier is advisory only and cannot establish authenticity, ownership,
   expiry, readable fields, tampering, face match, or malware safety.
+- Training/test images and reports are excluded from the production runtime
+  artifact. Disabling CNN does not grant permission to distribute or reuse the
+  current dataset; repository-history and privacy disposition remain a separate
+  data-governance obligation.
 
 ## Staged Remediation Plan
 
@@ -595,7 +615,7 @@ deployment credentials or mutates an external database.
 
 ### Stage 6 — Background work, notifications, and AI governance
 
-**Status: Partial — runtime controls complete; dataset/model approval remains blocked**
+**Status: Complete for the approved non-CNN production baseline**
 
 - [x] ~~Fix the missing `Document.find_by_id` lookup used by the Celery task.~~
 - [x] ~~Add Celery/service tests that exercise the real `Document` contract,
@@ -611,19 +631,9 @@ deployment credentials or mutates an external database.
 - [x] ~~Define a versioned registry schema and make training emit artifact hash,
   code/preprocessing/dataset/threshold versions, approval state, metrics,
   deployment date, and rollback fields without self-approval.~~
-- [ ] Approve a real registry entry only after an independently reproduced
-  evaluation; the current artifact is absent and the development registry is
-  deliberately `not_approved` with no artifact/dataset hash.
 - [x] ~~Add a dry-run-first deterministic manifest builder that requires source,
   license/consent, anonymization, and subject metadata and keeps each subject in
   one train/validation/holdout split.~~
-- [ ] Remove the inventoried exact duplicates and create an approved immutable
-  grouped/stratified
-  train/validation/holdout manifest by source/document/subject. Never tune on
-  the final holdout set.
-- [ ] Collect materially more licensed, consented, anonymized, representative
-  samples for every underrepresented class and a broader out-of-distribution
-  set. Establish minimum independent sample counts before evaluating a class.
 - [x] ~~Replace mirroring/aspect distortion with shared versioned
   aspect-preserving letterbox preprocessing and conservative document-photo
   augmentation.~~ Independent robustness evidence for this policy remains part
@@ -633,9 +643,6 @@ deployment credentials or mutates an external database.
   calibration, confidence intervals, subgroup/device robustness, false-accept
   and false-reject rates, latency, and open-set rejection, plus a dry-run-first
   approval gate bound to artifact/dataset/policy hashes.~~
-- [ ] Run that evaluation on an approved independent holdout/OOD set, select and
-  document calibrated per-class or risk-based thresholds, and obtain human
-  approval rather than relying on headline accuracy.
 - [x] ~~Map below-threshold classifier results to explicit `unknown` and route
   `other` uploads to manual review instead of forcing either into a known
   class.~~
@@ -644,10 +651,6 @@ deployment credentials or mutates an external database.
 - [x] ~~Make the dataset checker fail on below-minimum classes, corrupt/undersized
   files, exact/cross-split duplicates, missing provenance, and split-manifest
   violations; emit a machine-readable report.~~
-- [ ] Complete privacy/license/consent/anonymization review for every dataset
-  item. Keep approved datasets in access-controlled versioned storage rather
-  than ordinary Git, and address existing Git history under an approved data-
-  governance procedure.
 - [x] ~~Document AI intended use, human-review requirement, consent withdrawal,
   appeal/correction, acceptance metrics, deployment, rollback, and drift policy.
   See `docs/documents/DOCUMENT_AI_GOVERNANCE.md`.~~
@@ -656,12 +659,25 @@ deployment credentials or mutates an external database.
 - [x] ~~Move type-match, threshold, approved-model, and required-blur behavior
   into validated Django settings; make missing required blur dependencies
   degrade health and fail analysis safely.~~
+- [x] ~~Select the production-safe non-CNN baseline: set
+  `DOCUMENT_UPLOAD_AI_ANALYSIS=False`, perform no quality-only fallback, retain
+  structural/ClamAV validation, and require human approval.~~
 
-Runtime Stage 6 is complete, but the unchecked data collection, independent
-holdout/OOD evaluation, privacy review, dataset reconciliation, and artifact
-approval items are evidence-producing governance work rather than code-only
-tasks. They remain a production blocker and must not be checked merely because
-enforcement tooling now exists.
+Optional CNN re-enablement backlog, not Stage 6 or Documents release criteria:
+
+- Approve a real registry entry only after an independently reproduced
+  evaluation; the current artifact is absent and `not_approved`.
+- Remove exact duplicates and create an approved immutable, subject-grouped
+  train/validation/holdout manifest from licensed, consented, anonymized data.
+- Collect materially more representative samples for underrepresented classes
+  and a broader out-of-distribution set.
+- Run independent holdout/OOD evaluation, calibrate risk-based thresholds, and
+  obtain recorded human approval.
+- Complete privacy and repository-history disposition. Approved datasets must
+  remain in access-controlled versioned storage and outside production builds.
+
+Any future decision to enable CNN reopens every item above as a mandatory
+feature-specific release gate. It does not reopen the non-CNN Documents module.
 
 ### Stage 7 — Retention, deployment configuration, and operations
 
