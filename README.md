@@ -325,7 +325,16 @@ REAL_S3_TEST_ALLOW_MUTATION=yes \
 pytest -q -m real_s3 tests/test_documents_real_s3.py
 ```
 
-Never point the opt-in test suite at a production database account.
+Real-ClamAV validation is opt-in and sends only synthetic clean content and the
+harmless standard antivirus test marker to a private scanner:
+
+```bash
+REAL_CLAMAV_TEST_HOST='clamav.internal' \
+REAL_CLAMAV_TEST_ALLOW_SCAN=yes \
+pytest -q -m real_clamav tests/test_documents_real_clamav.py
+```
+
+Never point the opt-in database/object-storage tests at production resources.
 
 ## Production Deployment
 

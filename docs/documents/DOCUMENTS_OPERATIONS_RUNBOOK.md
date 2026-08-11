@@ -153,4 +153,14 @@ REAL_S3_TEST_BUCKET='isolated-documents-bucket' \
 REAL_S3_TEST_REGION='us-east-1' \
 REAL_S3_TEST_ALLOW_MUTATION=yes \
 pytest -q -m real_s3 tests/test_documents_real_s3.py
+
+REAL_CLAMAV_TEST_HOST='clamav.internal' \
+REAL_CLAMAV_TEST_ALLOW_SCAN=yes \
+pytest -q -m real_clamav tests/test_documents_real_clamav.py
 ```
+
+The ClamAV harness proves readiness and clean/detected verdicts using only
+synthetic content. Validate fail-closed outage behavior separately by making the
+scanner unavailable in the isolated environment and confirming `/api/health/`
+and uploads return `503`; do not stop a shared or production scanner for this
+test.

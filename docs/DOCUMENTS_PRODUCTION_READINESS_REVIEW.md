@@ -682,9 +682,9 @@ enforcement tooling now exists.
   review backlog/age, notification failures, AI failures, audit backlog,
   retention/legal holds, and URL-generation errors, with alert guidance in the
   runbook. Orphan/missing counts come from the deliberate inventory command.~~
-- [x] ~~Add explicitly gated real-Mongo document concurrency/index and real-S3
-  quarantine/finalize/replay/cleanup harnesses. They remain skipped until an
-  approved isolated target is supplied.~~
+- [x] ~~Add explicitly gated real-Mongo document concurrency/index, real-S3
+  quarantine/finalize/replay/cleanup, and real-ClamAV readiness/clean/detection
+  harnesses. They remain skipped until approved isolated targets are supplied.~~
 - [x] ~~Require fail-closed malware scanning outside development and expose a
   sanitized scanner readiness component and low-cardinality scan metrics.~~
 - [ ] Validate real MongoDB indexes/concurrency, object storage, Redis/Celery,

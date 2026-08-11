@@ -746,9 +746,9 @@ Stage 7 focused command:
 pytest -q tests/test_documents_stage7_retention_operations.py
 ```
 
-Latest local result: the Documents/S3 run passed 93 tests and skipped the
-explicitly gated real-S3 test. The full suite passed 1,058 tests and skipped 20
-opt-in integration tests.
+Latest local result: the Documents/S3/ClamAV run passed 93 tests and skipped the
+explicitly gated real-S3 and real-ClamAV tests. The full suite passed 1,058
+tests and skipped 21 opt-in integration tests.
 
 Read-only deployment checks (run only after selecting the intended isolated
 Mongo/S3 environment):
@@ -769,11 +769,17 @@ REAL_S3_TEST_BUCKET='isolated-documents-bucket' \
 REAL_S3_TEST_REGION='us-east-1' \
 REAL_S3_TEST_ALLOW_MUTATION=yes \
 pytest -q -m real_s3 tests/test_documents_real_s3.py
+
+REAL_CLAMAV_TEST_HOST='clamav.internal' \
+REAL_CLAMAV_TEST_ALLOW_SCAN=yes \
+pytest -q -m real_clamav tests/test_documents_real_clamav.py
 ```
 
 The S3 test creates only UUID-scoped quarantine/final objects, validates replay,
 and removes both objects in `finally`. The bucket itself is never created or
-deleted by the test.
+deleted by the test. The ClamAV test sends only synthetic clean bytes and the
+harmless standard antivirus test marker; it never reads repository datasets or
+customer uploads.
 
 Focused Stage 3–7 regression command:
 
