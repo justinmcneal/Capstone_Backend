@@ -41,6 +41,13 @@ from analytics.services.dashboard_metrics import (
     identity_query,
     status_query,
 )
+from analytics.services.operations import (
+    AnalyticsOperationalMixin,
+    bounded_aggregate,
+    bounded_count,
+    bounded_cursor,
+    db_count,
+)
 
 logger = logging.getLogger("analytics")
 
@@ -60,7 +67,7 @@ def _audit_admin_read(request, admin, endpoint):
     return None
 
 
-class AdminDashboardView(AdminRequiredMixin, APIView):
+class AdminDashboardView(AnalyticsOperationalMixin, AdminRequiredMixin, APIView):
     """
     Admin dashboard with system-wide statistics.
 
@@ -85,71 +92,69 @@ class AdminDashboardView(AdminRequiredMixin, APIView):
         month_start = as_of.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
 
         # User counts - use correct collection names from models
-        total_customers = db["customer"].count_documents(
-            {}
-        )  # Customer model uses 'customer'
-        total_officers = db["loan_officers"].count_documents({})
-        total_admins = db["admins"].count_documents({})
-        new_customers_this_week = db["customer"].count_documents(
+        total_customers = db_count(db, "customer", {})
+        total_officers = db_count(db, "loan_officers", {})
+        total_admins = db_count(db, "admins", {})
+        new_customers_this_week = db_count(db, "customer",
             {"created_at": {"$gte": week_ago}}
         )
-        new_officers_this_month = db["loan_officers"].count_documents(
+        new_officers_this_month = db_count(db, "loan_officers",
             {"created_at": {"$gte": month_start}}
         )
 
         loans = db["loan_applications"]
-        approved_outcomes = loans.count_documents(
+        approved_outcomes = bounded_count(loans,
             {"status": {"$in": sorted(LOAN_APPROVED_OUTCOME_STATUSES)}}
         )
-        rejected_outcomes = loans.count_documents({"status": "rejected"})
+        rejected_outcomes = bounded_count(loans, {"status": "rejected"})
         # Outcome fields remain meaningful after disbursement/closure. `pending`
         # is the published aggregate of submitted plus under-review records.
         loan_stats = {
-            "total": loans.count_documents({}),
-            "draft": loans.count_documents({"status": "draft"}),
-            "submitted": loans.count_documents({"status": "submitted"}),
-            "pending": loans.count_documents(
+            "total": bounded_count(loans, {}),
+            "draft": bounded_count(loans, {"status": "draft"}),
+            "submitted": bounded_count(loans, {"status": "submitted"}),
+            "pending": bounded_count(loans,
                 {"status": {"$in": sorted(LOAN_PENDING_STATUSES)}}
             ),
-            "under_review": loans.count_documents({"status": "under_review"}),
+            "under_review": bounded_count(loans, {"status": "under_review"}),
             "approved": approved_outcomes,
             "rejected": rejected_outcomes,
             "reviewed": approved_outcomes + rejected_outcomes,
-            "disbursed": loans.count_documents(
+            "disbursed": bounded_count(loans,
                 {"status": {"$in": sorted(LOAN_DISBURSED_STATUSES)}}
             ),
-            "completed": loans.count_documents({"status": "completed"}),
-            "written_off": loans.count_documents({"status": "written_off"}),
-            "cancelled": loans.count_documents({"status": "cancelled"}),
+            "completed": bounded_count(loans, {"status": "completed"}),
+            "written_off": bounded_count(loans, {"status": "written_off"}),
+            "cancelled": bounded_count(loans, {"status": "cancelled"}),
         }
 
         # Document metrics cover only the current metadata version whose object
         # remains available. Canonical status, not the legacy boolean, is used.
         current_documents = current_document_query()
         doc_stats = {
-            "total": db["documents"].count_documents(current_documents),
-            "pending": db["documents"].count_documents(
+            "total": db_count(db, "documents", current_documents),
+            "pending": db_count(db, "documents",
                 status_query(current_documents, DOCUMENT_PENDING_STATUSES)
             ),
-            "needs_review": db["documents"].count_documents(
+            "needs_review": db_count(db, "documents",
                 status_query(current_documents, {"needs_review"})
             ),
-            "approved": db["documents"].count_documents(
+            "approved": db_count(db, "documents",
                 status_query(current_documents, {"approved"})
             ),
-            "verified": db["documents"].count_documents(
+            "verified": db_count(db, "documents",
                 status_query(current_documents, {"approved"})
             ),
-            "rejected": db["documents"].count_documents(
+            "rejected": db_count(db, "documents",
                 status_query(current_documents, {"rejected"})
             ),
-            "expired": db["documents"].count_documents(
+            "expired": db_count(db, "documents",
                 status_query(current_documents, {"expired"})
             ),
         }
 
         # AI usage (last 7 days)
-        ai_sessions = db["ai_interactions"].count_documents(
+        ai_sessions = db_count(db, "ai_interactions",
             {"created_at": {"$gte": week_ago}}
         )
 
@@ -175,18 +180,44 @@ class AdminDashboardView(AdminRequiredMixin, APIView):
             recent_activity = [serialize_dashboard_activity(log) for log in recent_logs]
 
         # Loan products performance
-        products = list(db["loan_products"].find({"active": True}))
+        products = list(
+            bounded_cursor(db["loan_products"].find({"active": True}))
+            .sort([("name", 1), ("_id", 1)])
+            .limit(int(getattr(settings, "ANALYTICS_MAX_ACTIVE_PRODUCTS", 100)))
+        )
+        product_ids = []
+        for product in products:
+            product_ids.extend(identity_query("product_id", product["_id"])["product_id"].get("$in", [str(product["_id"])]))
+        grouped = {}
+        if product_ids:
+            pipeline = [
+                {"$match": {"product_id": {"$in": product_ids}}},
+                {
+                    "$group": {
+                        "_id": {"product_id": "$product_id", "status": "$status"},
+                        "count": {"$sum": 1},
+                    }
+                },
+            ]
+            for row in bounded_aggregate(loans, pipeline):
+                grouped[(str(row["_id"]["product_id"]), row["_id"]["status"])] = int(
+                    row["count"]
+                )
         product_stats = []
         for p in products:
-            product_query = identity_query("product_id", p["_id"])
-            approved = loans.count_documents(
-                status_query(product_query, LOAN_APPROVED_OUTCOME_STATUSES)
+            status_counts = {
+                loan_status: grouped.get((str(p["_id"]), loan_status), 0)
+                for loan_status in (
+                    LOAN_APPROVED_OUTCOME_STATUSES | {"rejected", "draft", "submitted", "under_review", "cancelled"}
+                )
+            }
+            approved = sum(
+                status_counts.get(loan_status, 0)
+                for loan_status in LOAN_APPROVED_OUTCOME_STATUSES
             )
-            rejected = loans.count_documents(
-                status_query(product_query, {"rejected"})
-            )
+            rejected = status_counts.get("rejected", 0)
             reviewed = approved + rejected
-            total = loans.count_documents(product_query)
+            total = sum(status_counts.values())
             product_stats.append(
                 {
                     "name": p["name"],
@@ -224,7 +255,7 @@ class AdminDashboardView(AdminRequiredMixin, APIView):
         )
 
 
-class AuditLogsView(AdminRequiredMixin, APIView):
+class AuditLogsView(AnalyticsOperationalMixin, AdminRequiredMixin, APIView):
     """
     View audit logs (admin only).
 
@@ -290,7 +321,7 @@ class AuditLogsView(AdminRequiredMixin, APIView):
         )
 
 
-class AuditLogUsersView(AdminRequiredMixin, APIView):
+class AuditLogUsersView(AnalyticsOperationalMixin, AdminRequiredMixin, APIView):
     """
     List users present in audit logs for user-based filtering.
 
@@ -329,7 +360,7 @@ class AuditLogUsersView(AdminRequiredMixin, APIView):
         collection = settings.MONGODB["audit_logs"]
         match_stage = {"user_id": {"$nin": [None, ""]}}
         if search:
-            regex = {"$regex": re.escape(search), "$options": "i"}
+            regex = {"$regex": f"^{re.escape(search)}", "$options": "i"}
             match_stage["$or"] = [{"user_type": regex}, {"user_id": regex}]
 
         pipeline = [
@@ -348,7 +379,7 @@ class AuditLogUsersView(AdminRequiredMixin, APIView):
         ]
 
         users = []
-        for doc in collection.aggregate(pipeline):
+        for doc in bounded_aggregate(collection, pipeline):
             user_id = str(doc.get("user_id"))
             user_type = doc.get("user_type") or "unknown"
             short_id = f"{user_id[:8]}..."
@@ -370,7 +401,7 @@ class AuditLogUsersView(AdminRequiredMixin, APIView):
         )
 
 
-class AuditLogDetailView(AdminRequiredMixin, APIView):
+class AuditLogDetailView(AnalyticsOperationalMixin, AdminRequiredMixin, APIView):
     """
     Get minimized privileged detail for a specific audit log entry.
 

@@ -8,6 +8,8 @@ and search helpers used by both admin and officer dashboard views.
 import re
 from datetime import datetime, timezone
 
+from django.conf import settings
+
 from analytics.models import (
     AUDIT_ACTION_REGISTRY,
     AUDIT_ACTIONS,
@@ -72,6 +74,13 @@ def parse_pagination(request, default_page_size: int = 20, max_page_size: int = 
         minimum=1,
         maximum=max_page_size,
     )
+    if (page - 1) * page_size > int(
+        getattr(settings, "ANALYTICS_MAX_PAGE_OFFSET", 10000)
+    ):
+        raise AnalyticsQueryError(
+            "Requested page is too deep",
+            errors={"page": "Use narrower filters to remain within the page window"},
+        )
     return page, page_size
 
 
@@ -187,7 +196,7 @@ def parse_audit_filters(request, *, allow_actor_filters):
 
 def default_search_conditions(search: str):
     """Build generic search conditions across common audit log fields."""
-    regex = {"$regex": re.escape(search), "$options": "i"}
+    regex = {"$regex": f"^{re.escape(search)}", "$options": "i"}
     return [
         {"action": regex},
         {"resource_id": regex},

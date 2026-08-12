@@ -23,12 +23,13 @@ from analytics.services.dashboard_metrics import (
     identity_query,
     status_query,
 )
+from analytics.services.operations import AnalyticsOperationalMixin, db_count
 from profiles.models import AlternativeData, BusinessProfile, CustomerProfile
 
 logger = logging.getLogger("analytics")
 
 
-class CustomerDashboardView(AccessControlMixin, APIView):
+class CustomerDashboardView(AnalyticsOperationalMixin, AccessControlMixin, APIView):
     """
     Customer dashboard - personal statistics.
 
@@ -52,29 +53,29 @@ class CustomerDashboardView(AccessControlMixin, APIView):
 
         # My applications
         my_apps = {
-            "total": db["loan_applications"].count_documents(loan_owner),
-            "draft": db["loan_applications"].count_documents(
+            "total": db_count(db, "loan_applications", loan_owner),
+            "draft": db_count(db, "loan_applications",
                 status_query(loan_owner, {"draft"})
             ),
-            "pending": db["loan_applications"].count_documents(
+            "pending": db_count(db, "loan_applications",
                 status_query(loan_owner, LOAN_PENDING_STATUSES)
             ),
-            "approved": db["loan_applications"].count_documents(
+            "approved": db_count(db, "loan_applications",
                 status_query(loan_owner, LOAN_APPROVED_OUTCOME_STATUSES)
             ),
-            "rejected": db["loan_applications"].count_documents(
+            "rejected": db_count(db, "loan_applications",
                 status_query(loan_owner, {"rejected"})
             ),
-            "disbursed": db["loan_applications"].count_documents(
+            "disbursed": db_count(db, "loan_applications",
                 status_query(loan_owner, LOAN_DISBURSED_STATUSES)
             ),
-            "completed": db["loan_applications"].count_documents(
+            "completed": db_count(db, "loan_applications",
                 status_query(loan_owner, {"completed"})
             ),
-            "written_off": db["loan_applications"].count_documents(
+            "written_off": db_count(db, "loan_applications",
                 status_query(loan_owner, {"written_off"})
             ),
-            "cancelled": db["loan_applications"].count_documents(
+            "cancelled": db_count(db, "loan_applications",
                 status_query(loan_owner, {"cancelled"})
             ),
         }
@@ -82,20 +83,20 @@ class CustomerDashboardView(AccessControlMixin, APIView):
         # Current, storage-available documents only.
         current_documents = current_document_query(document_owner)
         my_docs = {
-            "total": db["documents"].count_documents(current_documents),
-            "verified": db["documents"].count_documents(
+            "total": db_count(db, "documents", current_documents),
+            "verified": db_count(db, "documents",
                 status_query(current_documents, {"approved"})
             ),
-            "pending": db["documents"].count_documents(
+            "pending": db_count(db, "documents",
                 status_query(current_documents, DOCUMENT_PENDING_STATUSES)
             ),
-            "needs_review": db["documents"].count_documents(
+            "needs_review": db_count(db, "documents",
                 status_query(current_documents, {"needs_review"})
             ),
-            "rejected": db["documents"].count_documents(
+            "rejected": db_count(db, "documents",
                 status_query(current_documents, {"rejected"})
             ),
-            "expired": db["documents"].count_documents(
+            "expired": db_count(db, "documents",
                 status_query(current_documents, {"expired"})
             ),
         }
@@ -108,7 +109,7 @@ class CustomerDashboardView(AccessControlMixin, APIView):
         has_business = bool(business and business.profile_completed)
         has_alternative = bool(alternative and alternative.profile_completed)
         has_id = (
-            db["documents"].count_documents(
+            db_count(db, "documents",
                 status_query(
                     current_document_query(
                         {**document_owner, "document_type": "valid_id"}
@@ -135,7 +136,7 @@ class CustomerDashboardView(AccessControlMixin, APIView):
         }
 
         # AI interactions
-        ai_sessions = db["ai_interactions"].count_documents(
+        ai_sessions = db_count(db, "ai_interactions",
             identity_query("customer_id", customer_id)
         )
 

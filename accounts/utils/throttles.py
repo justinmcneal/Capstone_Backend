@@ -172,3 +172,10 @@ class DocumentUploadRateThrottle(SafeUserRateThrottle):
     """User-based throttling for document upload endpoints."""
 
     rate = "100/hour"
+
+
+class AnalyticsReadRateThrottle(SafeUserRateThrottle):
+    """Per-user protection for comparatively expensive Analytics reads."""
+
+    scope = "analytics_read"
+    rate = getattr(settings, "ANALYTICS_READ_RATE", "300/hour")

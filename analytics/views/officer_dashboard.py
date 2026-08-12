@@ -35,11 +35,17 @@ from analytics.services.dashboard_metrics import (
     approval_rate,
     identity_query,
 )
+from analytics.services.operations import (
+    AnalyticsOperationalMixin,
+    bounded_count,
+    bounded_cursor,
+    db_count,
+)
 
 logger = logging.getLogger("analytics")
 
 
-class LoanOfficerRequiredMixin(AccessControlMixin):
+class LoanOfficerRequiredMixin(AnalyticsOperationalMixin, AccessControlMixin):
     """Mixin to require loan officer role"""
 
     def check_officer_permission(self, request):
@@ -91,25 +97,25 @@ class OfficerDashboardView(LoanOfficerRequiredMixin, APIView):
         officer_query = identity_query("assigned_officer", officer_id)
 
         # My reviews - applications I've reviewed
-        my_approved = db["loan_applications"].count_documents(
+        my_approved = db_count(db, "loan_applications",
             {
                 **officer_query,
                 "status": {"$in": sorted(LOAN_APPROVED_OUTCOME_STATUSES)},
             }
         )
-        my_rejected = db["loan_applications"].count_documents(
+        my_rejected = db_count(db, "loan_applications",
             {**officer_query, "status": "rejected"}
         )
 
         # Reviews today
-        approved_today = db["loan_applications"].count_documents(
+        approved_today = db_count(db, "loan_applications",
             {
                 **officer_query,
                 "status": {"$in": sorted(LOAN_APPROVED_OUTCOME_STATUSES)},
                 "decision_date": {"$gte": today},
             }
         )
-        rejected_today = db["loan_applications"].count_documents(
+        rejected_today = db_count(db, "loan_applications",
             {
                 **officer_query,
                 "status": "rejected",
@@ -120,7 +126,7 @@ class OfficerDashboardView(LoanOfficerRequiredMixin, APIView):
         # Active queue assigned to this officer. Unassigned applications and
         # applications owned by another officer must not appear on a personal
         # dashboard.
-        pending_queue = db["loan_applications"].count_documents(
+        pending_queue = db_count(db, "loan_applications",
             {
                 **officer_query,
                 "status": {"$in": sorted(LOAN_PENDING_STATUSES)},
@@ -128,7 +134,7 @@ class OfficerDashboardView(LoanOfficerRequiredMixin, APIView):
         )
 
         # Assigned to me
-        my_queue = db["loan_applications"].count_documents(
+        my_queue = db_count(db, "loan_applications",
             {**officer_query, "status": "under_review"}
         )
 
@@ -252,10 +258,10 @@ class OfficerAuditLogsView(LoanOfficerRequiredMixin, APIView):
         query = and_filters[0] if len(and_filters) == 1 else {"$and": and_filters}
 
         collection = db["audit_logs"]
-        total = collection.count_documents(query)
+        total = bounded_count(collection, query)
         skip = (page - 1) * page_size
         cursor = (
-            collection.find(query)
+            bounded_cursor(collection.find(query))
             .sort([("timestamp", -1), ("_id", -1)])
             .skip(skip)
             .limit(page_size)

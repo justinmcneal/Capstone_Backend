@@ -79,6 +79,10 @@ app.conf.beat_schedule = {
         "task": "analytics.audit_integrity_inventory",
         "schedule": crontab(hour=2, minute=30),
     },
+    "collect-analytics-operational-metrics-every-5-minutes": {
+        "task": "analytics.collect_operational_metrics",
+        "schedule": crontab(minute="*/5"),
+    },
     "check-overdue-daily": {
         "task": "loans.tasks.check_overdue_installments_task",
         "schedule": crontab(hour=0, minute=0),

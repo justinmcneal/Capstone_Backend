@@ -6,6 +6,11 @@ from datetime import datetime, timezone
 
 from django.conf import settings
 
+from analytics.metrics import (
+    ANALYTICS_AUDIT_REPLAYS,
+    ANALYTICS_AUDIT_WRITE_FAILURES,
+    increment,
+)
 from analytics.models import AuditLog
 from config.field_encryption import decrypt_value, encrypt_value
 
@@ -28,6 +33,12 @@ AUDIT_PAYLOAD_KEYS = frozenset(
         "scope_policy_version",
     }
 )
+METRIC_DOMAINS = frozenset({"accounts", "analytics", "documents", "loans", "profiles"})
+
+
+def _metric_domain(domain):
+    value = str(domain or "other")
+    return value if value in METRIC_DOMAINS else "other"
 
 
 class AuditWriteUnavailable(RuntimeError):
@@ -69,6 +80,7 @@ def queue_audit_failure(*, domain, payload, error):
         },
         upsert=True,
     )
+    increment(ANALYTICS_AUDIT_WRITE_FAILURES, domain=_metric_domain(domain))
 
 
 def record_audit(*, domain, required=False, unavailable_error=None, writer=None, **kwargs):
@@ -133,6 +145,7 @@ def reconcile_audit_failures(*, domains=None, limit=100):
                 },
             )
             failed += 1
+            increment(ANALYTICS_AUDIT_REPLAYS, outcome="invalid_payload")
             continue
         if "event_id" not in payload and "idempotency_key" not in payload:
             payload = {
@@ -153,6 +166,7 @@ def reconcile_audit_failures(*, domains=None, limit=100):
                 },
             )
             failed += 1
+            increment(ANALYTICS_AUDIT_REPLAYS, outcome="failed")
             continue
         collection.update_one(
             {"_id": failure["_id"], "resolved_at": None},
@@ -163,4 +177,5 @@ def reconcile_audit_failures(*, domains=None, limit=100):
             },
         )
         resolved += 1
+        increment(ANALYTICS_AUDIT_REPLAYS, outcome="resolved")
     return {"resolved": resolved, "failed": failed}

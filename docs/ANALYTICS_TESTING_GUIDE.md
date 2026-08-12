@@ -2,10 +2,10 @@
 
 > **Readiness notice (2026-08-12):** This guide documents the current API for
 > development and characterization testing. Analytics is not yet production-
-> ready. Stages 1-4 (query correctness, privacy, protected audit persistence,
+> ready. Stages 1-5 (query correctness, privacy, protected audit persistence,
 > integrity/lifecycle, officer scope, and metric consistency) are complete at
-> code/test level. Query scalability/observability and real-
-> environment validation remain open. See
+> code/test level, including bounded queries and operational signals. Real-
+> environment query-plan/load and deployment validation remain open. See
 > `docs/ANALYTICS_PRODUCTION_READINESS_REVIEW.md` for the evidence and staged
 > remediation plan.
 
@@ -181,7 +181,10 @@ Paginated, filterable audit logs (full system).
 | `user_type` | string | | `customer`, `loan_officer`, `admin` |
 | `date_from` | string | | `YYYY-MM-DD`; inclusive UTC start of day |
 | `date_to` | string | | `YYYY-MM-DD`; inclusive UTC end of day and must not precede `date_from` |
-| `search` | string | | Matches action, actor ID/type, and resource ID/type; stored descriptions and emails are not searched |
+| `search` | string | | Case-insensitive escaped prefix of action, actor ID/type, or resource ID/type; stored descriptions/emails are not searched |
+
+The default maximum offset is 10,000. A page beyond that window returns HTTP
+400; narrow the filters instead of performing an unbounded deep scan.
 
 **Response fields (`data`):**
 
@@ -311,7 +314,7 @@ Audit logs scoped to the officer and their assigned loan applications.
 | `action_group` | string | | `login`, `read`, `create`, `update`, `delete` |
 | `date_from` | string | | `YYYY-MM-DD`; inclusive UTC start of day |
 | `date_to` | string | | `YYYY-MM-DD`; inclusive UTC end of day and must not precede `date_from` |
-| `search` | string | | Matches `action`, `resource_id`, and `resource_type` |
+| `search` | string | | Escaped prefix of `action`, `resource_id`, or `resource_type` |
 
 **Scope rules (what logs are included):**
 
@@ -476,11 +479,12 @@ than 100 characters return HTTP 400 instead of silently broadening the query.
 
 | Code | When |
 |------|------|
-| `400 Bad Request` | Unknown query parameter; invalid/out-of-range `page`, `page_size`, or `limit`; invalid/inverted dates; unknown action/group/actor type; search over 100 characters; invalid `log_id` format |
+| `400 Bad Request` | Unknown query parameter; invalid/out-of-range/deep `page`, `page_size`, or `limit`; invalid/inverted dates; unknown action/group/actor type; search over 100 characters; invalid `log_id` format |
 | `401 Unauthorized` | Missing or expired JWT |
 | `403 Forbidden` | Wrong role; admin missing `view_analytics` or `view_logs` permission |
 | `404 Not Found` | Audit log ID does not exist; officer account not resolved (`GET /officer/`) |
-| `503 Service Unavailable` | A privileged Analytics read could not be audit-recorded |
+| `429 Too Many Requests` | Authenticated Analytics read rate exceeded (default 300/hour) |
+| `503 Service Unavailable` | Required access audit failed or MongoDB timed out/unavailable |
 
 Standard error shape:
 ```json
@@ -538,10 +542,12 @@ Use these as negative and boundary cases while implementing the readiness plan:
 6. Database least-privilege roles, key rotation, legacy backfill, retention,
    legal-hold, integrity inventory, and backup/restore still need controlled
    target-environment evidence.
-7. Current regex and dashboard query shapes lack real-Mongo explain
-    and representative-load evidence.
-8. Analytics has no dedicated throttles, latency/error/backlog metrics, health
-   component, alerts, or dependency-outage response contract.
+7. Stage 5 bounds prefix search, offsets, active products, and MongoDB execution
+   time; aggregates product metrics; and bootstraps compound indexes. Real-Mongo
+   explain and representative-load evidence remain.
+8. Stage 5 adds a 300/hour authenticated throttle, request/audit/backlog/
+   integrity metrics, health readiness, and sanitized HTTP 503 behavior.
+   Production scrape/dashboard/alert delivery remains deployment validation.
 
 ---
 
@@ -550,11 +556,11 @@ Use these as negative and boundary cases while implementing the readiness plan:
 Focused local suites:
 
 ```bash
-pytest -q tests/test_analytics_api.py tests/test_analytics_stage3_integrity_lifecycle.py tests/test_analytics_stage4_scope_metrics.py
+pytest -q tests/test_analytics_api.py tests/test_analytics_stage3_integrity_lifecycle.py tests/test_analytics_stage4_scope_metrics.py tests/test_analytics_stage5_scalability_operations.py
 ```
 
-Latest Stage 4 result on 2026-08-12: the focused suites passed **68 tests** and
-the complete project suite passed **1,101 tests**, skipped **21 opt-in
+Latest Stage 5 result on 2026-08-12: the focused suites passed **77 tests** and
+the complete project suite passed **1,110 tests**, skipped **21 opt-in
 integration tests**, and reported one third-party deprecation warning.
 
 The API suite uses `mongomock`, calls views directly, and temporarily clears
@@ -616,6 +622,41 @@ the command result and repeat the read-only inventory afterward.
 
 ---
 
+## Analytics Operations Runbook
+
+Configuration defaults:
+
+| Setting | Default | Purpose |
+| --- | ---: | --- |
+| `ANALYTICS_QUERY_TIMEOUT_MS` | `3000` | MongoDB operation time budget |
+| `ANALYTICS_MAX_PAGE_OFFSET` | `10000` | Maximum page-number scan offset |
+| `ANALYTICS_MAX_ACTIVE_PRODUCTS` | `100` | Dashboard product-cardinality bound |
+| `ANALYTICS_AUDIT_BACKLOG_ALERT_THRESHOLD` | `1` | Health degradation threshold |
+| `ANALYTICS_READ_RATE` | `300/hour` | Per-authenticated-user read limit |
+
+Operational signals contain only endpoint class, outcome class, queue/domain,
+and integrity category labels—never query text, email/IP, identifiers, event
+details, credentials, or MongoDB hosts.
+
+When `/api/health/` reports Analytics degraded:
+
+1. Check `audit_backlog`, `oldest_backlog_age_seconds`,
+   `integrity_findings`, and `inventory_available` in the Analytics component.
+2. Verify MongoDB, Celery workers/Beat, Redis/cache, and the most recent
+   `analytics.collect_operational_metrics` and integrity-inventory executions.
+3. If backlog exists, restore the dependency and let the idempotent reconciler
+   drain it; do not edit encrypted payloads or event IDs manually.
+4. If integrity findings exist, stop lifecycle/backfill mutations, preserve a
+   backup, run the read-only inventory, and escalate as an evidence incident.
+5. Record sanitized counts, timestamps, deployment version, alert firing and
+   recovery times. Do not copy event documents into tickets or logs.
+
+Production release evidence must show Prometheus scraping, dashboard panels,
+alert delivery/resolution, MongoDB timeout behavior, throttle sharing through
+Redis, and real query plans at representative cardinality.
+
+---
+
 ## Where to Look in Code
 
 | Area | Path |
@@ -629,10 +670,12 @@ the command result and repeat the read-only inventory afterward.
 | Central audit writer/recovery | `analytics/services/audit_writer.py` |
 | Retention, holds, export, deletion, inventory | `analytics/services/lifecycle.py` |
 | Scheduled lifecycle/recovery tasks | `analytics/tasks.py`, `config/celery.py` |
+| Query bounds and health | `analytics/services/operations.py` |
+| Prometheus metrics | `analytics/metrics.py` |
 | Cross-domain adapters | `accounts/services/audit.py`, `profiles/services/audit.py`, `loans/services/audit.py`, `documents/services/audit.py` |
 | Operator commands | `analytics/management/commands/` |
 | Index bootstrap | `init_db.py` |
-| Focused tests | `tests/test_analytics_api.py`, `tests/test_analytics_stage3_integrity_lifecycle.py`, `tests/test_analytics_stage4_scope_metrics.py` |
+| Focused tests | `tests/test_analytics_api.py`, `tests/test_analytics_stage3_integrity_lifecycle.py`, `tests/test_analytics_stage4_scope_metrics.py`, `tests/test_analytics_stage5_scalability_operations.py` |
 
 ---
 

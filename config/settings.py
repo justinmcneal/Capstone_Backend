@@ -12,6 +12,7 @@ https://docs.djangoproject.com/en/4.2/ref/settings/
 
 import json
 import os
+import re
 from pathlib import Path
 
 from cryptography.fernet import Fernet
@@ -163,6 +164,15 @@ ANALYTICS_AUDIT_MAX_DETAILS_BYTES = int(
 ANALYTICS_AUDIT_MAX_DETAILS_DEPTH = int(
     os.getenv('ANALYTICS_AUDIT_MAX_DETAILS_DEPTH') or '4'
 )
+ANALYTICS_QUERY_TIMEOUT_MS = int(os.getenv('ANALYTICS_QUERY_TIMEOUT_MS') or '3000')
+ANALYTICS_READ_RATE = os.getenv('ANALYTICS_READ_RATE') or '300/hour'
+ANALYTICS_MAX_PAGE_OFFSET = int(os.getenv('ANALYTICS_MAX_PAGE_OFFSET') or '10000')
+ANALYTICS_MAX_ACTIVE_PRODUCTS = int(
+    os.getenv('ANALYTICS_MAX_ACTIVE_PRODUCTS') or '100'
+)
+ANALYTICS_AUDIT_BACKLOG_ALERT_THRESHOLD = int(
+    os.getenv('ANALYTICS_AUDIT_BACKLOG_ALERT_THRESHOLD') or '1'
+)
 if not 1024 <= ANALYTICS_AUDIT_MAX_DETAILS_BYTES <= 65536:
     raise ImproperlyConfigured(
         'ANALYTICS_AUDIT_MAX_DETAILS_BYTES must be between 1024 and 65536'
@@ -170,6 +180,26 @@ if not 1024 <= ANALYTICS_AUDIT_MAX_DETAILS_BYTES <= 65536:
 if not 1 <= ANALYTICS_AUDIT_MAX_DETAILS_DEPTH <= 8:
     raise ImproperlyConfigured(
         'ANALYTICS_AUDIT_MAX_DETAILS_DEPTH must be between 1 and 8'
+    )
+if not 100 <= ANALYTICS_QUERY_TIMEOUT_MS <= 30000:
+    raise ImproperlyConfigured(
+        'ANALYTICS_QUERY_TIMEOUT_MS must be between 100 and 30000'
+    )
+if not re.fullmatch(r"[1-9][0-9]*/(s|sec|m|min|h|hour|d|day)", ANALYTICS_READ_RATE):
+    raise ImproperlyConfigured(
+        'ANALYTICS_READ_RATE must use a positive DRF rate such as 300/hour'
+    )
+if not 100 <= ANALYTICS_MAX_PAGE_OFFSET <= 100000:
+    raise ImproperlyConfigured(
+        'ANALYTICS_MAX_PAGE_OFFSET must be between 100 and 100000'
+    )
+if not 1 <= ANALYTICS_MAX_ACTIVE_PRODUCTS <= 1000:
+    raise ImproperlyConfigured(
+        'ANALYTICS_MAX_ACTIVE_PRODUCTS must be between 1 and 1000'
+    )
+if not 1 <= ANALYTICS_AUDIT_BACKLOG_ALERT_THRESHOLD <= 100000:
+    raise ImproperlyConfigured(
+        'ANALYTICS_AUDIT_BACKLOG_ALERT_THRESHOLD must be between 1 and 100000'
     )
 
 # Production must never store sensitive fields as plaintext.

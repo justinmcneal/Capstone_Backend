@@ -34,20 +34,20 @@ routes use named permissions, customer counts are owner-scoped, officer queue
 counts are assignment-scoped, audit lists paginate in MongoDB, and basic tests
 pass.
 
-Stages 1 through 4 have corrected the query contract, response disclosure,
+Stages 1 through 5 have corrected the query contract, response disclosure,
 permission separation, officer-route role semantics, privileged-read auditing,
 protected audit persistence, cross-domain recovery, integrity verification, and
 audit lifecycle controls. Officer audit visibility now uses event-time scope,
 and dashboards share versioned lifecycle-aware definitions. Remaining
-application work is concentrated in query/index scalability and observability.
-Real-Mongo query plans, database roles, key operations,
+Application-code remediation is complete for the reviewed scope. Real-Mongo
+query plans/load, database roles, key operations,
 backfill/restore procedures, and deployment monitoring still require isolated
 environment evidence.
 
 Current local baseline:
 
-- Analytics Stage 1-4 suites: **68 passed** on 2026-08-12.
-- Full project suite after Stage 4: **1,101 passed and 21 skipped** with one
+- Analytics Stage 1-5 suites: **77 passed** on 2026-08-12.
+- Full project suite after Stage 5: **1,110 passed and 21 skipped** with one
   third-party deprecation warning on 2026-08-12.
 - The suite calls views directly and temporarily disables their DRF
   authentication/permission classes. Explicit role/mixin checks are exercised,
@@ -254,59 +254,47 @@ reassignment, deleted/superseded documents, and pending-versus-approved IDs.
 a transactional snapshot. A materialized/snapshot strategy, if required by the
 approved consistency SLO, belongs to Stage 5.
 
-### 7. Query design and indexes are insufficient for production volume
+### 7. Query design and bounded execution
 
-**Status: High priority**
+**Status: Complete at code and automated-test level; real-Mongo proof remains**
 
-Current audit indexes do not fully support every filtered sort path. Lists use
-deterministic `timestamp`/`_id` ordering, but unanchored multi-field regex search
-is not index-supported.
-`audit-logs/users/` sorts and groups across the event collection, and admin
-product statistics perform two application counts per active product.
+Stage 5 applies `maxTimeMS` to Analytics counts, cursors, and aggregations;
+bounds page-number offsets and active-product cardinality; uses deterministic
+time/ID ordering; and changes audit search to escaped prefix matching. Actor,
+action, resource, officer-scope, lifecycle, and deterministic-sort compound
+indexes are bootstrapped. All active product metrics now use one bounded grouped
+aggregation instead of per-product count queries. A dedicated authenticated
+Analytics throttle defaults to 300 requests per hour and uses the shared Django
+cache configuration.
 
-No `explain()` evidence, collection-size targets, response-time budget,
-`maxTimeMS`, bounded product count, cache policy, or snapshot/materialized
-dashboard strategy is documented. Analytics endpoints also have no dedicated
-DRF throttles despite potentially expensive queries.
+The compatibility page contract remains available inside the bounded offset
+window; deeper requests fail with HTTP 400 and require narrower filters. No
+Analytics response caching was introduced because the privacy, invalidation,
+and staleness contract does not yet justify it. Stage 6 must record real-Mongo
+`explain()` and load evidence before the indexes/performance budget are approved.
 
-Required remediation:
+### 8. Observability and failure behavior
 
-- define query shapes and add compound indexes such as actor/type/time/id,
-  resource/type/time/id, and action/time/id where explain evidence supports
-  them;
-- add deterministic `timestamp`/`_id` ordering and preferably cursor pagination
-  for deep history;
-- replace broad regex with bounded exact/prefix/blind-index search or a
-  separately approved search service;
-- replace per-product N+1 counts with aggregation or maintained projections;
-- add safe query timeouts, dedicated read throttles, and carefully keyed caching
-  only where privacy and staleness rules allow; and
-- run opt-in real-Mongo load/explain tests at representative cardinalities.
+**Status: Complete at code and automated-test level; alert wiring remains deployment work**
 
-### 8. Observability and failure behavior are incomplete
+Low-cardinality Prometheus metrics now cover request outcomes/latency/response
+size, audit write failures and replay outcomes, recovery backlog/oldest age, and
+integrity inventory categories. A five-minute task refreshes sanitized gauges
+and operational state; the daily inventory persists its bounded summary.
+`/api/health/` reports an identifier-free Analytics readiness component and
+degrades when recovery backlog reaches the configured threshold or integrity
+findings exist. MongoDB failures/timeouts return a stable sanitized HTTP 503
+without exposing hosts, queries, identifiers, or event content.
 
-**Status: Medium priority**
-
-The module has no Analytics-specific request latency, query failure, response
-size, audit-write failure, recovery backlog, integrity, or stale-dashboard
-metrics. Dashboard database exceptions are not normalized into a stable API
-error, and health does not report audit persistence/recovery readiness.
-
-Required remediation:
-
-- add low-cardinality counters/histograms and backlog/oldest-age gauges;
-- alert on privileged-read failures, query timeouts, audit write/replay backlog,
-  integrity mismatch, and dashboard latency/error budgets;
-- return a sanitized stable service-unavailable response for dependency outages;
-- ensure logs and metrics never include query text, emails, IPs, IDs, event
-  details, or credentials; and
-- document on-call diagnosis, backup/restore, and incident evidence procedures.
+Production still requires scrape validation, dashboard panels, alert routes,
+threshold approval, and evidence that the on-call notifications fire and
+resolve. Those are Stage 6 deployment gates, not missing application behavior.
 
 ### 9. Automated evidence remains environment-limited
 
 **Status: High priority**
 
-The 68 Analytics Stage 1-4 tests establish useful behavior, but most API cases
+The 77 Analytics Stage 1-5 tests establish useful behavior, but most API cases
 call view classes
 directly after clearing DRF authentication and permission classes. The suite
 does not cover:
@@ -373,10 +361,15 @@ count.
 
 ### Stage 5 — Scalability and observability
 
-- Add evidence-driven compound indexes, deterministic/cursor pagination,
-  bounded search, aggregations/projections, query timeouts, and throttles.
-- Add Analytics metrics, health/backlog signals, alerts, sanitized logging, and
-  an operational runbook section in the testing guide.
+**Status: Complete at code and automated-test level**
+
+- [x] Add compound indexes, deterministic bounded pagination, prefix search,
+  product aggregation, MongoDB timeouts, and a dedicated authenticated throttle.
+- [x] Add low-cardinality metrics, recovery/integrity gauges, health readiness,
+  scheduled snapshots, sanitized logging, and stable dependency-outage errors.
+- [x] Document configuration, diagnosis, and incident evidence procedures.
+- [ ] Prove real query plans/load and connect/test production dashboards and
+  alerts in Stage 6.
 
 ### Stage 6 — Real-environment release validation
 
@@ -404,8 +397,8 @@ count.
   include submitted plus under-review, unavailable/superseded documents are
   excluded, and valid-ID readiness requires approval. Clients should display
   the returned definition version and be regression-tested against these rules.
-- Cursor pagination may supplement or replace deep page-number navigation while
-  retaining a bounded compatibility window.
+- Page-number pagination is retained within a bounded offset window; clients
+  receive HTTP 400 for deeper requests and should narrow their filters.
 
 ## Review Boundaries
 

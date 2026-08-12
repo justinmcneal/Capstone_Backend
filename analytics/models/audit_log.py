@@ -774,9 +774,11 @@ class AuditLog:
 
     @classmethod
     def find(cls, query, sort=None, limit=100):
+        from analytics.services.operations import bounded_cursor
+
         db = get_db()
         collection = db[cls.collection_name]
-        cursor = collection.find(query)
+        cursor = bounded_cursor(collection.find(query))
         if sort:
             cursor = cursor.sort(sort)
         cursor = cursor.limit(limit)
@@ -809,12 +811,14 @@ class AuditLog:
         skip=0,
         limit=100,
     ):
+        from analytics.services.operations import bounded_cursor
+
         query = cls._build_filter_query(
             action, action_group, user_id, user_type, date_from, date_to, search
         )
         db = get_db()
         collection = db[cls.collection_name]
-        cursor = collection.find(query)
+        cursor = bounded_cursor(collection.find(query))
         cursor = cursor.sort([("timestamp", -1), ("_id", -1)])
         if skip:
             cursor = cursor.skip(skip)
@@ -832,12 +836,14 @@ class AuditLog:
         date_to=None,
         search=None,
     ):
+        from analytics.services.operations import bounded_count
+
         query = cls._build_filter_query(
             action, action_group, user_id, user_type, date_from, date_to, search
         )
         db = get_db()
         collection = db[cls.collection_name]
-        return collection.count_documents(query)
+        return bounded_count(collection, query)
 
     @classmethod
     def _build_filter_query(
@@ -899,7 +905,10 @@ class AuditLog:
                 and_conditions.append({"timestamp": ts_cond})
 
         if search and str(search).strip():
-            search_regex = {"$regex": re.escape(str(search).strip()), "$options": "i"}
+            search_regex = {
+                "$regex": f"^{re.escape(str(search).strip())}",
+                "$options": "i",
+            }
             and_conditions.append(
                 {
                     "$or": [
@@ -946,6 +955,18 @@ class AuditLog:
         collection.create_index("timestamp")
         collection.create_index("resource_type")
         collection.create_index([("timestamp", -1), ("_id", -1)])
+        collection.create_index(
+            [("user_id", 1), ("user_type", 1), ("timestamp", -1), ("_id", -1)],
+            name="audit_actor_filter_sort",
+        )
+        collection.create_index(
+            [("action", 1), ("timestamp", -1), ("_id", -1)],
+            name="audit_action_filter_sort",
+        )
+        collection.create_index(
+            [("resource_type", 1), ("resource_id", 1), ("timestamp", -1), ("_id", -1)],
+            name="audit_resource_filter_sort",
+        )
         collection.create_index(
             [("legal_hold", 1), ("retention_expires_at", 1)],
             name="audit_retention_cleanup",

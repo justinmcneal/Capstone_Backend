@@ -49,6 +49,21 @@ class HealthCheckView(APIView):
             health["services"]["mongodb"] = "disconnected"
             health["status"] = "degraded"
 
+        if health["services"].get("mongodb") == "connected":
+            try:
+                from analytics.services.operations import analytics_health_summary
+
+                analytics_health = analytics_health_summary(settings.MONGODB)
+                health["services"]["analytics"] = analytics_health
+                if not analytics_health["ready"]:
+                    health["status"] = "degraded"
+            except Exception:
+                health["services"]["analytics"] = {
+                    "ready": False,
+                    "status": "unavailable",
+                }
+                health["status"] = "degraded"
+
         # Check AI service (optional)
         try:
             from ai_assistant.services import get_llm_service
