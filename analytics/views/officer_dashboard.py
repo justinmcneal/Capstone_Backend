@@ -14,14 +14,15 @@ from rest_framework.views import APIView
 from accounts.authentication import CustomJWTAuthentication
 from accounts.utils.access_control import AccessControlMixin
 from accounts.utils.response_helpers import error_response, success_response
-from accounts.utils.validation_utils import sanitize_text
 from analytics.models import AuditLog
 from analytics.models.audit_log import ACTION_GROUPS
 from analytics.services.audit_queries import (
+    AnalyticsQueryError,
     officer_search_conditions,
-    parse_date_range,
+    parse_audit_filters,
     parse_pagination,
     serialize_log_entry,
+    validate_query_params,
 )
 
 logger = logging.getLogger("analytics")
@@ -152,19 +153,32 @@ class OfficerAuditLogsView(LoanOfficerRequiredMixin, APIView):
             )
 
         try:
+            validate_query_params(
+                request,
+                {
+                    "page",
+                    "page_size",
+                    "action",
+                    "action_group",
+                    "date_from",
+                    "date_to",
+                    "search",
+                },
+            )
             page, page_size = parse_pagination(request)
-        except ValueError as exc:
+            filters = parse_audit_filters(request, allow_actor_filters=False)
+        except AnalyticsQueryError as exc:
             return error_response(
-                message=str(exc.args[0]),
-                errors=exc.args[1] if len(exc.args) > 1 else {},
+                message=str(exc),
+                errors=exc.errors,
                 status_code=status.HTTP_400_BAD_REQUEST,
             )
 
         db = settings.MONGODB
-        action_filter = sanitize_text(request.query_params.get("action", ""))
-        action_group = sanitize_text(request.query_params.get("action_group", ""))
-        date_filters = parse_date_range(request)
-        search = sanitize_text(request.query_params.get("search", ""))
+        action_filter = filters["action"]
+        action_group = filters["action_group"]
+        date_filters = filters["date_range"]
+        search = filters["search"]
 
         assigned_ids = [
             str(doc.get("_id"))
@@ -185,23 +199,21 @@ class OfficerAuditLogsView(LoanOfficerRequiredMixin, APIView):
             and_filters.append({"action": action_filter})
 
         if action_group:
-            group = str(action_group).strip().lower()
-            if group in ACTION_GROUPS:
-                and_filters.append({"action": {"$in": ACTION_GROUPS[group]}})
-            elif group == "delete":
-                and_filters.append(
-                    {
-                        "$and": [
-                            {"action": "admin_action"},
-                            {
-                                "description": {
-                                    "$regex": "(delete|deleted|deactivate|deactivated|remove|removed)",
-                                    "$options": "i",
-                                }
+            group_filter = {"action": {"$in": ACTION_GROUPS[action_group]}}
+            if action_group == "delete":
+                group_filter = {
+                    "$or": [
+                        group_filter,
+                        {
+                            "action": "admin_action",
+                            "description": {
+                                "$regex": "(delete|deleted|deactivate|deactivated|remove|removed)",
+                                "$options": "i",
                             },
-                        ]
-                    }
-                )
+                        },
+                    ]
+                }
+            and_filters.append(group_filter)
 
         if date_filters:
             and_filters.append({"timestamp": date_filters})
@@ -215,7 +227,10 @@ class OfficerAuditLogsView(LoanOfficerRequiredMixin, APIView):
         total = collection.count_documents(query)
         skip = (page - 1) * page_size
         cursor = (
-            collection.find(query).sort("timestamp", -1).skip(skip).limit(page_size)
+            collection.find(query)
+            .sort([("timestamp", -1), ("_id", -1)])
+            .skip(skip)
+            .limit(page_size)
         )
 
         logs_data = [serialize_log_entry(AuditLog.from_dict(doc)) for doc in cursor]
@@ -226,7 +241,7 @@ class OfficerAuditLogsView(LoanOfficerRequiredMixin, APIView):
                 "total": total,
                 "page": page,
                 "page_size": page_size,
-                "total_pages": (total + page_size - 1) // page_size if total > 0 else 1,
+                "total_pages": (total + page_size - 1) // page_size if total > 0 else 0,
             },
             message="Officer audit logs retrieved",
         )

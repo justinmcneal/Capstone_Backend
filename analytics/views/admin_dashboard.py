@@ -14,13 +14,15 @@ from rest_framework.views import APIView
 
 from accounts.authentication import CustomJWTAuthentication
 from accounts.utils.response_helpers import error_response, success_response
-from accounts.utils.validation_utils import sanitize_text
 from accounts.views.admin_views import AdminRequiredMixin
 from analytics.models import AuditLog
 from analytics.services.audit_queries import (
+    AnalyticsQueryError,
     build_paginated_response,
-    parse_date_range,
+    parse_audit_filters,
+    parse_limit,
     parse_pagination,
+    validate_query_params,
 )
 
 logger = logging.getLogger("analytics")
@@ -177,41 +179,43 @@ class AuditLogsView(AdminRequiredMixin, APIView):
             return result
 
         try:
+            validate_query_params(
+                request,
+                {
+                    "page",
+                    "page_size",
+                    "action",
+                    "action_group",
+                    "user_id",
+                    "user_type",
+                    "date_from",
+                    "date_to",
+                    "search",
+                },
+            )
             page, page_size = parse_pagination(request)
-        except ValueError as exc:
+            filters = parse_audit_filters(request, allow_actor_filters=True)
+        except AnalyticsQueryError as exc:
             return error_response(
-                message=str(exc.args[0]),
-                errors=exc.args[1] if len(exc.args) > 1 else {},
+                message=str(exc),
+                errors=exc.errors,
                 status_code=status.HTTP_400_BAD_REQUEST,
             )
 
-        action_filter = sanitize_text(request.query_params.get("action", ""))
-        action_group = sanitize_text(request.query_params.get("action_group", ""))
-        user_id = sanitize_text(request.query_params.get("user_id", ""))
-        user_type = sanitize_text(request.query_params.get("user_type", ""))
-        search = sanitize_text(request.query_params.get("search", ""))
-        date_filters = parse_date_range(request)
+        date_filters = filters.pop("date_range")
 
         logs = AuditLog.find_with_filters(
-            action=action_filter or None,
-            action_group=action_group or None,
-            user_id=user_id or None,
-            user_type=user_type or None,
             date_from=(date_filters or {}).get("$gte"),
             date_to=(date_filters or {}).get("$lte"),
-            search=search or None,
             skip=(page - 1) * page_size,
             limit=page_size,
+            **filters,
         )
 
         total = AuditLog.count_with_filters(
-            action=action_filter or None,
-            action_group=action_group or None,
-            user_id=user_id or None,
-            user_type=user_type or None,
             date_from=(date_filters or {}).get("$gte"),
             date_to=(date_filters or {}).get("$lte"),
-            search=search or None,
+            **filters,
         )
 
         response_data = build_paginated_response(list(logs), total, page, page_size)
@@ -241,13 +245,19 @@ class AuditLogUsersView(AdminRequiredMixin, APIView):
         if not has_permission:
             return result
 
-        search = sanitize_text(request.query_params.get("search", ""))
         try:
-            limit = min(max(int(request.query_params.get("limit", 200)), 1), 500)
-        except (TypeError, ValueError):
+            validate_query_params(request, {"search", "limit"})
+            limit = parse_limit(request)
+            search = str(request.query_params.get("search", "") or "").strip()
+            if len(search) > 100:
+                raise AnalyticsQueryError(
+                    "Invalid search parameter",
+                    errors={"search": "search must be at most 100 characters"},
+                )
+        except AnalyticsQueryError as exc:
             return error_response(
-                message="Invalid limit parameter",
-                errors={"limit": "limit must be an integer"},
+                message=str(exc),
+                errors=exc.errors,
                 status_code=status.HTTP_400_BAD_REQUEST,
             )
 

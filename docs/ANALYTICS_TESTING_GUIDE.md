@@ -1,5 +1,13 @@
 # Analytics API Testing Guide
 
+> **Readiness notice (2026-08-12):** This guide documents the current API for
+> development and characterization testing. Analytics is not yet production-
+> ready. Stage 1 query correctness is complete; privacy, audit integrity and
+> lifecycle, officer scope, metric consistency, query scalability, and real-
+> environment validation remain open. See
+> `docs/ANALYTICS_PRODUCTION_READINESS_REVIEW.md` for the evidence and staged
+> remediation plan.
+
 ## Scope
 
 This guide documents the **Analytics service API** under `/api/analytics/` for API testing. It covers:
@@ -24,8 +32,8 @@ Content-Type: application/json
 | Document | Purpose |
 |----------|---------|
 | `docs/LOANS_TESTING_GUIDE.md` | Loan APIs that generate many audit log entries |
-| `docs/AUTH_ACCESS_SECURITY_GUIDE.md` | Admin permissions (`view_analytics`, `view_logs`) |
-| `docs/ANALYTICS_PRODUCTION_READINESS_REVIEW.md` | Analytics module review, risks, and roadmap |
+| `docs/accounts/ACCOUNTS_PRODUCTION_READINESS_REVIEW.md` | Authentication and admin permissions (`view_analytics`, `view_logs`) |
+| `docs/ANALYTICS_PRODUCTION_READINESS_REVIEW.md` | Verified implementation, risks, remediation plan, and release gate |
 
 ## Role and Permission Matrix
 
@@ -52,22 +60,31 @@ Content-Type: application/json
 | Group | Matching `action` values |
 |-------|--------------------------|
 | `login` | `user_login`, `user_login_failed`, `user_logout` |
+| `read` | Profile/document directory, detail, history, export, and denied-read events registered in `ACTION_GROUPS` |
 | `create` | Includes `user_registered`, `profile_created`, `loan_submitted`, `document_uploaded`, `payment_recorded` |
 | `update` | Includes `profile_updated`, `notification_preferences_updated`, `document_verified`, `document_rejected`, `loan_approved`, `loan_rejected`, `loan_disbursed`, `penalty_applied`, `penalty_waived`, `consent_recorded`, `admin_action` |
-| `delete` | `admin_action` entries whose description matches delete/deactivate/remove (regex) |
+| `delete` | Admin/officer deactivation actions plus `admin_action` entries whose description matches delete/deactivate/remove (regex) |
 
 ### Canonical Audit Actions (`AUDIT_ACTIONS` in code)
 
-The canonical list is maintained by `AUDIT_ACTIONS` in code. Profile actions
+The versioned list is maintained by `AUDIT_ACTION_REGISTRY` in code. Stage 1
+registers current cross-domain actions, rejects new unknown actions/actor types,
+and stores `event_schema_version` plus a stable `action_group`. Legacy records
+may lack those fields. Profile actions
 include `profile_created`, `profile_updated`,
 `notification_preferences_updated`, `profile_directory_viewed`,
 `profile_sensitive_read`, `profile_access_denied`, `profile_exported`,
 `profile_history_viewed`, the risk-review workflow, and the risk-score lifecycle
 actions.
 
-### Extended Actions (also appear in logs from other modules)
+### Additional Registered Cross-Domain Actions
 
-`loan_draft_updated_and_submitted`, `customer_payment_recorded`, `disbursement_method_set`, `wallet_payment_verified`, `loan_internal_note_added`, `loan_missing_documents_requested`
+The Stage 1 registry also includes `loan_draft_updated_and_submitted`, `loan_assigned`,
+`loan_reassigned`, `loan_resubmitted`, `loan_disbursement_pending`,
+`loan_disbursement_failed`, `customer_payment_submitted`,
+`customer_payment_recorded`, `disbursement_method_set`,
+`wallet_payment_verified`, `repayment_schedule_exported`,
+`loan_internal_note_added`, and `loan_missing_documents_requested`.
 
 ### Resource Types (in audit log entries)
 
@@ -146,8 +163,8 @@ Paginated, filterable audit logs (full system).
 | `action_group` | string | | `login`, `create`, `update`, `delete` |
 | `user_id` | string | | Filter by actor user ID |
 | `user_type` | string | | `customer`, `loan_officer`, `admin` |
-| `date_from` | string | | `YYYY-MM-DD` (start of day) |
-| `date_to` | string | | `YYYY-MM-DD` (end of day 23:59:59) |
+| `date_from` | string | | `YYYY-MM-DD`; inclusive UTC start of day |
+| `date_to` | string | | `YYYY-MM-DD`; inclusive UTC end of day and must not precede `date_from` |
 | `search` | string | | Matches `description`, `user_email`, `action`, `user_id`, `user_type` (case-insensitive) |
 
 **Response fields (`data`):**
@@ -171,7 +188,16 @@ Paginated, filterable audit logs (full system).
 | `page_size` | int |
 | `total_pages` | int |
 
+Results sort by `timestamp` descending and then `_id` descending. An empty
+result reports `total_pages: 0`; a page beyond the end returns an empty `logs`
+array while preserving `total` and `total_pages`.
+
 **Common `details` fields by action (when present):**
+
+`details` is currently an unrestricted producer-supplied object. The examples
+below characterize existing records; they are not an approved stable or safe
+schema. Do not render arbitrary values as HTML, log them on the client, or make
+client behavior depend on undocumented keys.
 
 | Action | Typical `details` keys |
 |--------|------------------------|
@@ -294,14 +320,20 @@ Audit logs scoped to the officer and their assigned loan applications.
 | `page_size` | int | 20 | 1–200 |
 | `action` | string | | Exact action match |
 | `action_group` | string | | `login`, `create`, `update`, `delete` |
-| `date_from` | string | | `YYYY-MM-DD` |
-| `date_to` | string | | `YYYY-MM-DD` |
+| `date_from` | string | | `YYYY-MM-DD`; inclusive UTC start of day |
+| `date_to` | string | | `YYYY-MM-DD`; inclusive UTC end of day and must not precede `date_from` |
 | `search` | string | | Matches `description`, `action`, `resource_id`, `resource_type` |
 
 **Scope rules (what logs are included):**
 
 - Logs where `user_id` = officer ID AND `user_type` = `loan_officer`, **OR**
 - Logs where `resource_type` = `loan` AND `resource_id` is in the officer's assigned application IDs
+
+This is the current implementation, not the approved final privacy contract.
+It applies current assignment to historical events, builds an unbounded assigned-
+ID list, and returns the same email/IP/free-form detail shape used for admins.
+Do not treat this endpoint as production-safe until the scope and redaction work
+in the readiness review is complete.
 
 **Response fields (`data`):**
 
@@ -363,10 +395,12 @@ Customer personal dashboard statistics.
 
 **Profile completion logic:**
 
-- `personal_profile`: `completion_percentage > 0` on customer profile
-- `business_profile`: `business_type` set AND (`income_range` OR `estimated_monthly_income`)
-- `alternative_data`: `education_level` AND `housing_status` set
-- `percentage`: average of the 3 boolean sections × 100 (valid ID is tracked separately)
+- each section boolean reflects that profile record's stored
+  `profile_completed` value;
+- `percentage` is the arithmetic mean of the stored personal, business, and
+  alternative-data `completion_percentage` values; and
+- `valid_id_uploaded` currently means any matching document record exists. It
+  does not yet exclude rejected, expired, superseded, or deletion-state records.
 
 ---
 
@@ -417,6 +451,10 @@ GET /audit-logs/?search=login&action_group=login
 GET /audit-logs/?user_id=<customer_id>
 ```
 
+These are now passing Stage 1 contract cases. Invalid dates, inverted ranges,
+unknown actions/groups/parameters, out-of-range pagination, and searches longer
+than 100 characters return HTTP 400 instead of silently broadening the query.
+
 ### Officer Scope Test
 
 1. Assign a loan to Officer A only.
@@ -430,7 +468,7 @@ GET /audit-logs/?user_id=<customer_id>
 
 | Code | When |
 |------|------|
-| `400 Bad Request` | Invalid `page`, `page_size`, `limit`; invalid `log_id` format (not ObjectId) |
+| `400 Bad Request` | Unknown query parameter; invalid/out-of-range `page`, `page_size`, or `limit`; invalid/inverted dates; unknown action/group/actor type; search over 100 characters; invalid `log_id` format |
 | `401 Unauthorized` | Missing or expired JWT |
 | `403 Forbidden` | Wrong role; admin missing `view_analytics` or `view_logs` permission |
 | `404 Not Found` | Audit log ID does not exist; officer account not resolved (`GET /officer/`) |
@@ -469,6 +507,72 @@ Standard success shape:
 
 ---
 
+## Known Gaps to Characterize Before Implementation
+
+Use these as negative and boundary cases while implementing the readiness plan:
+
+1. An admin with `view_analytics` but without `view_logs` can currently receive
+   recent audit descriptions from `/admin/`.
+2. Audit list/detail/officer responses currently expose full actor email, IP,
+   description, identifiers, and unrestricted `details`.
+3. Reading the audit list, user directory, or detail does not itself create a
+   required privileged-read audit event.
+4. Stage 1 now rejects invalid/unknown filters and bounds, parses dates once,
+   stores a versioned action/category for new events, and reports zero pages for
+   empty results. Legacy events may lack the new metadata.
+5. Officer historical visibility follows current assignment, and admin use of
+   officer routes has no explicit target or named admin permission.
+6. Customer/admin document counts can include deletion-state records; valid-ID
+   presence ignores review/lifecycle status; approved/disbursed meanings differ
+   between dashboards.
+7. Raw string-only counts can miss legacy `ObjectId` owner fields.
+8. Audit fields are not declared for application field encryption, events have
+   no enforced schema/idempotency/tamper evidence, and no Analytics retention or
+   legal-hold workflow exists.
+9. Current indexes and regex/assigned-ID query shapes lack real-Mongo explain
+    and representative-load evidence.
+10. Analytics has no dedicated throttles, latency/error/backlog metrics, health
+    component, alerts, or dependency-outage response contract.
+
+---
+
+## Automated Test Baseline and Commands
+
+Focused local suite:
+
+```bash
+pytest -q tests/test_analytics_api.py
+```
+
+Latest Stage 1 result on 2026-08-12: **40 passed**. The complete project suite
+passed **1,073 tests** and skipped **21 opt-in integration tests**.
+
+The focused suite uses `mongomock`, calls views directly, and temporarily clears
+their DRF authentication/permission classes before `force_authenticate`. It is
+useful for view/mixin behavior but does not prove live JWT authentication,
+middleware, URL dispatch, real MongoDB query plans, database roles, encryption,
+retention, recovery, load, or deployment monitoring.
+
+Required future test groups:
+
+- request-level JWT and complete role/permission matrix tests through URLs;
+- strict pagination/date/enum/search validation and non-broadening regressions;
+- admin summary-versus-log permission and sensitive-field redaction tests;
+- officer cross-assignment, reassignment, historical-scope, admin-target, and
+  bounded-search tests;
+- event registry/schema, secret rejection, encryption/rotation, idempotent
+  recovery, tamper inventory, retention, legal hold, deletion, and export tests;
+- lifecycle-complete dashboard fixtures with mixed string/ObjectId ownership and
+  reconciliation invariants; and
+- opt-in isolated real-Mongo index/explain, deep-history, aggregation, timeout,
+  and representative-cardinality tests.
+
+Do not point future load, retention, or recovery harnesses at a production
+database. They must create uniquely named temporary databases and remove only
+their own test data after explicit mutation approval.
+
+---
+
 ## Where to Look in Code
 
 | Area | Path |
@@ -480,6 +584,9 @@ Standard success shape:
 | Audit log model + filters | `analytics/models/audit_log.py` |
 | Shared audit query helpers | `analytics/services/audit_queries.py` |
 | Audit tracker service | `analytics/services/tracker.py` |
+| Cross-domain recovery examples | `profiles/services/audit.py`, `loans/services/audit.py`, `documents/services/audit.py` |
+| Index bootstrap | `init_db.py` |
+| Focused tests | `tests/test_analytics_api.py` |
 
 ---
 
@@ -487,9 +594,19 @@ Standard success shape:
 
 1. All endpoints are **GET only** — no request bodies.
 2. Admin audit log endpoints require specific permissions beyond the admin role.
-3. Officer audit logs are **ABAC-scoped** — only the officer's own actions and assigned loan resources.
+3. Officer audit logs currently use the officer's own actions plus loan resources
+   in the officer's current assignment set. Treat this as provisional scope,
+   not a proven event-time ABAC policy.
 4. Customer dashboard counts `pending` applications as `submitted` + `under_review` (not `draft`).
 5. Admin dashboard `loans.pending` counts only `submitted` status (not `under_review`).
-6. `action_group=delete` uses a description regex, not a dedicated action name.
-7. Audit log `details` is a free-form object — assert on known keys per action type, not a fixed schema.
-8. Generate test data by exercising auth, loans, documents, and profiles APIs first; analytics reads their side effects.
+6. `action_group=delete` partly uses a description regex rather than a stable
+   stored category.
+7. Audit log `details` is currently free-form. Tests should reject unsafe keys
+   once the event registry is implemented rather than normalizing arbitrary
+   payloads as acceptable.
+8. Generate test data by exercising auth, loans, documents, and profiles APIs
+   first; Analytics reads their side effects.
+9. Dashboard counts are separate queries with no snapshot or `as_of` value, so
+   concurrent source writes can make one response internally inconsistent.
+10. Do not assert that a passing `mongomock` test proves an index is used; use an
+    explicitly gated real-Mongo `explain()` harness.

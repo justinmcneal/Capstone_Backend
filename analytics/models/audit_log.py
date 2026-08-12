@@ -11,149 +11,121 @@ def get_db():
     return settings.MONGODB
 
 
-# Actions to track
-AUDIT_ACTIONS = [
+# Versioned action contract. New producers must register their action and stable
+# category here before writing it. Legacy records are still readable, but new
+# unknown actions fail closed instead of silently drifting out of filters.
+AUDIT_EVENT_SCHEMA_VERSION = 1
+AUDIT_ACTION_REGISTRY = {
     # Authentication
-    "user_login",
-    "user_login_failed",
-    "user_logout",
-    "user_registered",
-    "two_factor_setup_started",
-    "two_factor_enabled",
-    "two_factor_disabled",
-    "two_factor_backup_codes_regenerated",
-    "two_factor_backup_code_used",
-    "password_changed",
-    "password_reset_completed",
-    "sessions_terminated",
-    "email_change_requested",
-    "email_changed",
-    "account_suspended",
-    "account_deactivated",
-    "account_deletion_requested",
-    "account_deletion_cancelled",
-    "account_deleted",
-    "two_factor_recovery_requested",
-    "two_factor_recovery_approved",
-    "two_factor_recovery_rejected",
-    "admin_customer_unlock",
-    "new_device_login",
-    "admin_created",
-    "admin_updated",
-    "admin_deactivated",
-    "admin_permissions_changed",
-    "loan_officer_updated",
-    "loan_officer_deactivated",
+    "user_login": "login",
+    "user_login_failed": "login",
+    "user_logout": "login",
+    "user_registered": "create",
+    "two_factor_setup_started": "update",
+    "two_factor_enabled": "update",
+    "two_factor_disabled": "update",
+    "two_factor_backup_codes_regenerated": "update",
+    "two_factor_backup_code_used": "update",
+    "password_changed": "update",
+    "password_reset_requested": "update",
+    "password_reset_completed": "update",
+    "sessions_terminated": "update",
+    "email_change_requested": "update",
+    "email_changed": "update",
+    "account_suspended": "update",
+    "account_deactivated": "update",
+    "account_deletion_requested": "update",
+    "account_deletion_cancelled": "update",
+    "account_deleted": "delete",
+    "two_factor_recovery_requested": "update",
+    "two_factor_recovery_approved": "update",
+    "two_factor_recovery_rejected": "update",
+    "admin_customer_unlock": "update",
+    "new_device_login": "update",
+    "admin_created": "create",
+    "admin_updated": "update",
+    "admin_deactivated": "delete",
+    "admin_permissions_changed": "update",
+    "loan_officer_updated": "update",
+    "loan_officer_deactivated": "delete",
     # Profile
-    "profile_created",
-    "profile_updated",
-    "notification_preferences_updated",
-    "profile_exported",
-    "profile_history_viewed",
-    "profile_directory_viewed",
-    "profile_sensitive_read",
-    "profile_access_denied",
-    "risk_score_calculated",
-    "risk_score_failed",
-    "risk_score_stale",
-    "risk_review_requested",
-    "risk_review_queue_viewed",
-    "risk_review_status_changed",
+    "profile_created": "create",
+    "profile_updated": "update",
+    "notification_preferences_updated": "update",
+    "profile_exported": "read",
+    "profile_history_viewed": "read",
+    "profile_directory_viewed": "read",
+    "profile_sensitive_read": "read",
+    "profile_access_denied": "read",
+    "risk_score_calculated": "update",
+    "risk_score_failed": "update",
+    "risk_score_stale": "update",
+    "risk_review_requested": "create",
+    "risk_review_queue_viewed": "read",
+    "risk_review_status_changed": "update",
     # Documents
-    "document_uploaded",
-    "document_verified",
-    "document_rejected",
-    "document_deleted",
-    "document_delete_scheduled",
-    "document_reupload_requested",
-    "document_list_viewed",
-    "document_detail_viewed",
-    "document_access_denied",
-    "document_upload_session_issued",
-    "document_upload_finalized",
+    "document_uploaded": "create",
+    "document_verified": "update",
+    "document_rejected": "update",
+    "document_deleted": "delete",
+    "document_delete_scheduled": "delete",
+    "document_reupload_requested": "update",
+    "document_list_viewed": "read",
+    "document_detail_viewed": "read",
+    "document_access_denied": "read",
+    "document_upload_session_issued": "create",
+    "document_upload_finalized": "create",
+    "document_legal_hold_set": "update",
+    "document_legal_hold_release": "update",
     # Loans
-    "loan_submitted",
-    "loan_approved",
-    "loan_rejected",
-    "loan_disbursed",
+    "loan_submitted": "create",
+    "loan_draft_updated_and_submitted": "update",
+    "loan_assigned": "update",
+    "loan_reassigned": "update",
+    "loan_resubmitted": "update",
+    "loan_approved": "update",
+    "loan_rejected": "update",
+    "loan_disbursement_pending": "update",
+    "loan_disbursement_failed": "update",
+    "loan_disbursed": "update",
+    "loan_paid_off": "update",
+    "loan_internal_note_added": "update",
+    "loan_missing_documents_requested": "update",
+    "disbursement_method_set": "update",
+    "wallet_disbursement_reconcile": "update",
+    "wallet_disbursement_retry": "update",
+    "wallet_disbursement_cancel": "update",
     # Payments
-    "payment_recorded",
+    "payment_recorded": "create",
+    "customer_payment_submitted": "create",
+    "customer_payment_recorded": "create",
+    "wallet_payment_verified": "update",
+    "repayment_schedule_exported": "read",
     # Penalties / Consent
-    "penalty_applied",
-    "penalty_waived",
-    "consent_recorded",
+    "penalty_applied": "update",
+    "penalty_waived": "update",
+    "consent_recorded": "create",
+    "consent_granted": "update",
+    "consent_reconfirmed": "update",
+    "consent_revoked": "update",
+    "consent_updated": "update",
     # Admin
-    "admin_action",
-]
+    "admin_action": "update",
+}
 
-# High-level action group mapping for analytics filtering.
+AUDIT_ACTIONS = tuple(AUDIT_ACTION_REGISTRY)
+AUDIT_USER_TYPES = frozenset(
+    {"customer", "loan_officer", "admin", "super_admin", "system"}
+)
+
+# High-level groups are generated from the same registry used to validate writes.
 ACTION_GROUPS = {
-    "login": ["user_login", "user_login_failed", "user_logout"],
-    "read": [
-        "profile_directory_viewed",
-        "profile_sensitive_read",
-        "profile_access_denied",
-        "profile_exported",
-        "profile_history_viewed",
-        "risk_review_queue_viewed",
-        "document_list_viewed",
-        "document_detail_viewed",
-        "document_access_denied",
-    ],
-    "create": [
-        "user_registered",
-        "admin_created",
-        "profile_created",
-        "risk_review_requested",
-        "loan_submitted",
-        "document_uploaded",
-        "payment_recorded",
-    ],
-    "update": [
-        "profile_updated",
-        "notification_preferences_updated",
-        "risk_review_status_changed",
-        "risk_score_calculated",
-        "risk_score_failed",
-        "risk_score_stale",
-        "document_verified",
-        "document_rejected",
-        "document_reupload_requested",
-        "document_delete_scheduled",
-        "document_deleted",
-        "document_upload_session_issued",
-        "document_upload_finalized",
-        "loan_approved",
-        "loan_rejected",
-        "loan_disbursed",
-        "penalty_applied",
-        "penalty_waived",
-        "consent_recorded",
-        "admin_action",
-        "two_factor_setup_started",
-        "two_factor_enabled",
-        "two_factor_disabled",
-        "two_factor_backup_codes_regenerated",
-        "two_factor_backup_code_used",
-        "password_changed",
-        "password_reset_completed",
-        "sessions_terminated",
-        "email_change_requested",
-        "email_changed",
-        "account_suspended",
-        "account_deactivated",
-        "account_deletion_requested",
-        "account_deletion_cancelled",
-        "account_deleted",
-        "two_factor_recovery_requested",
-        "two_factor_recovery_approved",
-        "two_factor_recovery_rejected",
-        "admin_customer_unlock",
-        "new_device_login",
-        "admin_updated",
-        "admin_permissions_changed",
-        "loan_officer_updated",
-    ],
+    category: tuple(
+        action
+        for action, registered_category in AUDIT_ACTION_REGISTRY.items()
+        if registered_category == category
+    )
+    for category in ("login", "read", "create", "update", "delete")
 }
 
 
@@ -176,6 +148,12 @@ class AuditLog:
 
         # What action was performed
         self.action = kwargs.get("action")  # From AUDIT_ACTIONS
+        self.event_schema_version = kwargs.get(
+            "event_schema_version", AUDIT_EVENT_SCHEMA_VERSION
+        )
+        self.action_group = kwargs.get("action_group") or AUDIT_ACTION_REGISTRY.get(
+            self.action
+        )
         self.description = kwargs.get("description", "")
 
         # Related resource
@@ -199,6 +177,8 @@ class AuditLog:
             "user_type": self.user_type,
             "user_email": self.user_email,
             "action": self.action,
+            "event_schema_version": self.event_schema_version,
+            "action_group": self.action_group,
             "description": self.description,
             "resource_type": self.resource_type,
             "resource_id": self.resource_id,
@@ -217,6 +197,12 @@ class AuditLog:
         return cls(**data)
 
     def save(self):
+        if self.action not in AUDIT_ACTION_REGISTRY:
+            raise ValueError(f"Unregistered audit action: {self.action}")
+        if self.user_type not in AUDIT_USER_TYPES:
+            raise ValueError(f"Unregistered audit user type: {self.user_type}")
+        self.event_schema_version = AUDIT_EVENT_SCHEMA_VERSION
+        self.action_group = AUDIT_ACTION_REGISTRY[self.action]
         db = get_db()
         collection = db[self.collection_name]
         data = self.to_dict()
@@ -267,7 +253,7 @@ class AuditLog:
         db = get_db()
         collection = db[cls.collection_name]
         cursor = collection.find(query)
-        cursor = cursor.sort([("timestamp", -1)])
+        cursor = cursor.sort([("timestamp", -1), ("_id", -1)])
         if skip:
             cursor = cursor.skip(skip)
         cursor = cursor.limit(limit)
@@ -311,30 +297,23 @@ class AuditLog:
 
         if action_group:
             group = str(action_group).strip().lower()
-            if group in ACTION_GROUPS:
-                and_conditions.append({"action": {"$in": ACTION_GROUPS[group]}})
-            elif group == "delete":
-                and_conditions.append(
-                    {
-                        "$or": [
-                            {
-                                "action": {
-                                    "$in": [
-                                        "admin_deactivated",
-                                        "loan_officer_deactivated",
-                                    ]
-                                }
+            if group not in ACTION_GROUPS:
+                raise ValueError(f"Unregistered audit action group: {group}")
+            group_filter = {"action": {"$in": ACTION_GROUPS[group]}}
+            if group == "delete":
+                group_filter = {
+                    "$or": [
+                        group_filter,
+                        {
+                            "action": "admin_action",
+                            "description": {
+                                "$regex": "(delete|deleted|deactivate|deactivated|remove|removed)",
+                                "$options": "i",
                             },
-                            {
-                                "action": "admin_action",
-                                "description": {
-                                    "$regex": "(delete|deleted|deactivate|deactivated|remove|removed)",
-                                    "$options": "i",
-                                },
-                            },
-                        ]
-                    }
-                )
+                        },
+                    ]
+                }
+            and_conditions.append(group_filter)
 
         if user_id:
             and_conditions.append({"user_id": str(user_id).strip()})
@@ -345,28 +324,9 @@ class AuditLog:
         if date_from or date_to:
             ts_cond = {}
             if date_from:
-                try:
-                    date_from_obj = datetime.strptime(date_from, "%Y-%m-%d").replace(
-                        tzinfo=timezone.utc
-                    )
-                    ts_cond["$gte"] = date_from_obj
-                except ValueError:
-                    pass
-
+                ts_cond["$gte"] = date_from
             if date_to:
-                try:
-                    date_to_obj = datetime.strptime(date_to, "%Y-%m-%d").replace(
-                        tzinfo=timezone.utc
-                    )
-                    date_to_obj = date_to_obj.replace(
-                        hour=23,
-                        minute=59,
-                        second=59,
-                        microsecond=999999,
-                    )
-                    ts_cond["$lte"] = date_to_obj
-                except ValueError:
-                    pass
+                ts_cond["$lte"] = date_to
             if ts_cond:
                 and_conditions.append({"timestamp": ts_cond})
 
@@ -411,6 +371,7 @@ class AuditLog:
         collection.create_index("action")
         collection.create_index("timestamp")
         collection.create_index("resource_type")
+        collection.create_index([("timestamp", -1), ("_id", -1)])
 
     @classmethod
     def log_action(

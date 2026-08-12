@@ -1,18 +1,25 @@
 """
 Analytics API tests for /api/analytics/ endpoints.
 """
-import json
+
+from datetime import datetime, timezone
+
+import pytest
 from bson import ObjectId
 from rest_framework.test import APIRequestFactory, force_authenticate
 
 from accounts.authentication import AuthenticatedUser
-from accounts.models import Admin, Consent, Customer, LoanOfficer
+from accounts.models import Admin, Customer, LoanOfficer
 from analytics.models import AuditLog
+from analytics.models.audit_log import (
+    AUDIT_ACTION_REGISTRY,
+    AUDIT_EVENT_SCHEMA_VERSION,
+)
 from analytics.views import (
     AdminDashboardView,
     AuditLogDetailView,
-    AuditLogUsersView,
     AuditLogsView,
+    AuditLogUsersView,
     CustomerDashboardView,
     OfficerAuditLogsView,
     OfficerDashboardView,
@@ -51,7 +58,9 @@ def _create_admin(permissions=None, super_admin=False):
         password="hashed",
         first_name="Admin",
         last_name="Test",
-        permissions=permissions if permissions is not None else ["view_analytics", "view_logs"],
+        permissions=permissions
+        if permissions is not None
+        else ["view_analytics", "view_logs"],
         super_admin=super_admin,
     ).save()
     return admin
@@ -72,8 +81,8 @@ def _auth_get_request(path, user, query=None):
 
 
 def _bypass_auth(view_cls):
-    original_auth = getattr(view_cls, 'authentication_classes', [])
-    original_perm = getattr(view_cls, 'permission_classes', [])
+    original_auth = getattr(view_cls, "authentication_classes", [])
+    original_perm = getattr(view_cls, "permission_classes", [])
     view_cls.authentication_classes = []
     view_cls.permission_classes = []
     return original_auth, original_perm
@@ -121,7 +130,7 @@ class TestCustomerDashboard:
             assert response.status_code == 200
             data = response.data["data"]
             for section in ["applications", "documents"]:
-                for key, value in data[section].items():
+                for value in data[section].values():
                     assert value >= 0
         finally:
             _restore_auth(CustomerDashboardView, original_auth, original_perm)
@@ -389,6 +398,145 @@ class TestAuditLogDetail:
             _restore_auth(AuditLogDetailView, original_auth, original_perm)
 
 
+class TestAnalyticsStage1Contract:
+    def _admin_user(self):
+        admin = _create_admin(permissions=["view_logs"])
+        return AuthenticatedUser(
+            customer_id=str(admin.id),
+            email=admin.email,
+            verified=True,
+            role="admin",
+        )
+
+    def _get_logs(self, query):
+        request = _auth_get_request(
+            "/api/analytics/audit-logs/", self._admin_user(), query
+        )
+        original_auth, original_perm = _bypass_auth(AuditLogsView)
+        try:
+            return AuditLogsView.as_view()(request)
+        finally:
+            _restore_auth(AuditLogsView, original_auth, original_perm)
+
+    def test_valid_date_range_is_applied_once(self):
+        customer = _create_customer()
+        AuditLog(
+            action="user_login",
+            user_id=customer.id,
+            user_type="customer",
+            timestamp=datetime(2026, 8, 10, 12, tzinfo=timezone.utc),
+        ).save()
+        AuditLog(
+            action="user_login",
+            user_id=customer.id,
+            user_type="customer",
+            timestamp=datetime(2026, 8, 12, 12, tzinfo=timezone.utc),
+        ).save()
+
+        response = self._get_logs(
+            {
+                "action": "user_login",
+                "date_from": "2026-08-10",
+                "date_to": "2026-08-10",
+            }
+        )
+
+        assert response.status_code == 200
+        assert response.data["data"]["total"] == 1
+
+    @pytest.mark.parametrize(
+        ("query", "field"),
+        [
+            ({"date_from": "08-10-2026"}, "date_from"),
+            (
+                {"date_from": "2026-08-12", "date_to": "2026-08-10"},
+                "date_to",
+            ),
+            ({"action_group": "anything"}, "action_group"),
+            ({"action": "not_registered"}, "action"),
+            ({"user_type": "staff"}, "user_type"),
+            ({"page": "0"}, "page"),
+            ({"page_size": "201"}, "page_size"),
+            ({"search": "x" * 101}, "search"),
+            ({"typo_filter": "value"}, "typo_filter"),
+        ],
+    )
+    def test_invalid_filters_return_400_instead_of_broadening(self, query, field):
+        response = self._get_logs(query)
+
+        assert response.status_code == 400
+        assert field in response.data["errors"]
+
+    def test_empty_result_uses_zero_total_pages(self):
+        response = self._get_logs({"action": "document_legal_hold_set"})
+
+        assert response.status_code == 200
+        assert response.data["data"]["total"] == 0
+        assert response.data["data"]["total_pages"] == 0
+
+    def test_equal_timestamps_use_descending_id_tie_breaker(self):
+        timestamp = datetime(2026, 8, 10, 12, tzinfo=timezone.utc)
+        first = AuditLog(
+            action="user_login",
+            user_type="customer",
+            resource_id="first",
+            timestamp=timestamp,
+        ).save()
+        second = AuditLog(
+            action="user_login",
+            user_type="customer",
+            resource_id="second",
+            timestamp=timestamp,
+        ).save()
+
+        response = self._get_logs({"action": "user_login", "page_size": 2})
+
+        assert response.status_code == 200
+        assert [item["id"] for item in response.data["data"]["logs"]] == [
+            second.id,
+            first.id,
+        ]
+
+    def test_new_events_persist_registered_schema_and_group(self, settings):
+        event = AuditLog.log_action(
+            action="loan_reassigned",
+            user_id=str(ObjectId()),
+            user_type="loan_officer",
+            resource_type="loan",
+            resource_id=str(ObjectId()),
+        )
+
+        stored = settings.MONGODB["audit_logs"].find_one({"_id": event._id})
+        assert stored["event_schema_version"] == AUDIT_EVENT_SCHEMA_VERSION
+        assert stored["action_group"] == AUDIT_ACTION_REGISTRY["loan_reassigned"]
+
+    def test_unknown_action_and_actor_type_fail_closed(self):
+        with pytest.raises(ValueError, match="Unregistered audit action"):
+            AuditLog(action="unknown_action", user_type="customer").save()
+        with pytest.raises(ValueError, match="Unregistered audit user type"):
+            AuditLog(action="user_login", user_type="unknown_actor").save()
+
+    def test_audit_user_limit_and_unknown_parameter_are_strict(self):
+        user = self._admin_user()
+        original_auth, original_perm = _bypass_auth(AuditLogUsersView)
+        try:
+            too_large = AuditLogUsersView.as_view()(
+                _auth_get_request(
+                    "/api/analytics/audit-logs/users/", user, {"limit": 501}
+                )
+            )
+            unknown = AuditLogUsersView.as_view()(
+                _auth_get_request("/api/analytics/audit-logs/users/", user, {"page": 1})
+            )
+        finally:
+            _restore_auth(AuditLogUsersView, original_auth, original_perm)
+
+        assert too_large.status_code == 400
+        assert "limit" in too_large.data["errors"]
+        assert unknown.status_code == 400
+        assert "page" in unknown.data["errors"]
+
+
 class TestAuditLogUsers:
     def test_audit_log_users_requires_permission(self):
         admin = _create_admin(permissions=["view_logs"])
@@ -614,7 +762,9 @@ class TestAnalyticsHappyPaths:
 
             # 3. Filter by search
             req3 = _auth_get_request(
-                "/api/analytics/audit-logs/", user, {"search": "UniqueRegisteredKeyword"}
+                "/api/analytics/audit-logs/",
+                user,
+                {"search": "UniqueRegisteredKeyword"},
             )
             resp3 = AuditLogsView.as_view()(req3)
             assert resp3.status_code == 200
