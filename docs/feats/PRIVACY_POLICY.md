@@ -105,4 +105,4 @@ This policy is intentionally transparent about the following unresolved items:
 
 ## 9. Implementation references
 
-This draft is based on `docs/AUTH_ACCESS_SECURITY_GUIDE.md`, `docs/DOCUMENTS_AND_CNN_GUIDE.md`, `docs/AI_ASSISTANT_TESTING_GUIDE.md`, `docs/DEPLOYMENT_AND_OPERATIONS_GUIDE.md`, `docs/BLOCKCHAIN_SYSTEM_DOCUMENTATION.md`, and the following implementation areas: `config/settings.py`, `config/middleware.py`, `accounts/`, `profiles/`, `loans/`, `documents/`, `ai_assistant/`, `notifications/`, and `analytics/`.
+This draft is based on `docs/AUTH_ACCESS_SECURITY_GUIDE.md`, `docs/documents/DOCUMENTS_PRODUCTION_READINESS_REVIEW.md`, `docs/AI_ASSISTANT_TESTING_GUIDE.md`, `docs/DEPLOYMENT_AND_OPERATIONS_GUIDE.md`, `docs/BLOCKCHAIN_SYSTEM_DOCUMENTATION.md`, and the following implementation areas: `config/settings.py`, `config/middleware.py`, `accounts/`, `profiles/`, `loans/`, `documents/`, `ai_assistant/`, `notifications/`, and `analytics/`.

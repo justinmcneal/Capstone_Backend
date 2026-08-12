@@ -403,7 +403,5 @@ thread pool and defaults to `4`. Tune it only after observing workload and CPU.
 - [Profiles testing guide](docs/profiles/PROFILES_TESTING_GUIDE.md)
 - [Documents production readiness](docs/documents/DOCUMENTS_PRODUCTION_READINESS_REVIEW.md)
 - [Documents testing guide](docs/documents/DOCUMENTS_TESTING_GUIDE.md)
-- [Documents operations](docs/documents/DOCUMENTS_OPERATIONS_RUNBOOK.md)
-- [Documents AI governance](docs/documents/DOCUMENT_AI_GOVERNANCE.md)
 - [API reference](docs/feats/API_REFERENCE.md)
 - [Deployment and operations](docs/feats/DEPLOYMENT_AND_OPERATIONS_GUIDE.md)

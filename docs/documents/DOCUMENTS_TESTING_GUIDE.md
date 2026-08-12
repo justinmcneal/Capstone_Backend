@@ -1,10 +1,10 @@
 # Documents Testing Guide
 
-> **Readiness notice (2026-08-11):** This guide documents the current API for
-> development and characterization testing. The Documents module is not yet
-> production-ready. See
+> **Status notice (2026-08-12):** The Documents implementation is complete for
+> the approved non-CNN baseline and awaits deployment-environment validation.
+> See
 > `docs/documents/DOCUMENTS_PRODUCTION_READINESS_REVIEW.md` for the
-> verified gaps and staged remediation plan. A presigned S3 POST remains a
+> module status, operating contract, and release conditions. A presigned S3 POST remains a
 > quarantined object until the separate finalize endpoint validates and creates
 > the `Document` record.
 
@@ -36,9 +36,7 @@ Content-Type: application/json
 | Document | Purpose |
 |----------|---------|
 | `docs/AUTH_ACCESS_SECURITY_GUIDE.md` | Account roles, permissions, and JWT auth |
-| `docs/documents/DOCUMENTS_PRODUCTION_READINESS_REVIEW.md` | Documents module review, risks, and roadmap |
-| `docs/documents/DOCUMENT_AI_GOVERNANCE.md` | AI intended use, consent, approval, rollback, and monitoring gates |
-| `docs/documents/DOCUMENTS_OPERATIONS_RUNBOOK.md` | S3, retention, legal hold, inventory, monitoring, and restore operations |
+| `docs/documents/DOCUMENTS_PRODUCTION_READINESS_REVIEW.md` | Documents module status, responsibilities, security, operations, AI policy, gaps, and release conditions |
 | `docs/ANALYTICS_TESTING_GUIDE.md` | Audit log endpoints that record document actions |
 | `docs/LOANS_TESTING_GUIDE.md` | Loan APIs that generate dependent document requirements |
 
@@ -488,7 +486,7 @@ PDF policy, and ClamAV scanning remain active. The CNN sections below document
 development behavior and the controls required for any future separately
 approved enablement; they are not production setup instructions.
 
-**Current repository state (2026-08-10):**
+**Current repository state (2026-08-12):**
 
 - `documents/ml/models/document_classifier.pth` is absent, so this checkout uses
   quality-check mode and the CNN evaluation command exits with "No trained CNN
@@ -614,6 +612,34 @@ If CNN is later proposed for production, its model must come through an
 approved, integrity-checked artifact workflow; generating it locally is not by
 itself a deployment process.
 
+### AI governance and optional enablement checks
+
+Document AI is advisory only. It may prioritize manual review or set an
+unreviewed upload to `needs_review`. It must never approve or reject a document,
+determine loan eligibility, infer identity, or override a human decision. Every
+result requires manual review, and customer-facing rejection must use the human
+review reason rather than an opaque score.
+
+Before any future production enablement, verify all of the following:
+
+- the worker re-checks current consent before reading bytes and skips safely
+  when consent is missing, withdrawn, expired, or unreadable;
+- every dataset item has approved source, license/consent, anonymization, hash,
+  subject grouping, and split metadata in access-controlled versioned storage;
+- the independent immutable holdout reports per-class sample counts and 95%
+  confidence intervals, macro/per-class metrics, calibration, false-accept and
+  false-reject rates, subgroup/device/capture robustness, OOD rejection,
+  latency, and memory;
+- the artifact registry is explicitly approved and binds the artifact hash,
+  code, preprocessing, dataset, threshold policy, deployment date, and rollback
+  target; and
+- drift, disagreement, consent skips, failures, appeals, alert thresholds,
+  change control, and rollback have approved owners and procedures.
+
+Training emits `not_approved`; it cannot approve its own output. Any model,
+preprocessing, class mapping, threshold, or dataset change creates a new version
+and repeats the approval gates. The final holdout is never used for tuning.
+
 **Validation:**
 
 ```bash
@@ -641,6 +667,75 @@ python scripts/test_cnn_model.py documents/ml/test_data --confusion
    and repeat finalize to confirm the same document is returned.
 9. Confirm an authorized officer/admin must review and approve the uploaded
    document. Do not train or enable CNN as part of the production smoke test.
+
+---
+
+## Operational Validation Procedures
+
+### Private storage
+
+Production uses `DOCUMENT_STORAGE_BACKEND=s3`. Confirm all public-access-block
+controls, `BucketOwnerEnforced`, default AES-256 or KMS encryption, exact CORS,
+short-lived SigV4 URLs, and versioning where supported. The workload identity
+must be restricted to the configured document/quarantine prefixes and selected
+KMS key, with no bucket-policy, ACL, or unrelated-prefix administration.
+
+The validator is read-only:
+
+```bash
+python manage.py validate_document_storage
+```
+
+Review IAM and lifecycle/versioning separately because the application identity
+should not have policy-administration permission.
+
+### Retention, legal holds, and inventory
+
+Legal-hold commands are dry-run unless `--apply` is supplied:
+
+```bash
+python manage.py manage_document_legal_hold DOCUMENT_ID --action set \
+  --reason "CASE_REFERENCE" --operator "ADMIN_ID"
+python manage.py manage_document_legal_hold DOCUMENT_ID --action set \
+  --reason "CASE_REFERENCE" --operator "ADMIN_ID" --apply
+python manage.py manage_document_legal_hold DOCUMENT_ID --action release \
+  --operator "ADMIN_ID" --apply
+```
+
+Use an approved case reference and change record before applying a hold change.
+The following command is count-only and performs no repair:
+
+```bash
+python manage.py inventory_document_storage
+```
+
+Run inventory immediately before production index/storage work, after restore,
+and during relevant incident investigation. It reports aggregate missing and
+orphan objects, expired sessions, contradictions, retention gaps, legal holds,
+and deleted-customer records without printing keys, paths, filenames, or
+customer IDs. Investigate non-zero findings before corrective action.
+
+### Malware scanner
+
+Keep ClamAV on a private application network and its stream maximum above the
+10 MB application limit. Confirm readiness, current signature updates, clean,
+detected, timeout, invalid-response, and unavailable behavior. The health
+endpoint and upload path must fail closed when scanning is required. Do not
+include content, names, signatures, hashes, or customer data in scanner logs or
+metrics.
+
+### Monitoring and restore
+
+Scrape `documents_*` metrics and test alerts for upload/finalize errors, URL
+generation failures, retry backlog and age, review SLA age, expired sessions,
+retention-due growth, scanner unavailability, and unexplained inventory counts.
+Correlate these with Redis, Celery worker/Beat, MongoDB, S3, and ClamAV health.
+
+Restore MongoDB metadata and object storage together in an isolated recovery
+environment. Verify recreated indexes/TTL indexes, decryption with the approved
+key version, object/metadata matching, authorized-only downloads, idempotent
+reconciliation, and a clean explained inventory. Never use production as a
+restore smoke-test target.
 
 ---
 
@@ -695,7 +790,7 @@ Standard success shape:
 | Background analysis orchestration | `documents/services/analysis.py` |
 | Shared preprocessing policy | `documents/services/preprocessing.py` |
 | Notification outbox | `documents/models/notification_delivery.py` |
-| AI governance | `docs/documents/DOCUMENT_AI_GOVERNANCE.md` |
+| AI governance and release conditions | `docs/documents/DOCUMENTS_PRODUCTION_READINESS_REVIEW.md` |
 | CNN model | `documents/services/cnn_model.py` |
 | Training command | `documents/management/commands/train_document_classifier.py` |
 | Test script | `scripts/test_cnn_model.py` |

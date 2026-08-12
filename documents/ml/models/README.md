@@ -28,5 +28,6 @@ python manage.py train_document_classifier
 
 Training requires a passing `training_data/dataset_manifest.json` and produces
 a hashed but deliberately `not_approved` artifact entry. See
-`docs/documents/DOCUMENT_AI_GOVERNANCE.md` for independent evaluation, approval,
+`docs/documents/DOCUMENTS_PRODUCTION_READINESS_REVIEW.md` for independent
+evaluation, approval,
 deployment, and rollback requirements.
