@@ -30,6 +30,17 @@ from analytics.services.audit_queries import (
     serialize_dashboard_activity,
     validate_query_params,
 )
+from analytics.services.dashboard_metrics import (
+    DOCUMENT_PENDING_STATUSES,
+    LOAN_APPROVED_OUTCOME_STATUSES,
+    LOAN_DISBURSED_STATUSES,
+    LOAN_PENDING_STATUSES,
+    METRIC_DEFINITION_VERSION,
+    approval_rate,
+    current_document_query,
+    identity_query,
+    status_query,
+)
 
 logger = logging.getLogger("analytics")
 
@@ -69,9 +80,9 @@ class AdminDashboardView(AdminRequiredMixin, APIView):
 
         db = settings.MONGODB
 
-        now = datetime.now(timezone.utc)
-        week_ago = now - timedelta(days=7)
-        month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        as_of = datetime.now(timezone.utc)
+        week_ago = as_of - timedelta(days=7)
+        month_start = as_of.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
 
         # User counts - use correct collection names from models
         total_customers = db["customer"].count_documents(
@@ -86,29 +97,55 @@ class AdminDashboardView(AdminRequiredMixin, APIView):
             {"created_at": {"$gte": month_start}}
         )
 
-        # Loan stats - include ALL statuses for complete visibility
+        loans = db["loan_applications"]
+        approved_outcomes = loans.count_documents(
+            {"status": {"$in": sorted(LOAN_APPROVED_OUTCOME_STATUSES)}}
+        )
+        rejected_outcomes = loans.count_documents({"status": "rejected"})
+        # Outcome fields remain meaningful after disbursement/closure. `pending`
+        # is the published aggregate of submitted plus under-review records.
         loan_stats = {
-            "total": db["loan_applications"].count_documents({}),
-            "draft": db["loan_applications"].count_documents({"status": "draft"}),
-            "pending": db["loan_applications"].count_documents({"status": "submitted"}),
-            "under_review": db["loan_applications"].count_documents(
-                {"status": "under_review"}
+            "total": loans.count_documents({}),
+            "draft": loans.count_documents({"status": "draft"}),
+            "submitted": loans.count_documents({"status": "submitted"}),
+            "pending": loans.count_documents(
+                {"status": {"$in": sorted(LOAN_PENDING_STATUSES)}}
             ),
-            "approved": db["loan_applications"].count_documents({"status": "approved"}),
-            "rejected": db["loan_applications"].count_documents({"status": "rejected"}),
-            "disbursed": db["loan_applications"].count_documents(
-                {"status": "disbursed"}
+            "under_review": loans.count_documents({"status": "under_review"}),
+            "approved": approved_outcomes,
+            "rejected": rejected_outcomes,
+            "reviewed": approved_outcomes + rejected_outcomes,
+            "disbursed": loans.count_documents(
+                {"status": {"$in": sorted(LOAN_DISBURSED_STATUSES)}}
             ),
-            "cancelled": db["loan_applications"].count_documents(
-                {"status": "cancelled"}
-            ),
+            "completed": loans.count_documents({"status": "completed"}),
+            "written_off": loans.count_documents({"status": "written_off"}),
+            "cancelled": loans.count_documents({"status": "cancelled"}),
         }
 
-        # Document stats
+        # Document metrics cover only the current metadata version whose object
+        # remains available. Canonical status, not the legacy boolean, is used.
+        current_documents = current_document_query()
         doc_stats = {
-            "total": db["documents"].count_documents({}),
-            "pending": db["documents"].count_documents({"status": "pending"}),
-            "verified": db["documents"].count_documents({"verified": True}),
+            "total": db["documents"].count_documents(current_documents),
+            "pending": db["documents"].count_documents(
+                status_query(current_documents, DOCUMENT_PENDING_STATUSES)
+            ),
+            "needs_review": db["documents"].count_documents(
+                status_query(current_documents, {"needs_review"})
+            ),
+            "approved": db["documents"].count_documents(
+                status_query(current_documents, {"approved"})
+            ),
+            "verified": db["documents"].count_documents(
+                status_query(current_documents, {"approved"})
+            ),
+            "rejected": db["documents"].count_documents(
+                status_query(current_documents, {"rejected"})
+            ),
+            "expired": db["documents"].count_documents(
+                status_query(current_documents, {"expired"})
+            ),
         }
 
         # AI usage (last 7 days)
@@ -141,20 +178,22 @@ class AdminDashboardView(AdminRequiredMixin, APIView):
         products = list(db["loan_products"].find({"active": True}))
         product_stats = []
         for p in products:
-            approved = db["loan_applications"].count_documents(
-                {"product_id": str(p["_id"]), "status": "approved"}
+            product_query = identity_query("product_id", p["_id"])
+            approved = loans.count_documents(
+                status_query(product_query, LOAN_APPROVED_OUTCOME_STATUSES)
             )
-            total = db["loan_applications"].count_documents(
-                {"product_id": str(p["_id"])}
+            rejected = loans.count_documents(
+                status_query(product_query, {"rejected"})
             )
+            reviewed = approved + rejected
+            total = loans.count_documents(product_query)
             product_stats.append(
                 {
                     "name": p["name"],
                     "applications": total,
+                    "reviewed": reviewed,
                     "approved": approved,
-                    "approval_rate": (
-                        f"{(approved / total * 100):.1f}%" if total > 0 else "0%"
-                    ),
+                    "approval_rate": approval_rate(approved, reviewed),
                 }
             )
 
@@ -164,6 +203,8 @@ class AdminDashboardView(AdminRequiredMixin, APIView):
 
         return success_response(
             data={
+                "as_of": as_of.isoformat(),
+                "metric_definition_version": METRIC_DEFINITION_VERSION,
                 "users": {
                     "customers": total_customers,
                     "loan_officers": total_officers,

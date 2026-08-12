@@ -24,6 +24,8 @@ AUDIT_PAYLOAD_KEYS = frozenset(
         "ip_address",
         "event_id",
         "idempotency_key",
+        "scope_officer_id",
+        "scope_policy_version",
     }
 )
 

@@ -16,7 +16,7 @@ def _subject_query(customer_id):
         raise ValueError("customer_id is required")
     return {
         "$or": [
-            {"subject_index": AuditLog.blind_index(value)},
+            {"subject_index": {"$in": AuditLog.blind_index_candidates(value)}},
             {"user_id": value},
             {"details.customer_id": value},  # legacy plaintext records only
         ]
@@ -132,7 +132,12 @@ def pseudonymize_customer_audit_data(db, customer_id, *, limit=5000):
         {"$and": [_subject_query(customer_id), {"pseudonymized_at": None}, {"legal_hold": {"$ne": True}}]}
     )
     queued = db["audit_write_failures"].delete_many(
-        {"subject_index": AuditLog.blind_index(customer_id), "resolved_at": None}
+        {
+            "subject_index": {
+                "$in": AuditLog.blind_index_candidates(customer_id)
+            },
+            "resolved_at": None,
+        }
     )
     return {
         "pseudonymized": changed,

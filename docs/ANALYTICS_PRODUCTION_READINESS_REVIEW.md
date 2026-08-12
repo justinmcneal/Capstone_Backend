@@ -34,19 +34,20 @@ routes use named permissions, customer counts are owner-scoped, officer queue
 counts are assignment-scoped, audit lists paginate in MongoDB, and basic tests
 pass.
 
-Stages 1 through 3 have corrected the query contract, response disclosure,
+Stages 1 through 4 have corrected the query contract, response disclosure,
 permission separation, officer-route role semantics, privileged-read auditing,
 protected audit persistence, cross-domain recovery, integrity verification, and
-audit lifecycle controls. Remaining application work is concentrated in
-officer audit scope, dashboard metric consistency, query/index scalability, and
-observability. Real-Mongo query plans, database roles, key operations,
+audit lifecycle controls. Officer audit visibility now uses event-time scope,
+and dashboards share versioned lifecycle-aware definitions. Remaining
+application work is concentrated in query/index scalability and observability.
+Real-Mongo query plans, database roles, key operations,
 backfill/restore procedures, and deployment monitoring still require isolated
 environment evidence.
 
 Current local baseline:
 
-- Analytics Stage 1-3 suites: **60 passed** on 2026-08-12.
-- Full project suite after Stage 3: **1,093 passed and 21 skipped** with one
+- Analytics Stage 1-4 suites: **68 passed** on 2026-08-12.
+- Full project suite after Stage 4: **1,101 passed and 21 skipped** with one
   third-party deprecation warning on 2026-08-12.
 - The suite calls views directly and temporarily disables their DRF
   authentication/permission classes. Explicit role/mixin checks are exercised,
@@ -210,72 +211,56 @@ unknown historical actions, take an approved backup, and only then authorize
 `--apply`. Generic historical `admin_action` delete matching remains read-only
 compatibility; new producers should use specific registered actions.
 
-### 5. Officer audit scope and admin semantics need redesign
+### 5. Officer audit scope and admin semantics
 
-**Status: Blocked for production**
+**Status: Complete at code and automated-test level**
 
-Officer logs include the officer's own events plus every loan event whose
-resource ID belongs to a currently assigned application. This has several
-problems:
+Stage 4 adopts `event-time-assignment-v1`. Each new Loan audit event snapshots
+the assigned officer as a blind HMAC index. Officer audit queries match the
+officer's own events or that event-time index and no longer load every currently
+assigned loan into an unbounded `$in` list. Reassignment therefore does not
+transfer old customer/system event visibility to the new officer. Assignment
+events explicitly scope to the assignee even when an administrator is the
+actor. Legacy events without an event-time index remain visible only when the
+officer was the actor; they are not broadened using current assignment.
 
-- it materializes every assigned application ID into an unbounded Python list
-  and sends it back to MongoDB as a large `$in` clause;
-- current assignment determines visibility of historical events, so reassignment
-  can transfer old event visibility to the new officer and remove it from the
-  prior officer without an explicit history policy;
-- Stage 2 now returns a minimal officer schema without actor identity, email,
-  IP, description, or free-form details;
-- Stage 2 removed customer-name and sensitive stored-field search expansion;
-  officer search is limited to action and resource fields; and
-- administrators are now rejected by officer routes and use administrator
-  endpoints with named permissions.
+The officer response remains minimized and administrators continue to use the
+named-permission administrator routes. The compound officer-scope/time/ID index
+is bootstrapped. Scope lookup and integrity verification consider configured
+previous keys so controlled key rotation does not hide history. Target-volume
+query-plan proof remains Stage 6 work.
 
-Required remediation:
+### 6. Dashboard metric contract
 
-- choose and document current-scope versus event-time-scope semantics;
-- persist an approved scope/assignment reference on each relevant event or use
-  a bounded server-side join/materialized projection;
-- prove the remaining scoped action/resource search plan under representative
-  real-Mongo data volume.
+**Status: Complete at code and automated-test level**
 
-### 6. Dashboard metrics are not yet a stable business contract
+All three dashboards now return `metric_definition_version` and an UTC `as_of`
+timestamp. Version `2026-08-12-v1` defines approved outcomes as `approved`,
+`disbursed`, `completed`, or `written_off`; disbursed outcomes include
+`disbursed`, `completed`, or `written_off`; reviewed is approved outcomes plus
+`rejected`; and pending is `submitted` plus `under_review`. Officer, customer,
+administrator, and product metrics use those same definitions and product
+approval rate uses reviewed decisions as its denominator.
 
-**Status: High priority**
+Loan/customer/officer/product ownership queries accept string and legacy
+`ObjectId` representations. Document counts use canonical status and include
+only current, storage-available metadata, excluding deletion-state and
+superseded records. A valid ID is ready only when its current available record
+is `approved`. Customer breakdowns now expose the remaining lifecycle states.
+Fixture tests reconcile these definitions across dashboards and cover mixed IDs,
+reassignment, deleted/superseded documents, and pending-versus-approved IDs.
 
-The dashboards issue independent counts without an `as_of` timestamp, snapshot,
-or definition version. Concurrent writes can make one response internally
-inconsistent. Metric meanings also differ:
-
-- officer “approved” includes `approved` and `disbursed`, while customer/admin
-  approved counts and product approval rates use only `approved`;
-- customer application totals include draft/cancelled/disbursed records, but
-  the displayed breakdown omits some of those states;
-- raw document counts can include `delete_pending`/`delete_failed` records and
-  use legacy `verified` rather than canonical status;
-- valid-ID presence accepts any status, including rejected, expired, or deleting
-  records;
-- raw string-only customer queries can miss legacy `ObjectId` identifiers even
-  though domain models already support mixed IDs; and
-- profile documentation previously described boolean completion, while the code
-  averages three stored completion percentages and reports separate completion
-  booleans.
-
-Required remediation:
-
-- publish versioned metric definitions and response `as_of` timestamps;
-- align status buckets with canonical Loans/Documents lifecycle helpers;
-- decide whether approved includes disbursed and use that definition everywhere;
-- exclude unavailable/deleting documents and define valid-ID readiness;
-- use mixed-ID-safe domain query helpers; and
-- add reconciliation invariants and fixture-based cross-domain tests.
+`as_of` describes when evaluation began; the independent MongoDB counts are not
+a transactional snapshot. A materialized/snapshot strategy, if required by the
+approved consistency SLO, belongs to Stage 5.
 
 ### 7. Query design and indexes are insufficient for production volume
 
 **Status: High priority**
 
-Single-field audit indexes do not fully support the actual filtered sort paths.
-Lists sort only by `timestamp`, so equal timestamps have no deterministic `_id`
-tie-breaker. Unanchored multi-field regex search is not index-supported.
+Current audit indexes do not fully support every filtered sort path. Lists use
+deterministic `timestamp`/`_id` ordering, but unanchored multi-field regex search
+is not index-supported.
 `audit-logs/users/` sorts and groups across the event collection, and admin
 product statistics perform two application counts per active product.
 
@@ -293,8 +278,7 @@ Required remediation:
   for deep history;
 - replace broad regex with bounded exact/prefix/blind-index search or a
   separately approved search service;
-- replace unbounded officer `$in` and per-product N+1 counts with aggregation or
-  maintained projections;
+- replace per-product N+1 counts with aggregation or maintained projections;
 - add safe query timeouts, dedicated read throttles, and carefully keyed caching
   only where privacy and staleness rules allow; and
 - run opt-in real-Mongo load/explain tests at representative cardinalities.
@@ -322,16 +306,15 @@ Required remediation:
 
 **Status: High priority**
 
-The 60 Analytics Stage 1-3 tests establish useful behavior, but most API cases call view classes
+The 68 Analytics Stage 1-4 tests establish useful behavior, but most API cases
+call view classes
 directly after clearing DRF authentication and permission classes. The suite
 does not cover:
 
 - real JWT/cookie/middleware/live-account authentication;
-- full historical officer reassignment semantics;
 - production encryption-key rotation, database-level least privilege, or real
   backup/restore execution;
-- mixed string/ObjectId records and delete-pending documents;
-- dashboard metric invariants under complete lifecycle fixtures;
+- transactional/snapshot consistency during concurrent source writes;
 - database outage/timeouts beyond fail-closed privileged-read auditing; or
 - real MongoDB indexes, query plans, deep pagination, and representative load.
 
@@ -378,10 +361,15 @@ count.
 
 ### Stage 4 — Scope and metric correctness
 
-- Implement bounded officer event-time/current-scope policy.
-- Use canonical mixed-ID and lifecycle-aware domain queries.
-- Version metric definitions, align status semantics, add `as_of`, and test
-  cross-domain reconciliation invariants.
+**Status: Complete at code and automated-test level**
+
+- [x] Implement bounded `event-time-assignment-v1` officer audit scope.
+- [x] Use canonical mixed-ID and lifecycle-aware domain queries.
+- [x] Version metric definitions, align status semantics, and add UTC `as_of`.
+- [x] Test reassignment, mixed-ID, lifecycle, valid-ID, and cross-dashboard
+  reconciliation invariants.
+- [ ] Prove the indexed scope query and concurrent consistency behavior under
+  representative real MongoDB load in Stage 6.
 
 ### Stage 5 — Scalability and observability
 
@@ -411,9 +399,11 @@ count.
   `{items, total, truncated}` instead of a raw latest-200 array.
 - Officer/admin clients must not use the officer route as an implicit admin
   dashboard. Any admin target-officer workflow should be explicit.
-- Metric-definition alignment may change counts such as approved/disbursed,
-  pending/deleting documents, and valid-ID readiness. Versioning or a coordinated
-  client release is required.
+- Stage 4 changed dashboard counts under metric definition `2026-08-12-v1`:
+  approved/disbursed outcomes include downstream terminal states, pending loans
+  include submitted plus under-review, unavailable/superseded documents are
+  excluded, and valid-ID readiness requires approval. Clients should display
+  the returned definition version and be regression-tested against these rules.
 - Cursor pagination may supplement or replace deep page-number navigation while
   retaining a bounded compatibility window.
 

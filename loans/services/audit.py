@@ -2,6 +2,9 @@
 
 import logging
 
+from bson import ObjectId
+from django.conf import settings
+
 from analytics.models import AuditLog
 from analytics.services.audit_writer import record_audit
 
@@ -23,12 +26,49 @@ class LoanAuditUnavailable(RuntimeError):
     """Raised when an operation must not expose data without an audit record."""
 
 
+OFFICER_EVENT_SCOPE_POLICY_VERSION = "event-time-assignment-v1"
+
+
+def _event_scope_officer_id(payload):
+    """Snapshot the authorized officer when the event is created."""
+    details = payload.get("details") or {}
+    explicit = details.get("assigned_officer")
+    if explicit:
+        return str(explicit)
+
+    loan_id = details.get("loan_id")
+    if payload.get("resource_type") == "loan":
+        loan_id = payload.get("resource_id")
+    loan_id = str(loan_id or "").strip()
+    if loan_id and ObjectId.is_valid(loan_id):
+        try:
+            application = settings.MONGODB["loan_applications"].find_one(
+                {"_id": ObjectId(loan_id)}, {"assigned_officer": 1}
+            )
+            assigned = (application or {}).get("assigned_officer")
+            if assigned:
+                return str(assigned)
+        except Exception:
+            logger.exception("Unable to resolve event-time loan audit scope")
+
+    if payload.get("user_type") == "loan_officer" and payload.get("user_id"):
+        return str(payload["user_id"])
+    return None
+
+
 def record_loan_audit(*, required=False, **kwargs):
     """Write an audit event and surface failures through logs, metrics, and a queue.
 
     Normal financial mutations are not rolled back merely because their audit
     write failed. Sensitive reads can pass ``required=True`` to fail closed.
     """
+    scoped_officer_id = _event_scope_officer_id(kwargs)
+    if scoped_officer_id:
+        kwargs = {
+            **kwargs,
+            "scope_officer_id": scoped_officer_id,
+            "scope_policy_version": OFFICER_EVENT_SCOPE_POLICY_VERSION,
+        }
     try:
         return record_audit(
             domain="loans",

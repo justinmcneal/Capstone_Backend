@@ -28,6 +28,13 @@ from analytics.services.audit_queries import (
     serialize_officer_log_entry,
     validate_query_params,
 )
+from analytics.services.dashboard_metrics import (
+    LOAN_APPROVED_OUTCOME_STATUSES,
+    LOAN_PENDING_STATUSES,
+    METRIC_DEFINITION_VERSION,
+    approval_rate,
+    identity_query,
+)
 
 logger = logging.getLogger("analytics")
 
@@ -77,32 +84,34 @@ class OfficerDashboardView(LoanOfficerRequiredMixin, APIView):
             )
         db = settings.MONGODB
 
-        today = datetime.now(timezone.utc).replace(
+        as_of = datetime.now(timezone.utc)
+        today = as_of.replace(
             hour=0, minute=0, second=0, microsecond=0
         )
+        officer_query = identity_query("assigned_officer", officer_id)
 
         # My reviews - applications I've reviewed
         my_approved = db["loan_applications"].count_documents(
             {
-                "assigned_officer": str(officer_id),
-                "status": {"$in": ["approved", "disbursed"]},
+                **officer_query,
+                "status": {"$in": sorted(LOAN_APPROVED_OUTCOME_STATUSES)},
             }
         )
         my_rejected = db["loan_applications"].count_documents(
-            {"assigned_officer": str(officer_id), "status": "rejected"}
+            {**officer_query, "status": "rejected"}
         )
 
         # Reviews today
         approved_today = db["loan_applications"].count_documents(
             {
-                "assigned_officer": str(officer_id),
-                "status": {"$in": ["approved", "disbursed"]},
+                **officer_query,
+                "status": {"$in": sorted(LOAN_APPROVED_OUTCOME_STATUSES)},
                 "decision_date": {"$gte": today},
             }
         )
         rejected_today = db["loan_applications"].count_documents(
             {
-                "assigned_officer": str(officer_id),
+                **officer_query,
                 "status": "rejected",
                 "decision_date": {"$gte": today},
             }
@@ -113,21 +122,19 @@ class OfficerDashboardView(LoanOfficerRequiredMixin, APIView):
         # dashboard.
         pending_queue = db["loan_applications"].count_documents(
             {
-                "assigned_officer": str(officer_id),
-                "status": {"$in": ["submitted", "under_review"]},
+                **officer_query,
+                "status": {"$in": sorted(LOAN_PENDING_STATUSES)},
             }
         )
 
         # Assigned to me
         my_queue = db["loan_applications"].count_documents(
-            {"assigned_officer": str(officer_id), "status": "under_review"}
+            {**officer_query, "status": "under_review"}
         )
 
         # Approval rate
         total_reviewed = my_approved + my_rejected
-        approval_rate = (
-            (my_approved / total_reviewed * 100) if total_reviewed > 0 else 0
-        )
+        rate = approval_rate(my_approved, total_reviewed)
 
         audit_error = self.audit_officer_read(user, "officer_dashboard")
         if audit_error:
@@ -135,6 +142,8 @@ class OfficerDashboardView(LoanOfficerRequiredMixin, APIView):
 
         return success_response(
             data={
+                "as_of": as_of.isoformat(),
+                "metric_definition_version": METRIC_DEFINITION_VERSION,
                 "my_reviews": {
                     "total_approved": my_approved,
                     "total_rejected": my_rejected,
@@ -144,7 +153,7 @@ class OfficerDashboardView(LoanOfficerRequiredMixin, APIView):
                 "queue": {"pending_total": pending_queue, "assigned_to_me": my_queue},
                 "performance": {
                     "total_reviewed": total_reviewed,
-                    "approval_rate": f"{approval_rate:.1f}%",
+                    "approval_rate": rate,
                 },
             },
             message="Officer dashboard data retrieved",
@@ -202,18 +211,15 @@ class OfficerAuditLogsView(LoanOfficerRequiredMixin, APIView):
         date_filters = filters["date_range"]
         search = filters["search"]
 
-        assigned_ids = [
-            str(doc.get("_id"))
-            for doc in db["loan_applications"].find(
-                {"assigned_officer": officer_id}, {"_id": 1}
-            )
+        actor_query = identity_query("user_id", officer_id)
+        base_or = [
+            {**actor_query, "user_type": "loan_officer"},
+            {
+                "scope_officer_index": {
+                    "$in": AuditLog.blind_index_candidates(officer_id)
+                }
+            },
         ]
-
-        base_or = [{"user_id": officer_id, "user_type": "loan_officer"}]
-        if assigned_ids:
-            base_or.append(
-                {"resource_type": "loan", "resource_id": {"$in": assigned_ids}}
-            )
 
         and_filters = [{"$or": base_or}]
 

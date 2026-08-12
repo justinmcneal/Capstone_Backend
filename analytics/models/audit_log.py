@@ -23,6 +23,7 @@ def get_db():
 # category here before writing it. Legacy records are still readable, but new
 # unknown actions fail closed instead of silently drifting out of filters.
 AUDIT_EVENT_SCHEMA_VERSION = 2
+AUDIT_SCOPE_POLICY_VERSIONS = frozenset({"event-time-assignment-v1"})
 AUDIT_ACTION_REGISTRY = {
     # Authentication
     "user_login": "login",
@@ -494,6 +495,10 @@ class AuditLog:
         self.event_id = kwargs.get("event_id") or f"evt_{uuid.uuid4().hex}"
         self.payload_digest = kwargs.get("payload_digest", "")
         self.subject_index = kwargs.get("subject_index")
+        self.scope_officer_index = kwargs.get("scope_officer_index") or self.blind_index(
+            kwargs.get("scope_officer_id")
+        )
+        self.scope_policy_version = kwargs.get("scope_policy_version")
         self.integrity_algorithm = kwargs.get("integrity_algorithm", "hmac-sha256-v1")
         self.integrity_hash = kwargs.get("integrity_hash", "")
 
@@ -530,6 +535,8 @@ class AuditLog:
             "event_id": self.event_id,
             "payload_digest": self.payload_digest,
             "subject_index": self.subject_index,
+            "scope_officer_index": self.scope_officer_index,
+            "scope_policy_version": self.scope_policy_version,
             "integrity_algorithm": self.integrity_algorithm,
             "integrity_hash": self.integrity_hash,
             "retention_policy_version": self.retention_policy_version,
@@ -552,11 +559,24 @@ class AuditLog:
         return cls(**decrypt_fields(data, cls.encrypted_fields))
 
     @staticmethod
-    def _integrity_key():
-        configured = str(getattr(settings, "FIELD_ENCRYPTION_KEY", "") or "")
-        if configured:
-            return configured.encode("utf-8")
-        return str(settings.SECRET_KEY).encode("utf-8")
+    def _integrity_keys():
+        configured = [
+            str(getattr(settings, "FIELD_ENCRYPTION_KEY", "") or "").strip(),
+            *[
+                str(key or "").strip()
+                for key in getattr(settings, "FIELD_ENCRYPTION_PREVIOUS_KEYS", ())
+            ],
+        ]
+        keys = []
+        for value in configured:
+            encoded = value.encode("utf-8") if value else None
+            if encoded and encoded not in keys:
+                keys.append(encoded)
+        return keys or [str(settings.SECRET_KEY).encode("utf-8")]
+
+    @classmethod
+    def _integrity_key(cls):
+        return cls._integrity_keys()[0]
 
     @staticmethod
     def _canonical_json(data):
@@ -589,14 +609,25 @@ class AuditLog:
         ).hexdigest()
 
     @classmethod
-    def _hash_document(cls, data):
+    def blind_index_candidates(cls, value):
+        """Return current and previous-key indexes during controlled rotation."""
+        text = str(value or "").strip()
+        if not text:
+            return []
+        return [
+            hmac.new(key, text.encode("utf-8"), hashlib.sha256).hexdigest()
+            for key in cls._integrity_keys()
+        ]
+
+    @classmethod
+    def _hash_document(cls, data, *, key=None):
         signed = {
             key: value
             for key, value in data.items()
             if key not in {"_id", "integrity_hash"}
         }
         return hmac.new(
-            cls._integrity_key(), cls._canonical_json(signed), hashlib.sha256
+            key or cls._integrity_key(), cls._canonical_json(signed), hashlib.sha256
         ).hexdigest()
 
     @classmethod
@@ -604,7 +635,10 @@ class AuditLog:
         expected = str((raw_document or {}).get("integrity_hash") or "")
         if not expected:
             return False
-        return hmac.compare_digest(expected, cls._hash_document(raw_document))
+        return any(
+            hmac.compare_digest(expected, cls._hash_document(raw_document, key=key))
+            for key in cls._integrity_keys()
+        )
 
     @classmethod
     def _validate_nested_value(cls, value, *, depth=0):
@@ -630,6 +664,13 @@ class AuditLog:
             raise ValueError(f"Unregistered audit action: {self.action}")
         if self.user_type not in AUDIT_USER_TYPES:
             raise ValueError(f"Unregistered audit user type: {self.user_type}")
+        if bool(self.scope_officer_index) != bool(self.scope_policy_version):
+            raise ValueError("Audit officer scope and policy must be stored together")
+        if (
+            self.scope_policy_version
+            and self.scope_policy_version not in AUDIT_SCOPE_POLICY_VERSIONS
+        ):
+            raise ValueError("Unregistered audit officer scope policy")
         if not isinstance(self.details, dict):
             raise TypeError("Audit details must be an object")
         allowed_keys = AUDIT_ACTION_DETAIL_KEYS[self.action]
@@ -662,6 +703,8 @@ class AuditLog:
             "resource_id": self.resource_id,
             "details": self.details,
             "ip_address": self.ip_address,
+            "scope_officer_index": self.scope_officer_index,
+            "scope_policy_version": self.scope_policy_version,
         }
 
     def to_storage_dict(self):
@@ -895,6 +938,10 @@ class AuditLog:
         collection.create_index("event_id", unique=True, sparse=True)
         collection.create_index("user_id")
         collection.create_index("subject_index")
+        collection.create_index(
+            [("scope_officer_index", 1), ("timestamp", -1), ("_id", -1)],
+            name="audit_officer_event_scope",
+        )
         collection.create_index("action")
         collection.create_index("timestamp")
         collection.create_index("resource_type")
@@ -932,6 +979,10 @@ class AuditLog:
                     "timestamp": {"bsonType": "date"},
                     "retention_expires_at": {"bsonType": "date"},
                     "legal_hold": {"bsonType": "bool"},
+                    "scope_officer_index": {"bsonType": ["string", "null"]},
+                    "scope_policy_version": {
+                        "enum": [None, *sorted(AUDIT_SCOPE_POLICY_VERSIONS)]
+                    },
                     "integrity_hash": {"bsonType": "string"},
                 },
             }
@@ -958,6 +1009,8 @@ class AuditLog:
         ip_address="",
         event_id=None,
         idempotency_key=None,
+        scope_officer_id=None,
+        scope_policy_version=None,
     ):
         """
         Convenience method to create and save an audit log entry.
@@ -991,5 +1044,7 @@ class AuditLog:
             details=details or {},
             ip_address=ip_address,
             event_id=stable_event_id,
+            scope_officer_id=scope_officer_id,
+            scope_policy_version=scope_policy_version,
         )
         return log.save()

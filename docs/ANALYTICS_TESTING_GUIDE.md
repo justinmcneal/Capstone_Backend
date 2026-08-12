@@ -2,9 +2,9 @@
 
 > **Readiness notice (2026-08-12):** This guide documents the current API for
 > development and characterization testing. Analytics is not yet production-
-> ready. Stages 1-3 (query correctness, privacy, protected audit persistence,
-> integrity, recovery, and lifecycle) are complete at code/test level. Officer
-> scope, metric consistency, query scalability/observability, and real-
+> ready. Stages 1-4 (query correctness, privacy, protected audit persistence,
+> integrity/lifecycle, officer scope, and metric consistency) are complete at
+> code/test level. Query scalability/observability and real-
 > environment validation remain open. See
 > `docs/ANALYTICS_PRODUCTION_READINESS_REVIEW.md` for the evidence and staged
 > remediation plan.
@@ -118,6 +118,8 @@ System-wide dashboard statistics.
 
 | Field | Type | Description |
 |-------|------|-------------|
+| `as_of` | ISO datetime | UTC time when dashboard evaluation began |
+| `metric_definition_version` | string | Current metric contract version |
 | `users` | object | User counts |
 | `users.customers` | int | Total customers |
 | `users.loan_officers` | int | Total loan officers |
@@ -126,23 +128,32 @@ System-wide dashboard statistics.
 | `loans` | object | Loan application counts by status |
 | `loans.total` | int | All applications |
 | `loans.draft` | int | Status `draft` |
-| `loans.pending` | int | Status `submitted` |
+| `loans.submitted` | int | Status `submitted` |
+| `loans.pending` | int | Status `submitted` or `under_review` |
 | `loans.under_review` | int | Status `under_review` |
-| `loans.approved` | int | Status `approved` |
+| `loans.approved` | int | Approved outcome statuses |
 | `loans.rejected` | int | Status `rejected` |
-| `loans.disbursed` | int | Status `disbursed` |
+| `loans.reviewed` | int | Approved outcomes plus rejected |
+| `loans.disbursed` | int | Disbursed outcome statuses |
+| `loans.completed` | int | Status `completed` |
+| `loans.written_off` | int | Status `written_off` |
 | `loans.cancelled` | int | Status `cancelled` |
 | `documents` | object | Document stats |
-| `documents.total` | int | All documents |
-| `documents.pending` | int | Status `pending` |
-| `documents.verified` | int | `verified: true` |
+| `documents.total` | int | Current, storage-available documents |
+| `documents.pending` | int | Status `pending` or `needs_review` |
+| `documents.needs_review` | int | Status `needs_review` |
+| `documents.approved` | int | Canonical status `approved` |
+| `documents.verified` | int | Compatibility alias for approved count |
+| `documents.rejected` | int | Status `rejected` |
+| `documents.expired` | int | Status `expired` |
 | `ai_usage` | object | AI chatbot usage |
 | `ai_usage.sessions_last_7_days` | int | `ai_interactions` in last 7 days |
 | `products` | array | Per active loan product |
 | `products[].name` | string | Product name |
 | `products[].applications` | int | Total applications for product |
-| `products[].approved` | int | Approved applications for product |
-| `products[].approval_rate` | string | e.g. `"75.0%"` |
+| `products[].reviewed` | int | Approved outcomes plus rejected |
+| `products[].approved` | int | Approved outcomes for product |
+| `products[].approval_rate` | string | Approved / reviewed, e.g. `"75.0%"` |
 | `recent_activity` | array | Last 10 minimized audit summaries; empty without `view_logs` |
 | `recent_activity_restricted` | boolean | `true` when the caller lacks `view_logs` |
 | `recent_activity[].action` | string | Audit action |
@@ -270,8 +281,10 @@ Loan officer personal dashboard — review activity and queue stats.
 
 | Field | Type | Description |
 |-------|------|-------------|
+| `as_of` | ISO datetime | UTC time when dashboard evaluation began |
+| `metric_definition_version` | string | Current metric contract version |
 | `my_reviews` | object | Officer's review history |
-| `my_reviews.total_approved` | int | Assigned apps with status `approved` or `disbursed` |
+| `my_reviews.total_approved` | int | Assigned approved outcome statuses |
 | `my_reviews.total_rejected` | int | Assigned apps with status `rejected` |
 | `my_reviews.approved_today` | int | Approved/disbursed today (`decision_date >= today`) |
 | `my_reviews.rejected_today` | int | Rejected today |
@@ -303,12 +316,12 @@ Audit logs scoped to the officer and their assigned loan applications.
 **Scope rules (what logs are included):**
 
 - Logs where `user_id` = officer ID AND `user_type` = `loan_officer`, **OR**
-- Logs where `resource_type` = `loan` AND `resource_id` is in the officer's assigned application IDs
+- Logs whose blind `scope_officer_index` captured that officer when the event occurred.
 
-This remains a current-assignment visibility policy and builds an unbounded
-assigned-ID list; Stage 4 owns that scope/query redesign. Stage 2 makes the
-response safe for officers by removing all actor identity, email, IP,
-description, and free-form details.
+The `event-time-assignment-v1` policy prevents reassignment from transferring
+historical visibility and avoids an assigned-loan `$in` list. Legacy events
+without the event-time field are visible only when the officer was the actor.
+The response omits actor identity, email, IP, description, and details.
 
 **Response fields (`data`):**
 
@@ -346,21 +359,31 @@ Customer personal dashboard statistics.
 
 | Field | Type | Description |
 |-------|------|-------------|
+| `as_of` | ISO datetime | UTC time when dashboard evaluation began |
+| `metric_definition_version` | string | Current metric contract version |
 | `applications` | object | Customer's loan applications |
 | `applications.total` | int | All applications |
+| `applications.draft` | int | Status `draft` |
 | `applications.pending` | int | Status `submitted` or `under_review` |
-| `applications.approved` | int | Status `approved` |
+| `applications.approved` | int | Approved outcome statuses |
 | `applications.rejected` | int | Status `rejected` |
+| `applications.disbursed` | int | Disbursed outcome statuses |
+| `applications.completed` | int | Status `completed` |
+| `applications.written_off` | int | Status `written_off` |
+| `applications.cancelled` | int | Status `cancelled` |
 | `documents` | object | Customer's documents |
-| `documents.total` | int | All uploaded documents |
-| `documents.verified` | int | `verified: true` |
-| `documents.pending` | int | Status `pending` |
+| `documents.total` | int | Current, storage-available documents |
+| `documents.verified` | int | Canonical status `approved` |
+| `documents.pending` | int | Status `pending` or `needs_review` |
+| `documents.needs_review` | int | Status `needs_review` |
+| `documents.rejected` | int | Status `rejected` |
+| `documents.expired` | int | Status `expired` |
 | `profile_completion` | object | Profile readiness |
 | `profile_completion.percentage` | string | e.g. `"67%"` (3 core sections) |
 | `profile_completion.personal_profile` | boolean | Personal section has meaningful data |
 | `profile_completion.business_profile` | boolean | Business type + income info present |
 | `profile_completion.alternative_data` | boolean | Education + housing status present |
-| `profile_completion.valid_id_uploaded` | boolean | At least one `valid_id` document |
+| `profile_completion.valid_id_uploaded` | boolean | Current available `valid_id` is approved |
 | `ai_sessions` | int | Total `ai_interactions` for customer |
 
 **Profile completion logic:**
@@ -369,8 +392,21 @@ Customer personal dashboard statistics.
   `profile_completed` value;
 - `percentage` is the arithmetic mean of the stored personal, business, and
   alternative-data `completion_percentage` values; and
-- `valid_id_uploaded` currently means any matching document record exists. It
-  does not yet exclude rejected, expired, superseded, or deletion-state records.
+- `valid_id_uploaded` requires a current, storage-available `valid_id` whose
+  canonical status is `approved`.
+
+### Metric definition `2026-08-12-v1`
+
+- Approved outcome: `approved`, `disbursed`, `completed`, or `written_off`.
+- Disbursed outcome: `disbursed`, `completed`, or `written_off`.
+- Reviewed: approved outcome plus `rejected`.
+- Pending: `submitted` plus `under_review`.
+- Product approval rate: approved outcomes divided by reviewed decisions.
+- Document counts exclude unavailable/deletion-state and superseded records and
+  use canonical `status` rather than the legacy `verified` boolean.
+- String and legacy MongoDB `ObjectId` owner/assignee/product identifiers match.
+- `as_of` is an evaluation-start timestamp, not a transactional snapshot across
+  the independent source queries.
 
 ---
 
@@ -492,16 +528,17 @@ Use these as negative and boundary cases while implementing the readiness plan:
    details, sign events, and implement recovery, retention, legal holds,
    pseudonymization, export, and inventory. Target key/backfill/restore proof
    remains deployment work.
-3. Officer historical visibility follows current assignment and the query
-   materializes every assigned loan ID.
-4. Customer/admin document counts can include deletion-state records; valid-ID
-   presence ignores review/lifecycle status; approved/disbursed meanings differ
-   between dashboards.
-5. Raw string-only counts can miss legacy `ObjectId` owner fields.
+3. Stage 4 captures blind event-time officer scope, so reassignment does not
+   transfer history and no assigned-loan list is materialized. Legacy unscoped
+   events remain actor-only.
+4. Stage 4 aligns loan/document status meanings, excludes unavailable and
+   superseded documents, requires an approved valid ID, and supports mixed IDs.
+5. Independent dashboard counts are not a transactional snapshot; validate the
+   approved consistency SLO under concurrent writes.
 6. Database least-privilege roles, key rotation, legacy backfill, retention,
    legal-hold, integrity inventory, and backup/restore still need controlled
    target-environment evidence.
-7. Current regex/assigned-ID and dashboard query shapes lack real-Mongo explain
+7. Current regex and dashboard query shapes lack real-Mongo explain
     and representative-load evidence.
 8. Analytics has no dedicated throttles, latency/error/backlog metrics, health
    component, alerts, or dependency-outage response contract.
@@ -513,11 +550,11 @@ Use these as negative and boundary cases while implementing the readiness plan:
 Focused local suites:
 
 ```bash
-pytest -q tests/test_analytics_api.py tests/test_analytics_stage3_integrity_lifecycle.py
+pytest -q tests/test_analytics_api.py tests/test_analytics_stage3_integrity_lifecycle.py tests/test_analytics_stage4_scope_metrics.py
 ```
 
-Latest Stage 3 result on 2026-08-12: the focused suites passed **60 tests** and
-the complete project suite passed **1,093 tests**, skipped **21 opt-in
+Latest Stage 4 result on 2026-08-12: the focused suites passed **68 tests** and
+the complete project suite passed **1,101 tests**, skipped **21 opt-in
 integration tests**, and reported one third-party deprecation warning.
 
 The API suite uses `mongomock`, calls views directly, and temporarily clears
@@ -531,11 +568,9 @@ Required future test groups:
 - request-level JWT and complete role/permission matrix tests through URLs;
 - strict pagination/date/enum/search validation and non-broadening regressions;
 - admin summary-versus-log permission and sensitive-field redaction tests;
-- officer cross-assignment, reassignment, historical-scope, admin-target, and
-  bounded-search tests;
+- request-level officer/admin scope tests through the full authentication stack;
 - production-key rotation/recovery and controlled legacy-backfill tests;
-- lifecycle-complete dashboard fixtures with mixed string/ObjectId ownership and
-  reconciliation invariants; and
+- concurrent dashboard consistency and snapshot/SLO characterization; and
 - opt-in isolated real-Mongo index/explain, deep-history, aggregation, timeout,
   and representative-cardinality tests.
 
@@ -597,7 +632,7 @@ the command result and repeat the read-only inventory afterward.
 | Cross-domain adapters | `accounts/services/audit.py`, `profiles/services/audit.py`, `loans/services/audit.py`, `documents/services/audit.py` |
 | Operator commands | `analytics/management/commands/` |
 | Index bootstrap | `init_db.py` |
-| Focused tests | `tests/test_analytics_api.py`, `tests/test_analytics_stage3_integrity_lifecycle.py` |
+| Focused tests | `tests/test_analytics_api.py`, `tests/test_analytics_stage3_integrity_lifecycle.py`, `tests/test_analytics_stage4_scope_metrics.py` |
 
 ---
 
@@ -605,18 +640,20 @@ the command result and repeat the read-only inventory afterward.
 
 1. All endpoints are **GET only** — no request bodies.
 2. Admin audit log endpoints require specific permissions beyond the admin role.
-3. Officer audit logs currently use the officer's own actions plus loan resources
-   in the officer's current assignment set. Treat this as provisional scope,
-   not a proven event-time ABAC policy.
+3. Officer audit logs use the officer's own actions plus the blind officer scope
+   captured under `event-time-assignment-v1`; reassignment does not transfer old
+   event visibility. Legacy unscoped events remain actor-only.
 4. Customer dashboard counts `pending` applications as `submitted` + `under_review` (not `draft`).
-5. Admin dashboard `loans.pending` counts only `submitted` status (not `under_review`).
+5. Admin and customer dashboard `loans.pending` both count `submitted` plus
+   `under_review`.
 6. New events store a stable action group; description matching exists only for
    legacy `admin_action` compatibility.
 7. Audit `details` are action-specific, bounded, checked recursively for secret-
    shaped keys, and encrypted at rest. Unknown top-level keys fail validation.
 8. Generate test data by exercising auth, loans, documents, and profiles APIs
    first; Analytics reads their side effects.
-9. Dashboard counts are separate queries with no snapshot or `as_of` value, so
-   concurrent source writes can make one response internally inconsistent.
+9. Dashboard responses include `as_of`, but counts remain separate queries rather
+   than one database snapshot; concurrent writes can still cause transient
+   internal differences.
 10. Do not assert that a passing `mongomock` test proves an index is used; use an
     explicitly gated real-Mongo `explain()` harness.

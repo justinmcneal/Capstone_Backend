@@ -47,7 +47,11 @@ def _customer_audit_failure_query(customer_id):
         "domain": "profiles",
         "resolved_at": None,
         "$or": [
-            {"subject_index": AuditLog.blind_index(str(customer_id))},
+            {
+                "subject_index": {
+                    "$in": AuditLog.blind_index_candidates(str(customer_id))
+                }
+            },
             {"payload.user_id": {"$in": variants}},
             {"payload.resource_id": {"$in": variants}},
             {"payload.details.customer_id": {"$in": variants}},

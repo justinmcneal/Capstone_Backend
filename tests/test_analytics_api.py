@@ -1040,6 +1040,8 @@ class TestAnalyticsStage2PrivacyBoundary:
             resource_id=str(loan_id),
             ip_address="203.0.113.9",
             details={"amount": 50000},
+            scope_officer_id=str(officer.id),
+            scope_policy_version="event-time-assignment-v1",
         )
         user = AuthenticatedUser(
             customer_id=str(officer.id),

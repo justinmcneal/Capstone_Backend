@@ -175,7 +175,11 @@ def get_profile_history(customer_id, *, page=1, page_size=20):
             {"action": {"$in": list(PROFILE_HISTORY_ACTIONS)}},
             {
                 "$or": [
-                    {"subject_index": AuditLog.blind_index(str(customer_id))},
+                    {
+                        "subject_index": {
+                            "$in": AuditLog.blind_index_candidates(str(customer_id))
+                        }
+                    },
                     {"user_id": str(customer_id)},
                     {"details.customer_id": str(customer_id)},
                 ]
