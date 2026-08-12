@@ -325,6 +325,29 @@ prefixes and selected KMS key. It needs the object, multipart, copy, delete, and
 prefix-list operations used by the application, but no bucket-policy, ACL, or
 unrelated-prefix administration. Prefer workload identity over long-lived keys.
 
+### Local-to-S3 migration and rollback
+
+The repository includes `scripts/migrate_media_to_s3.py`,
+`scripts/migration_verifier.py`, a manual staging workflow, and Terraform
+templates under `infra/terraform/s3/`. These are operational tools, not evidence
+that a real migration has passed. No production or staging AWS migration is
+recorded as complete.
+
+If an environment has existing local document media, migration requires an
+approved MongoDB backup and immutable media snapshot, a staging dry run,
+restricted review of the status/report artifacts, an approved apply window, and
+post-copy verification before cutover. Status and verifier reports can contain
+document identifiers and storage paths; treat them as sensitive operational
+artifacts, keep them out of Git and ordinary logs, restrict access, and remove
+them under the approved retention policy.
+
+Do not delete or overwrite local source files until S3 validation, restore, and
+rollback evidence is approved. During cutover, quiesce document writes or use a
+formally tested dual-write/reconciliation design. Changing the backend to
+`local` is not a complete rollback after S3-only uploads have occurred: the
+operator must preserve new objects, restore or reconcile metadata from the
+approved migration record, verify accessibility, and run consistency inventory.
+
 ### Monitoring and alerting
 
 Scrape `documents_*` Prometheus metrics and alert on:
@@ -370,6 +393,9 @@ under the project's approval procedures.
 | `python manage.py inventory_document_storage` | Read-only/count-only | Report missing/orphan objects, expired sessions, contradictions, retention gaps, legal holds, and deleted-customer records without identifiers. |
 | `python manage.py manage_document_legal_hold DOCUMENT_ID --action set --reason CASE --operator ADMIN_ID` | Dry-run by default | Preview a legal hold. |
 | Same legal-hold command with `--apply` | State-changing | Set or release a hold after approved case/change review. |
+| `python scripts/migrate_media_to_s3.py --dry-run --prefix documents` | Reads configured MongoDB/local media/S3 and writes sensitive local reports | Preview an approved isolated local-to-S3 migration. |
+| `python scripts/migration_verifier.py --report migration_report.json --prefix documents` | Reads MongoDB/S3 and writes a sensitive local report | Verify copied objects and stored keys in an approved isolated target. |
+| Migration command with `--confirm --apply-db` | State-changing | Copy objects and update document metadata only after backup, dry-run review, and explicit change approval. |
 
 Run inventory immediately before production index/storage work, after restore,
 and during relevant incidents. Investigate every unexplained non-zero finding
@@ -435,6 +461,8 @@ following:
 
 - private S3 bucket controls, least-privilege IAM/KMS, exact CORS, short URL
   expiry, multipart behavior, and full quarantine/finalize/replay/cleanup;
+- when existing local media must be retained, approved staging migration,
+  sensitive-report handling, cutover, verification, and rollback rehearsal;
 - private ClamAV readiness, current signatures, stream-size policy, clean,
   detected, invalid-response, timeout, and outage behavior;
 - deployed encryption-key access, previous-key reads, rotation, and restore;

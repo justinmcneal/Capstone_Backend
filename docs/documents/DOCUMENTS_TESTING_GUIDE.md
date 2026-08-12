@@ -689,6 +689,38 @@ python manage.py validate_document_storage
 Review IAM and lifecycle/versioning separately because the application identity
 should not have policy-administration permission.
 
+### Local-to-S3 migration and rollback validation
+
+The migration and verifier scripts access configured storage and MongoDB. They
+must be run only against an approved isolated target and are not ordinary test
+commands. Take an approved MongoDB backup and immutable local-media snapshot
+first. The dry run still reads local media/S3 and writes status/report files:
+
+```bash
+python scripts/migrate_media_to_s3.py --dry-run --prefix documents
+python scripts/migration_verifier.py \
+  --report migration_report.json --prefix documents
+```
+
+Treat `migration_status.json` and `migration_report.json` as sensitive because
+they can contain document IDs and storage paths. Do not commit them, paste them
+into ordinary CI logs, or distribute them outside the approved operator group.
+
+After reviewing the dry run, an explicitly approved staging apply uses:
+
+```bash
+python scripts/migrate_media_to_s3.py \
+  --confirm --prefix documents --apply-db
+```
+
+This command copies objects and may update MongoDB. Do not run it without
+separate state-change approval. Quiesce writes during the tested cutover, retain
+the original local files, run the verifier and count-only inventory, then test
+authorized detail downloads and deletion. Rehearse rollback in staging: preserve
+S3-only uploads, restore or reconcile metadata using the protected migration
+record, select the correct backend, and repeat verification. Merely switching
+back to `local` can lose access to documents uploaded after cutover.
+
 ### Retention, legal holds, and inventory
 
 Legal-hold commands are dry-run unless `--apply` is supplied:

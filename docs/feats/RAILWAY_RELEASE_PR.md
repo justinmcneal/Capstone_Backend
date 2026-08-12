@@ -6,10 +6,10 @@ Summary
 What this PR contains
 - Infra changes (if any): Terraform templates, bucket names, IAM policy references.
 - Application changes: branch to deploy (commit range listed in the PR).
-- New or updated runbooks: `docs/RAILWAY_PRODUCTION_DEPLOYMENT_AND_SMOKE_TESTS.md` and `docs/INFRA_HANDOFF.md`.
+- New or updated runbooks: `docs/feats/RAILWAY_PRODUCTION_DEPLOYMENT_AND_SMOKE_TESTS.md` and `docs/documents/DOCUMENTS_PRODUCTION_READINESS_REVIEW.md`.
 
 Action for infra (reviewers)
-1. Provision S3 bucket and KMS per `docs/PRODUCTION_S3.md` (if `DOCUMENT_STORAGE_BACKEND=s3`).
+1. Provision and validate private S3/KMS per `docs/documents/DOCUMENTS_PRODUCTION_READINESS_REVIEW.md` (if `DOCUMENT_STORAGE_BACKEND=s3`).
 2. Add Railway variables exactly as named in `docs/RAILWAY_PRODUCTION_DEPLOYMENT_AND_SMOKE_TESTS.md`.
 3. Deploy to Railway staging and confirm web + worker services start.
 4. Run staging smoke tests (see commands below) and paste the run output into the PR thread.
