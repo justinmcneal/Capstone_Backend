@@ -16,16 +16,37 @@ from accounts.authentication import CustomJWTAuthentication
 from accounts.utils.response_helpers import error_response, success_response
 from accounts.views.admin_views import AdminRequiredMixin
 from analytics.models import AuditLog
+from analytics.services.access_audit import (
+    AnalyticsAccessAuditError,
+    record_privileged_read,
+)
 from analytics.services.audit_queries import (
     AnalyticsQueryError,
     build_paginated_response,
     parse_audit_filters,
     parse_limit,
     parse_pagination,
+    serialize_admin_log_detail,
+    serialize_dashboard_activity,
     validate_query_params,
 )
 
 logger = logging.getLogger("analytics")
+
+
+def _audit_admin_read(request, admin, endpoint):
+    try:
+        record_privileged_read(
+            actor=admin,
+            actor_type=str(getattr(request.user, "role", "admin") or "admin"),
+            endpoint=endpoint,
+        )
+    except AnalyticsAccessAuditError:
+        return error_response(
+            message="Analytics access could not be audited",
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        )
+    return None
 
 
 class AdminDashboardView(AdminRequiredMixin, APIView):
@@ -95,31 +116,26 @@ class AdminDashboardView(AdminRequiredMixin, APIView):
             {"created_at": {"$gte": week_ago}}
         )
 
-        # Recent activity (last 10 audit logs, excluding standard noise)
-        recent_logs = AuditLog.find(
-            query={
-                "action": {
-                    "$nin": [
-                        "user_login",
-                        "user_logout",
-                        "user_login_failed",
-                        "loan_submitted",
-                        "document_uploaded",
-                    ]
-                }
-            },
-            sort=[("timestamp", -1)],
-            limit=10,
-        )
-        recent_activity = [
-            {
-                "action": log.action,
-                "user_type": log.user_type,
-                "description": log.description,
-                "timestamp": log.timestamp.isoformat(),
-            }
-            for log in recent_logs
-        ]
+        # Audit-derived content is a separate permission boundary from metrics.
+        can_view_logs = result.has_all_permissions(["view_logs"])
+        recent_activity = []
+        if can_view_logs:
+            recent_logs = AuditLog.find(
+                query={
+                    "action": {
+                        "$nin": [
+                            "user_login",
+                            "user_logout",
+                            "user_login_failed",
+                            "loan_submitted",
+                            "document_uploaded",
+                        ]
+                    }
+                },
+                sort=[("timestamp", -1), ("_id", -1)],
+                limit=10,
+            )
+            recent_activity = [serialize_dashboard_activity(log) for log in recent_logs]
 
         # Loan products performance
         products = list(db["loan_products"].find({"active": True}))
@@ -142,6 +158,10 @@ class AdminDashboardView(AdminRequiredMixin, APIView):
                 }
             )
 
+        audit_error = _audit_admin_read(request, result, "admin_dashboard")
+        if audit_error:
+            return audit_error
+
         return success_response(
             data={
                 "users": {
@@ -157,6 +177,7 @@ class AdminDashboardView(AdminRequiredMixin, APIView):
                 "ai_usage": {"sessions_last_7_days": ai_sessions},
                 "products": product_stats,
                 "recent_activity": recent_activity,
+                "recent_activity_restricted": not can_view_logs,
             },
             message="Admin dashboard data retrieved",
         )
@@ -219,6 +240,9 @@ class AuditLogsView(AdminRequiredMixin, APIView):
         )
 
         response_data = build_paginated_response(list(logs), total, page, page_size)
+        audit_error = _audit_admin_read(request, result, "audit_log_list")
+        if audit_error:
+            return audit_error
         return success_response(
             data=response_data,
             message="Audit logs retrieved",
@@ -265,11 +289,7 @@ class AuditLogUsersView(AdminRequiredMixin, APIView):
         match_stage = {"user_id": {"$nin": [None, ""]}}
         if search:
             regex = {"$regex": re.escape(search), "$options": "i"}
-            match_stage["$or"] = [
-                {"user_email": regex},
-                {"user_type": regex},
-                {"user_id": regex},
-            ]
+            match_stage["$or"] = [{"user_type": regex}, {"user_id": regex}]
 
         pipeline = [
             {"$match": match_stage},
@@ -279,7 +299,6 @@ class AuditLogUsersView(AdminRequiredMixin, APIView):
                     "_id": "$user_id",
                     "user_id": {"$first": "$user_id"},
                     "user_type": {"$first": "$user_type"},
-                    "user_email": {"$first": "$user_email"},
                     "latest_timestamp": {"$first": "$timestamp"},
                 }
             },
@@ -289,24 +308,21 @@ class AuditLogUsersView(AdminRequiredMixin, APIView):
 
         users = []
         for doc in collection.aggregate(pipeline):
-            user_id = doc.get("user_id")
+            user_id = str(doc.get("user_id"))
             user_type = doc.get("user_type") or "unknown"
-            user_email = doc.get("user_email") or ""
-            short_id = f"{user_id[:8]}..." if isinstance(user_id, str) else ""
-            label = (
-                f"{user_email} ({user_type})"
-                if user_email
-                else f"{user_type} ({short_id})"
-            )
+            short_id = f"{user_id[:8]}..."
+            label = f"{user_type} ({short_id})"
             users.append(
                 {
                     "user_id": user_id,
                     "user_type": user_type,
-                    "user_email": user_email,
                     "label": label,
                 }
             )
 
+        audit_error = _audit_admin_read(request, result, "audit_log_actor_directory")
+        if audit_error:
+            return audit_error
         return success_response(
             data={"users": users},
             message="Audit log users retrieved",
@@ -315,7 +331,7 @@ class AuditLogUsersView(AdminRequiredMixin, APIView):
 
 class AuditLogDetailView(AdminRequiredMixin, APIView):
     """
-    Get full detail for a specific audit log entry.
+    Get minimized privileged detail for a specific audit log entry.
 
     GET /api/analytics/audit-logs/<log_id>/
     """
@@ -330,17 +346,6 @@ class AuditLogDetailView(AdminRequiredMixin, APIView):
         has_permission, result = self.check_admin_permission(request)
         if not has_permission:
             return result
-
-        def serialize_details(value):
-            if isinstance(value, datetime):
-                return value.isoformat()
-            if isinstance(value, ObjectId):
-                return str(value)
-            if isinstance(value, dict):
-                return {k: serialize_details(v) for k, v in value.items()}
-            if isinstance(value, list):
-                return [serialize_details(v) for v in value]
-            return value
 
         try:
             oid = ObjectId(log_id)
@@ -358,19 +363,10 @@ class AuditLogDetailView(AdminRequiredMixin, APIView):
             )
 
         log = AuditLog.from_dict(doc)
+        audit_error = _audit_admin_read(request, result, "audit_log_detail")
+        if audit_error:
+            return audit_error
         return success_response(
-            data={
-                "id": log.id,
-                "user_id": log.user_id,
-                "user_type": log.user_type,
-                "user_email": log.user_email,
-                "action": log.action,
-                "description": log.description,
-                "resource_type": log.resource_type,
-                "resource_id": log.resource_id,
-                "details": serialize_details(log.details or {}),
-                "ip_address": log.ip_address,
-                "timestamp": log.timestamp.isoformat() if log.timestamp else None,
-            },
+            data=serialize_admin_log_detail(log),
             message="Audit log detail retrieved",
         )

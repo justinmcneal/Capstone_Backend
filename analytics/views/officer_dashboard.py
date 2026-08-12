@@ -16,12 +16,16 @@ from accounts.utils.access_control import AccessControlMixin
 from accounts.utils.response_helpers import error_response, success_response
 from analytics.models import AuditLog
 from analytics.models.audit_log import ACTION_GROUPS
+from analytics.services.access_audit import (
+    AnalyticsAccessAuditError,
+    record_privileged_read,
+)
 from analytics.services.audit_queries import (
     AnalyticsQueryError,
     officer_search_conditions,
     parse_audit_filters,
     parse_pagination,
-    serialize_log_entry,
+    serialize_officer_log_entry,
     validate_query_params,
 )
 
@@ -32,7 +36,21 @@ class LoanOfficerRequiredMixin(AccessControlMixin):
     """Mixin to require loan officer role"""
 
     def check_officer_permission(self, request):
-        return self.require_officer_or_admin(request)
+        return self.require_roles(request, {"loan_officer"})
+
+    def audit_officer_read(self, officer, endpoint):
+        try:
+            record_privileged_read(
+                actor=officer,
+                actor_type="loan_officer",
+                endpoint=endpoint,
+            )
+        except AnalyticsAccessAuditError:
+            return error_response(
+                message="Analytics access could not be audited",
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+        return None
 
 
 class OfficerDashboardView(LoanOfficerRequiredMixin, APIView):
@@ -110,6 +128,10 @@ class OfficerDashboardView(LoanOfficerRequiredMixin, APIView):
         approval_rate = (
             (my_approved / total_reviewed * 100) if total_reviewed > 0 else 0
         )
+
+        audit_error = self.audit_officer_read(user, "officer_dashboard")
+        if audit_error:
+            return audit_error
 
         return success_response(
             data={
@@ -233,7 +255,13 @@ class OfficerAuditLogsView(LoanOfficerRequiredMixin, APIView):
             .limit(page_size)
         )
 
-        logs_data = [serialize_log_entry(AuditLog.from_dict(doc)) for doc in cursor]
+        logs_data = [
+            serialize_officer_log_entry(AuditLog.from_dict(doc)) for doc in cursor
+        ]
+
+        audit_error = self.audit_officer_read(user, "officer_audit_log_list")
+        if audit_error:
+            return audit_error
 
         return success_response(
             data={

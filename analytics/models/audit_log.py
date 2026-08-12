@@ -48,6 +48,8 @@ AUDIT_ACTION_REGISTRY = {
     "admin_permissions_changed": "update",
     "loan_officer_updated": "update",
     "loan_officer_deactivated": "delete",
+    # Analytics privileged reads
+    "analytics_privileged_read": "read",
     # Profile
     "profile_created": "create",
     "profile_updated": "update",
@@ -335,11 +337,11 @@ class AuditLog:
             and_conditions.append(
                 {
                     "$or": [
-                        {"description": search_regex},
-                        {"user_email": search_regex},
                         {"action": search_regex},
                         {"user_id": search_regex},
                         {"user_type": search_regex},
+                        {"resource_id": search_regex},
+                        {"resource_type": search_regex},
                     ]
                 }
             )

@@ -35,21 +35,21 @@ counts are assignment-scoped, audit lists paginate in MongoDB, and basic tests
 pass.
 
 The previous review's statement that no implementation gaps remain is not
-supported by the current code. Stage 1 has now corrected the reproduced date-
-filter failure and non-broadening query contract. Remaining findings include
-plaintext sensitive audit fields; unrestricted free-form audit
-details; no Analytics-owned retention, legal-hold, immutability, or tamper-
-evidence policy; inconsistent audit failure recovery between domains; audit-log
-reads that are not themselves audited; a `view_analytics` path that exposes
-recent audit descriptions without `view_logs`; weak officer log scoping and
-field disclosure; dashboard metric inconsistencies; incomplete compound
+supported by the current code. Stages 1 and 2 have corrected the query contract,
+response disclosure, permission separation, officer-route role semantics, and
+privileged-read auditing. Remaining findings include plaintext sensitive audit
+fields; unrestricted free-form audit details; no Analytics-owned retention,
+legal-hold, immutability, or tamper-evidence policy; inconsistent audit failure
+recovery between domains; weak officer log scope query design; dashboard metric
+inconsistencies; incomplete compound
 indexes; expensive regex and `$in` query shapes; no Analytics throttles or
 metrics; and no real-Mongo/load/recovery validation.
 
 Current local baseline:
 
-- `pytest -q tests/test_analytics_api.py`: **40 passed** on 2026-08-12.
-- Full project suite after Stage 1: **1,073 passed and 21 skipped**.
+- `pytest -q tests/test_analytics_api.py`: **49 passed** on 2026-08-12.
+- Full project suite after Stage 2: **1,082 passed and 21 skipped** with one
+  third-party deprecation warning on 2026-08-12.
 - The suite calls views directly and temporarily disables their DRF
   authentication/permission classes. Explicit role/mixin checks are exercised,
   but the real JWT and middleware boundary is not.
@@ -66,12 +66,12 @@ All seven routes are registered under `/api/analytics/` and are read-only:
 
 | Route | Current boundary | Implementation status |
 | --- | --- | --- |
-| `GET admin/` | Admin with `view_analytics` | Implemented; privacy and metric gaps remain |
-| `GET audit-logs/` | Admin with `view_logs` | Implemented; validation, privacy, integrity, and scale gaps remain |
-| `GET audit-logs/users/` | Admin with `view_logs` | Implemented; plaintext identity and query-cost gaps remain |
-| `GET audit-logs/<log_id>/` | Admin with `view_logs` | Implemented; sensitive-read auditing/redaction gaps remain |
-| `GET officer/` | Loan officer or admin | Implemented; admin semantics and metric consistency need correction |
-| `GET officer/audit-logs/` | Loan officer or admin | Implemented; scope, disclosure, and scale gaps remain |
+| `GET admin/` | Admin with `view_analytics`; activity additionally requires `view_logs` | Implemented; metric gaps remain |
+| `GET audit-logs/` | Admin with `view_logs` | Implemented; integrity and scale gaps remain |
+| `GET audit-logs/users/` | Admin with `view_logs` | Implemented; query-cost gaps remain |
+| `GET audit-logs/<log_id>/` | Admin with `view_logs` | Implemented with minimized response and access audit |
+| `GET officer/` | Loan officer only | Implemented; metric consistency needs correction |
+| `GET officer/audit-logs/` | Loan officer only | Implemented with minimized response; scope and scale gaps remain |
 | `GET customer/` | Customer owner | Implemented; lifecycle and mixed-ID counting gaps remain |
 
 ### Authentication and role checks
@@ -80,13 +80,15 @@ All seven routes are registered under `/api/analytics/` and are read-only:
 - Administrator dashboard access requires `view_analytics`.
 - Administrator audit-log list, user directory, and detail require `view_logs`.
 - Customer dashboard access uses `AccessControlMixin.require_customer`.
-- Officer endpoints use `require_officer_or_admin` and reject customers.
+- Officer endpoints require the `loan_officer` role; administrators use the
+  administrator routes instead of being interpreted as an officer identity.
 - Malformed audit-log ObjectIds return HTTP 400 and missing records return 404.
 
-These controls are useful foundations. They do not resolve the separate issue
-that an admin without `view_logs` can receive recent audit descriptions through
-the dashboard, or that officer responses expose fields beyond a minimal role-
-appropriate schema.
+The administrator dashboard returns an empty activity list plus
+`recent_activity_restricted: true` when the administrator lacks `view_logs`.
+Audit-derived response contracts omit stored email, IP, description, and
+free-form details. Privileged administrator and officer reads are themselves
+recorded and fail closed with HTTP 503 if that record cannot be written.
 
 ### Dashboard aggregation
 
@@ -106,7 +108,8 @@ appropriate schema.
 - Admin and officer log lists use `skip`/`limit` in MongoDB and cap page size at
   200.
 - Audit-log user aggregation is capped at 500 results.
-- Nested `datetime` and `ObjectId` values are converted for JSON responses.
+- Dashboard, administrator summary/detail, and officer-safe response serializers
+  expose only their explicit fields.
 - Search text is escaped before MongoDB regular expressions are constructed.
 - Action groups provide `login`, `read`, `create`, `update`, and a derived
   `delete` filter.
@@ -160,7 +163,7 @@ Stage 1 adds 15 focused cases for valid date filtering, malformed/inverted
 dates, unknown filters/enums, strict bounds, bounded search, zero-page results,
 deterministic tie-breaking, registry metadata, and fail-closed writes.
 
-### 2. Sensitive audit data is not minimized, encrypted, or safely disclosed
+### 2. Sensitive audit storage still requires minimization and encryption
 
 **Status: Blocked for production**
 
@@ -171,12 +174,13 @@ or secret/credential rejection. Producers already place rejection reasons,
 device data, transaction references/hashes, amounts, customer IDs, and other
 domain data in this free-form field.
 
-Administrator list and detail responses return the full email, IP address, and
-details object. Officer log responses use the same serializer, including events
-written by other actors on assigned loans. The audit-user endpoint exposes a
-plain email directory. The admin dashboard grants `view_analytics` users recent
-audit descriptions even when they do not have `view_logs`, bypassing the
-intended permission separation.
+Stage 2 removed these stored values from administrator list/detail, dashboard,
+officer, and actor-directory responses. Administrator activity now additionally
+requires `view_logs`; officer routes are officer-only; and privileged reads
+write a recursion-safe `analytics_privileged_read` event without copying query
+text, email, IP, or arbitrary request data. Access fails closed if the event
+cannot be persisted. Nine focused leakage, role, and access-audit regressions
+cover this boundary.
 
 Required remediation:
 
@@ -185,13 +189,8 @@ Required remediation:
   limits;
 - encrypt sensitive values with the shared key lifecycle or replace searchable
   identifiers with approved blind/exact indexes;
-- create summary and privileged-detail response schemas with role-appropriate
-  redaction;
-- require `view_logs` for any audit-derived content, including recent activity;
-- audit privileged log list, user-directory, and detail reads through a
-  recursion-safe access-audit design; and
-- add leakage tests for credentials, tokens, free text, IPs, emails, document
-  paths, and financial details.
+- extend leakage cases as Stage 3 defines rejected secret keys, paths, and
+  per-action financial schemas.
 
 ### 3. Audit integrity, durability, and lifecycle are incomplete
 
@@ -262,24 +261,20 @@ problems:
 - current assignment determines visibility of historical events, so reassignment
   can transfer old event visibility to the new officer and remove it from the
   prior officer without an explicit history policy;
-- the full admin serializer exposes other actors' email, IP, description, and
-  free-form details to officers;
-- customer-name search performs potentially unbounded regex profile matching
-  before applying the audit scope; and
-- admins are accepted by the officer routes without `view_analytics` or
-  `view_logs`, but the views interpret the admin ID as an officer ID, producing
-  unclear and potentially permission-bypassing behavior.
+- Stage 2 now returns a minimal officer schema without actor identity, email,
+  IP, description, or free-form details;
+- Stage 2 removed customer-name and sensitive stored-field search expansion;
+  officer search is limited to action and resource fields; and
+- administrators are now rejected by officer routes and use administrator
+  endpoints with named permissions.
 
 Required remediation:
 
 - choose and document current-scope versus event-time-scope semantics;
 - persist an approved scope/assignment reference on each relevant event or use
   a bounded server-side join/materialized projection;
-- provide a minimal officer event schema and remove IP/email/free-form data;
-- replace unbounded name regex expansion with the scoped Profiles directory and
-  exact IDs; and
-- make officer routes officer-only, or require the corresponding admin
-  permission and an explicit target officer.
+- prove the remaining scoped action/resource search plan under representative
+  real-Mongo data volume.
 
 ### 6. Dashboard metrics are not yet a stable business contract
 
@@ -361,24 +356,21 @@ Required remediation:
   details, or credentials; and
 - document on-call diagnosis, backup/restore, and incident evidence procedures.
 
-### 9. Automated evidence is too narrow
+### 9. Automated evidence remains environment-limited
 
 **Status: High priority**
 
-The 25 focused tests establish useful basic behavior, but most call view classes
+The 48 focused tests establish useful behavior, but most call view classes
 directly after clearing DRF authentication and permission classes. The suite
 does not cover:
 
 - real JWT/cookie/middleware/live-account authentication;
-- valid or invalid date ranges (the current defect was therefore missed);
-- strict enum/search/pagination validation;
-- `view_analytics` versus `view_logs` data separation;
-- full negative officer cross-assignment/reassignment and response redaction;
+- full historical officer reassignment semantics;
 - event schema/secret rejection, encryption, tamper detection, retention, legal
   holds, recovery idempotency, or backup/restore;
 - mixed string/ObjectId records and delete-pending documents;
 - dashboard metric invariants under complete lifecycle fixtures;
-- database outage/timeouts; or
+- database outage/timeouts beyond fail-closed privileged-read auditing; or
 - real MongoDB indexes, query plans, deep pagination, and representative load.
 
 ## Remediation Plan
@@ -398,11 +390,15 @@ count.
 
 ### Stage 2 — Privacy and authorization boundary
 
-- Separate dashboard summaries, admin log summaries/details, and officer-safe
+**Status: Complete**
+
+- [x] Separate dashboard summaries, admin log summaries/details, and officer-safe
   event schemas.
-- Enforce `view_logs` on all audit-derived administrator content.
-- Redesign admin use of officer routes.
-- Audit privileged Analytics reads and add field-leakage tests.
+- [x] Enforce `view_logs` on all audit-derived administrator content.
+- [x] Make officer routes officer-only; administrators use named-permission
+  administrator routes.
+- [x] Audit privileged Analytics reads with fail-closed behavior and add field-
+  leakage tests.
 
 ### Stage 3 — Audit event integrity and lifecycle
 
@@ -441,9 +437,9 @@ count.
 - Existing endpoint paths can remain stable.
 - Clients should expect invalid filters and out-of-range pagination to return
   HTTP 400 after Stage 1 instead of being ignored or clamped.
-- Audit list/detail fields will likely become smaller and role-specific after
-  privacy remediation. Frontends must not depend on arbitrary `details`, raw IP,
-  or full actor email being present in list responses.
+- Stage 2 made audit list/detail fields smaller and role-specific. Frontends
+  must use the documented summary/detail contracts and must not expect arbitrary
+  `details`, descriptions, raw IP, or actor email.
 - Officer/admin clients must not use the officer route as an implicit admin
   dashboard. Any admin target-officer workflow should be explicit.
 - Metric-definition alignment may change counts such as approved/disbursed,

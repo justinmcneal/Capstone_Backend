@@ -15,6 +15,7 @@ from analytics.models.audit_log import (
     AUDIT_ACTION_REGISTRY,
     AUDIT_EVENT_SCHEMA_VERSION,
 )
+from analytics.services.access_audit import AnalyticsAccessAuditError
 from analytics.views import (
     AdminDashboardView,
     AuditLogDetailView,
@@ -728,6 +729,7 @@ class TestAnalyticsHappyPaths:
             user_type="customer",
             user_email=customer.email,
             description="UniqueRegisteredKeyword",
+            resource_id="UniqueRegisteredKeyword",
         )
         AuditLog.log_action(
             action="admin_action",
@@ -770,7 +772,8 @@ class TestAnalyticsHappyPaths:
             assert resp3.status_code == 200
             logs = resp3.data["data"]["logs"]
             assert len(logs) == 1
-            assert logs[0]["description"] == "UniqueRegisteredKeyword"
+            assert logs[0]["action"] == "user_registered"
+            assert "description" not in logs[0]
 
             # 4. Filter by delete action group
             req4 = _auth_get_request(
@@ -841,6 +844,307 @@ class TestAnalyticsHappyPaths:
             data = response.data["data"]
             assert data["id"] == log.id
             assert data["action"] == "loan_submitted"
-            assert data["user_email"] == customer.email
+            assert data["actor"] == {"id": str(customer.id), "type": "customer"}
         finally:
             _restore_auth(AuditLogDetailView, original_auth, original_perm)
+
+
+class TestAnalyticsStage2PrivacyBoundary:
+    sensitive_fields = frozenset(
+        {"user_email", "ip_address", "description", "details"}
+    )
+
+    def test_dashboard_hides_audit_activity_without_view_logs(self):
+        AuditLog.log_action(
+            action="loan_rejected",
+            user_type="loan_officer",
+            description="Sensitive rejection explanation",
+        )
+        admin = _create_admin(permissions=["view_analytics"])
+        user = AuthenticatedUser(
+            customer_id=str(admin.id),
+            email=admin.email,
+            verified=True,
+            role="admin",
+        )
+
+        original_auth, original_perm = _bypass_auth(AdminDashboardView)
+        try:
+            response = AdminDashboardView.as_view()(
+                _auth_get_request("/api/analytics/admin/", user)
+            )
+        finally:
+            _restore_auth(AdminDashboardView, original_auth, original_perm)
+
+        assert response.status_code == 200
+        assert response.data["data"]["recent_activity"] == []
+        assert response.data["data"]["recent_activity_restricted"] is True
+
+    def test_dashboard_activity_uses_minimal_summary_with_view_logs(self):
+        AuditLog.log_action(
+            action="loan_rejected",
+            user_type="loan_officer",
+            user_email="officer@example.com",
+            description="Sensitive rejection explanation",
+            ip_address="203.0.113.8",
+            details={"reason": "private"},
+        )
+        admin = _create_admin(permissions=["view_analytics", "view_logs"])
+        user = AuthenticatedUser(
+            customer_id=str(admin.id),
+            email=admin.email,
+            verified=True,
+            role="admin",
+        )
+
+        original_auth, original_perm = _bypass_auth(AdminDashboardView)
+        try:
+            response = AdminDashboardView.as_view()(
+                _auth_get_request("/api/analytics/admin/", user)
+            )
+        finally:
+            _restore_auth(AdminDashboardView, original_auth, original_perm)
+
+        activity = response.data["data"]["recent_activity"]
+        assert response.status_code == 200
+        assert response.data["data"]["recent_activity_restricted"] is False
+        assert activity
+        assert not self.sensitive_fields.intersection(activity[0])
+
+    def test_admin_list_and_detail_do_not_return_stored_sensitive_fields(self):
+        log = AuditLog.log_action(
+            action="loan_rejected",
+            user_id=str(ObjectId()),
+            user_type="loan_officer",
+            user_email="officer@example.com",
+            description="Sensitive rejection explanation",
+            resource_type="loan",
+            resource_id=str(ObjectId()),
+            ip_address="203.0.113.8",
+            details={"reason": "private", "amount": 25000},
+        )
+        admin = _create_admin(permissions=["view_logs"])
+        user = AuthenticatedUser(
+            customer_id=str(admin.id),
+            email=admin.email,
+            verified=True,
+            role="admin",
+        )
+
+        list_auth, list_perm = _bypass_auth(AuditLogsView)
+        detail_auth, detail_perm = _bypass_auth(AuditLogDetailView)
+        try:
+            list_response = AuditLogsView.as_view()(
+                _auth_get_request(
+                    "/api/analytics/audit-logs/", user, {"action": "loan_rejected"}
+                )
+            )
+            detail_response = AuditLogDetailView.as_view()(
+                _auth_get_request(f"/api/analytics/audit-logs/{log.id}/", user),
+                log_id=log.id,
+            )
+            hidden_search_response = AuditLogsView.as_view()(
+                _auth_get_request(
+                    "/api/analytics/audit-logs/",
+                    user,
+                    {"search": "Sensitive rejection explanation"},
+                )
+            )
+        finally:
+            _restore_auth(AuditLogsView, list_auth, list_perm)
+            _restore_auth(AuditLogDetailView, detail_auth, detail_perm)
+
+        summary = list_response.data["data"]["logs"][0]
+        detail = detail_response.data["data"]
+        assert not self.sensitive_fields.intersection(summary)
+        assert not self.sensitive_fields.intersection(detail)
+        assert hidden_search_response.data["data"]["total"] == 0
+
+    def test_actor_directory_does_not_return_email(self):
+        customer = _create_customer()
+        AuditLog.log_action(
+            action="user_login",
+            user_id=customer.id,
+            user_type="customer",
+            user_email=customer.email,
+        )
+        admin = _create_admin(permissions=["view_logs"])
+        user = AuthenticatedUser(
+            customer_id=str(admin.id),
+            email=admin.email,
+            verified=True,
+            role="admin",
+        )
+
+        original_auth, original_perm = _bypass_auth(AuditLogUsersView)
+        try:
+            response = AuditLogUsersView.as_view()(
+                _auth_get_request(
+                    "/api/analytics/audit-logs/users/", user, {"limit": 50}
+                )
+            )
+        finally:
+            _restore_auth(AuditLogUsersView, original_auth, original_perm)
+
+        actor = next(
+            item
+            for item in response.data["data"]["users"]
+            if item["user_id"] == str(customer.id)
+        )
+        assert "user_email" not in actor
+        assert customer.email not in actor["label"]
+
+    def test_admin_is_not_accepted_by_officer_routes(self):
+        admin = _create_admin(permissions=["view_analytics", "view_logs"])
+        user = AuthenticatedUser(
+            customer_id=str(admin.id),
+            email=admin.email,
+            verified=True,
+            role="admin",
+        )
+
+        dashboard_auth, dashboard_perm = _bypass_auth(OfficerDashboardView)
+        logs_auth, logs_perm = _bypass_auth(OfficerAuditLogsView)
+        try:
+            dashboard = OfficerDashboardView.as_view()(
+                _auth_get_request("/api/analytics/officer/", user)
+            )
+            logs = OfficerAuditLogsView.as_view()(
+                _auth_get_request("/api/analytics/officer/audit-logs/", user)
+            )
+        finally:
+            _restore_auth(OfficerDashboardView, dashboard_auth, dashboard_perm)
+            _restore_auth(OfficerAuditLogsView, logs_auth, logs_perm)
+
+        assert dashboard.status_code == 403
+        assert logs.status_code == 403
+
+    def test_officer_log_contract_hides_other_actor_fields(self, settings):
+        officer = _create_officer()
+        loan_id = ObjectId()
+        settings.MONGODB["loan_applications"].insert_one(
+            {
+                "_id": loan_id,
+                "assigned_officer": str(officer.id),
+                "status": "under_review",
+            }
+        )
+        AuditLog.log_action(
+            action="loan_submitted",
+            user_id=str(ObjectId()),
+            user_type="customer",
+            user_email="customer@example.com",
+            description="Customer submitted a private application",
+            resource_type="loan",
+            resource_id=str(loan_id),
+            ip_address="203.0.113.9",
+            details={"amount": 50000},
+        )
+        user = AuthenticatedUser(
+            customer_id=str(officer.id),
+            email=officer.email,
+            verified=True,
+            role="loan_officer",
+        )
+
+        original_auth, original_perm = _bypass_auth(OfficerAuditLogsView)
+        try:
+            response = OfficerAuditLogsView.as_view()(
+                _auth_get_request("/api/analytics/officer/audit-logs/", user)
+            )
+        finally:
+            _restore_auth(OfficerAuditLogsView, original_auth, original_perm)
+
+        event = next(
+            item
+            for item in response.data["data"]["logs"]
+            if item["resource_id"] == str(loan_id)
+        )
+        assert not self.sensitive_fields.intersection(event)
+        assert "actor_type" not in event
+        assert "user_id" not in event
+
+    def test_privileged_read_is_audited_without_request_secrets(self, settings):
+        admin = _create_admin(permissions=["view_logs"])
+        user = AuthenticatedUser(
+            customer_id=str(admin.id),
+            email=admin.email,
+            verified=True,
+            role="admin",
+        )
+
+        original_auth, original_perm = _bypass_auth(AuditLogsView)
+        try:
+            response = AuditLogsView.as_view()(
+                _auth_get_request(
+                    "/api/analytics/audit-logs/",
+                    user,
+                    {"search": "must-not-be-copied"},
+                )
+            )
+        finally:
+            _restore_auth(AuditLogsView, original_auth, original_perm)
+
+        event = settings.MONGODB["audit_logs"].find_one(
+            {"action": "analytics_privileged_read", "user_id": str(admin.id)}
+        )
+        assert response.status_code == 200
+        assert event["resource_id"] == "audit_log_list"
+        assert event["user_email"] == ""
+        assert event["ip_address"] == ""
+        assert event["details"] == {}
+        assert "must-not-be-copied" not in str(event)
+
+    def test_privileged_response_fails_closed_when_access_audit_fails(
+        self, monkeypatch
+    ):
+        admin = _create_admin(permissions=["view_logs"])
+        user = AuthenticatedUser(
+            customer_id=str(admin.id),
+            email=admin.email,
+            verified=True,
+            role="admin",
+        )
+
+        def fail_audit(**_kwargs):
+            raise AnalyticsAccessAuditError("unavailable")
+
+        monkeypatch.setattr(
+            "analytics.views.admin_dashboard.record_privileged_read", fail_audit
+        )
+        original_auth, original_perm = _bypass_auth(AuditLogsView)
+        try:
+            response = AuditLogsView.as_view()(
+                _auth_get_request("/api/analytics/audit-logs/", user)
+            )
+        finally:
+            _restore_auth(AuditLogsView, original_auth, original_perm)
+
+        assert response.status_code == 503
+
+    def test_officer_response_fails_closed_when_access_audit_fails(
+        self, monkeypatch
+    ):
+        officer = _create_officer()
+        user = AuthenticatedUser(
+            customer_id=str(officer.id),
+            email=officer.email,
+            verified=True,
+            role="loan_officer",
+        )
+
+        def fail_audit(**_kwargs):
+            raise AnalyticsAccessAuditError("unavailable")
+
+        monkeypatch.setattr(
+            "analytics.views.officer_dashboard.record_privileged_read", fail_audit
+        )
+        original_auth, original_perm = _bypass_auth(OfficerDashboardView)
+        try:
+            response = OfficerDashboardView.as_view()(
+                _auth_get_request("/api/analytics/officer/", user)
+            )
+        finally:
+            _restore_auth(OfficerDashboardView, original_auth, original_perm)
+
+        assert response.status_code == 503

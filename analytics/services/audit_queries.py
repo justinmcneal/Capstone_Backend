@@ -7,11 +7,13 @@ and search helpers used by both admin and officer dashboard views.
 
 import re
 from datetime import datetime, timezone
-from typing import Any
 
-from bson import ObjectId
-
-from analytics.models import AUDIT_ACTIONS, AUDIT_USER_TYPES, AuditLog
+from analytics.models import (
+    AUDIT_ACTION_REGISTRY,
+    AUDIT_ACTIONS,
+    AUDIT_USER_TYPES,
+    AuditLog,
+)
 from analytics.models.audit_log import ACTION_GROUPS
 
 MAX_SEARCH_LENGTH = 100
@@ -187,7 +189,6 @@ def default_search_conditions(search: str):
     """Build generic search conditions across common audit log fields."""
     regex = {"$regex": re.escape(search), "$options": "i"}
     return [
-        {"description": regex},
         {"action": regex},
         {"resource_id": regex},
         {"resource_type": regex},
@@ -195,91 +196,66 @@ def default_search_conditions(search: str):
 
 
 def officer_search_conditions(search: str):
-    """Build officer-scoped search conditions including customer name matching."""
-    conditions = default_search_conditions(search)
-    from accounts.models import Customer
-
-    customer_ids = []
-    search_terms = search.strip().split()
-    if len(search_terms) == 1:
-        name_regex = re.compile(f".*{re.escape(search_terms[0])}.*", re.IGNORECASE)
-        matched_customers = Customer.find(
-            {
-                "$or": [
-                    {"first_name": name_regex},
-                    {"last_name": name_regex},
-                ]
-            }
-        )
-    else:
-        customer_and_conditions = []
-        for term in search_terms:
-            term_regex = re.compile(f".*{re.escape(term)}.*", re.IGNORECASE)
-            customer_and_conditions.append(
-                {
-                    "$or": [
-                        {"first_name": term_regex},
-                        {"last_name": term_regex},
-                    ]
-                }
-            )
-        matched_customers = Customer.find({"$and": customer_and_conditions})
-    customer_ids = [c.id for c in matched_customers if c]
-    if customer_ids:
-        conditions.append({"details.customer_id": {"$in": customer_ids}})
-    return conditions
+    """Build an officer search without profile expansion or sensitive fields."""
+    return default_search_conditions(search)
 
 
-def default_log_search(logs, search: str):
-    """In-memory search filter for admin-style log lists."""
-    search_regex = re.compile(re.escape(search), re.IGNORECASE)
-    return [
-        log
-        for log in logs
-        if (
-            search_regex.search(log.description or "")
-            or search_regex.search(log.user_email or "")
-            or search_regex.search(log.action or "")
-            or search_regex.search(log.user_id or "")
-            or search_regex.search(log.user_type or "")
-        )
-    ]
+def _safe_identifier(value):
+    return str(value) if value is not None else None
 
 
-def serialize_details(value: Any):
-    """Ensure a value is JSON-serializable for API responses."""
-    if isinstance(value, datetime):
-        return value.isoformat()
-    if isinstance(value, ObjectId):
-        return str(value)
-    if isinstance(value, dict):
-        return {k: serialize_details(v) for k, v in value.items()}
-    if isinstance(value, list):
-        return [serialize_details(v) for v in value]
-    return value
-
-
-def serialize_log_entry(log: AuditLog):
-    """Convert an AuditLog instance into a dict response."""
+def _common_event_fields(log: AuditLog):
+    """Return non-secret fields shared by role-specific response contracts."""
     return {
         "id": log.id,
-        "user_id": log.user_id,
-        "user_type": log.user_type,
-        "user_email": log.user_email,
         "action": log.action,
-        "description": log.description,
+        "action_group": log.action_group or AUDIT_ACTION_REGISTRY.get(log.action),
         "resource_type": log.resource_type,
-        "resource_id": log.resource_id,
-        "details": serialize_details(log.details or {}),
-        "ip_address": log.ip_address,
+        "resource_id": _safe_identifier(log.resource_id),
         "timestamp": log.timestamp.isoformat() if log.timestamp else None,
     }
 
 
-def build_paginated_response(logs, total, page: int, page_size: int):
+def serialize_dashboard_activity(log: AuditLog):
+    """Serialize the minimal audit summary allowed on the admin dashboard."""
+    return {
+        "action": log.action,
+        "action_group": log.action_group or AUDIT_ACTION_REGISTRY.get(log.action),
+        "actor_type": log.user_type,
+        "timestamp": log.timestamp.isoformat() if log.timestamp else None,
+    }
+
+
+def serialize_admin_log_summary(log: AuditLog):
+    """Serialize an audit event for the privileged administrator list."""
+    data = _common_event_fields(log)
+    data["actor_type"] = log.user_type
+    return data
+
+
+def serialize_admin_log_detail(log: AuditLog):
+    """Serialize one event without stored email, IP, description, or details."""
+    data = _common_event_fields(log)
+    data.update(
+        {
+            "event_schema_version": log.event_schema_version,
+            "actor": {"id": _safe_identifier(log.user_id), "type": log.user_type},
+        }
+    )
+    return data
+
+
+def serialize_officer_log_entry(log: AuditLog):
+    """Serialize an assigned-scope event without identifying another actor."""
+    return _common_event_fields(log)
+
+
+def build_paginated_response(
+    logs, total, page: int, page_size: int, *, serializer=serialize_admin_log_summary
+):
     """Build the standard paginated audit log response payload."""
     return {
-        "logs": [serialize_log_entry(log) for log in logs],
+        "logs": [serializer(log) for log in logs],
         "total": total,
         "page": page,
         "page_size": page_size,

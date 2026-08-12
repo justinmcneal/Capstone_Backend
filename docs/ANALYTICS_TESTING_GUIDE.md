@@ -43,8 +43,8 @@ Content-Type: application/json
 | `GET /audit-logs/` | Admin | `view_logs` |
 | `GET /audit-logs/users/` | Admin | `view_logs` |
 | `GET /audit-logs/<log_id>/` | Admin | `view_logs` |
-| `GET /officer/` | Loan Officer, Admin | None |
-| `GET /officer/audit-logs/` | Loan Officer, Admin | None |
+| `GET /officer/` | Loan Officer | None |
+| `GET /officer/audit-logs/` | Loan Officer | None |
 | `GET /customer/` | Customer | None |
 
 ---
@@ -53,7 +53,7 @@ Content-Type: application/json
 
 ### Audit Log User Types (`user_type` filter)
 
-`customer`, `loan_officer`, `admin`
+`customer`, `loan_officer`, `admin`, `super_admin`, `system`
 
 ### Audit Log Action Groups (`action_group` filter)
 
@@ -84,11 +84,13 @@ The Stage 1 registry also includes `loan_draft_updated_and_submitted`, `loan_ass
 `loan_disbursement_failed`, `customer_payment_submitted`,
 `customer_payment_recorded`, `disbursement_method_set`,
 `wallet_payment_verified`, `repayment_schedule_exported`,
-`loan_internal_note_added`, and `loan_missing_documents_requested`.
+`loan_internal_note_added`, `loan_missing_documents_requested`, and the
+Stage 2 `analytics_privileged_read` event.
 
 ### Resource Types (in audit log entries)
 
-`loan`, `document`, `profile`, `payment`, `penalty`, `user` (and others as logged)
+`loan`, `document`, `profile`, `payment`, `penalty`, `user`,
+`analytics_endpoint` (and others as logged)
 
 ### Date Format
 
@@ -139,10 +141,11 @@ System-wide dashboard statistics.
 | `products[].applications` | int | Total applications for product |
 | `products[].approved` | int | Approved applications for product |
 | `products[].approval_rate` | string | e.g. `"75.0%"` |
-| `recent_activity` | array | Last 10 audit log summaries |
+| `recent_activity` | array | Last 10 minimized audit summaries; empty without `view_logs` |
+| `recent_activity_restricted` | boolean | `true` when the caller lacks `view_logs` |
 | `recent_activity[].action` | string | Audit action |
-| `recent_activity[].user_type` | string | Actor role |
-| `recent_activity[].description` | string | Human-readable text |
+| `recent_activity[].action_group` | string | Stable action category |
+| `recent_activity[].actor_type` | string | Actor role |
 | `recent_activity[].timestamp` | ISO datetime | When logged |
 
 ---
@@ -160,12 +163,12 @@ Paginated, filterable audit logs (full system).
 | `page` | int | 1 | >= 1 |
 | `page_size` | int | 20 | 1–200 |
 | `action` | string | | Exact action match (see Reference Values) |
-| `action_group` | string | | `login`, `create`, `update`, `delete` |
+| `action_group` | string | | `login`, `read`, `create`, `update`, `delete` |
 | `user_id` | string | | Filter by actor user ID |
 | `user_type` | string | | `customer`, `loan_officer`, `admin` |
 | `date_from` | string | | `YYYY-MM-DD`; inclusive UTC start of day |
 | `date_to` | string | | `YYYY-MM-DD`; inclusive UTC end of day and must not precede `date_from` |
-| `search` | string | | Matches `description`, `user_email`, `action`, `user_id`, `user_type` (case-insensitive) |
+| `search` | string | | Matches action, actor ID/type, and resource ID/type; stored descriptions and emails are not searched |
 
 **Response fields (`data`):**
 
@@ -173,15 +176,11 @@ Paginated, filterable audit logs (full system).
 |-------|------|
 | `logs` | array |
 | `logs[].id` | string |
-| `logs[].user_id` | string |
-| `logs[].user_type` | string |
-| `logs[].user_email` | string |
 | `logs[].action` | string |
-| `logs[].description` | string |
+| `logs[].action_group` | string |
+| `logs[].actor_type` | string |
 | `logs[].resource_type` | string |
 | `logs[].resource_id` | string |
-| `logs[].details` | object (free-form; varies by action) |
-| `logs[].ip_address` | string |
 | `logs[].timestamp` | ISO datetime |
 | `total` | int |
 | `page` | int |
@@ -192,32 +191,9 @@ Results sort by `timestamp` descending and then `_id` descending. An empty
 result reports `total_pages: 0`; a page beyond the end returns an empty `logs`
 array while preserving `total` and `total_pages`.
 
-**Common `details` fields by action (when present):**
-
-`details` is currently an unrestricted producer-supplied object. The examples
-below characterize existing records; they are not an approved stable or safe
-schema. Do not render arbitrary values as HTML, log them on the client, or make
-client behavior depend on undocumented keys.
-
-| Action | Typical `details` keys |
-|--------|------------------------|
-| `loan_submitted` | `product`, `amount`, `term` |
-| `loan_approved` | `approved_amount`, `customer_id` |
-| `loan_rejected` | `reason`, `customer_id` |
-| `loan_disbursed` | `amount`, `method`, `reference`, `customer_id` |
-| `payment_recorded` | `loan_id`, `amount`, `installment`, `method` |
-| `customer_payment_recorded` | `loan_id`, `amount`, `installment`, `method` |
-| `document_uploaded` | `document_type` |
-| `profile_updated` | `profile_revision`, `profile_completed`; alternative data also includes safe risk/completion state |
-| `profile_created` | `profile_revision`, `profile_completed` |
-| `notification_preferences_updated` | `changed_keys` |
-| `profile_exported` | `schema_version`, `server_copy_created` |
-| `risk_review_requested` | `revision`, `policy_version`, `reason`, `status` |
-| `risk_review_status_changed` | `customer_id`, `revision`, `status`, `review_revision` |
-| `penalty_applied` | `loan_id`, `installment_number`, `amount`, `reason` |
-| `penalty_waived` | `loan_id`, `installment_number`, `amount`, `reason` |
-| `wallet_payment_verified` | `loan_id`, `installment_number`, `eth_amount`, `php_amount`, `eth_rate`, `tx_hash` |
-| `admin_action` | Varies (admin CRUD operations) |
+Stored descriptions, actor emails, IP addresses, and free-form `details` are
+deliberately absent from the list response. Clients must not depend on those
+legacy stored fields.
 
 ---
 
@@ -231,7 +207,7 @@ Distinct users appearing in audit logs (for filter dropdowns).
 
 | Field | Type | Default | Validation |
 |-------|------|---------|------------|
-| `search` | string | | Matches `user_email`, `user_type`, `user_id` |
+| `search` | string | | Matches `user_type` and `user_id` only |
 | `limit` | int | 200 | 1–500 |
 
 **Response fields (`data`):**
@@ -241,14 +217,13 @@ Distinct users appearing in audit logs (for filter dropdowns).
 | `users` | array |
 | `users[].user_id` | string |
 | `users[].user_type` | string |
-| `users[].user_email` | string |
-| `users[].label` | string | Display label, e.g. `"user@email.com (customer)"` |
+| `users[].label` | string | Redacted display label, e.g. `"customer (65ab12cd...)"` |
 
 ---
 
 ### 4. `GET /audit-logs/<log_id>/`
 
-Full detail for a single audit log entry.
+Minimized privileged detail for a single audit log entry.
 
 **Permission:** `view_logs`
 
@@ -263,22 +238,21 @@ Full detail for a single audit log entry.
 | Field | Type |
 |-------|------|
 | `id` | string |
-| `user_id` | string |
-| `user_type` | string |
-| `user_email` | string |
 | `action` | string |
-| `description` | string |
+| `action_group` | string |
+| `event_schema_version` | int |
+| `actor.id` | string or null |
+| `actor.type` | string |
 | `resource_type` | string |
 | `resource_id` | string |
-| `details` | object |
-| `ip_address` | string |
 | `timestamp` | ISO datetime |
 
 ---
 
 # Loan Officer Endpoints
 
-Auth: **loan_officer** or **admin**.
+Auth: **loan_officer** only. Administrators use the administrator dashboard and
+audit-log routes with their named permissions.
 
 ---
 
@@ -319,21 +293,20 @@ Audit logs scoped to the officer and their assigned loan applications.
 | `page` | int | 1 | >= 1 |
 | `page_size` | int | 20 | 1–200 |
 | `action` | string | | Exact action match |
-| `action_group` | string | | `login`, `create`, `update`, `delete` |
+| `action_group` | string | | `login`, `read`, `create`, `update`, `delete` |
 | `date_from` | string | | `YYYY-MM-DD`; inclusive UTC start of day |
 | `date_to` | string | | `YYYY-MM-DD`; inclusive UTC end of day and must not precede `date_from` |
-| `search` | string | | Matches `description`, `action`, `resource_id`, `resource_type` |
+| `search` | string | | Matches `action`, `resource_id`, and `resource_type` |
 
 **Scope rules (what logs are included):**
 
 - Logs where `user_id` = officer ID AND `user_type` = `loan_officer`, **OR**
 - Logs where `resource_type` = `loan` AND `resource_id` is in the officer's assigned application IDs
 
-This is the current implementation, not the approved final privacy contract.
-It applies current assignment to historical events, builds an unbounded assigned-
-ID list, and returns the same email/IP/free-form detail shape used for admins.
-Do not treat this endpoint as production-safe until the scope and redaction work
-in the readiness review is complete.
+This remains a current-assignment visibility policy and builds an unbounded
+assigned-ID list; Stage 4 owns that scope/query redesign. Stage 2 makes the
+response safe for officers by removing all actor identity, email, IP,
+description, and free-form details.
 
 **Response fields (`data`):**
 
@@ -341,15 +314,10 @@ in the readiness review is complete.
 |-------|------|
 | `logs` | array |
 | `logs[].id` | string |
-| `logs[].user_id` | string |
-| `logs[].user_type` | string |
-| `logs[].user_email` | string |
 | `logs[].action` | string |
-| `logs[].description` | string |
+| `logs[].action_group` | string |
 | `logs[].resource_type` | string |
 | `logs[].resource_id` | string |
-| `logs[].details` | object |
-| `logs[].ip_address` | string |
 | `logs[].timestamp` | ISO datetime |
 | `total` | int |
 | `page` | int |
@@ -412,8 +380,8 @@ Customer personal dashboard statistics.
 | 2 | GET | `/api/analytics/audit-logs/` | Admin | `view_logs` |
 | 3 | GET | `/api/analytics/audit-logs/users/` | Admin | `view_logs` |
 | 4 | GET | `/api/analytics/audit-logs/<log_id>/` | Admin | `view_logs` |
-| 5 | GET | `/api/analytics/officer/` | Officer, Admin | — |
-| 6 | GET | `/api/analytics/officer/audit-logs/` | Officer, Admin | — |
+| 5 | GET | `/api/analytics/officer/` | Officer | — |
+| 6 | GET | `/api/analytics/officer/audit-logs/` | Officer | — |
 | 7 | GET | `/api/analytics/customer/` | Customer | — |
 
 ---
@@ -433,7 +401,7 @@ Customer personal dashboard statistics.
 | 2 | Admin | `GET /audit-logs/?page=1&page_size=20` | 200; paginated `logs` array |
 | 3 | Admin | `GET /audit-logs/?action_group=login` | 200; only login-related actions |
 | 4 | Admin | `GET /audit-logs/users/?limit=50` | 200; `users` array with `label` |
-| 5 | Admin | `GET /audit-logs/<log_id>/` | 200; full log detail (use ID from step 2) |
+| 5 | Admin | `GET /audit-logs/<log_id>/` | 200; minimized privileged detail (use ID from step 2) |
 | 6 | Officer | `GET /officer/` | 200; `my_reviews`, `queue`, `performance` |
 | 7 | Officer | `GET /officer/audit-logs/?page=1` | 200; scoped logs only |
 | 8 | Customer | `GET /customer/` | 200; `applications`, `documents`, `profile_completion`, `ai_sessions` |
@@ -441,6 +409,8 @@ Customer personal dashboard statistics.
 | 10 | Officer | `GET /audit-logs/` | 403 Forbidden (admin-only) |
 | 11 | Admin | `GET /audit-logs/<invalid_id>/` | 400 Bad Request |
 | 12 | Admin | `GET /audit-logs/nonexistent_objectid/` | 404 Not Found |
+| 13 | Admin | `GET /officer/` | 403 Forbidden (officer-only) |
+| 14 | Admin without `view_logs` | `GET /admin/` | 200; `recent_activity: []`, `recent_activity_restricted: true` |
 
 ### Filter Combination Tests (Admin audit logs)
 
@@ -472,6 +442,7 @@ than 100 characters return HTTP 400 instead of silently broadening the query.
 | `401 Unauthorized` | Missing or expired JWT |
 | `403 Forbidden` | Wrong role; admin missing `view_analytics` or `view_logs` permission |
 | `404 Not Found` | Audit log ID does not exist; officer account not resolved (`GET /officer/`) |
+| `503 Service Unavailable` | A privileged Analytics read could not be audit-recorded |
 
 Standard error shape:
 ```json
@@ -507,32 +478,29 @@ Standard success shape:
 
 ---
 
-## Known Gaps to Characterize Before Implementation
+## Remaining Gaps to Characterize Before Implementation
 
 Use these as negative and boundary cases while implementing the readiness plan:
 
-1. An admin with `view_analytics` but without `view_logs` can currently receive
-   recent audit descriptions from `/admin/`.
-2. Audit list/detail/officer responses currently expose full actor email, IP,
-   description, identifiers, and unrestricted `details`.
-3. Reading the audit list, user directory, or detail does not itself create a
-   required privileged-read audit event.
-4. Stage 1 now rejects invalid/unknown filters and bounds, parses dates once,
+1. Stage 1 now rejects invalid/unknown filters and bounds, parses dates once,
    stores a versioned action/category for new events, and reports zero pages for
    empty results. Legacy events may lack the new metadata.
-5. Officer historical visibility follows current assignment, and admin use of
-   officer routes has no explicit target or named admin permission.
-6. Customer/admin document counts can include deletion-state records; valid-ID
+2. Stage 2 separates response schemas, requires `view_logs` for activity,
+   rejects administrators on officer routes, and fail-closed audits privileged
+   reads. Stored legacy email/IP/descriptions/details remain Stage 3 work.
+3. Officer historical visibility follows current assignment and the query
+   materializes every assigned loan ID.
+4. Customer/admin document counts can include deletion-state records; valid-ID
    presence ignores review/lifecycle status; approved/disbursed meanings differ
    between dashboards.
-7. Raw string-only counts can miss legacy `ObjectId` owner fields.
-8. Audit fields are not declared for application field encryption, events have
+5. Raw string-only counts can miss legacy `ObjectId` owner fields.
+6. Audit fields are not declared for application field encryption, events have
    no enforced schema/idempotency/tamper evidence, and no Analytics retention or
    legal-hold workflow exists.
-9. Current indexes and regex/assigned-ID query shapes lack real-Mongo explain
+7. Current indexes and regex/assigned-ID query shapes lack real-Mongo explain
     and representative-load evidence.
-10. Analytics has no dedicated throttles, latency/error/backlog metrics, health
-    component, alerts, or dependency-outage response contract.
+8. Analytics has no dedicated throttles, latency/error/backlog metrics, health
+   component, alerts, or dependency-outage response contract.
 
 ---
 
@@ -544,8 +512,9 @@ Focused local suite:
 pytest -q tests/test_analytics_api.py
 ```
 
-Latest Stage 1 result on 2026-08-12: **40 passed**. The complete project suite
-passed **1,073 tests** and skipped **21 opt-in integration tests**.
+Latest Stage 2 result on 2026-08-12: the focused suite passed **49 tests** and
+the complete project suite passed **1,082 tests**, skipped **21 opt-in
+integration tests**, and reported one third-party deprecation warning.
 
 The focused suite uses `mongomock`, calls views directly, and temporarily clears
 their DRF authentication/permission classes before `force_authenticate`. It is
