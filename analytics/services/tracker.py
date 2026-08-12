@@ -4,9 +4,7 @@ Audit Tracker Service - Log actions throughout the system.
 
 import logging
 
-from pymongo.errors import PyMongoError
-
-from analytics.models.audit_log import AuditLog
+from analytics.services.audit_writer import record_audit
 
 logger = logging.getLogger("analytics")
 
@@ -37,7 +35,8 @@ def log_action(
         user_email: User's email
     """
     try:
-        log = AuditLog(
+        log = record_audit(
+            domain="analytics_tracker",
             user_id=str(user_id) if user_id else None,
             user_type=user_type,
             user_email=user_email,
@@ -48,10 +47,9 @@ def log_action(
             details=details or {},
             ip_address=ip_address,
         )
-        log.save()
         logger.info(f"Audit: {action} by {user_type} {user_id}")
         return log
-    except PyMongoError as e:
+    except Exception as e:  # noqa: BLE001 - legacy tracker remains best effort
         logger.error(f"Failed to log audit: {e}")
         return None
 

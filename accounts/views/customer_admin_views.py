@@ -13,13 +13,13 @@ from accounts.serializers.account_lifecycle_serializers import (
     TwoFactorRecoveryDecisionSerializer,
 )
 from accounts.services.account_lifecycle_service import AccountLifecycleService
+from accounts.services.audit import record_account_audit
 from accounts.services.lockout_service import LockoutService
 from accounts.services.security_event_service import SecurityEventService
 from accounts.utils.access_control import AccessControlMixin
 from accounts.utils.request_utils import get_client_ip
 from accounts.utils.response_helpers import error_response, success_response
 from accounts.utils.validation_utils import parse_optional_bool, sanitize_text
-from analytics.models import AuditLog
 
 logger = logging.getLogger("admin_auth")
 
@@ -224,7 +224,7 @@ class CustomerDetailView(ManageUsersRequiredMixin, APIView):
                 in {"suspended", "deactivated"},
             },
         )
-        AuditLog.log_action(
+        record_account_audit(
             action=action,
             user_id=admin.id,
             user_type="super_admin" if admin.super_admin else "admin",
@@ -281,7 +281,7 @@ class CustomerUnlockView(ManageUsersRequiredMixin, APIView):
             action="admin_customer_unlock",
             ip_address=get_client_ip(request),
         )
-        AuditLog.log_action(
+        record_account_audit(
             action="admin_customer_unlock",
             user_id=admin.id,
             user_type="super_admin" if admin.super_admin else "admin",
@@ -333,7 +333,7 @@ class CustomerDeletionFinalizeView(ManageUsersRequiredMixin, APIView):
             ip_address=get_client_ip(request),
             details={"performed_by_admin": True},
         )
-        AuditLog.log_action(
+        record_account_audit(
             action="account_deleted",
             user_id=admin.id,
             user_type="super_admin" if admin.super_admin else "admin",
@@ -424,7 +424,7 @@ class TwoFactorRecoveryAdminView(ManageUsersRequiredMixin, APIView):
                 "sessions_revoked": approve,
             },
         )
-        AuditLog.log_action(
+        record_account_audit(
             action=action,
             user_id=admin.id,
             user_type="super_admin" if admin.super_admin else "admin",

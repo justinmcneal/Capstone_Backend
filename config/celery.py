@@ -67,6 +67,18 @@ app.conf.beat_schedule = {
         "task": "documents.collect_operational_metrics",
         "schedule": crontab(minute="*/15"),
     },
+    "reconcile-all-audit-failures-every-minute": {
+        "task": "analytics.reconcile_audit_failures",
+        "schedule": crontab(minute="*"),
+    },
+    "enforce-analytics-audit-retention-daily": {
+        "task": "analytics.enforce_audit_retention",
+        "schedule": crontab(hour=2, minute=0),
+    },
+    "inventory-analytics-audit-integrity-daily": {
+        "task": "analytics.audit_integrity_inventory",
+        "schedule": crontab(hour=2, minute=30),
+    },
     "check-overdue-daily": {
         "task": "loans.tasks.check_overdue_installments_task",
         "schedule": crontab(hour=0, minute=0),

@@ -16,6 +16,7 @@ from rest_framework_simplejwt.tokens import RefreshToken
 
 from accounts.models import Admin, LoanOfficer
 from accounts.services import AuthService
+from accounts.services.audit import record_account_audit
 from accounts.services.security_event_service import SecurityEventService
 from accounts.services.session_activity_service import SessionActivityService
 from accounts.services.two_factor_service import TwoFactorService
@@ -27,7 +28,6 @@ from accounts.utils.throttles import TwoFactorRateThrottle, TwoFactorTokenRateTh
 from accounts.utils.token_utils import TokenUtils
 from accounts.utils.user_detection import get_authenticated_user
 from accounts.utils.validation_utils import parse_bool
-from analytics.models import AuditLog
 
 logger = logging.getLogger("authentication")
 
@@ -404,7 +404,7 @@ class Verify2FAView(APIView):
                     if (user_type == "admin" and getattr(user, "super_admin", False))
                     else user_type
                 )
-                AuditLog.log_action(
+                record_account_audit(
                     action="user_login",
                     user_id=user.id,
                     user_type=audit_user_type,

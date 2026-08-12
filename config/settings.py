@@ -147,6 +147,30 @@ FIELD_ENCRYPTION_PREVIOUS_KEYS = tuple(
 FIELD_ENCRYPTION_STRICT_DECRYPTION = env_bool(
     'FIELD_ENCRYPTION_STRICT_DECRYPTION', not DEBUG
 )
+ANALYTICS_AUDIT_RETENTION_DAYS = int(
+    os.getenv('ANALYTICS_AUDIT_RETENTION_DAYS') or '2555'
+)
+if not 1 <= ANALYTICS_AUDIT_RETENTION_DAYS <= 3650:
+    raise ImproperlyConfigured(
+        'ANALYTICS_AUDIT_RETENTION_DAYS must be between 1 and 3650'
+    )
+ANALYTICS_AUDIT_RETENTION_POLICY_VERSION = (
+    os.getenv('ANALYTICS_AUDIT_RETENTION_POLICY_VERSION') or '2026-08-12-v1'
+)
+ANALYTICS_AUDIT_MAX_DETAILS_BYTES = int(
+    os.getenv('ANALYTICS_AUDIT_MAX_DETAILS_BYTES') or '16384'
+)
+ANALYTICS_AUDIT_MAX_DETAILS_DEPTH = int(
+    os.getenv('ANALYTICS_AUDIT_MAX_DETAILS_DEPTH') or '4'
+)
+if not 1024 <= ANALYTICS_AUDIT_MAX_DETAILS_BYTES <= 65536:
+    raise ImproperlyConfigured(
+        'ANALYTICS_AUDIT_MAX_DETAILS_BYTES must be between 1024 and 65536'
+    )
+if not 1 <= ANALYTICS_AUDIT_MAX_DETAILS_DEPTH <= 8:
+    raise ImproperlyConfigured(
+        'ANALYTICS_AUDIT_MAX_DETAILS_DEPTH must be between 1 and 8'
+    )
 
 # Production must never store sensitive fields as plaintext.
 # In DEBUG/development, allow plaintext pass-through so local setups do not require key management.

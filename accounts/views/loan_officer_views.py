@@ -7,6 +7,7 @@ from rest_framework.permissions import AllowAny
 from rest_framework.views import APIView
 
 from accounts.models import LoanOfficer
+from accounts.services.audit import record_account_audit
 from accounts.services.lockout_service import LockoutService
 from accounts.services.session_activity_service import SessionActivityService
 from accounts.utils.auth_cookies import (
@@ -26,7 +27,6 @@ from accounts.utils.throttles import (
 )
 from accounts.utils.token_utils import TokenUtils
 from accounts.utils.validation_utils import parse_bool
-from analytics.models import AuditLog
 
 logger = logging.getLogger("loan_officer_auth")
 GENERIC_LOGIN_ERROR_MESSAGE = "Invalid email/username or password."
@@ -41,7 +41,7 @@ def _log_loan_officer_login_failure(request, email, reason, officer=None):
         ip_address,
     )
     try:
-        AuditLog.log_action(
+        record_account_audit(
             action="user_login_failed",
             user_id=getattr(officer, "id", None),
             user_type="loan_officer",
@@ -239,7 +239,7 @@ class LoanOfficerLoginView(APIView):
             )
 
             # Audit log for loan officer login
-            AuditLog.log_action(
+            record_account_audit(
                 action="user_login",
                 user_id=officer.id,
                 user_type="loan_officer",
@@ -340,7 +340,7 @@ class LoanOfficerLogoutView(APIView):
                 TokenUtils.revoke_session(user_id, "loan_officer", session_id)
 
             # Audit log for loan officer logout
-            AuditLog.log_action(
+            record_account_audit(
                 action="user_logout",
                 user_id=user_id,
                 user_type="loan_officer",
@@ -525,7 +525,7 @@ class LoanOfficerProfileView(MustChangePasswordMixin, APIView):
 
             if changes:
                 user.save()
-                AuditLog.log_action(
+                record_account_audit(
                     action="profile_updated",
                     user_id=user.id,
                     user_type="loan_officer",

@@ -1,7 +1,7 @@
 import logging
 from typing import ClassVar
 
-from analytics.models import AuditLog
+from accounts.services.audit import record_account_audit
 
 logger = logging.getLogger("authentication")
 
@@ -149,7 +149,7 @@ class SecurityEventService:
         subject, message = cls.EVENT_MESSAGES[action]
         if record_audit:
             try:
-                AuditLog.log_action(
+                record_account_audit(
                     action=action,
                     user_id=user.id,
                     user_type=user_type,

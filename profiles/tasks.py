@@ -349,40 +349,9 @@ def reconcile_risk_scores_task():
 @shared_task(name="profiles.reconcile_audit_failures")
 def reconcile_profile_audit_failures_task(limit=100):
     """Replay queued profile audit writes without exposing profile values."""
+    from analytics.services.audit_writer import reconcile_audit_failures
 
-    now = datetime.now(timezone.utc)
-    collection = settings.MONGODB["audit_write_failures"]
-    resolved = 0
-    for failure in collection.find(
-        {"domain": "profiles", "resolved_at": None},
-        sort=[("occurred_at", 1)],
-        limit=max(1, min(int(limit), 500)),
-    ):
-        try:
-            from analytics.models import AuditLog
-
-            AuditLog.log_action(**failure.get("payload", {}))
-        except Exception as exc:  # noqa: BLE001 - audit backends may fail arbitrarily
-            collection.update_one(
-                {"_id": failure["_id"], "resolved_at": None},
-                {
-                    "$inc": {"attempt_count": 1},
-                    "$set": {
-                        "last_attempt_at": now,
-                        "error_type": type(exc).__name__,
-                    },
-                },
-            )
-            continue
-        collection.update_one(
-            {"_id": failure["_id"], "resolved_at": None},
-            {
-                "$inc": {"attempt_count": 1},
-                "$set": {"last_attempt_at": now, "resolved_at": now},
-                "$unset": {"payload": ""},
-            },
-        )
-        resolved += 1
+    resolved = reconcile_audit_failures(domains={"profiles"}, limit=limit)["resolved"]
 
     increment(PROFILE_OPERATIONS, operation="audit_reconcile", outcome="completed")
     return resolved

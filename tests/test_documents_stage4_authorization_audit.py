@@ -167,7 +167,9 @@ def test_required_read_audit_failure_is_queued_and_reconciled(
         {"domain": "documents", "resolved_at": None}
     )
     assert queued is not None
-    assert set(queued["payload"]["details"]) <= {
+    from config.field_encryption import decrypt_value
+
+    assert set(decrypt_value(queued["payload_encrypted"])["details"]) <= {
         "filter_customer_id",
         "filter_document_type",
         "filter_status",

@@ -25,6 +25,7 @@ from analytics.views import (
     OfficerAuditLogsView,
     OfficerDashboardView,
 )
+from config.field_encryption import decrypt_value
 
 
 def _create_customer(customer_id=None):
@@ -1092,7 +1093,7 @@ class TestAnalyticsStage2PrivacyBoundary:
         assert event["resource_id"] == "audit_log_list"
         assert event["user_email"] == ""
         assert event["ip_address"] == ""
-        assert event["details"] == {}
+        assert decrypt_value(event["details"]) == {}
         assert "must-not-be-copied" not in str(event)
 
     def test_privileged_response_fails_closed_when_access_audit_fails(

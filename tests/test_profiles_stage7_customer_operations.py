@@ -10,7 +10,12 @@ from rest_framework.test import APIRequestFactory, force_authenticate
 from accounts.authentication import AuthenticatedUser
 from accounts.models import Customer, LoanOfficer
 from analytics.models import AuditLog
-from config.field_encryption import _build_keyring, _get_fernet, is_encrypted_value
+from config.field_encryption import (
+    _build_keyring,
+    _get_fernet,
+    decrypt_value,
+    is_encrypted_value,
+)
 from profiles.models import AlternativeData, CustomerProfile, RiskReviewRequest
 from profiles.services.lifecycle import delete_customer_profile_data
 from profiles.tasks import (
@@ -157,7 +162,7 @@ def test_profile_export_fails_closed_and_queues_failed_audit(monkeypatch, settin
         {"domain": "profiles", "action": "profile_exported"}
     )
     assert queued is not None
-    assert "personal_profile" not in queued["payload"]
+    assert "personal_profile" not in decrypt_value(queued["payload_encrypted"])
 
 
 def test_history_exposes_change_metadata_but_not_values_or_ip(monkeypatch):
@@ -401,7 +406,7 @@ def test_failed_profile_audit_can_be_reconciled(monkeypatch, settings):
         {"_id": queued["_id"]}
     )
     assert resolved["resolved_at"] is not None
-    assert "payload" not in resolved
+    assert "payload_encrypted" not in resolved
     assert AuditLog.find_by_action("profile_created", limit=1)
 
 

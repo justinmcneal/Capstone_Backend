@@ -1,11 +1,9 @@
 """Observable audit writes for loan-domain actions."""
 
 import logging
-from datetime import datetime, timezone
-
-from django.conf import settings
 
 from analytics.models import AuditLog
+from analytics.services.audit_writer import record_audit
 
 logger = logging.getLogger("loans.audit")
 
@@ -32,7 +30,20 @@ def record_loan_audit(*, required=False, **kwargs):
     write failed. Sensitive reads can pass ``required=True`` to fail closed.
     """
     try:
-        return AuditLog.log_action(**kwargs)
+        return record_audit(
+            domain="loans",
+            required=required,
+            unavailable_error=LoanAuditUnavailable,
+            writer=AuditLog.log_action,
+            **kwargs,
+        )
+    except LoanAuditUnavailable:
+        action = str(kwargs.get("action") or "unknown")
+        if LOAN_AUDIT_WRITE_FAILURES is not None:
+            LOAN_AUDIT_WRITE_FAILURES.labels(action=action).inc()
+        raise
+    except ValueError:
+        raise
     except Exception as exc:  # audit storage must not hide the original outcome
         action = str(kwargs.get("action") or "unknown")
         if LOAN_AUDIT_WRITE_FAILURES is not None:
@@ -43,22 +54,6 @@ def record_loan_audit(*, required=False, **kwargs):
             kwargs.get("resource_type"),
             kwargs.get("resource_id"),
         )
-        try:
-            settings.MONGODB["audit_write_failures"].insert_one(
-                {
-                    "domain": "loans",
-                    "action": action,
-                    "resource_type": kwargs.get("resource_type"),
-                    "resource_id": str(kwargs.get("resource_id") or ""),
-                    "user_id": str(kwargs.get("user_id") or ""),
-                    "user_type": str(kwargs.get("user_type") or "system"),
-                    "error_type": type(exc).__name__,
-                    "occurred_at": datetime.now(timezone.utc),
-                    "resolved_at": None,
-                }
-            )
-        except Exception:
-            logger.exception("Loan audit failure queue write also failed")
         if required:
             raise LoanAuditUnavailable(
                 "The required access audit could not be recorded"

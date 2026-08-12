@@ -2,8 +2,9 @@
 
 > **Readiness notice (2026-08-12):** This guide documents the current API for
 > development and characterization testing. Analytics is not yet production-
-> ready. Stage 1 query correctness is complete; privacy, audit integrity and
-> lifecycle, officer scope, metric consistency, query scalability, and real-
+> ready. Stages 1-3 (query correctness, privacy, protected audit persistence,
+> integrity, recovery, and lifecycle) are complete at code/test level. Officer
+> scope, metric consistency, query scalability/observability, and real-
 > environment validation remain open. See
 > `docs/ANALYTICS_PRODUCTION_READINESS_REVIEW.md` for the evidence and staged
 > remediation plan.
@@ -67,10 +68,11 @@ Content-Type: application/json
 
 ### Canonical Audit Actions (`AUDIT_ACTIONS` in code)
 
-The versioned list is maintained by `AUDIT_ACTION_REGISTRY` in code. Stage 1
-registers current cross-domain actions, rejects new unknown actions/actor types,
-and stores `event_schema_version` plus a stable `action_group`. Legacy records
-may lack those fields. Profile actions
+The versioned list is maintained by `AUDIT_ACTION_REGISTRY` in code. New schema
+version 2 events reject unknown actions/actor types, enforce an explicit
+per-action details contract, and store stable action-group, retention,
+idempotency, subject-index, and integrity metadata. Legacy records may lack
+those fields until the reviewed backfill is applied. Profile actions
 include `profile_created`, `profile_updated`,
 `notification_preferences_updated`, `profile_directory_viewed`,
 `profile_sensitive_read`, `profile_access_denied`, `profile_exported`,
@@ -478,26 +480,28 @@ Standard success shape:
 
 ---
 
-## Remaining Gaps to Characterize Before Implementation
+## Remaining Gaps to Characterize Before Release
 
 Use these as negative and boundary cases while implementing the readiness plan:
 
 1. Stage 1 now rejects invalid/unknown filters and bounds, parses dates once,
    stores a versioned action/category for new events, and reports zero pages for
    empty results. Legacy events may lack the new metadata.
-2. Stage 2 separates response schemas, requires `view_logs` for activity,
-   rejects administrators on officer routes, and fail-closed audits privileged
-   reads. Stored legacy email/IP/descriptions/details remain Stage 3 work.
+2. Stages 2-3 separate response schemas, fail-closed audit privileged reads,
+   encrypt sensitive stored fields and replay payloads, validate per-action
+   details, sign events, and implement recovery, retention, legal holds,
+   pseudonymization, export, and inventory. Target key/backfill/restore proof
+   remains deployment work.
 3. Officer historical visibility follows current assignment and the query
    materializes every assigned loan ID.
 4. Customer/admin document counts can include deletion-state records; valid-ID
    presence ignores review/lifecycle status; approved/disbursed meanings differ
    between dashboards.
 5. Raw string-only counts can miss legacy `ObjectId` owner fields.
-6. Audit fields are not declared for application field encryption, events have
-   no enforced schema/idempotency/tamper evidence, and no Analytics retention or
-   legal-hold workflow exists.
-7. Current indexes and regex/assigned-ID query shapes lack real-Mongo explain
+6. Database least-privilege roles, key rotation, legacy backfill, retention,
+   legal-hold, integrity inventory, and backup/restore still need controlled
+   target-environment evidence.
+7. Current regex/assigned-ID and dashboard query shapes lack real-Mongo explain
     and representative-load evidence.
 8. Analytics has no dedicated throttles, latency/error/backlog metrics, health
    component, alerts, or dependency-outage response contract.
@@ -506,17 +510,17 @@ Use these as negative and boundary cases while implementing the readiness plan:
 
 ## Automated Test Baseline and Commands
 
-Focused local suite:
+Focused local suites:
 
 ```bash
-pytest -q tests/test_analytics_api.py
+pytest -q tests/test_analytics_api.py tests/test_analytics_stage3_integrity_lifecycle.py
 ```
 
-Latest Stage 2 result on 2026-08-12: the focused suite passed **49 tests** and
-the complete project suite passed **1,082 tests**, skipped **21 opt-in
+Latest Stage 3 result on 2026-08-12: the focused suites passed **60 tests** and
+the complete project suite passed **1,093 tests**, skipped **21 opt-in
 integration tests**, and reported one third-party deprecation warning.
 
-The focused suite uses `mongomock`, calls views directly, and temporarily clears
+The API suite uses `mongomock`, calls views directly, and temporarily clears
 their DRF authentication/permission classes before `force_authenticate`. It is
 useful for view/mixin behavior but does not prove live JWT authentication,
 middleware, URL dispatch, real MongoDB query plans, database roles, encryption,
@@ -529,8 +533,7 @@ Required future test groups:
 - admin summary-versus-log permission and sensitive-field redaction tests;
 - officer cross-assignment, reassignment, historical-scope, admin-target, and
   bounded-search tests;
-- event registry/schema, secret rejection, encryption/rotation, idempotent
-  recovery, tamper inventory, retention, legal hold, deletion, and export tests;
+- production-key rotation/recovery and controlled legacy-backfill tests;
 - lifecycle-complete dashboard fixtures with mixed string/ObjectId ownership and
   reconciliation invariants; and
 - opt-in isolated real-Mongo index/explain, deep-history, aggregation, timeout,
@@ -539,6 +542,42 @@ Required future test groups:
 Do not point future load, retention, or recovery harnesses at a production
 database. They must create uniquely named temporary databases and remove only
 their own test data after explicit mutation approval.
+
+---
+
+## Audit Lifecycle Operator Commands
+
+These commands are documented for an approved isolated/deployment workflow;
+they were not run against a real database during Stage 3.
+
+Read-only integrity/encryption/retention inventory:
+
+```bash
+python manage.py audit_integrity_inventory --limit 10000
+```
+
+Legacy protection preview (dry run is the default):
+
+```bash
+python manage.py backfill_audit_events --limit 10000
+```
+
+After reviewing invalid/unregistered events, verifying the encryption key,
+taking an approved backup, and obtaining mutation approval:
+
+```bash
+python manage.py backfill_audit_events --limit 10000 --apply
+```
+
+Legal holds also preview by default and require `--apply` to mutate data:
+
+```bash
+python manage.py manage_audit_legal_hold <event_id> --action set --actor <operator_id> --reason "<approved reason>"
+python manage.py manage_audit_legal_hold <event_id> --action release --actor <operator_id>
+```
+
+Append `--apply` only after the preview and authorization are complete. Record
+the command result and repeat the read-only inventory afterward.
 
 ---
 
@@ -552,10 +591,13 @@ their own test data after explicit mutation approval.
 | Customer dashboard | `analytics/views/customer_dashboard.py` |
 | Audit log model + filters | `analytics/models/audit_log.py` |
 | Shared audit query helpers | `analytics/services/audit_queries.py` |
-| Audit tracker service | `analytics/services/tracker.py` |
-| Cross-domain recovery examples | `profiles/services/audit.py`, `loans/services/audit.py`, `documents/services/audit.py` |
+| Central audit writer/recovery | `analytics/services/audit_writer.py` |
+| Retention, holds, export, deletion, inventory | `analytics/services/lifecycle.py` |
+| Scheduled lifecycle/recovery tasks | `analytics/tasks.py`, `config/celery.py` |
+| Cross-domain adapters | `accounts/services/audit.py`, `profiles/services/audit.py`, `loans/services/audit.py`, `documents/services/audit.py` |
+| Operator commands | `analytics/management/commands/` |
 | Index bootstrap | `init_db.py` |
-| Focused tests | `tests/test_analytics_api.py` |
+| Focused tests | `tests/test_analytics_api.py`, `tests/test_analytics_stage3_integrity_lifecycle.py` |
 
 ---
 
@@ -568,11 +610,10 @@ their own test data after explicit mutation approval.
    not a proven event-time ABAC policy.
 4. Customer dashboard counts `pending` applications as `submitted` + `under_review` (not `draft`).
 5. Admin dashboard `loans.pending` counts only `submitted` status (not `under_review`).
-6. `action_group=delete` partly uses a description regex rather than a stable
-   stored category.
-7. Audit log `details` is currently free-form. Tests should reject unsafe keys
-   once the event registry is implemented rather than normalizing arbitrary
-   payloads as acceptable.
+6. New events store a stable action group; description matching exists only for
+   legacy `admin_action` compatibility.
+7. Audit `details` are action-specific, bounded, checked recursively for secret-
+   shaped keys, and encrypted at rest. Unknown top-level keys fail validation.
 8. Generate test data by exercising auth, loans, documents, and profiles APIs
    first; Analytics reads their side effects.
 9. Dashboard counts are separate queries with no snapshot or `as_of` value, so

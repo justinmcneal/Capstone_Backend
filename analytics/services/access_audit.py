@@ -2,7 +2,7 @@
 
 import logging
 
-from analytics.models import AuditLog
+from analytics.services.audit_writer import AuditWriteUnavailable, record_audit
 
 logger = logging.getLogger("analytics")
 
@@ -15,7 +15,9 @@ def record_privileged_read(*, actor, actor_type: str, endpoint: str):
     """Record an access without copying query strings or sensitive actor fields."""
     actor_id = str(getattr(actor, "id", "") or "").strip()
     try:
-        return AuditLog.log_action(
+        return record_audit(
+            domain="analytics",
+            required=True,
             action="analytics_privileged_read",
             user_id=actor_id or None,
             user_type=actor_type,
@@ -23,7 +25,7 @@ def record_privileged_read(*, actor, actor_type: str, endpoint: str):
             resource_type="analytics_endpoint",
             resource_id=endpoint,
         )
-    except Exception as exc:
+    except AuditWriteUnavailable as exc:
         logger.exception("Privileged Analytics access audit failed")
         raise AnalyticsAccessAuditError(
             "Privileged Analytics access could not be audited"

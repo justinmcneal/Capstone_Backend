@@ -16,6 +16,7 @@ from rest_framework.views import APIView
 
 from accounts.authentication import CustomJWTAuthentication
 from accounts.models import Admin, LoanOfficer
+from accounts.services.audit import record_account_audit
 from accounts.services.lockout_service import LockoutService
 from accounts.services.security_event_service import SecurityEventService
 from accounts.services.session_activity_service import SessionActivityService
@@ -44,7 +45,6 @@ from accounts.utils.validation_utils import (
     validate_person_name,
     validate_phone_number,
 )
-from analytics.models import AuditLog
 from config.field_encryption import encrypt_fields
 
 logger = logging.getLogger("admin_auth")
@@ -110,7 +110,7 @@ def _audit_privileged_change(
     *, request, actor, target, action, description, before, after
 ):
     changed_fields = [field for field in after if before.get(field) != after[field]]
-    AuditLog.log_action(
+    record_account_audit(
         action=action,
         user_id=actor.id,
         user_type="super_admin" if actor.super_admin else "admin",
@@ -181,7 +181,7 @@ def _log_admin_login_failure(request, login_identifier, reason, admin=None):
         else ""
     )
     try:
-        AuditLog.log_action(
+        record_account_audit(
             action="user_login_failed",
             user_id=getattr(admin, "id", None),
             user_type="admin",
@@ -517,7 +517,7 @@ class AdminLogoutView(APIView):
                 TokenUtils.revoke_session(user_id, "admin", session_id)
 
             # Audit log for admin logout
-            AuditLog.log_action(
+            record_account_audit(
                 action="user_logout",
                 user_id=user_id,
                 user_type="admin",
@@ -891,7 +891,7 @@ class LoanOfficerManagementView(AdminRequiredMixin, APIView):
             )
 
             # Audit log
-            AuditLog.log_action(
+            record_account_audit(
                 action="admin_action",
                 user_id=admin.id,
                 user_type="admin" if not admin.super_admin else "super_admin",
@@ -2081,7 +2081,7 @@ class AdminProfileView(APIView):
 
             if changes:
                 user.save()
-                AuditLog.log_action(
+                record_account_audit(
                     action="profile_updated",
                     user_id=user.id,
                     user_type=(

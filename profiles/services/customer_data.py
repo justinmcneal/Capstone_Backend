@@ -168,11 +168,14 @@ def build_profile_export(customer):
 
 
 def get_profile_history(customer_id, *, page=1, page_size=20):
+    from analytics.models import AuditLog
+
     query = {
         "$and": [
             {"action": {"$in": list(PROFILE_HISTORY_ACTIONS)}},
             {
                 "$or": [
+                    {"subject_index": AuditLog.blind_index(str(customer_id))},
                     {"user_id": str(customer_id)},
                     {"details.customer_id": str(customer_id)},
                 ]
@@ -188,19 +191,20 @@ def get_profile_history(customer_id, *, page=1, page_size=20):
         .limit(page_size)
     )
     history = []
-    for event in cursor:
-        details = event.get("details") or {}
+    for raw_event in cursor:
+        event = AuditLog.from_dict(raw_event)
+        details = event.details or {}
         history.append(
             {
-                "event_id": str(event.get("_id")),
-                "action": event.get("action"),
-                "section": event.get("resource_type"),
-                "resource_id": event.get("resource_id"),
+                "event_id": event.id,
+                "action": event.action,
+                "section": event.resource_type,
+                "resource_id": event.resource_id,
                 "changed_fields": sorted(details.get("changed_fields") or []),
                 "profile_revision": details.get("profile_revision"),
                 "risk_revision": details.get("revision"),
                 "status": details.get("status"),
-                "timestamp": _json_value(event.get("timestamp")),
+                "timestamp": _json_value(event.timestamp),
             }
         )
     return {

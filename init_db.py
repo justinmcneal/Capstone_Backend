@@ -183,6 +183,7 @@ def create_indexes():
     try:
         print("Creating indexes for AuditLog collection...")
         AuditLog.create_indexes()
+        AuditLog.create_validator()
         print("✓ AuditLog indexes created")
     except (DuplicateKeyError, OperationFailure):
         print("⚠ AuditLog indexes already exist, skipping")
@@ -193,6 +194,12 @@ def create_indexes():
         print("Creating indexes for audit failure recovery...")
         settings.MONGODB["audit_write_failures"].create_index(
             [("domain", 1), ("resolved_at", 1), ("occurred_at", 1)]
+        )
+        settings.MONGODB["audit_write_failures"].create_index(
+            "event_id", unique=True, sparse=True
+        )
+        settings.MONGODB["audit_write_failures"].create_index(
+            [("subject_index", 1), ("resolved_at", 1)]
         )
         print("✓ Audit failure recovery indexes created")
     except (DuplicateKeyError, OperationFailure):

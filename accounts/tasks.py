@@ -8,8 +8,8 @@ from django.conf import settings
 
 from accounts.models import Admin, Customer, LoanOfficer
 from accounts.services.account_lifecycle_service import AccountLifecycleService
+from accounts.services.audit import record_account_audit
 from accounts.utils.email_utils import EmailUtils
-from analytics.models import AuditLog
 
 logger = logging.getLogger(__name__)
 
@@ -295,6 +295,8 @@ def finalize_scheduled_customer_deletions_task():
                         {"profile_cleanup_status": "pending"},
                         {"document_cleanup_status": "pending"},
                         {"document_cleanup_status": {"$exists": False}},
+                        {"analytics_cleanup_status": "pending"},
+                        {"analytics_cleanup_status": {"$exists": False}},
                     ],
                 },
             ]
@@ -312,7 +314,7 @@ def finalize_scheduled_customer_deletions_task():
             if not updated:
                 continue
 
-            AuditLog.log_action(
+            record_account_audit(
                 action="account_deleted",
                 user_id=updated.id,
                 user_type="system",

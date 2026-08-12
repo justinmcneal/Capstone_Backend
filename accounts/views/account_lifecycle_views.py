@@ -14,6 +14,7 @@ from accounts.serializers.account_lifecycle_serializers import (
     TwoFactorRecoveryVerifySerializer,
 )
 from accounts.services.account_lifecycle_service import AccountLifecycleService
+from accounts.services.audit import record_account_audit
 from accounts.services.security_event_service import SecurityEventService
 from accounts.utils.exception_types import NON_FATAL_EXCEPTIONS
 from accounts.utils.request_utils import get_client_ip
@@ -25,7 +26,6 @@ from accounts.utils.throttles import (
     OTPVerificationRateThrottle,
 )
 from accounts.utils.user_detection import get_authenticated_user
-from analytics.models import AuditLog
 
 logger = logging.getLogger("authentication")
 
@@ -65,7 +65,7 @@ class EmailChangeRequestView(APIView):
                 ip_address=get_client_ip(request),
                 details={"pending_email": serializer.validated_data["new_email"]},
             )
-            AuditLog.log_action(
+            record_account_audit(
                 action="email_change_requested",
                 user_id=user.id,
                 user_type="customer",
@@ -127,7 +127,7 @@ class EmailChangeConfirmView(APIView):
                         "sessions_revoked": True,
                     },
                 )
-                AuditLog.log_action(
+                record_account_audit(
                     action="email_changed",
                     user_id=refreshed.id,
                     user_type="customer",
@@ -217,7 +217,7 @@ class AccountDeletionRequestView(APIView):
                 "sessions_revoked": True,
             },
         )
-        AuditLog.log_action(
+        record_account_audit(
             action="account_deletion_requested",
             user_id=updated.id,
             user_type="customer",
@@ -271,7 +271,7 @@ class AccountDeletionCancelView(APIView):
             ip_address=get_client_ip(request),
             details={"sessions_revoked": True},
         )
-        AuditLog.log_action(
+        record_account_audit(
             action="account_deletion_cancelled",
             user_id=updated.id,
             user_type="customer",
@@ -312,7 +312,7 @@ class TwoFactorRecoveryRequestView(APIView):
                 action="two_factor_recovery_requested",
                 ip_address=get_client_ip(request),
             )
-            AuditLog.log_action(
+            record_account_audit(
                 action="two_factor_recovery_requested",
                 user_id=customer.id,
                 user_type="customer",
@@ -342,7 +342,7 @@ class TwoFactorRecoveryVerifyView(APIView):
                 message, status.HTTP_400_BAD_REQUEST
             )
         if customer:
-            AuditLog.log_action(
+            record_account_audit(
                 action="two_factor_recovery_requested",
                 user_id=customer.id,
                 user_type="customer",

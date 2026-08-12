@@ -12,7 +12,6 @@ from accounts.services.otp_service import OTPService
 from accounts.utils.email_utils import EmailUtils
 from accounts.utils.identity_policy import assert_email_available_globally
 from accounts.utils.token_utils import TokenUtils
-from analytics.models import AuditLog
 from notifications.models.notification import Notification
 
 ACCOUNT_STATES = {
@@ -329,6 +328,7 @@ class AccountLifecycleService:
         if getattr(customer, "account_state", "active") == "deleted" and (
             getattr(customer, "profile_cleanup_status", None) == "pending"
             or getattr(customer, "document_cleanup_status", None) in (None, "pending")
+            or getattr(customer, "analytics_cleanup_status", None) in (None, "pending")
         ):
             return True
         scheduled_for = EmailUtils.to_aware_utc(
@@ -421,6 +421,12 @@ class AccountLifecycleService:
                     "document_cleanup_last_error": "",
                     "document_cleanup_last_attempt_at": None,
                     "document_cleanup_completed_at": None,
+                    "analytics_cleanup_status": "pending",
+                    "analytics_cleanup_counts": {},
+                    "analytics_cleanup_attempts": 0,
+                    "analytics_cleanup_last_error": "",
+                    "analytics_cleanup_last_attempt_at": None,
+                    "analytics_cleanup_completed_at": None,
                     "active": False,
                     "updated_at": now,
                 },
@@ -437,6 +443,8 @@ class AccountLifecycleService:
                         {"profile_cleanup_status": "pending"},
                         {"document_cleanup_status": "pending"},
                         {"document_cleanup_status": {"$exists": False}},
+                        {"analytics_cleanup_status": "pending"},
+                        {"analytics_cleanup_status": {"$exists": False}},
                     ],
                 }
             )
@@ -545,6 +553,52 @@ class AccountLifecycleService:
             if counts["status"] == "complete":
                 update["document_cleanup_completed_at"] = update["updated_at"]
             collection.update_one({"_id": updated._id}, {"$set": update})
+
+        updated = Customer.from_dict(collection.find_one({"_id": updated._id}))
+        if updated.analytics_cleanup_status in (None, "pending"):
+            from analytics.services.lifecycle import pseudonymize_customer_audit_data
+
+            attempted_at = AccountLifecycleService._now()
+            collection.update_one(
+                {"_id": updated._id},
+                {
+                    "$set": {
+                        "analytics_cleanup_last_attempt_at": attempted_at,
+                        "updated_at": attempted_at,
+                    },
+                    "$inc": {"analytics_cleanup_attempts": 1},
+                },
+            )
+            try:
+                counts = pseudonymize_customer_audit_data(
+                    settings.MONGODB, updated.id
+                )
+            except Exception as exc:
+                collection.update_one(
+                    {"_id": updated._id},
+                    {
+                        "$set": {
+                            "analytics_cleanup_status": "pending",
+                            "analytics_cleanup_last_error": type(exc).__name__,
+                            "updated_at": AccountLifecycleService._now(),
+                        }
+                    },
+                )
+                raise
+            cleanup_complete = counts["remaining"] == 0
+            analytics_update = {
+                "analytics_cleanup_status": (
+                    "complete" if cleanup_complete else "pending"
+                ),
+                "analytics_cleanup_counts": counts,
+                "analytics_cleanup_last_error": "",
+                "updated_at": AccountLifecycleService._now(),
+            }
+            if cleanup_complete:
+                analytics_update["analytics_cleanup_completed_at"] = analytics_update[
+                    "updated_at"
+                ]
+            collection.update_one({"_id": updated._id}, {"$set": analytics_update})
 
         return Customer.from_dict(collection.find_one({"_id": updated._id}))
 
@@ -842,6 +896,7 @@ class AccountLifecycleService:
 
     @staticmethod
     def export_customer_data(customer):
+        from analytics.services.lifecycle import export_customer_audit_data
         from documents.services.lifecycle import export_customer_documents
 
         consent = Consent.find_by_user(customer.id, "customer")
@@ -849,7 +904,6 @@ class AccountLifecycleService:
             {"user_id": customer.id}, sort=[("created_at", -1)]
         )
         login_activity = LoginActivity.find({"user_id": customer.id}, limit=200)
-        audit_entries = AuditLog.find_by_user(customer.id, limit=200)
         notifications = Notification.find_by_user(customer.id, limit=200)
 
         payload = {
@@ -876,7 +930,9 @@ class AccountLifecycleService:
             "consent": consent.to_dict() if consent else None,
             "active_sessions": [session.to_dict() for session in sessions],
             "login_activity": [entry.to_dict() for entry in login_activity],
-            "audit_logs": [entry.to_dict() for entry in audit_entries],
+            "audit_logs": export_customer_audit_data(
+                settings.MONGODB, customer.id
+            ),
             "notifications": [item.to_dict() for item in notifications],
             "documents": export_customer_documents(settings.MONGODB, customer.id),
         }
