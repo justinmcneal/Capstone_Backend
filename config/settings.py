@@ -173,6 +173,9 @@ ANALYTICS_MAX_ACTIVE_PRODUCTS = int(
 ANALYTICS_AUDIT_BACKLOG_ALERT_THRESHOLD = int(
     os.getenv('ANALYTICS_AUDIT_BACKLOG_ALERT_THRESHOLD') or '1'
 )
+ANALYTICS_INTEGRITY_INVENTORY_MAX_AGE_SECONDS = int(
+    os.getenv('ANALYTICS_INTEGRITY_INVENTORY_MAX_AGE_SECONDS') or '90000'
+)
 if not 1024 <= ANALYTICS_AUDIT_MAX_DETAILS_BYTES <= 65536:
     raise ImproperlyConfigured(
         'ANALYTICS_AUDIT_MAX_DETAILS_BYTES must be between 1024 and 65536'
@@ -200,6 +203,10 @@ if not 1 <= ANALYTICS_MAX_ACTIVE_PRODUCTS <= 1000:
 if not 1 <= ANALYTICS_AUDIT_BACKLOG_ALERT_THRESHOLD <= 100000:
     raise ImproperlyConfigured(
         'ANALYTICS_AUDIT_BACKLOG_ALERT_THRESHOLD must be between 1 and 100000'
+    )
+if not 300 <= ANALYTICS_INTEGRITY_INVENTORY_MAX_AGE_SECONDS <= 604800:
+    raise ImproperlyConfigured(
+        'ANALYTICS_INTEGRITY_INVENTORY_MAX_AGE_SECONDS must be between 300 and 604800'
     )
 
 # Production must never store sensitive fields as plaintext.

@@ -1,6 +1,6 @@
 # Analytics API Testing Guide
 
-> **Readiness notice (2026-08-12):** This guide documents the current API for
+> **Readiness notice (2026-08-13):** This guide documents the current API for
 > development and characterization testing. Analytics is not yet production-
 > ready. Stages 1-5 (query correctness, privacy, protected audit persistence,
 > integrity/lifecycle, officer scope, and metric consistency) are complete at
@@ -556,25 +556,22 @@ Use these as negative and boundary cases while implementing the readiness plan:
 Focused local suites:
 
 ```bash
-pytest -q tests/test_analytics_api.py tests/test_analytics_stage3_integrity_lifecycle.py tests/test_analytics_stage4_scope_metrics.py tests/test_analytics_stage5_scalability_operations.py
+pytest -q tests/test_analytics_api.py tests/test_analytics_stage3_integrity_lifecycle.py tests/test_analytics_stage4_scope_metrics.py tests/test_analytics_stage5_scalability_operations.py tests/test_analytics_stage6_request_auth.py
 ```
 
-Latest Stage 5 result on 2026-08-12: the focused suites passed **77 tests** and
-the complete project suite passed **1,110 tests**, skipped **21 opt-in
-integration tests**, and reported one third-party deprecation warning.
+Latest local Stage 6 result on 2026-08-13: Analytics Stage 1-6 suites passed
+**82 tests** and skipped **2 opt-in real-Mongo tests**. The complete project
+suite passed **1,115 tests**, skipped **23 opt-in integration tests**, and
+reported one third-party deprecation warning.
 
-The API suite uses `mongomock`, calls views directly, and temporarily clears
-their DRF authentication/permission classes before `force_authenticate`. It is
-useful for view/mixin behavior but does not prove live JWT authentication,
-middleware, URL dispatch, real MongoDB query plans, database roles, encryption,
-retention, recovery, load, or deployment monitoring.
+Most API characterization cases use `mongomock` and direct view calls. Stage 6
+also exercises URL routing, issued JWT validation, persisted active sessions,
+live-account checks, permissions, role isolation, and revocation with DRF's
+`APIClient`. Neither group proves real MongoDB plans, deployment roles, proxy
+behavior, backup/restore, monitoring, or load.
 
-Required future test groups:
+Remaining environment test groups:
 
-- request-level JWT and complete role/permission matrix tests through URLs;
-- strict pagination/date/enum/search validation and non-broadening regressions;
-- admin summary-versus-log permission and sensitive-field redaction tests;
-- request-level officer/admin scope tests through the full authentication stack;
 - production-key rotation/recovery and controlled legacy-backfill tests;
 - concurrent dashboard consistency and snapshot/SLO characterization; and
 - opt-in isolated real-Mongo index/explain, deep-history, aggregation, timeout,
@@ -583,6 +580,22 @@ Required future test groups:
 Do not point future load, retention, or recovery harnesses at a production
 database. They must create uniquely named temporary databases and remove only
 their own test data after explicit mutation approval.
+
+### Opt-in isolated real-Mongo suite
+
+This suite mutates and drops only its generated `an_<random>` database. Use a
+non-production cluster/account with permission to create and drop that database,
+then obtain explicit approval before running:
+
+```bash
+RUN_ANALYTICS_REAL_MONGO_TESTS=1 \
+REAL_MONGO_TEST_URI='<isolated MongoDB URI>' \
+pytest -q -m real_mongo tests/test_analytics_real_mongo.py
+```
+
+Record the server version, topology, test database prefix, dataset cardinality,
+execution time, winning index/stats, and final cleanup result. Never paste the
+URI or credentials into test output or release evidence.
 
 ---
 
@@ -632,6 +645,7 @@ Configuration defaults:
 | `ANALYTICS_MAX_PAGE_OFFSET` | `10000` | Maximum page-number scan offset |
 | `ANALYTICS_MAX_ACTIVE_PRODUCTS` | `100` | Dashboard product-cardinality bound |
 | `ANALYTICS_AUDIT_BACKLOG_ALERT_THRESHOLD` | `1` | Health degradation threshold |
+| `ANALYTICS_INTEGRITY_INVENTORY_MAX_AGE_SECONDS` | `90000` | Maximum healthy inventory age |
 | `ANALYTICS_READ_RATE` | `300/hour` | Per-authenticated-user read limit |
 
 Operational signals contain only endpoint class, outcome class, queue/domain,
@@ -655,6 +669,32 @@ Production release evidence must show Prometheus scraping, dashboard panels,
 alert delivery/resolution, MongoDB timeout behavior, throttle sharing through
 Redis, and real query plans at representative cardinality.
 
+After deployment bootstrap and the first scheduled/manual integrity inventory,
+run the read-only readiness command:
+
+```bash
+python manage.py analytics_release_check
+python manage.py analytics_release_check --json
+```
+
+It reports only booleans and bounded health counts. A failure exits non-zero;
+fix the failed gate rather than bypassing it.
+
+### Remaining deployment evidence checklist
+
+- Separate least-privilege Analytics reader and audit-writer permissions are
+  demonstrated; neither can administer users/roles or unrelated collections.
+- Current/previous encryption-key rotation is exercised and rollback is proven.
+- Reverse-proxy request/response limits and timeouts preserve the sanitized API
+  error contract.
+- A real backup is restored into an isolated target and the integrity inventory
+  remains clean afterward.
+- Redis-backed throttling is shared across at least two application workers.
+- Prometheus scrapes every Analytics metric; dashboards render expected rates,
+  latency, response size, backlog age, replay, and integrity signals.
+- Test alerts fire and resolve through the approved on-call route without PII.
+- The incident runbook is rehearsed and evidence identifiers are recorded.
+
 ---
 
 ## Where to Look in Code
@@ -674,6 +714,8 @@ Redis, and real query plans at representative cardinality.
 | Prometheus metrics | `analytics/metrics.py` |
 | Cross-domain adapters | `accounts/services/audit.py`, `profiles/services/audit.py`, `loans/services/audit.py`, `documents/services/audit.py` |
 | Operator commands | `analytics/management/commands/` |
+| Request-level Stage 6 tests | `tests/test_analytics_stage6_request_auth.py` |
+| Opt-in real-Mongo Stage 6 tests | `tests/test_analytics_real_mongo.py` |
 | Index bootstrap | `init_db.py` |
 | Focused tests | `tests/test_analytics_api.py`, `tests/test_analytics_stage3_integrity_lifecycle.py`, `tests/test_analytics_stage4_scope_metrics.py`, `tests/test_analytics_stage5_scalability_operations.py` |
 

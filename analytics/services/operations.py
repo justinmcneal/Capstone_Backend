@@ -112,15 +112,75 @@ def analytics_health_summary(db):
     inventory = db["analytics_operational_state"].find_one(
         {"_id": "audit_integrity_inventory"}
     ) or {}
+    collected_at = inventory.get("collected_at")
+    inventory_age = None
+    if collected_at:
+        if collected_at.tzinfo is None:
+            collected_at = collected_at.replace(tzinfo=timezone.utc)
+        inventory_age = max(
+            0, int((datetime.now(timezone.utc) - collected_at).total_seconds())
+        )
+    inventory_fresh = inventory_age is not None and inventory_age <= int(
+        getattr(settings, "ANALYTICS_INTEGRITY_INVENTORY_MAX_AGE_SECONDS", 90000)
+    )
     invalid = int(inventory.get("invalid_integrity", 0) or 0)
     missing = int(inventory.get("missing_integrity", 0) or 0)
     threshold = int(getattr(settings, "ANALYTICS_AUDIT_BACKLOG_ALERT_THRESHOLD", 1))
-    ready = unresolved < threshold and invalid == 0 and missing == 0
+    ready = unresolved < threshold and invalid == 0 and missing == 0 and inventory_fresh
     return {
         "ready": ready,
         "status": "ready" if ready else "degraded",
         "audit_backlog": unresolved,
         "oldest_backlog_age_seconds": oldest_age,
         "integrity_findings": invalid + missing,
-        "inventory_available": bool(inventory.get("collected_at")),
+        "inventory_available": collected_at is not None,
+        "inventory_fresh": inventory_fresh,
+        "inventory_age_seconds": inventory_age,
+    }
+
+
+def analytics_release_readiness(db):
+    """Collect read-only, non-secret release checks for an operator."""
+    expected_indexes = {
+        "event_id_1",
+        "audit_officer_event_scope",
+        "audit_actor_filter_sort",
+        "audit_action_filter_sort",
+        "audit_resource_filter_sort",
+        "audit_retention_cleanup",
+    }
+    db.command("ping")
+    indexes = set(db["audit_logs"].index_information())
+    validator_present = False
+    try:
+        result = db.command(
+            {"listCollections": 1, "filter": {"name": "audit_logs"}}
+        )
+        batches = result.get("cursor", {}).get("firstBatch", [])
+        validator_present = bool(
+            batches and batches[0].get("options", {}).get("validator")
+        )
+    except (KeyError, TypeError, NotImplementedError, PyMongoError):
+        validator_present = False
+    health = analytics_health_summary(db)
+    checks = {
+        "debug_disabled": not bool(settings.DEBUG),
+        "field_encryption_configured": bool(
+            getattr(settings, "FIELD_ENCRYPTION_KEY", "")
+        ),
+        "strict_decryption_enabled": bool(
+            getattr(settings, "FIELD_ENCRYPTION_STRICT_DECRYPTION", False)
+        ),
+        "shared_redis_cache_enabled": bool(
+            getattr(settings, "USE_REDIS_CACHE", False)
+        ),
+        "mongodb_connected": True,
+        "required_indexes_present": expected_indexes.issubset(indexes),
+        "validator_present": validator_present,
+        "analytics_health_ready": health["ready"],
+    }
+    return {
+        "ready": all(checks.values()),
+        "checks": checks,
+        "health": health,
     }

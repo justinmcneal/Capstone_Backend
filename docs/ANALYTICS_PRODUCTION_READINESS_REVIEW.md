@@ -1,6 +1,6 @@
 # Analytics Production Readiness Review
 
-Last updated: 2026-08-12
+Last updated: 2026-08-13
 
 Scope: `analytics/`, `/api/analytics/`, the shared `audit_logs` collection,
 cross-domain audit producers and recovery paths, dashboard source collections,
@@ -46,12 +46,13 @@ environment evidence.
 
 Current local baseline:
 
-- Analytics Stage 1-5 suites: **77 passed** on 2026-08-12.
-- Full project suite after Stage 5: **1,110 passed and 21 skipped** with one
-  third-party deprecation warning on 2026-08-12.
-- The suite calls views directly and temporarily disables their DRF
-  authentication/permission classes. Explicit role/mixin checks are exercised,
-  but the real JWT and middleware boundary is not.
+- Local Analytics Stage 1-6 suites: **82 passed and 2 opt-in real-Mongo tests
+  skipped** on 2026-08-13.
+- Full project suite after the local Stage 6 implementation: **1,115 passed and
+  23 skipped** with one third-party deprecation warning on 2026-08-13.
+- Characterization cases call views directly for precision, while Stage 6
+  request tests exercise real URL routing, JWT validation, live accounts,
+  persisted sessions, named permissions, role isolation, and revocation.
 - The earlier `datetime.strptime(datetime_value, ...)` failure is fixed and
   covered by valid, malformed, and inverted date-range regressions.
 - No opt-in real-Mongo Analytics query-plan, concurrency, retention, or load
@@ -290,21 +291,31 @@ Production still requires scrape validation, dashboard panels, alert routes,
 threshold approval, and evidence that the on-call notifications fire and
 resolve. Those are Stage 6 deployment gates, not missing application behavior.
 
-### 9. Automated evidence remains environment-limited
+### 9. Automated evidence and release environment
 
-**Status: High priority**
+**Status: Local request-stack evidence complete; deployment evidence pending**
 
-The 77 Analytics Stage 1-5 tests establish useful behavior, but most API cases
-call view classes
-directly after clearing DRF authentication and permission classes. The suite
-does not cover:
+Stage 6 adds full URL-dispatch tests with issued JWTs, persisted active sessions,
+live-account resolution, named administrator permissions, role isolation, and
+session revocation. These close the earlier request-stack limitation while the
+lower-level cases remain useful for precise view behavior.
 
-- real JWT/cookie/middleware/live-account authentication;
+An explicitly gated real-Mongo harness creates and drops only a uniquely named
+temporary database. It covers validator/index installation, a 5,000-event
+officer-scope query with `executionStats`, idempotent recovery, legal holds,
+retention, and integrity/encryption inventory. It requires both
+`REAL_MONGO_TEST_URI` and `RUN_ANALYTICS_REAL_MONGO_TESTS=1` and was not executed
+during this local review because no approved isolated target was supplied.
+
+The repository still cannot prove without deployment infrastructure:
+
 - production encryption-key rotation, database-level least privilege, or real
   backup/restore execution;
 - transactional/snapshot consistency during concurrent source writes;
-- database outage/timeouts beyond fail-closed privileged-read auditing; or
-- real MongoDB indexes, query plans, deep pagination, and representative load.
+- proxy timeout/header behavior, shared Redis throttling, Prometheus scraping,
+  dashboard panels, or alert delivery/resolution; or
+- real MongoDB query plans and representative load until the opt-in harness is
+  executed and its evidence reviewed.
 
 ## Remediation Plan
 
@@ -373,12 +384,22 @@ count.
 
 ### Stage 6 — Real-environment release validation
 
-- Add end-to-end JWT/permission tests and opt-in real-Mongo load/explain,
-  durability, retention, and recovery harnesses.
-- Validate database roles, encryption keys, proxy behavior, backup/restore,
-  monitoring, alerting, and incident procedures in an isolated deployment-like
-  environment.
-- Re-run the focused and full project suites and record evidence here.
+**Status: Partially complete; deployment execution remains**
+
+- [x] Add request-level JWT/session/permission tests through real URL routing.
+- [x] Add a double-opt-in isolated real-Mongo load/explain, validator, recovery,
+  retention, legal-hold, and integrity harness.
+- [x] Add a read-only `analytics_release_check` command for production mode,
+  key/decryption/cache configuration, MongoDB connectivity, indexes, validator,
+  and Analytics health readiness.
+- [x] Re-run local focused and full suites and record the evidence above.
+- [ ] Execute and review the real-Mongo harness against an approved isolated
+  deployment-like target.
+- [ ] Validate least-privilege reader/writer roles, production key rotation,
+  proxy timeouts/headers, backup and restore, Redis-shared throttles, Prometheus
+  scraping, dashboards, alert firing/resolution, and incident procedures.
+- [ ] Run `analytics_release_check` in the target after bootstrap, the first
+  integrity inventory, and all deployment integrations are configured.
 
 ## API and Client Impact Notes
 
