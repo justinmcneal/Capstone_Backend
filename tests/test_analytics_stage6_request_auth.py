@@ -1,7 +1,7 @@
 """Stage 6 request-level JWT, URL routing, and role-permission evidence."""
 
 from io import StringIO
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 from bson import ObjectId
@@ -12,6 +12,7 @@ from rest_framework.test import APIClient
 
 from accounts.models import Admin, Customer, LoanOfficer
 from accounts.utils.token_utils import TokenUtils
+from analytics.services.operations import analytics_release_readiness
 
 
 def _authorized_client(account, role):
@@ -141,3 +142,44 @@ def test_release_check_is_read_only_and_fails_when_a_gate_is_missing(settings):
     ):
         call_command("analytics_release_check", stdout=StringIO())
     readiness.assert_called_once_with(settings.MONGODB)
+
+
+def test_release_readiness_includes_monitoring_and_proxy_gates(settings):
+    settings.DEBUG = False
+    settings.FIELD_ENCRYPTION_KEY = "configured"
+    settings.FIELD_ENCRYPTION_STRICT_DECRYPTION = True
+    settings.USE_REDIS_CACHE = True
+    settings.PROMETHEUS_METRICS_ENABLED = True
+    settings.SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+    db = MagicMock()
+    db.command.side_effect = [
+        {"ok": 1},
+        {
+            "cursor": {
+                "firstBatch": [
+                    {"name": "audit_logs", "options": {"validator": {"$jsonSchema": {}}}}
+                ]
+            }
+        },
+    ]
+    db["audit_logs"].index_information.return_value = {
+        name: {}
+        for name in (
+            "event_id_1",
+            "audit_officer_event_scope",
+            "audit_actor_filter_sort",
+            "audit_action_filter_sort",
+            "audit_resource_filter_sort",
+            "audit_retention_cleanup",
+        )
+    }
+    with patch(
+        "analytics.services.operations.analytics_health_summary",
+        return_value={"ready": True},
+    ):
+        report = analytics_release_readiness(db)
+
+    assert report["ready"] is True
+    assert report["checks"]["prometheus_metrics_enabled"] is True
+    assert report["checks"]["analytics_monitoring_assets_present"] is True
+    assert report["checks"]["secure_proxy_header_configured"] is True

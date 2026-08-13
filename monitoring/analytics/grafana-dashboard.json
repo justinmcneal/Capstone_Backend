@@ -1,0 +1,71 @@
+{
+  "annotations": {"list": []},
+  "editable": false,
+  "graphTooltip": 1,
+  "panels": [
+    {
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "fieldConfig": {"defaults": {"unit": "reqps"}},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
+      "id": 1,
+      "targets": [{"expr": "sum by (endpoint, outcome) (rate(analytics_requests_total[5m]))", "legendFormat": "{{endpoint}} {{outcome}}", "refId": "A"}],
+      "title": "Request rate and outcomes",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "fieldConfig": {"defaults": {"unit": "s"}},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0},
+      "id": 2,
+      "targets": [{"expr": "histogram_quantile(0.95, sum by (le, endpoint) (rate(analytics_request_duration_seconds_bucket[5m])))", "legendFormat": "{{endpoint}}", "refId": "A"}],
+      "title": "Request latency p95",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "fieldConfig": {"defaults": {"unit": "bytes"}},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8},
+      "id": 3,
+      "targets": [{"expr": "histogram_quantile(0.95, sum by (le, endpoint) (rate(analytics_response_size_bytes_bucket[5m])))", "legendFormat": "{{endpoint}}", "refId": "A"}],
+      "title": "Response size p95",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "fieldConfig": {"defaults": {"unit": "short"}},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8},
+      "id": 4,
+      "targets": [
+        {"expr": "analytics_audit_failure_backlog", "legendFormat": "backlog", "refId": "A"},
+        {"expr": "analytics_audit_failure_oldest_age_seconds", "legendFormat": "oldest seconds", "refId": "B"}
+      ],
+      "title": "Audit recovery backlog",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "fieldConfig": {"defaults": {"unit": "short"}},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 16},
+      "id": 5,
+      "targets": [{"expr": "sum by (domain) (rate(analytics_audit_write_failures_total[5m]))", "legendFormat": "{{domain}}", "refId": "A"}, {"expr": "sum by (outcome) (rate(analytics_audit_replays_total[5m]))", "legendFormat": "replay {{outcome}}", "refId": "B"}],
+      "title": "Audit writes and replay outcomes",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "fieldConfig": {"defaults": {"unit": "short"}},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 16},
+      "id": 6,
+      "targets": [{"expr": "analytics_audit_integrity_gaps", "legendFormat": "{{kind}}", "refId": "A"}],
+      "title": "Audit integrity findings",
+      "type": "timeseries"
+    }
+  ],
+  "schemaVersion": 39,
+  "tags": ["analytics", "capstone"],
+  "templating": {"list": [{"name": "DS_PROMETHEUS", "type": "datasource", "query": "prometheus", "current": {}}]},
+  "time": {"from": "now-6h", "to": "now"},
+  "title": "Capstone Analytics Operations",
+  "uid": "capstone-analytics",
+  "version": 1
+}

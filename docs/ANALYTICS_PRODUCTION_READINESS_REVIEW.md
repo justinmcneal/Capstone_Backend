@@ -27,36 +27,39 @@ behavior, production load, or database access controls.
 
 ## Executive Summary
 
-The Analytics module is **partially implemented and not yet production-ready**.
+The Analytics module is **complete for the reviewed application-code scope and
+ready for production-environment validation**.
 Seven read-only endpoints provide administrator, loan-officer, and customer
 dashboards plus administrator/officer audit-log views. Admin dashboard and log
 routes use named permissions, customer counts are owner-scoped, officer queue
 counts are assignment-scoped, audit lists paginate in MongoDB, and basic tests
 pass.
 
-Stages 1 through 5 have corrected the query contract, response disclosure,
+Stages 1 through 6 have corrected the query contract, response disclosure,
 permission separation, officer-route role semantics, privileged-read auditing,
 protected audit persistence, cross-domain recovery, integrity verification, and
 audit lifecycle controls. Officer audit visibility now uses event-time scope,
-and dashboards share versioned lifecycle-aware definitions. Remaining
-Application-code remediation is complete for the reviewed scope. Real-Mongo
-query plans/load, database roles, key operations,
-backfill/restore procedures, and deployment monitoring still require isolated
-environment evidence.
+and dashboards share versioned lifecycle-aware definitions. Application-code
+remediation and repository-side release tooling are complete for the reviewed
+scope. Real-Mongo query plans/load, database roles, key operations,
+backfill/restore procedures, and deployment integrations still require isolated
+environment evidence; those are release execution conditions rather than
+unimplemented Analytics behavior.
 
 Current local baseline:
 
-- Local Analytics Stage 1-6 suites: **82 passed and 2 opt-in real-Mongo tests
-  skipped** on 2026-08-13.
-- Full project suite after the local Stage 6 implementation: **1,115 passed and
-  23 skipped** with one third-party deprecation warning on 2026-08-13.
+- Local Analytics Stage 1-6 and deployment-asset suites: **86 passed and 6
+  opt-in integration tests skipped** on 2026-08-13.
+- Full project suite after the final repository-side release package: **1,120
+  passed and 27 opt-in integration tests skipped**, with one third-party
+  deprecation warning on 2026-08-13.
 - Characterization cases call views directly for precision, while Stage 6
   request tests exercise real URL routing, JWT validation, live accounts,
   persisted sessions, named permissions, role isolation, and revocation.
 - The earlier `datetime.strptime(datetime_value, ...)` failure is fixed and
   covered by valid, malformed, and inverted date-range regressions.
-- No opt-in real-Mongo Analytics query-plan, concurrency, retention, or load
-  suite was found.
+- The opt-in suites now cover real-Mongo query plans/lifecycle plus deployment
+  MongoDB-role, Redis-sharing, Prometheus-scrape, and proxy/health probes.
 
 ## Verified Implemented Foundations
 
@@ -66,13 +69,13 @@ All seven routes are registered under `/api/analytics/` and are read-only:
 
 | Route | Current boundary | Implementation status |
 | --- | --- | --- |
-| `GET admin/` | Admin with `view_analytics`; activity additionally requires `view_logs` | Implemented; metric gaps remain |
-| `GET audit-logs/` | Admin with `view_logs` | Implemented; scale gaps remain |
-| `GET audit-logs/users/` | Admin with `view_logs` | Implemented; query-cost gaps remain |
+| `GET admin/` | Admin with `view_analytics`; activity additionally requires `view_logs` | Implemented and locally verified |
+| `GET audit-logs/` | Admin with `view_logs` | Implemented and locally verified |
+| `GET audit-logs/users/` | Admin with `view_logs` | Implemented and locally verified |
 | `GET audit-logs/<log_id>/` | Admin with `view_logs` | Implemented with minimized response and access audit |
-| `GET officer/` | Loan officer only | Implemented; metric consistency needs correction |
-| `GET officer/audit-logs/` | Loan officer only | Implemented with minimized response; scope and scale gaps remain |
-| `GET customer/` | Customer owner | Implemented; lifecycle and mixed-ID counting gaps remain |
+| `GET officer/` | Loan officer only | Implemented and locally verified |
+| `GET officer/audit-logs/` | Loan officer only | Implemented with minimized, event-time-scoped response |
+| `GET customer/` | Customer owner | Implemented and locally verified |
 
 ### Authentication and role checks
 
@@ -132,10 +135,9 @@ recorded and fail closed with HTTP 503 if that record cannot be written.
 `AuditLog.create_indexes()` and `AuditLog.create_validator()` are called by
 `init_db.py`. Bootstrap provides a unique event-ID index, subject and lifecycle
 indexes, deterministic timestamp/ID support, and a MongoDB JSON-schema
-validator. This does not yet prove the remaining dashboard and filtered-list
-query plans at production volume.
+validator. Target-volume query-plan evidence is a deployment release condition.
 
-## Confirmed Production Blockers and Gaps
+## Implemented Controls and Remaining Release Conditions
 
 ### 1. Query contract and action registry
 
@@ -276,7 +278,7 @@ and staleness contract does not yet justify it. Stage 6 must record real-Mongo
 
 ### 8. Observability and failure behavior
 
-**Status: Complete at code and automated-test level; alert wiring remains deployment work**
+**Status: Complete at code and automated-test level; target import/routing remains deployment work**
 
 Low-cardinality Prometheus metrics now cover request outcomes/latency/response
 size, audit write failures and replay outcomes, recovery backlog/oldest age, and
@@ -287,9 +289,12 @@ degrades when recovery backlog reaches the configured threshold or integrity
 findings exist. MongoDB failures/timeouts return a stable sanitized HTTP 503
 without exposing hosts, queries, identifiers, or event content.
 
-Production still requires scrape validation, dashboard panels, alert routes,
-threshold approval, and evidence that the on-call notifications fire and
-resolve. Those are Stage 6 deployment gates, not missing application behavior.
+Deployable Prometheus recording/alert rules and a Grafana dashboard now cover
+rates, outcomes, p95 latency/response size, write/replay behavior, recovery
+backlog/age, missing metrics, and integrity findings. Production still requires
+importing them, calibrating thresholds, configuring alert routes, and proving
+that scrapes and on-call notifications fire and resolve. Those are Stage 6
+deployment gates, not missing application behavior.
 
 ### 9. Automated evidence and release environment
 
@@ -306,6 +311,17 @@ officer-scope query with `executionStats`, idempotent recovery, legal holds,
 retention, and integrity/encryption inventory. It requires both
 `REAL_MONGO_TEST_URI` and `RUN_ANALYTICS_REAL_MONGO_TESTS=1` and was not executed
 during this local review because no approved isolated target was supplied.
+Separate double-opt-in deployment probes validate the runtime MongoDB identity
+has no user/database-administration privilege, two Redis clients share one
+counter, the deployed metrics endpoint exposes every Analytics metric family,
+and the HTTPS proxy preserves a sanitized health contract. They are skipped
+unless their individual approval flags and target URLs are supplied.
+
+A local rotation rehearsal now proves that an old-key audit event remains
+readable/verifiable while the previous key is configured, is re-encrypted and
+re-signed by the dry-run-first backfill, and remains readable after the old key
+is removed. This proves the procedure in code but not target secret-manager or
+rollback operation.
 
 The repository still cannot prove without deployment infrastructure:
 
@@ -355,6 +371,8 @@ count.
 - [x] Implement retention, legal holds, pseudonymization, bounded export,
   tamper evidence, and integrity inventory.
 - [x] Add dry-run-first legacy backfill and legal-hold operator commands.
+- [x] Prove the audit key-rotation/backfill sequence locally, including removal
+  of the previous key after re-encryption.
 - [ ] Prove key operations, backup/restore, database roles, and controlled
   command execution in Stage 6's isolated deployment environment.
 
@@ -379,6 +397,8 @@ count.
 - [x] Add low-cardinality metrics, recovery/integrity gauges, health readiness,
   scheduled snapshots, sanitized logging, and stable dependency-outage errors.
 - [x] Document configuration, diagnosis, and incident evidence procedures.
+- [x] Provide structurally validated Prometheus recording/alert rules and an
+  importable Grafana Analytics operations dashboard.
 - [ ] Prove real query plans/load and connect/test production dashboards and
   alerts in Stage 6.
 
@@ -391,11 +411,16 @@ count.
   retention, legal-hold, and integrity harness.
 - [x] Add a read-only `analytics_release_check` command for production mode,
   key/decryption/cache configuration, MongoDB connectivity, indexes, validator,
-  and Analytics health readiness.
+  metrics/monitoring assets, proxy configuration, and Analytics health readiness.
+- [x] Add double-opt-in MongoDB-role, Redis-sharing, metrics-scrape, and
+  proxy/health deployment probes.
+- [x] Add and structurally validate deployable Prometheus alert/recording rules
+  and a Grafana dashboard.
 - [x] Re-run local focused and full suites and record the evidence above.
 - [ ] Execute and review the real-Mongo harness against an approved isolated
   deployment-like target.
-- [ ] Validate least-privilege reader/writer roles, production key rotation,
+- [ ] Validate the least-privilege runtime database identity, production key
+  rotation,
   proxy timeouts/headers, backup and restore, Redis-shared throttles, Prometheus
   scraping, dashboards, alert firing/resolution, and incident procedures.
 - [ ] Run `analytics_release_check` in the target after bootstrap, the first

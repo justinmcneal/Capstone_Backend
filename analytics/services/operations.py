@@ -4,6 +4,7 @@ import json
 import logging
 import time
 from datetime import datetime, timezone
+from pathlib import Path
 
 from django.conf import settings
 from pymongo.errors import PyMongoError
@@ -163,6 +164,14 @@ def analytics_release_readiness(db):
     except (KeyError, TypeError, NotImplementedError, PyMongoError):
         validator_present = False
     health = analytics_health_summary(db)
+    monitoring_root = Path(settings.BASE_DIR) / "monitoring" / "analytics"
+    metrics_flag = Path(
+        getattr(
+            settings,
+            "PROMETHEUS_METRICS_RUNTIME_FLAG_FILE",
+            Path(settings.BASE_DIR) / ".prometheus_metrics_enabled",
+        )
+    )
     checks = {
         "debug_disabled": not bool(settings.DEBUG),
         "field_encryption_configured": bool(
@@ -173,6 +182,17 @@ def analytics_release_readiness(db):
         ),
         "shared_redis_cache_enabled": bool(
             getattr(settings, "USE_REDIS_CACHE", False)
+        ),
+        "prometheus_metrics_enabled": bool(
+            getattr(settings, "PROMETHEUS_METRICS_ENABLED", False)
+            or metrics_flag.is_file()
+        ),
+        "analytics_monitoring_assets_present": all(
+            (monitoring_root / filename).is_file()
+            for filename in ("prometheus-rules.yml", "grafana-dashboard.json")
+        ),
+        "secure_proxy_header_configured": bool(
+            getattr(settings, "SECURE_PROXY_SSL_HEADER", None)
         ),
         "mongodb_connected": True,
         "required_indexes_present": expected_indexes.issubset(indexes),

@@ -1,11 +1,12 @@
 # Analytics API Testing Guide
 
 > **Readiness notice (2026-08-13):** This guide documents the current API for
-> development and characterization testing. Analytics is not yet production-
-> ready. Stages 1-5 (query correctness, privacy, protected audit persistence,
+> development and release testing. Analytics application code is complete and
+> ready for production-environment validation. Stages 1-6 (query correctness,
+> privacy, protected audit persistence,
 > integrity/lifecycle, officer scope, and metric consistency) are complete at
 > code/test level, including bounded queries and operational signals. Real-
-> environment query-plan/load and deployment validation remain open. See
+> environment query-plan/load and deployment execution remain open. See
 > `docs/ANALYTICS_PRODUCTION_READINESS_REVIEW.md` for the evidence and staged
 > remediation plan.
 
@@ -520,7 +521,7 @@ Standard success shape:
 
 ---
 
-## Remaining Gaps to Characterize Before Release
+## Implemented Baseline and Release-Environment Boundaries
 
 Use these as negative and boundary cases while implementing the readiness plan:
 
@@ -556,13 +557,20 @@ Use these as negative and boundary cases while implementing the readiness plan:
 Focused local suites:
 
 ```bash
-pytest -q tests/test_analytics_api.py tests/test_analytics_stage3_integrity_lifecycle.py tests/test_analytics_stage4_scope_metrics.py tests/test_analytics_stage5_scalability_operations.py tests/test_analytics_stage6_request_auth.py
+pytest -q tests/test_analytics_api.py \
+  tests/test_analytics_stage3_integrity_lifecycle.py \
+  tests/test_analytics_stage4_scope_metrics.py \
+  tests/test_analytics_stage5_scalability_operations.py \
+  tests/test_analytics_stage6_request_auth.py \
+  tests/test_analytics_monitoring_assets.py \
+  tests/test_analytics_real_mongo.py \
+  tests/test_analytics_deployment_integrations.py
 ```
 
 Latest local Stage 6 result on 2026-08-13: Analytics Stage 1-6 suites passed
-**82 tests** and skipped **2 opt-in real-Mongo tests**. The complete project
-suite passed **1,115 tests**, skipped **23 opt-in integration tests**, and
-reported one third-party deprecation warning.
+**86 tests** and skipped **6 opt-in deployment tests**. The complete-project
+suite passed **1,120 tests**, skipped **27 opt-in integration tests**, and
+reported one third-party WebSocket deprecation warning.
 
 Most API characterization cases use `mongomock` and direct view calls. Stage 6
 also exercises URL routing, issued JWT validation, persisted active sessions,
@@ -570,12 +578,11 @@ live-account checks, permissions, role isolation, and revocation with DRF's
 `APIClient`. Neither group proves real MongoDB plans, deployment roles, proxy
 behavior, backup/restore, monitoring, or load.
 
-Remaining environment test groups:
-
-- production-key rotation/recovery and controlled legacy-backfill tests;
-- concurrent dashboard consistency and snapshot/SLO characterization; and
-- opt-in isolated real-Mongo index/explain, deep-history, aggregation, timeout,
-  and representative-cardinality tests.
+The local suite now includes the controlled audit key-rotation/backfill sequence
+and validation of the deployable Prometheus/Grafana assets. Environment
+execution remains necessary for real MongoDB query plans, approved consistency
+SLO characterization, secret-manager rotation/rollback, restore rehearsal, and
+the opt-in deployment integration probes below.
 
 Do not point future load, retention, or recovery harnesses at a production
 database. They must create uniquely named temporary databases and remove only
@@ -596,6 +603,35 @@ pytest -q -m real_mongo tests/test_analytics_real_mongo.py
 Record the server version, topology, test database prefix, dataset cardinality,
 execution time, winning index/stats, and final cleanup result. Never paste the
 URI or credentials into test output or release evidence.
+
+### Opt-in deployment integration probes
+
+Each probe is independently gated. Use only the variables for the approved
+service being tested, and never paste their values into evidence:
+
+```bash
+RUN_ANALYTICS_DEPLOYMENT_MONGO_TESTS=1 \
+ANALYTICS_DEPLOYMENT_MONGO_URI='<runtime MongoDB URI>' \
+ANALYTICS_DEPLOYMENT_MONGO_DB='<database name>' \
+pytest -q -m deployment_integration \
+  tests/test_analytics_deployment_integrations.py::test_runtime_mongodb_identity_is_least_privilege
+
+RUN_ANALYTICS_DEPLOYMENT_REDIS_TESTS=1 \
+ANALYTICS_DEPLOYMENT_REDIS_URL='<isolated/shared Redis URL>' \
+pytest -q -m deployment_integration \
+  tests/test_analytics_deployment_integrations.py::test_two_clients_share_the_redis_throttle_counter
+
+RUN_ANALYTICS_DEPLOYMENT_HTTP_TESTS=1 \
+ANALYTICS_DEPLOYMENT_METRICS_URL='<private metrics URL>' \
+ANALYTICS_DEPLOYMENT_HEALTH_URL='<public HTTPS health URL>' \
+pytest -q -m deployment_integration tests/test_analytics_deployment_integrations.py
+```
+
+The Redis probe creates one random key with a 60-second TTL and deletes it in
+cleanup. The MongoDB, metrics, and health probes are read-only. The MongoDB
+probe rejects broad administrative roles/actions; retain the sanitized role
+report generated by the platform separately because test output intentionally
+does not print credentials or privilege documents.
 
 ---
 
@@ -669,6 +705,11 @@ Production release evidence must show Prometheus scraping, dashboard panels,
 alert delivery/resolution, MongoDB timeout behavior, throttle sharing through
 Redis, and real query plans at representative cardinality.
 
+Import `monitoring/analytics/prometheus-rules.yml` into Prometheus-compatible
+rule evaluation and `monitoring/analytics/grafana-dashboard.json` into Grafana.
+The checked-in thresholds are safe starting points, not approved SLOs: calibrate
+them from representative traffic and record the approved values before release.
+
 After deployment bootstrap and the first scheduled/manual integrity inventory,
 run the read-only readiness command:
 
@@ -682,8 +723,10 @@ fix the failed gate rather than bypassing it.
 
 ### Remaining deployment evidence checklist
 
-- Separate least-privilege Analytics reader and audit-writer permissions are
-  demonstrated; neither can administer users/roles or unrelated collections.
+- The real-Mongo harness completes and its winning indexes/execution statistics
+  meet the approved performance budget.
+- The Analytics runtime database identity is limited to required collection
+  reads/writes and cannot administer users/roles or unrelated databases.
 - Current/previous encryption-key rotation is exercised and rollback is proven.
 - Reverse-proxy request/response limits and timeouts preserve the sanitized API
   error contract.
@@ -712,10 +755,13 @@ fix the failed gate rather than bypassing it.
 | Scheduled lifecycle/recovery tasks | `analytics/tasks.py`, `config/celery.py` |
 | Query bounds and health | `analytics/services/operations.py` |
 | Prometheus metrics | `analytics/metrics.py` |
+| Prometheus rules | `monitoring/analytics/prometheus-rules.yml` |
+| Grafana dashboard | `monitoring/analytics/grafana-dashboard.json` |
 | Cross-domain adapters | `accounts/services/audit.py`, `profiles/services/audit.py`, `loans/services/audit.py`, `documents/services/audit.py` |
 | Operator commands | `analytics/management/commands/` |
 | Request-level Stage 6 tests | `tests/test_analytics_stage6_request_auth.py` |
 | Opt-in real-Mongo Stage 6 tests | `tests/test_analytics_real_mongo.py` |
+| Opt-in deployment probes | `tests/test_analytics_deployment_integrations.py` |
 | Index bootstrap | `init_db.py` |
 | Focused tests | `tests/test_analytics_api.py`, `tests/test_analytics_stage3_integrity_lifecycle.py`, `tests/test_analytics_stage4_scope_metrics.py`, `tests/test_analytics_stage5_scalability_operations.py` |
 

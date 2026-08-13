@@ -21,7 +21,9 @@ from config.field_encryption import (
     _build_keyring,
     _get_fernet,
     decrypt_value,
+    encrypted_value_key_id,
     is_encrypted_value,
+    primary_key_id,
 )
 
 
@@ -221,3 +223,38 @@ def test_legacy_backfill_is_dry_run_first_and_integrity_safe(audit_security):
     assert is_encrypted_value(protected["user_email"])
     assert protected["event_id"] == f"evt_legacy_{legacy_id}"
     assert AuditLog.verify_integrity_document(protected)
+
+
+def test_audit_backfill_rotates_ciphertext_and_integrity_to_primary_key(
+    audit_security, settings
+):
+    old_key = settings.FIELD_ENCRYPTION_KEY
+    event = AuditLog.log_action(
+        action="user_login",
+        user_id="rotation-customer",
+        user_type="customer",
+        user_email="rotation@example.test",
+        ip_address="203.0.113.40",
+    )
+    old_raw = audit_security["audit_logs"].find_one({"_id": event._id})
+    old_key_id = encrypted_value_key_id(old_raw["user_email"])
+
+    settings.FIELD_ENCRYPTION_KEY = Fernet.generate_key().decode()
+    settings.FIELD_ENCRYPTION_PREVIOUS_KEYS = (old_key,)
+    _build_keyring.cache_clear()
+    _get_fernet.cache_clear()
+
+    assert AuditLog.verify_integrity_document(old_raw)
+    assert AuditLog.from_dict(old_raw).user_email == "rotation@example.test"
+    call_command("backfill_audit_events", apply=True, stdout=StringIO())
+
+    rotated = audit_security["audit_logs"].find_one({"_id": event._id})
+    assert encrypted_value_key_id(rotated["user_email"]) == primary_key_id()
+    assert encrypted_value_key_id(rotated["user_email"]) != old_key_id
+    assert AuditLog.verify_integrity_document(rotated)
+
+    settings.FIELD_ENCRYPTION_PREVIOUS_KEYS = ()
+    _build_keyring.cache_clear()
+    _get_fernet.cache_clear()
+    assert AuditLog.from_dict(rotated).user_email == "rotation@example.test"
+    assert AuditLog.verify_integrity_document(rotated)
