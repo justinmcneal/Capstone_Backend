@@ -67,6 +67,11 @@ def main(argv: list[str]) -> int:
             os.getenv("BACKUP_RESTORE_DB_NAME", "capstone_db_restore_test")
             or "capstone_db_restore_test"
         ).strip()
+        if target_db == source_db:
+            raise RuntimeError(
+                "BACKUP_RESTORE_DB_NAME must differ from MONGODB_NAME; "
+                "refusing to restore over the source database"
+            )
 
         env = dict(os.environ)
         decrypt_cmd = [
@@ -87,6 +92,12 @@ def main(argv: list[str]) -> int:
             "--archive",
             "--gzip",
             "--drop",
+            # A backup may contain legacy records created before a collection
+            # validator was tightened. Restore the evidence faithfully, then
+            # run the current inventory/backfill workflow against the isolated
+            # target before approving it.
+            "--bypassDocumentValidation",
+            "--stopOnError",
             "--nsFrom",
             f"{source_db}.*",
             "--nsTo",

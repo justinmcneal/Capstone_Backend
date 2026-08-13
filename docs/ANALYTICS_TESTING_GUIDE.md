@@ -5,8 +5,8 @@
 > ready for production-environment validation. Stages 1-6 (query correctness,
 > privacy, protected audit persistence,
 > integrity/lifecycle, officer scope, and metric consistency) are complete at
-> code/test level, including bounded queries and operational signals. Real-
-> environment query-plan/load and deployment execution remain open. See
+> code/test level, including bounded queries and operational signals. Isolated
+> query-plan/load evidence is complete; production-topology execution remains. See
 > `docs/ANALYTICS_PRODUCTION_READINESS_REVIEW.md` for the evidence and staged
 > remediation plan.
 
@@ -544,8 +544,9 @@ Use these as negative and boundary cases while implementing the readiness plan:
    legal-hold, integrity inventory, and backup/restore still need controlled
    target-environment evidence.
 7. Stage 5 bounds prefix search, offsets, active products, and MongoDB execution
-   time; aggregates product metrics; and bootstraps compound indexes. Real-Mongo
-   explain and representative-load evidence remain.
+   time; aggregates product metrics; and bootstraps compound indexes. The
+   approved test-cluster explain/load suite passed; repeat it after selecting
+   the production topology.
 8. Stage 5 adds a 300/hour authenticated throttle, request/audit/backlog/
    integrity metrics, health readiness, and sanitized HTTP 503 behavior.
    Production scrape/dashboard/alert delivery remains deployment validation.
@@ -568,8 +569,8 @@ pytest -q tests/test_analytics_api.py \
 ```
 
 Latest local Stage 6 result on 2026-08-13: Analytics Stage 1-6 suites passed
-**86 tests** and skipped **6 opt-in deployment tests**. The complete-project
-suite passed **1,120 tests**, skipped **27 opt-in integration tests**, and
+**88 tests** and skipped **7 opt-in deployment tests**. The complete-project
+suite passed **1,122 tests**, skipped **28 opt-in integration tests**, and
 reported one third-party WebSocket deprecation warning.
 
 Most API characterization cases use `mongomock` and direct view calls. Stage 6
@@ -580,9 +581,10 @@ behavior, backup/restore, monitoring, or load.
 
 The local suite now includes the controlled audit key-rotation/backfill sequence
 and validation of the deployable Prometheus/Grafana assets. Environment
-execution remains necessary for real MongoDB query plans, approved consistency
-SLO characterization, secret-manager rotation/rollback, restore rehearsal, and
-the opt-in deployment integration probes below.
+execution remains necessary for production-topology query-plan confirmation,
+secret-manager rotation/rollback, HTTPS proxy behavior, imported monitoring,
+on-call delivery, and the remaining opt-in probes below. The approved
+short-lived-inconsistency policy and post-write convergence are already proven.
 
 Do not point future load, retention, or recovery harnesses at a production
 database. They must create uniquely named temporary databases and remove only
@@ -637,8 +639,9 @@ does not print credentials or privilege documents.
 
 ## Audit Lifecycle Operator Commands
 
-These commands are documented for an approved isolated/deployment workflow;
-they were not run against a real database during Stage 3.
+These commands were exercised against the approved development/test database
+and isolated restored copy on 2026-08-13. Production use remains separately
+approval-gated.
 
 Read-only integrity/encryption/retention inventory:
 
@@ -710,6 +713,57 @@ rule evaluation and `monitoring/analytics/grafana-dashboard.json` into Grafana.
 The checked-in thresholds are safe starting points, not approved SLOs: calibrate
 them from representative traffic and record the approved values before release.
 
+### Local live Prometheus and Grafana
+
+The development `.env` may enable the ASGI metrics sidecar without changing
+`DEBUG=True`:
+
+```dotenv
+PROMETHEUS_METRICS_ENABLED=True
+PROMETHEUS_METRICS_HTTP_SERVER_ENABLED=True
+PROMETHEUS_METRICS_HTTP_SERVER_PORT=8001
+PROMETHEUS_METRICS_URL=http://127.0.0.1:8001/metrics
+```
+
+Restart Daphne after changing those values, then keep these commands running in
+separate terminals from the repository root:
+
+```bash
+.venv/bin/dotenv -f .env run -- \
+  .venv/bin/daphne -b 0.0.0.0 -p 8000 config.asgi:application
+
+prometheus \
+  --config.file="$PWD/monitoring/analytics/prometheus-smoke.yml" \
+  --storage.tsdb.path=/tmp/capstone-analytics-prometheus-live \
+  --web.listen-address=127.0.0.1:9090
+
+ANALYTICS_DASHBOARD_PATH="$PWD/monitoring/analytics" \
+GF_SECURITY_ADMIN_USER=admin \
+GF_SECURITY_ADMIN_PASSWORD=admin \
+/opt/homebrew/opt/grafana/bin/grafana server \
+  --homepath /opt/homebrew/opt/grafana/share/grafana \
+  --config /opt/homebrew/etc/grafana/grafana.ini \
+  --packaging=brew \
+  cfg:default.paths.provisioning="$PWD/monitoring/grafana/provisioning" \
+  cfg:default.paths.data=/tmp/capstone-grafana-data \
+  cfg:default.paths.logs=/tmp/capstone-grafana-logs \
+  cfg:server.http_addr=127.0.0.1 \
+  cfg:server.http_port=3000
+```
+
+Open:
+
+- `http://127.0.0.1:8001/metrics` for raw metrics;
+- `http://127.0.0.1:9090/targets` for Prometheus target health; and
+- `http://127.0.0.1:3000/d/capstone-analytics/capstone-analytics-operations`
+  for the dashboard.
+
+The local Grafana bootstrap login is `admin` / `admin`; replace it when Grafana
+prompts. Generate authenticated Analytics traffic to populate endpoint panels.
+Backlog, replay, and integrity panels remain at zero or empty until those event
+types occur. Stop local servers with `Ctrl+C`; do not expose ports 8001, 9090,
+or 3000 publicly.
+
 After deployment bootstrap and the first scheduled/manual integrity inventory,
 run the read-only readiness command:
 
@@ -723,20 +777,25 @@ fix the failed gate rather than bypassing it.
 
 ### Remaining deployment evidence checklist
 
-- The real-Mongo harness completes and its winning indexes/execution statistics
-  meet the approved performance budget.
-- The Analytics runtime database identity is limited to required collection
+- [x] The real-Mongo harness completed against the approved test cluster; its
+  indexed scope, lifecycle, and convergence cases passed.
+- [ ] The production Analytics runtime database identity is limited to required collection
   reads/writes and cannot administer users/roles or unrelated databases.
-- Current/previous encryption-key rotation is exercised and rollback is proven.
-- Reverse-proxy request/response limits and timeouts preserve the sanitized API
+- [x] Current/previous encryption-key rotation was exercised on an isolated
+  restored database and verified after removing the previous key.
+- [ ] Reverse-proxy request/response limits and timeouts preserve the sanitized API
   error contract.
-- A real backup is restored into an isolated target and the integrity inventory
-  remains clean afterward.
-- Redis-backed throttling is shared across at least two application workers.
-- Prometheus scrapes every Analytics metric; dashboards render expected rates,
+- [x] A real encrypted backup restored 94 documents into an isolated target;
+  the post-backfill integrity inventory was clean and the target was removed.
+- [x] Two independent Redis clients observed one shared counter; repeat through
+  multiple production application workers after deployment.
+- [x] A temporary real Prometheus instance reported the Analytics scrape target
+  up and loaded all eight rules; `promtool` passed firing/resolution simulations.
+- [ ] Production Prometheus scrapes every Analytics metric; dashboards render expected rates,
   latency, response size, backlog age, replay, and integrity signals.
-- Test alerts fire and resolve through the approved on-call route without PII.
-- The incident runbook is rehearsed and evidence identifiers are recorded.
+- [ ] Test alerts fire and resolve through the approved on-call route without PII.
+- [x] The Analytics incident path was rehearsed from missing inventory/degraded
+  health through protected backfill, fresh inventory, and HTTP 200 readiness.
 
 ---
 
@@ -756,6 +815,8 @@ fix the failed gate rather than bypassing it.
 | Query bounds and health | `analytics/services/operations.py` |
 | Prometheus metrics | `analytics/metrics.py` |
 | Prometheus rules | `monitoring/analytics/prometheus-rules.yml` |
+| Prometheus rule tests | `monitoring/analytics/prometheus-rules.test.yml` |
+| Local Prometheus smoke config | `monitoring/analytics/prometheus-smoke.yml` |
 | Grafana dashboard | `monitoring/analytics/grafana-dashboard.json` |
 | Cross-domain adapters | `accounts/services/audit.py`, `profiles/services/audit.py`, `loans/services/audit.py`, `documents/services/audit.py` |
 | Operator commands | `analytics/management/commands/` |
@@ -784,7 +845,8 @@ fix the failed gate rather than bypassing it.
 8. Generate test data by exercising auth, loans, documents, and profiles APIs
    first; Analytics reads their side effects.
 9. Dashboard responses include `as_of`, but counts remain separate queries rather
-   than one database snapshot; concurrent writes can still cause transient
-   internal differences.
+   than one database snapshot. The approved policy accepts transient differences
+   during concurrent writes; after writes settle, the next successful refresh
+   must converge to the source collections.
 10. Do not assert that a passing `mongomock` test proves an index is used; use an
     explicitly gated real-Mongo `explain()` harness.

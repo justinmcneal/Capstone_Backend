@@ -32,6 +32,11 @@ database initialization mechanism.
   deployment release gate. The production baseline disables document CNN/AI,
   requires human review, and fails closed unless private malware scanning is
   required and enabled.
+- Analytics: implementation and isolated development validation are complete,
+  including real-Mongo query plans, audit protection, backup/restore, Redis,
+  Celery, Prometheus, and a provisioned Grafana dashboard. Restricted production
+  database credentials, HTTPS proxy validation, production monitoring/on-call
+  delivery, and the final production-mode release check remain deployment gates.
 
 ## Development Quick Start
 
@@ -381,7 +386,115 @@ python scripts/restore_encrypted_backup.py /path/to/backup.archive.gz.enc
 ## Metrics and Observability
 
 The project exposes optional Prometheus metrics when `prometheus-client` is
-installed. Notification counters include:
+installed. For local ASGI monitoring, configure `.env` and restart Daphne:
+
+```dotenv
+PROMETHEUS_METRICS_ENABLED=True
+PROMETHEUS_METRICS_HTTP_SERVER_ENABLED=True
+PROMETHEUS_METRICS_HTTP_SERVER_PORT=8001
+PROMETHEUS_METRICS_URL=http://127.0.0.1:8001/metrics
+```
+
+Keep the exporter private. Ports `8001`, `9090`, and `3000` are local monitoring
+ports and must not be exposed publicly.
+
+### Local Analytics Monitoring with Prometheus and Grafana
+
+Install the local monitoring tools on macOS:
+
+```bash
+brew install prometheus grafana
+```
+
+Run the following in separate terminals from the repository root. If Daphne is
+already running, stop it and restart it with the first command so the metrics
+settings are loaded.
+
+```bash
+# Terminal 1: backend plus private metrics sidecar on port 8001
+.venv/bin/dotenv -f .env run -- \
+  .venv/bin/daphne -b 0.0.0.0 -p 8000 config.asgi:application
+
+# Terminal 2: Prometheus
+mkdir -p /tmp/capstone-analytics-prometheus-live
+prometheus \
+  --config.file="$PWD/monitoring/analytics/prometheus-smoke.yml" \
+  --storage.tsdb.path=/tmp/capstone-analytics-prometheus-live \
+  --web.listen-address=127.0.0.1:9090
+
+# Terminal 3: Grafana with the repository-provisioned datasource/dashboard
+mkdir -p /tmp/capstone-grafana-data /tmp/capstone-grafana-logs
+ANALYTICS_DASHBOARD_PATH="$PWD/monitoring/analytics" \
+GF_SECURITY_ADMIN_USER=admin \
+GF_SECURITY_ADMIN_PASSWORD=admin \
+/opt/homebrew/opt/grafana/bin/grafana server \
+  --homepath /opt/homebrew/opt/grafana/share/grafana \
+  --config /opt/homebrew/etc/grafana/grafana.ini \
+  --packaging=brew \
+  cfg:default.paths.provisioning="$PWD/monitoring/grafana/provisioning" \
+  cfg:default.paths.data=/tmp/capstone-grafana-data \
+  cfg:default.paths.logs=/tmp/capstone-grafana-logs \
+  cfg:server.http_addr=127.0.0.1 \
+  cfg:server.http_port=3000
+```
+
+Open these pages:
+
+| Page | URL | Purpose |
+| --- | --- | --- |
+| Raw application metrics | `http://127.0.0.1:8001/metrics` | Inspect exported Prometheus metric families. |
+| Prometheus targets | `http://127.0.0.1:9090/targets` | Confirm `capstone-analytics-smoke` is `UP`. |
+| Prometheus rules | `http://127.0.0.1:9090/rules` | Inspect loaded Analytics recording and alert rules. |
+| Analytics Grafana dashboard | `http://127.0.0.1:3000/d/capstone-analytics/capstone-analytics-operations` | View request, latency, size, recovery, replay, and integrity panels. |
+
+The local Grafana bootstrap login is `admin` / `admin`. Replace it if Grafana
+prompts. These credentials are for this localhost-only development instance and
+must never be used in production.
+
+To generate visible customer traffic with Insomnia:
+
+1. Log in through the customer authentication endpoint.
+2. Copy the returned access token.
+3. Send an authenticated request:
+
+```http
+GET http://127.0.0.1:8000/api/analytics/customer/
+Authorization: Bearer <customer-access-token>
+```
+
+4. In Grafana, select **Last 5 minutes** and refresh. The request-rate, latency,
+   and response-size panels should populate within a few seconds.
+
+A login creates an audit event, but the login endpoint itself does not increment
+`analytics_requests_total`; the authenticated Analytics request above does.
+Metrics intentionally omit email addresses, tokens, customer IDs, IP addresses,
+request bodies, and stored event details.
+
+Verify configuration and alert behavior from the command line:
+
+```bash
+promtool check config monitoring/analytics/prometheus-smoke.yml
+promtool check rules monitoring/analytics/prometheus-rules.yml
+
+cd monitoring/analytics
+promtool test rules prometheus-rules.test.yml
+cd ../..
+
+pytest -q tests/test_analytics_monitoring_assets.py
+```
+
+Stop each foreground service with `Ctrl+C`. Local Prometheus and Grafana data
+are stored under `/tmp`; remove those directories after stopping the services
+when the history is no longer needed:
+
+```bash
+rm -rf /tmp/capstone-analytics-prometheus-live
+rm -rf /tmp/capstone-grafana-data /tmp/capstone-grafana-logs
+```
+
+Analytics metrics include request outcomes, duration, response size, audit-write
+failures, replay outcomes, recovery backlog/age, and integrity findings.
+Notification counters include:
 
 - `notifications_email_send_success_total`
 - `notifications_email_send_failure_total`
@@ -391,6 +504,12 @@ installed. Notification counters include:
 Profiles metrics cover scoring outcomes/backlogs, duplicate records, encryption
 coverage, audit recovery, review queues, and denied access. See
 [`docs/profiles/PROFILES_PRODUCTION_READINESS_REVIEW.md`](docs/profiles/PROFILES_PRODUCTION_READINESS_REVIEW.md).
+
+For production monitoring, use private service discovery, persistent protected
+storage, a non-default Grafana administrator credential, authentication/TLS,
+and a tested Alertmanager or Grafana contact point. See
+[`docs/ANALYTICS_TESTING_GUIDE.md`](docs/ANALYTICS_TESTING_GUIDE.md) for release
+checks and production-topology boundaries.
 
 `EMAIL_SENDER_THREADPOOL_MAX_WORKERS` controls the internal notification email
 thread pool and defaults to `4`. Tune it only after observing workload and CPU.
@@ -403,5 +522,7 @@ thread pool and defaults to `4`. Tune it only after observing workload and CPU.
 - [Profiles testing guide](docs/profiles/PROFILES_TESTING_GUIDE.md)
 - [Documents production readiness](docs/documents/DOCUMENTS_PRODUCTION_READINESS_REVIEW.md)
 - [Documents testing guide](docs/documents/DOCUMENTS_TESTING_GUIDE.md)
+- [Analytics production readiness](docs/ANALYTICS_PRODUCTION_READINESS_REVIEW.md)
+- [Analytics testing guide](docs/ANALYTICS_TESTING_GUIDE.md)
 - [API reference](docs/feats/API_REFERENCE.md)
 - [Deployment and operations](docs/feats/DEPLOYMENT_AND_OPERATIONS_GUIDE.md)

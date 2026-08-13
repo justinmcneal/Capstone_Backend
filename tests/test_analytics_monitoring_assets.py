@@ -9,6 +9,9 @@ import yaml
 ROOT = Path(__file__).resolve().parents[1]
 RULES_PATH = ROOT / "monitoring" / "analytics" / "prometheus-rules.yml"
 DASHBOARD_PATH = ROOT / "monitoring" / "analytics" / "grafana-dashboard.json"
+RULE_TEST_PATH = ROOT / "monitoring" / "analytics" / "prometheus-rules.test.yml"
+SMOKE_CONFIG_PATH = ROOT / "monitoring" / "analytics" / "prometheus-smoke.yml"
+GRAFANA_PROVISIONING_ROOT = ROOT / "monitoring" / "grafana" / "provisioning"
 
 EXPECTED_METRICS = {
     "analytics_requests_total",
@@ -36,6 +39,10 @@ def test_analytics_prometheus_rules_are_parseable_and_have_runbooks():
     }
     assert all(rule["labels"]["service"] == "analytics" for rule in alerts)
     assert all(rule["annotations"].get("runbook") for rule in alerts)
+    test_definition = yaml.safe_load(RULE_TEST_PATH.read_text(encoding="utf-8"))
+    assert len(test_definition["tests"]) == 3
+    smoke_config = yaml.safe_load(SMOKE_CONFIG_PATH.read_text(encoding="utf-8"))
+    assert smoke_config["scrape_configs"][0]["job_name"] == "capstone-analytics-smoke"
 
 
 def test_analytics_dashboard_is_parseable_and_covers_every_metric_family():
@@ -52,3 +59,23 @@ def test_analytics_dashboard_is_parseable_and_covers_every_metric_family():
     assert len({panel["id"] for panel in dashboard["panels"]}) == len(
         dashboard["panels"]
     )
+    assert all(
+        panel["datasource"]["uid"] == "capstone-prometheus"
+        for panel in dashboard["panels"]
+    )
+
+
+def test_grafana_provisioning_connects_prometheus_and_dashboard_directory():
+    datasource = yaml.safe_load(
+        (GRAFANA_PROVISIONING_ROOT / "datasources" / "prometheus.yml").read_text(
+            encoding="utf-8"
+        )
+    )["datasources"][0]
+    provider = yaml.safe_load(
+        (GRAFANA_PROVISIONING_ROOT / "dashboards" / "analytics.yml").read_text(
+            encoding="utf-8"
+        )
+    )["providers"][0]
+    assert datasource["uid"] == "capstone-prometheus"
+    assert datasource["url"] == "http://127.0.0.1:9090"
+    assert provider["options"]["path"] == "$ANALYTICS_DASHBOARD_PATH"

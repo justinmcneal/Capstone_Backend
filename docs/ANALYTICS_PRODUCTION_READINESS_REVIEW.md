@@ -28,7 +28,9 @@ behavior, production load, or database access controls.
 ## Executive Summary
 
 The Analytics module is **complete for the reviewed application-code scope and
-ready for production-environment validation**.
+ready for deployment when a production environment is selected**. Final
+production certification is intentionally deferred until that deployment
+exists.
 Seven read-only endpoints provide administrator, loan-officer, and customer
 dashboards plus administrator/officer audit-log views. Admin dashboard and log
 routes use named permissions, customer counts are owner-scoped, officer queue
@@ -41,17 +43,20 @@ protected audit persistence, cross-domain recovery, integrity verification, and
 audit lifecycle controls. Officer audit visibility now uses event-time scope,
 and dashboards share versioned lifecycle-aware definitions. Application-code
 remediation and repository-side release tooling are complete for the reviewed
-scope. Real-Mongo query plans/load, database roles, key operations,
-backfill/restore procedures, and deployment integrations still require isolated
-environment evidence; those are release execution conditions rather than
-unimplemented Analytics behavior.
+scope. Isolated real-Mongo, Redis, key-rotation, backup/restore, metrics-scrape,
+and incident-recovery evidence has now been recorded. The owner has accepted a
+single-account MongoDB administration/runtime exception and deferred HTTPS proxy
+validation until deployment. Prometheus and Grafana are proven locally and may
+remain local for the current operating plan. The final production-mode release
+check still requires the selected deployment topology; these are recorded
+operational decisions rather than unimplemented Analytics behavior.
 
 Current local baseline:
 
-- Local Analytics Stage 1-6 and deployment-asset suites: **86 passed and 6
+- Local Analytics, restore-safety, and deployment-asset suites: **88 passed and 7
   opt-in integration tests skipped** on 2026-08-13.
-- Full project suite after the final repository-side release package: **1,120
-  passed and 27 opt-in integration tests skipped**, with one third-party
+- Full project suite after the isolated validation work: **1,122 passed and 28
+  opt-in integration tests skipped**, with one third-party
   deprecation warning on 2026-08-13.
 - Characterization cases call views directly for precision, while Stage 6
   request tests exercise real URL routing, JWT validation, live accounts,
@@ -195,13 +200,15 @@ missing retention metadata, and plaintext sensitive fields. The specialized
 backfill is dry-run-first, refuses invalid existing hashes and unregistered
 legacy actions, and preserves event meaning.
 
-Production still needs least-privilege MongoDB roles and evidence for the real
-key, backup/restore, retention, legal-hold, inventory, and backfill procedures.
-Stage 5 remains responsible for sanitized health/backlog metrics and alerts.
+The real key, backup/restore, retention, legal-hold, inventory, and backfill
+procedures have isolated development evidence. The owner has accepted continued
+use of the current `atlasAdmin` database identity instead of a separate
+least-privilege runtime identity. This is an explicit security exception: a
+leaked backend database URI carries `dropDatabase` and all-resource impact.
 
 ### 4. Legacy event normalization and registry governance
 
-**Status: Implemented; deployment inventory and apply approval remain**
+**Status: Implemented and applied to development data; production inventory/apply approval remain**
 
 New writes use schema version 2, the action registry, per-action detail
 contracts, category, retention metadata, encryption, and integrity protection.
@@ -230,8 +237,8 @@ officer was the actor; they are not broadened using current assignment.
 The officer response remains minimized and administrators continue to use the
 named-permission administrator routes. The compound officer-scope/time/ID index
 is bootstrapped. Scope lookup and integrity verification consider configured
-previous keys so controlled key rotation does not hide history. Target-volume
-query-plan proof remains Stage 6 work.
+previous keys so controlled key rotation does not hide history. The Stage 6
+test-cluster harness proved indexed execution over 5,000 events.
 
 ### 6. Dashboard metric contract
 
@@ -254,12 +261,14 @@ Fixture tests reconcile these definitions across dashboards and cover mixed IDs,
 reassignment, deleted/superseded documents, and pending-versus-approved IDs.
 
 `as_of` describes when evaluation began; the independent MongoDB counts are not
-a transactional snapshot. A materialized/snapshot strategy, if required by the
-approved consistency SLO, belongs to Stage 5.
+a transactional snapshot. The approved policy accepts short-lived differences
+during concurrent writes: once the writes settle, the next successful dashboard
+refresh must converge to the source collections. Exact point-in-time snapshots
+are not a release requirement for this version.
 
 ### 7. Query design and bounded execution
 
-**Status: Complete at code and automated-test level; real-Mongo proof remains**
+**Status: Complete with isolated real-Mongo query-plan evidence**
 
 Stage 5 applies `maxTimeMS` to Analytics counts, cursors, and aggregations;
 bounds page-number offsets and active-product cardinality; uses deterministic
@@ -298,7 +307,7 @@ deployment gates, not missing application behavior.
 
 ### 9. Automated evidence and release environment
 
-**Status: Local request-stack evidence complete; deployment evidence pending**
+**Status: Isolated development evidence complete; production-topology evidence pending**
 
 Stage 6 adds full URL-dispatch tests with issued JWTs, persisted active sessions,
 live-account resolution, named administrator permissions, role isolation, and
@@ -307,10 +316,10 @@ lower-level cases remain useful for precise view behavior.
 
 An explicitly gated real-Mongo harness creates and drops only a uniquely named
 temporary database. It covers validator/index installation, a 5,000-event
-officer-scope query with `executionStats`, idempotent recovery, legal holds,
-retention, and integrity/encryption inventory. It requires both
-`REAL_MONGO_TEST_URI` and `RUN_ANALYTICS_REAL_MONGO_TESTS=1` and was not executed
-during this local review because no approved isolated target was supplied.
+officer-scope query with `executionStats`, concurrent-write convergence,
+idempotent recovery, legal holds, retention, and integrity/encryption inventory.
+All three cases passed against the approved test cluster on 2026-08-13, and
+their random temporary databases were removed.
 Separate double-opt-in deployment probes validate the runtime MongoDB identity
 has no user/database-administration privilege, two Redis clients share one
 counter, the deployed metrics endpoint exposes every Analytics metric family,
@@ -323,15 +332,33 @@ re-signed by the dry-run-first backfill, and remains readable after the old key
 is removed. This proves the procedure in code but not target secret-manager or
 rollback operation.
 
-The repository still cannot prove without deployment infrastructure:
+The repository and approved development services still cannot prove HTTPS proxy
+behavior, production secret-manager operation, always-on alert delivery, or a
+final production-mode readiness result before deployment. The MongoDB
+least-privilege control is owner-waived rather than technically proven. Exact
+transactional dashboard snapshots are not required under the approved
+short-lived-inconsistency policy.
 
-- production encryption-key rotation, database-level least privilege, or real
-  backup/restore execution;
-- transactional/snapshot consistency during concurrent source writes;
-- proxy timeout/header behavior, shared Redis throttling, Prometheus scraping,
-  dashboard panels, or alert delivery/resolution; or
-- real MongoDB query plans and representative load until the opt-in harness is
-  executed and its evidence reviewed.
+### Owner-approved deployment decisions and exceptions
+
+- **MongoDB identity:** the owner will retain the existing single
+  `atlasAdmin@All Resources` database identity for administration and runtime.
+  The least-privilege probe correctly fails on `dropDatabase`; this result is
+  accepted as a documented risk, not represented as a passing control.
+- **HTTPS proxy:** proxy/TLS configuration and its probe are deferred until the
+  backend is deployed because local Daphne has no HTTPS termination layer.
+- **Prometheus and Grafana:** the local stack is implemented and verified. It
+  can monitor a deployed backend only while the local machine is running and
+  can securely reach the remote metrics endpoint. A VPN, SSH tunnel, or other
+  protected private path is required; the metrics port must not be exposed
+  anonymously to the public internet.
+- **Always-on monitoring:** deploying Prometheus/Grafana beside the backend or
+  using managed monitoring is optional for initial deployment, but required if
+  continuous collection, durable history, and alerts while the local computer
+  is offline are release requirements.
+- **Final gate:** `analytics_release_check` is deferred until the actual backend
+  deployment has its production settings, bootstrap, first integrity inventory,
+  Redis, and monitoring path configured.
 
 ## Remediation Plan
 
@@ -373,8 +400,12 @@ count.
 - [x] Add dry-run-first legacy backfill and legal-hold operator commands.
 - [x] Prove the audit key-rotation/backfill sequence locally, including removal
   of the previous key after re-encryption.
-- [ ] Prove key operations, backup/restore, database roles, and controlled
-  command execution in Stage 6's isolated deployment environment.
+- [x] Prove key rotation, encrypted backup/restore, legacy backfill, and
+  controlled command execution against an isolated restored database.
+- [x] Record the owner-approved single-`atlasAdmin` runtime exception; the
+  resulting all-resource and `dropDatabase` exposure is explicitly accepted.
+- [x] Defer the production secret-manager procedure until a deployment target
+  exists; the isolated key-rotation procedure is already proven.
 
 ### Stage 4 — Scope and metric correctness
 
@@ -385,8 +416,8 @@ count.
 - [x] Version metric definitions, align status semantics, and add UTC `as_of`.
 - [x] Test reassignment, mixed-ID, lifecycle, valid-ID, and cross-dashboard
   reconciliation invariants.
-- [ ] Prove the indexed scope query and concurrent consistency behavior under
-  representative real MongoDB load in Stage 6.
+- [x] Prove indexed officer scope and post-write count convergence against the
+  approved isolated real MongoDB target; transient in-flight drift is accepted.
 
 ### Stage 5 — Scalability and observability
 
@@ -399,8 +430,9 @@ count.
 - [x] Document configuration, diagnosis, and incident evidence procedures.
 - [x] Provide structurally validated Prometheus recording/alert rules and an
   importable Grafana Analytics operations dashboard.
-- [ ] Prove real query plans/load and connect/test production dashboards and
-  alerts in Stage 6.
+- [x] Prove real query plans and representative test-cluster load in Stage 6.
+- [x] Import and test the dashboard locally with live Analytics metrics; retain
+  local-only monitoring for the current plan and defer an always-on alert route.
 
 ### Stage 6 — Real-environment release validation
 
@@ -417,14 +449,30 @@ count.
 - [x] Add and structurally validate deployable Prometheus alert/recording rules
   and a Grafana dashboard.
 - [x] Re-run local focused and full suites and record the evidence above.
-- [ ] Execute and review the real-Mongo harness against an approved isolated
-  deployment-like target.
-- [ ] Validate the least-privilege runtime database identity, production key
-  rotation,
-  proxy timeouts/headers, backup and restore, Redis-shared throttles, Prometheus
-  scraping, dashboards, alert firing/resolution, and incident procedures.
+- [x] Execute and review the real-Mongo harness against the approved isolated
+  test target.
+- [x] Validate isolated key rotation, encrypted backup/restore, Redis sharing,
+  metric scraping, alert-rule firing/resolution logic, and the Analytics
+  incident recovery procedure.
+- [x] Record owner-approved deployment exceptions: single administrative
+  MongoDB identity, local-only monitoring, and deferred HTTPS/secret-manager/
+  always-on alert validation until a production target exists.
 - [ ] Run `analytics_release_check` in the target after bootstrap, the first
   integrity inventory, and all deployment integrations are configured.
+
+Development validation evidence recorded on 2026-08-13:
+
+| Check | Result |
+| --- | --- |
+| Real MongoDB | Three opt-in tests passed; 5,000-event indexed scope, lifecycle/recovery, and concurrent-write convergence were proven. |
+| Current MongoDB identity | Probe correctly failed because the single owner-approved identity has `dropDatabase`; the least-privilege control is explicitly waived and must be reconsidered if the risk decision changes. |
+| Legacy audit protection | Encrypted backup taken; 39-event dry run and apply completed with zero conflicts/invalid events; final inventory has zero findings. |
+| Restore and rotation | Owner-only encrypted backup restored 94 documents with zero failures; isolated key rotation remained valid after previous-key removal; restore target was deleted afterward. |
+| Redis/Celery | Shared Redis counter passed; one Celery worker replied; Beat holds the schedule containing all Analytics periodic tasks. |
+| Health | Local `/api/health/` returns HTTP 200 with Analytics ready, fresh inventory, zero backlog, and zero findings. |
+| Monitoring | Local Prometheus reports the live Daphne Analytics target up and loads all eight rules; Grafana 13.1.3 has the datasource and dashboard provisioned with real request series; rule simulations pass. |
+| Proxy | Expected local limitation; HTTPS/proxy proof is deferred until backend deployment. |
+| Release command | Expected development failure only for `DEBUG`, strict decryption, Prometheus enablement, and secure-proxy configuration; every database/health/index/validator gate passed. |
 
 ## API and Client Impact Notes
 
@@ -460,13 +508,12 @@ accepts instead of assuming every producer is safe.
 
 ## Release Gate
 
-Do not classify Analytics as production-ready until Stages 1–5 are implemented
-and tested, Stage 6 evidence is recorded, no privileged query can silently
-broaden, audit-derived data requires the correct permission, sensitive event
-fields are minimized/protected, officer scope is proven, event integrity and
-lifecycle controls are operational, dashboard definitions reconcile with source
-domains, and representative real-Mongo query plans meet an approved performance
-budget.
+Analytics is application-ready and deployment-prepared. Do not classify the
+actual production deployment as certified until `analytics_release_check`
+passes against that deployed target after bootstrap and the first integrity
+inventory. The owner-approved MongoDB least-privilege exception and any
+local-only monitoring limitations must remain visible in the release record;
+they are accepted risks, not passing technical controls.
 
 ## Related Documentation
 

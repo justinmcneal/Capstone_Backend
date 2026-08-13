@@ -4,7 +4,7 @@
   "graphTooltip": 1,
   "panels": [
     {
-      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "datasource": {"type": "prometheus", "uid": "capstone-prometheus"},
       "fieldConfig": {"defaults": {"unit": "reqps"}},
       "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
       "id": 1,
@@ -13,7 +13,7 @@
       "type": "timeseries"
     },
     {
-      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "datasource": {"type": "prometheus", "uid": "capstone-prometheus"},
       "fieldConfig": {"defaults": {"unit": "s"}},
       "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0},
       "id": 2,
@@ -22,7 +22,7 @@
       "type": "timeseries"
     },
     {
-      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "datasource": {"type": "prometheus", "uid": "capstone-prometheus"},
       "fieldConfig": {"defaults": {"unit": "bytes"}},
       "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8},
       "id": 3,
@@ -31,7 +31,7 @@
       "type": "timeseries"
     },
     {
-      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "datasource": {"type": "prometheus", "uid": "capstone-prometheus"},
       "fieldConfig": {"defaults": {"unit": "short"}},
       "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8},
       "id": 4,
@@ -43,7 +43,7 @@
       "type": "timeseries"
     },
     {
-      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "datasource": {"type": "prometheus", "uid": "capstone-prometheus"},
       "fieldConfig": {"defaults": {"unit": "short"}},
       "gridPos": {"h": 8, "w": 12, "x": 0, "y": 16},
       "id": 5,
@@ -52,7 +52,7 @@
       "type": "timeseries"
     },
     {
-      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "datasource": {"type": "prometheus", "uid": "capstone-prometheus"},
       "fieldConfig": {"defaults": {"unit": "short"}},
       "gridPos": {"h": 8, "w": 12, "x": 12, "y": 16},
       "id": 6,
@@ -63,7 +63,7 @@
   ],
   "schemaVersion": 39,
   "tags": ["analytics", "capstone"],
-  "templating": {"list": [{"name": "DS_PROMETHEUS", "type": "datasource", "query": "prometheus", "current": {}}]},
+  "templating": {"list": []},
   "time": {"from": "now-6h", "to": "now"},
   "title": "Capstone Analytics Operations",
   "uid": "capstone-analytics",

@@ -3,6 +3,7 @@
 import hashlib
 import os
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -16,6 +17,7 @@ from analytics.services.lifecycle import (
     release_audit_legal_hold,
     set_audit_legal_hold,
 )
+from analytics.services.operations import bounded_count
 from config.field_encryption import encrypt_value
 
 
@@ -143,3 +145,34 @@ def test_analytics_real_mongo_idempotent_recovery_and_lifecycle(analytics_real_m
     inventory = audit_integrity_inventory(limit=10000)
     assert inventory["invalid_integrity"] == 0
     assert inventory["plaintext_sensitive_fields"] == 0
+
+
+@pytest.mark.real_mongo
+def test_dashboard_counts_converge_after_concurrent_writes(analytics_real_mongo):
+    """Accepted eventual-consistency policy: transient drift, then convergence."""
+    database = analytics_real_mongo
+    loans = database["loan_applications"]
+    total = 500
+
+    def write_batch(start):
+        documents = [
+            {
+                "customer_id": f"customer-{index % 25}",
+                "status": "submitted",
+                "created_at": datetime.now(timezone.utc),
+            }
+            for index in range(start, start + 100)
+        ]
+        loans.insert_many(documents)
+
+    with ThreadPoolExecutor(max_workers=5) as executor:
+        futures = [executor.submit(write_batch, start) for start in range(0, total, 100)]
+        # Reads are intentionally allowed to observe partial progress while
+        # independent writes are still in flight.
+        observed_during_writes = bounded_count(loans, {})
+        for future in futures:
+            future.result()
+
+    assert 0 <= observed_during_writes <= total
+    assert bounded_count(loans, {}) == total
+    assert bounded_count(loans, {"status": "submitted"}) == total

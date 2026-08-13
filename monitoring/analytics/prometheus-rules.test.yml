@@ -1,0 +1,56 @@
+rule_files:
+  - prometheus-rules.yml
+
+evaluation_interval: 1m
+
+tests:
+  - name: audit backlog alert fires after ten minutes and resolves
+    interval: 1m
+    input_series:
+      - series: analytics_audit_failure_backlog
+        values: 0 1x11 0
+    alert_rule_test:
+      - eval_time: 11m
+        alertname: AnalyticsAuditRecoveryBacklog
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              service: analytics
+            exp_annotations:
+              summary: Analytics audit recovery backlog is not draining
+              runbook: docs/ANALYTICS_TESTING_GUIDE.md#analytics-operations-runbook
+      - eval_time: 13m
+        alertname: AnalyticsAuditRecoveryBacklog
+        exp_alerts: []
+
+  - name: integrity alert fires and resolves without identifiers
+    interval: 1m
+    input_series:
+      - series: 'analytics_audit_integrity_gaps{kind="invalid_integrity"}'
+        values: 0 1 1 0
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: AnalyticsAuditIntegrityFinding
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              service: analytics
+            exp_annotations:
+              summary: Analytics audit integrity inventory found a gap
+              runbook: docs/ANALYTICS_TESTING_GUIDE.md#analytics-operations-runbook
+      - eval_time: 3m
+        alertname: AnalyticsAuditIntegrityFinding
+        exp_alerts: []
+
+  - name: missing operational gauge alerts after ten minutes
+    interval: 1m
+    alert_rule_test:
+      - eval_time: 11m
+        alertname: AnalyticsMetricsMissing
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              service: analytics
+            exp_annotations:
+              summary: Analytics application metrics are missing
+              runbook: docs/ANALYTICS_TESTING_GUIDE.md#analytics-operations-runbook
