@@ -10,20 +10,20 @@ This guide covers the AI Assistant's API, consent and customer isolation,
 context/tool safety, chat persistence, SSE behavior, provider integration,
 privacy lifecycle, observability, and deployment validation.
 
-The focused Stage 1–4 offline suite passed during the review:
+The focused Stage 1–5 offline suite passed during the review:
 
 ```text
-207 passed
+217 passed
 ```
 
 That result verifies the current local/mocked implementation only. It is not a
 substitute for the real MongoDB, Redis, provider, proxy, load, privacy-lifecycle,
 and monitoring gates described below.
 
-The complete local repository suite also passed after Stage 4:
+The complete local repository suite also passed after Stage 5:
 
 ```text
-1184 passed, 30 skipped
+1194 passed, 30 skipped
 ```
 
 ## Safety Rules
@@ -141,12 +141,14 @@ event: token
 data: {"content":"Your"}
 
 event: done
-data: {"model":"...","tokens_used":0,"response_time_ms":25,"conversation_id":"...","tools_called":["get_document_status"]}
+data: {"model":"...","tokens_used":0,"response_time_ms":25,"conversation_id":"...","tools_called":["get_document_status"],"request_id":"..."}
 
 ```
 
-An `error` event ends a failed stream. Clients must not treat an HTTP 200 alone
-as success; success requires a valid terminal `done` event.
+An `error` event ends a failed stream and includes `code` plus `request_id`.
+Tokens received before an error are incomplete display-only output and are not
+persisted. Clients must not treat HTTP 200 alone as success; success requires
+exactly one valid terminal `done` event.
 
 Verify these headers:
 
@@ -200,6 +202,7 @@ focused command is:
   tests/test_ai_stage2_provider_boundary.py \
   tests/test_ai_stage3_persistence_scalability.py \
   tests/test_ai_stage4_observability.py \
+  tests/test_ai_stage5_streaming_correctness.py \
   tests/test_ai_model_methods.py \
   tests/test_ai_streaming.py \
   tests/test_chatbot_api.py \
@@ -226,6 +229,7 @@ Static checks for the module and its focused tests:
   tests/test_ai_stage2_provider_boundary.py \
   tests/test_ai_stage3_persistence_scalability.py \
   tests/test_ai_stage4_observability.py \
+  tests/test_ai_stage5_streaming_correctness.py \
   tests/test_ai_model_methods.py \
   tests/test_ai_streaming.py \
   tests/test_chatbot_api.py \
@@ -255,6 +259,7 @@ modules and are required for the current focused count.
 | Stage 2 provider boundary | Message/request/search/page bounds, configurable throttle, hard generation limits, provider selection, readiness states, stable errors, safe GET retry, no paid-POST retry, stream concurrency lifetime, and circuit opening. |
 | Stage 3 persistence/scalability | Idempotent exchange pairs, lease/replay/conflict behavior, signed cursor continuity/tamper rejection, bounded conversation reads, validators, indexes, and owner-shape reconciliation. |
 | Stage 4 tool safety/observability | Atomic pre-execution budgets, failed-attempt charging, explicit dashboard cost/schema, metadata-only durable tool audit, request-ID propagation, truthful tool results, low-cardinality metrics, and monitoring assets. |
+| Stage 5 streaming correctness | Single-pass escaping, aligned filtered persistence, malformed/truncated/empty stream rejection, one terminal event, request-ID errors, disconnect lease release, and upstream response closure. |
 
 Most persistence and external behavior in these tests is mocked or in-memory.
 
@@ -303,15 +308,19 @@ index/validator definitions. Deployment tests must additionally verify:
 
 ### Output correctness
 
-Add regression tests ensuring:
+Stage 5 regression tests ensure:
 
-- non-streaming and streaming responses persist the same decoded text;
-- `<`, `>`, `&`, quotes, Unicode, and multiline content are escaped exactly
+- streaming content is persisted after one sanitization/escaping pass;
+- `&`, Unicode, and multiline content are escaped exactly
   once, not double-escaped;
 - an empty/truncated stream does not create a successful assistant message;
 - a failed tool produces `tool_result.success=false`; and
 - public failures never include provider response bodies, URLs, API-key text,
   stack traces, or raw tool payloads.
+
+Filtered requests use the same two-record user/assistant persistence policy in
+ordinary and streaming chat. Provider `[DONE]` is required for success, `done`
+or `error` is terminal, and every terminal error carries the request ID.
 
 ## Tool and Customer-Isolation Tests
 
@@ -600,14 +609,16 @@ encryption, concurrency, or provider privacy.
 
 ## Release Evidence Checklist
 
-- [x] Stage 1–4 focused offline suite passes (207 tests on 2026-08-14).
-- [x] Full local repository suite passes after Stage 4 (1184 passed, 30 skipped).
+- [x] Stage 1–5 focused offline suite passes (217 tests on 2026-08-14).
+- [x] Full local repository suite passes after Stage 5 (1194 passed, 30 skipped).
 - [x] AI conversation encryption and shared key-rotation tests pass locally.
 - [x] Retention, legal hold, export, account-deletion, and retry tests pass locally.
 - [x] Stage 2 request/provider boundary tests pass locally.
 - [x] Stage 3 persistence, idempotency, cursor, validator, and index tests pass locally.
 - [x] Stage 4 atomic budget, durable metadata audit, correlation, truthful tool
   results, metrics, dashboards, and alert assets pass locally.
+- [x] Stage 5 single-pass escaping, filtered persistence, malformed/truncated/
+  empty stream, terminal-event, and disconnect cleanup tests pass locally.
 - [ ] Deployment-target inventory/backfill is reviewed, applied, and clean.
 - [ ] Isolated real MongoDB validator/index/query-plan/concurrency gate passes.
 - [ ] Real Redis multi-worker atomic limit/cache gate passes.
@@ -637,7 +648,7 @@ encryption, concurrency, or provider privacy.
 
 ## Review Boundary
 
-The 2026-08-14 Stage 1–4 review ran the focused and full local suites with
+The 2026-08-14 Stage 1–5 review ran the focused and full local suites with
 offline test settings. It
 did not read `.env`, use customer data, call Groq/Ollama, initialize a database,
 run Redis integration, modify deployment state, or perform load/proxy tests.

@@ -211,9 +211,11 @@ class StreamingChatView(AIRequestMetricsMixin, ConsentRequiredMixin, APIView):
             model_used = ''
             tokens_used = 0
             tools_called = []
+            terminal_emitted = False
+            provider_stream = None
             
             try:
-                for chunk in llm.chat_with_tools_stream(
+                provider_stream = llm.chat_with_tools_stream(
                     message=message,
                     customer_id=customer_id,
                     conversation_history=conversation_history,
@@ -221,7 +223,8 @@ class StreamingChatView(AIRequestMetricsMixin, ConsentRequiredMixin, APIView):
                     system_prompt=contextualized_prompt,
                     tools=TOOL_SCHEMAS,
                     request_id=request_id,
-                ):
+                )
+                for chunk in provider_stream:
                     chunk_type = chunk.get('type')
                     
                     if chunk_type == 'tool_call':
@@ -232,16 +235,19 @@ class StreamingChatView(AIRequestMetricsMixin, ConsentRequiredMixin, APIView):
                         yield f"event: tool_result\ndata: {json.dumps({'name': chunk.get('name'), 'success': chunk.get('success', True)})}\n\n"
                     
                     elif chunk_type == 'token':
-                        content = escape_llm_output(chunk.get('content', ''))
-                        full_response.append(content)
-                        yield f"event: token\ndata: {json.dumps({'content': content})}\n\n"
+                        raw_content = str(chunk.get('content', '') or '')
+                        full_response.append(raw_content)
+                        safe_content = escape_llm_output(raw_content)
+                        yield f"event: token\ndata: {json.dumps({'content': safe_content})}\n\n"
                     
                     elif chunk_type == 'done':
                         model_used = chunk.get('model', '')
                         tokens_used = chunk.get('tokens_used', 0)
                         elapsed_ms = int((time.time() - start_time) * 1000)
                         
-                        ai_response = escape_llm_output(sanitize_multiline_text(''.join(full_response)))
+                        ai_response = escape_llm_output(
+                            sanitize_multiline_text(''.join(full_response))
+                        )
                         if ai_response:
                             user_interaction = AIInteraction(
                                 customer_id=customer_id,
@@ -294,14 +300,17 @@ class StreamingChatView(AIRequestMetricsMixin, ConsentRequiredMixin, APIView):
                                 endpoint='chat_stream_completion',
                                 outcome='success',
                             )
+                            terminal_emitted = True
+                            yield f"event: done\ndata: {json.dumps({'model': model_used, 'tokens_used': tokens_used, 'response_time_ms': elapsed_ms, 'conversation_id': conversation_id, 'tools_called': tools_called, 'request_id': request_id})}\n\n"
                         else:
                             mark_failed(customer_id, request_id)
                             increment(
                                 AI_PERSISTENCE_FAILURES,
                                 operation='empty_stream',
                             )
-                        
-                        yield f"event: done\ndata: {json.dumps({'model': model_used, 'tokens_used': tokens_used, 'response_time_ms': elapsed_ms, 'conversation_id': conversation_id, 'tools_called': tools_called, 'request_id': request_id})}\n\n"
+                            terminal_emitted = True
+                            yield f"event: error\ndata: {json.dumps({'content': escape_llm_output('AI returned an empty response'), 'code': 'AI_EMPTY_RESPONSE', 'request_id': request_id})}\n\n"
+                        break
                     
                     elif chunk_type == 'error':
                         mark_failed(customer_id, request_id)
@@ -323,10 +332,34 @@ class StreamingChatView(AIRequestMetricsMixin, ConsentRequiredMixin, APIView):
                         error_data = {
                             'content': escape_llm_output(chunk.get('content', 'Unknown error')),
                             'code': chunk.get('code', 'AI_PROVIDER_ERROR'),
+                            'request_id': request_id,
                         }
+                        terminal_emitted = True
                         yield f"event: error\ndata: {json.dumps(error_data)}\n\n"
                         break
-                        
+
+                if not terminal_emitted:
+                    mark_failed(customer_id, request_id)
+                    increment(
+                        AI_REQUESTS,
+                        endpoint='chat_stream_completion',
+                        outcome='incomplete',
+                    )
+                    terminal_emitted = True
+                    yield f"event: error\ndata: {json.dumps({'content': escape_llm_output('AI stream ended unexpectedly'), 'code': 'AI_STREAM_INCOMPLETE', 'request_id': request_id})}\n\n"
+            except GeneratorExit:
+                if not terminal_emitted:
+                    mark_failed(customer_id, request_id)
+                    increment(
+                        AI_REQUESTS,
+                        endpoint='chat_stream_completion',
+                        outcome='disconnect',
+                    )
+                    logger.info(
+                        'AI stream disconnected before completion',
+                        extra={'request_id': request_id},
+                    )
+                raise
             except NON_FATAL_EXCEPTIONS:
                 mark_failed(customer_id, request_id)
                 increment(AI_PERSISTENCE_FAILURES, operation='stream_request')
@@ -339,7 +372,11 @@ class StreamingChatView(AIRequestMetricsMixin, ConsentRequiredMixin, APIView):
                     "AI stream request failed",
                     extra={'request_id': request_id},
                 )
-                yield f"event: error\ndata: {json.dumps({'content': escape_llm_output('Stream error occurred')})}\n\n"
+                yield f"event: error\ndata: {json.dumps({'content': escape_llm_output('Stream error occurred'), 'code': 'AI_STREAM_ERROR', 'request_id': request_id})}\n\n"
+            finally:
+                close_stream = getattr(provider_stream, 'close', None)
+                if callable(close_stream):
+                    close_stream()
         
         return self._streaming_response(event_stream())
 

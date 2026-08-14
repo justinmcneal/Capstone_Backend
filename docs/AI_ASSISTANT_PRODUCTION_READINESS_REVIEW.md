@@ -30,10 +30,9 @@ quality.
 
 ## Executive Summary
 
-The AI Assistant is **complete through Stage 4 at the application-code and local
+The AI Assistant is **complete through Stage 5 at the application-code and local
 automated-test level**. It is not yet ready for production approval because
-streaming correctness, bilingual quality evaluation, and deployment validation
-remain.
+bilingual quality evaluation and deployment validation remain.
 
 Nine customer endpoints provide English/Tagalog chat, streaming chat, history,
 provider status, suggestions, education, and FAQs. Chat can use ten fixed,
@@ -41,18 +40,20 @@ read-only, customer-scoped tools. Current AI/data consent is required whenever
 personal data or conversation history is processed. No administrator or loan-
 officer AI endpoint is registered.
 
-Stages 1 through 4 added encrypted interaction content, keyed search, retention,
+Stages 1 through 5 added encrypted interaction content, keyed search, retention,
 legal holds, export/deletion integration, validated request/provider limits,
 stable provider failures, bounded provider concurrency, idempotency leases,
 transaction-backed exchange persistence, signed cursor history, bounded domain
 queries, MongoDB validators, production indexes, atomic tool budgets, durable
 metadata-only tool audit, end-to-end correlation, metrics, dashboards, and
-alerts. Stages 5 and 6 remain open and are described below.
+alerts. Streaming now fails closed for malformed/truncated providers, closes
+upstream work on disconnect, persists content after exactly one escaping pass,
+and emits one correlated terminal event. Stage 6 remains open.
 
 Current local baseline:
 
-- Focused Stage 1–4 AI suite: **207 passed** on 2026-08-14.
-- Full repository suite: **1,184 passed and 30 opt-in integration tests skipped**
+- Focused Stage 1–5 AI suite: **217 passed** on 2026-08-14.
+- Full repository suite: **1,194 passed and 30 opt-in integration tests skipped**
   on 2026-08-14.
 - The skipped cases require explicitly approved real MongoDB, Redis, provider,
   proxy, load, privacy, or monitoring environments.
@@ -68,7 +69,7 @@ customer:
 | Route | Consent boundary | Implementation status |
 | --- | --- | --- |
 | `POST chat/` | Current data and AI consent | Stage 4 complete; deployment monitoring proof remains |
-| `POST chat/stream/` | Current data and AI consent | Stage 3 complete; Stage 5 stream hardening remains |
+| `POST chat/stream/` | Current data and AI consent | Stage 5 complete; proxy/load proof remains |
 | `GET history/` | Current data and AI consent | Implemented with cursor and bounded offset modes |
 | `DELETE history/` | Current data and AI consent | Implemented with legal-hold preservation |
 | `GET suggestions/` | Authentication only | Implemented; static English/Tagalog content |
@@ -230,19 +231,22 @@ retention policy.
 
 ### 5. Streaming and response correctness
 
-**Status: Partial; Stage 5 application and proxy work remains**
+**Status: Complete at code and automated-test level; proxy/load proof remains**
 
 SSE framing, content type, cache control, anti-buffering headers, token events,
-terminal events, and persistence have local coverage. Remaining defects and
-policy decisions are:
+and exactly one terminal event have local coverage. Raw provider tokens are
+accumulated and sanitized/escaped once for persistence, while each emitted token
+is safely escaped for transport. Ordinary and streaming filtered requests both
+persist the same user/assistant pair. Empty, malformed, truncated, and
+unterminated streams emit a correlated error and do not persist partial content.
+`tool_result.success` reflects the safe executor outcome.
 
-- streamed tokens are escaped individually and the joined response is escaped
-  again before storage, which can double-escape entities;
-- filtered messages are persisted by ordinary chat but not streaming chat;
-- `tool_result.success` can be emitted as true for a safe error/rate-limit
-  payload; and
-- disconnect, malformed/truncated upstream stream, proxy buffering, upstream
-  failure, and multi-worker stream-limit behavior lack deployment evidence.
+Closing a client response closes the provider generator, which closes the
+upstream HTTP response and releases its concurrency permit; an incomplete
+request lease is marked failed for an intentional retry. Deployment must still
+prove disconnect propagation, incremental delivery, buffering, timeouts,
+resource limits, and concurrency behavior through the selected ASGI workers and
+reverse proxy/load balancer.
 
 ### 6. Model quality and knowledge governance
 
@@ -261,7 +265,7 @@ it adds ingestion, freshness, authorization, privacy, and citation obligations.
 
 ### 7. Automated evidence and release environment
 
-**Status: Local evidence complete through Stage 4; deployment evidence pending**
+**Status: Local evidence complete through Stage 5; deployment evidence pending**
 
 Local suites cover authentication, consent, owner isolation, lifecycle,
 encryption/search, idempotency, bounded queries, provider boundary behavior,
@@ -321,10 +325,10 @@ count.
 
 ### Stage 5 — Streaming and response correctness
 
-**Status: Pending**
+**Status: Complete at code and automated-test level**
 
-- [ ] Remove double escaping and align filtered-message persistence policy.
-- [ ] Test malformed/truncated streams, disconnects, upstream failures, and
+- [x] Remove double escaping and align filtered-message persistence policy.
+- [x] Test malformed/truncated streams, disconnects, upstream failures, and
   terminal-event semantics.
 - [ ] Prove SSE buffering, timeout, and concurrency behavior through the target
   proxy and multi-worker deployment.
@@ -351,6 +355,10 @@ count.
 - Clients must treat assistant output as text, not trusted HTML.
 - SSE clients must process `tool_call`, `tool_result`, `token`, `done`, and
   `error`; HTTP 200 alone does not prove a successful completed stream.
+- Treat tokens received before a terminal `error` or disconnect as incomplete
+  display-only text; the backend does not persist that partial assistant reply.
+- Terminal stream errors include `request_id` for support correlation. A
+  successful stream has exactly one `done` and no later events.
 - Clients should stop loading on `done`, `error`, 401, 403, 409, 429, 503, or
   disconnect and must not automatically duplicate a stream without preserving
   the same idempotency key.
@@ -373,8 +381,8 @@ loan decisions or mutate their records.
 
 ## Release Gate
 
-The AI Assistant is application-complete through Stage 4 but is **not production
-ready yet**. Do not approve a production deployment until Stages 5–6 are
+The AI Assistant is application-complete through Stage 5 but is **not production
+ready yet**. Do not approve a production deployment until Stage 6 is
 complete, the target inventory/backfill and real-Mongo/Redis/provider/proxy/load
 gates pass, provider privacy terms are approved, bilingual safety/quality meets
 versioned thresholds, and the final deployment smoke test succeeds.

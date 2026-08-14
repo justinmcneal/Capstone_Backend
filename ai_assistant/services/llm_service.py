@@ -230,6 +230,113 @@ class GroqService:
             code = 'AI_PROVIDER_ERROR'
         return {'success': False, 'error': PUBLIC_PROVIDER_ERROR, 'code': code}
 
+    def _provider_stream_chunks(self, response, request_id=None):
+        """Parse one provider SSE response and close it on every exit path."""
+        total_tokens = 0
+        saw_done = False
+        try:
+            for line in response.iter_lines():
+                if not line:
+                    continue
+                try:
+                    line_text = (
+                        line.decode('utf-8')
+                        if isinstance(line, bytes)
+                        else str(line)
+                    )
+                except UnicodeDecodeError:
+                    logger.warning(
+                        'AI provider stream contained invalid UTF-8',
+                        extra={'request_id': request_id},
+                    )
+                    yield {
+                        'type': 'error',
+                        'content': PUBLIC_PROVIDER_ERROR,
+                        'code': 'AI_PROVIDER_STREAM_MALFORMED',
+                    }
+                    return
+
+                if not line_text.startswith('data:'):
+                    continue
+                data_text = line_text[5:].lstrip()
+                if data_text.strip() == '[DONE]':
+                    saw_done = True
+                    break
+                try:
+                    payload = json.loads(data_text)
+                except (json.JSONDecodeError, TypeError):
+                    logger.warning(
+                        'AI provider stream contained malformed JSON',
+                        extra={'request_id': request_id},
+                    )
+                    yield {
+                        'type': 'error',
+                        'content': PUBLIC_PROVIDER_ERROR,
+                        'code': 'AI_PROVIDER_STREAM_MALFORMED',
+                    }
+                    return
+                if not isinstance(payload, dict):
+                    yield {
+                        'type': 'error',
+                        'content': PUBLIC_PROVIDER_ERROR,
+                        'code': 'AI_PROVIDER_STREAM_MALFORMED',
+                    }
+                    return
+
+                usage = payload.get('usage')
+                if isinstance(usage, dict):
+                    try:
+                        total_tokens = max(
+                            0,
+                            int(usage.get('total_tokens') or total_tokens),
+                        )
+                    except (TypeError, ValueError):
+                        total_tokens = 0
+
+                choices = payload.get('choices', [])
+                if not isinstance(choices, list):
+                    yield {
+                        'type': 'error',
+                        'content': PUBLIC_PROVIDER_ERROR,
+                        'code': 'AI_PROVIDER_STREAM_MALFORMED',
+                    }
+                    return
+                if not choices:
+                    continue
+                choice = choices[0]
+                delta = choice.get('delta', {}) if isinstance(choice, dict) else None
+                if not isinstance(delta, dict):
+                    yield {
+                        'type': 'error',
+                        'content': PUBLIC_PROVIDER_ERROR,
+                        'code': 'AI_PROVIDER_STREAM_MALFORMED',
+                    }
+                    return
+                content = delta.get('content', '')
+                if content:
+                    yield {'type': 'token', 'content': str(content)}
+
+            if not saw_done:
+                logger.warning(
+                    'AI provider stream ended without a terminal marker',
+                    extra={'request_id': request_id},
+                )
+                yield {
+                    'type': 'error',
+                    'content': PUBLIC_PROVIDER_ERROR,
+                    'code': 'AI_PROVIDER_STREAM_TRUNCATED',
+                }
+                return
+
+            yield {
+                'type': 'done',
+                'model': self.model,
+                'provider': self.provider,
+                'tokens_used': total_tokens,
+            }
+        finally:
+            response.close()
+
     @staticmethod
     def _tool_budget_exceeded(count):
         return count > settings.AI_ASSISTANT_MAX_TOOL_CALLS_PER_REQUEST
@@ -715,34 +822,7 @@ class GroqService:
                 yield {'type': 'error', 'content': PUBLIC_PROVIDER_ERROR, 'code': 'AI_PROVIDER_ERROR'}
                 return
 
-            total_tokens = 0
-            for line in response.iter_lines():
-                if line:
-                    line_str = line.decode('utf-8')
-                    if line_str.startswith('data: '):
-                        data_str = line_str[6:]
-                        if data_str.strip() == '[DONE]':
-                            break
-                        try:
-                            data = json.loads(data_str)
-                            choice = data.get('choices', [{}])[0]
-                            delta = choice.get('delta', {})
-                            content = delta.get('content', '')
-                            if content:
-                                yield {'type': 'token', 'content': content}
-                            
-                            usage = data.get('usage')
-                            if usage:
-                                total_tokens = usage.get('total_tokens', 0)
-                        except json.JSONDecodeError:
-                            continue
-
-            yield {
-                'type': 'done',
-                'model': self.model,
-                'provider': self.provider,
-                'tokens_used': total_tokens,
-            }
+            yield from self._provider_stream_chunks(response)
 
         except requests.Timeout:
             yield {'type': 'error', 'content': PUBLIC_PROVIDER_ERROR, 'code': 'AI_PROVIDER_TIMEOUT'}
@@ -964,35 +1044,13 @@ class GroqService:
                 yield {'type': 'error', 'content': PUBLIC_PROVIDER_ERROR, 'code': 'AI_PROVIDER_ERROR'}
                 return
 
-            total_tokens = 0
-            for line in response.iter_lines():
-                if line:
-                    line_str = line.decode('utf-8')
-                    if line_str.startswith('data: '):
-                        data_str = line_str[6:]
-                        if data_str.strip() == '[DONE]':
-                            break
-                        try:
-                            data = json.loads(data_str)
-                            choice = data.get('choices', [{}])[0]
-                            delta = choice.get('delta', {})
-                            content = delta.get('content', '')
-                            if content:
-                                yield {'type': 'token', 'content': content}
-                            
-                            usage = data.get('usage')
-                            if usage:
-                                total_tokens = usage.get('total_tokens', 0)
-                        except json.JSONDecodeError:
-                            continue
-
-            yield {
-                'type': 'done',
-                'model': self.model,
-                'provider': self.provider,
-                'tokens_used': total_tokens,
-                'tools_called': tools_called,
-            }
+            for chunk in self._provider_stream_chunks(
+                response,
+                request_id=request_id,
+            ):
+                if chunk.get('type') == 'done':
+                    chunk['tools_called'] = tools_called
+                yield chunk
 
         except requests.Timeout:
             yield {'type': 'error', 'content': PUBLIC_PROVIDER_ERROR, 'code': 'AI_PROVIDER_TIMEOUT'}
