@@ -7,8 +7,8 @@ import hashlib
 from django.conf import settings
 
 from config.field_encryption import decrypt_fields, encrypt_fields
-from loans.utils.time import utcnow
 from loans.utils.money import from_centavos, to_centavos
+from loans.utils.time import utcnow
 
 
 def get_db():
@@ -160,12 +160,14 @@ class LoanPayment:
         return [cls.from_dict(doc) for doc in docs]
 
     @classmethod
-    def find_by_customer(cls, customer_id):
+    def find_by_customer(cls, customer_id, limit=None, projection=None):
         db = get_db()
         collection = db[cls.collection_name]
-        docs = collection.find({"customer_id": str(customer_id)}).sort(
-            "recorded_at", -1
-        )
+        docs = collection.find(
+            {"customer_id": str(customer_id)}, projection
+        ).sort("recorded_at", -1)
+        if limit:
+            docs = docs.limit(max(1, int(limit)))
         return [cls.from_dict(doc) for doc in docs]
 
     @classmethod

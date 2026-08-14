@@ -15,10 +15,11 @@ API prefix: `/api/ai/`
 The module already provides authenticated English/Tagalog chat, tool-assisted
 answers based on the current customer's data, SSE streaming, consent checks,
 history, static education content, and a choice of Groq or Ollama. Its local
-automated behavior is strong: the Stage 1–2 focused review suite completed with
-**188 passing tests** on 2026-08-14.
+automated behavior is strong: the Stage 1–3 focused suite has **200 passing
+tests**, and the full local repository suite has **1,157 passing tests**.
 
-Stage 1 data-governance code and Stage 2 request/provider-boundary code are complete: conversation content is encrypted when
+Stage 1 data governance, Stage 2 request/provider boundaries, and Stage 3
+persistence/query scalability are application-complete. Conversation content is encrypted when
 a field key is configured, history search uses keyed blind tokens, new records
 receive versioned retention metadata, legal holds and bounded cleanup exist,
 account export includes allowlisted history, and final account deletion performs
@@ -26,7 +27,9 @@ resumable AI cleanup. Chat input, history search/page, rate, token, tool,
 timeout, and concurrency policies are validated and configurable. Provider
 configuration fails at startup when invalid; readiness checks authentication
 and reachability; public failures are stable; and safe readiness retries,
-circuit breaking, and concurrency slots are enforced. Production approval still
+circuit breaking, and concurrency slots are enforced. Signed cursor history,
+bounded context/tool reads, idempotency leases, transaction-backed exchange
+writes, validators, and production indexes are implemented. Production approval still
 requires target backfill, provider/privacy approval, and real provider,
 MongoDB, Redis, load, proxy, audit, and monitoring evidence.
 
@@ -34,15 +37,15 @@ MongoDB, Redis, load, proxy, audit, and monitoring evidence.
 | --- | --- | --- |
 | Authentication and customer scoping | Implemented | Every endpoint requires JWT authentication and customer role checks. Conversation and tool data are scoped with the authenticated customer ID. |
 | Consent | Implemented | Chat, streaming chat, and history require current data and AI consent. Static status, education, FAQ, and suggestion endpoints do not send personal data to an LLM. |
-| Non-streaming chat | Stage 2 implemented; later hardening remains | Tool calling, history context, content filtering, bilingual responses, bounded requests/provider work, and stable provider errors work. Idempotency, database-side context bounds, and full correlation remain. |
+| Non-streaming chat | Stage 3 implemented; later hardening remains | Bounded tool chat uses UUID idempotency keys, active-request leases, completed-response replay, and consistent exchange persistence. Full provider/tool/audit correlation remains Stage 4. |
 | Streaming chat | Implemented; hardening required | SSE framing and persistence are tested. Disconnect handling, proxy/load proof, error semantics, and a double-escaping defect remain. |
 | Read-only customer tools | Implemented; hardening required | Ten customer-scoped tools are available. Rate limiting is non-atomic, one expensive tool is under-costed, and durable tool audit is missing. |
 | Context minimization | Partial | Context builders limit list sizes and omit direct credentials, but the declared redaction/masking lists are not actually applied as a generic enforcement layer. |
-| Conversation storage | Stage 1 implemented; deployment backfill pending | Message, response, and hold reason use versioned field encryption; keyed search tokens preserve keyword search; retention, legal holds, export, and resumable account cleanup are implemented. MongoDB schema validation and target backfill evidence remain. |
+| Conversation storage | Stage 3 implemented; deployment proof pending | Encryption/lifecycle controls, signed cursor pagination, bounded conversation reads, canonical owner shape, transaction-backed idempotent pairs, validators, and indexes are implemented. Target backfill and real-Mongo evidence remain. |
 | Provider integration | Stage 2 implemented; deployment proof pending | Groq and Ollama use validated configuration, authenticated/reachable readiness states, stable errors, bounded timeouts, safe GET retries, a circuit breaker, and per-process concurrency slots. Real-provider contract and privacy approval remain. |
 | Knowledge and response quality | Partial | A centralized prompt, simple prohibited-content checks, and many behavior tests exist. There is no versioned evaluation set, feedback loop, groundedness threshold, or adversarial safety gate. |
 | Observability | Partial | Timing, model, token count, streaming request ID, and ordinary logs exist. Non-streaming correlation, Prometheus metrics, durable audit, dashboards, and alerts do not. |
-| Local automated tests | Passing through Stage 2 | 188 focused tests and the full 1,145-test local suite pass; 28 external opt-in tests are skipped and real deployment behavior remains unproven. |
+| Local automated tests | Passing through Stage 3 | 200 focused tests and the full 1,157-test local suite pass; 30 opt-in integrations are skipped and real deployment behavior remains unproven. |
 | Deployment validation | Missing | No recorded real Groq/Ollama, MongoDB, Redis, concurrent-load, SSE proxy, secret rotation, or incident-response evidence exists. |
 
 ## Module Responsibilities
@@ -82,9 +85,9 @@ owned by their respective modules.
 
 | Method and path | Consent | Status | Notes |
 | --- | --- | --- | --- |
-| `POST /api/ai/chat/` | Required | Stage 2 implemented; later hardening remains | Bounded JSON chat with tool calling, stable provider failures, and stored history. |
-| `POST /api/ai/chat/stream/` | Required | Implemented; hardening required | SSE events: `tool_call`, `tool_result`, `token`, `done`, and `error`. |
-| `GET /api/ai/history/` | Required | Input bounds implemented; query hardening remains | Owner-scoped pagination has a configured maximum page, limit capped at 100, and bounded encrypted keyword search. Cursor/database query improvements remain Stage 3. |
+| `POST /api/ai/chat/` | Required | Stage 3 implemented; later hardening remains | Accepts optional UUID `Idempotency-Key`; duplicates replay without a second provider call, active duplicates return 409, and mismatched reuse returns 409. |
+| `POST /api/ai/chat/stream/` | Required | Stage 3 implemented; later hardening remains | Uses the same idempotency contract and persists filtered/successful exchanges consistently; disconnect/proxy correctness remains Stage 5. |
+| `GET /api/ai/history/` | Required | Stage 3 implemented | Owner-scoped signed keyset cursors are available with `pagination=cursor`; bounded page compatibility remains for existing clients. Search remains keyed and bounded. |
 | `DELETE /api/ai/history/` | Required | Implemented | Deletes all interactions belonging to the authenticated customer. |
 | `GET /api/ai/suggestions/` | Not required | Implemented | Static English/Tagalog suggestions cached by language. |
 | `GET /api/ai/status/` | Not required | Implemented; deployment proof pending | Reports configured, reachable, authenticated, selected-model availability/degradation, and circuit state using a bounded provider probe. |
@@ -218,11 +221,10 @@ History search length and page number are bounded. Chat rate (currently
 connect/read timeouts, and provider concurrency are validated settings. Bound
 violations return stable 400, 413, or DRF 429 responses.
 
-Remaining Stage 3 query work: `find_by_conversation()` still loads the entire
-conversation before Python slicing, offset pagination should be replaced with a
-cursor/database-enforced maximum, and several tools still need projection and
-database-side limit audits. These are persistence/query gaps, not missing
-Stage 2 request/provider controls.
+Stage 3 subsequently added signed keyset history, database-bounded conversation
+context, and bounded/projected document, loan, repayment, payment, dashboard,
+and notification tool reads. Legacy offset pages remain bounded only for client
+compatibility. Deployment query-plan/load evidence remains open.
 
 ### 2. Provider boundary and failure behavior
 
@@ -247,10 +249,10 @@ it is intentionally not represented as a distributed quota.
 `get_recent_calls()` method is an explicit placeholder returning an empty list.
 There are no AI Prometheus counters/histograms or alert rules.
 
-Streaming creates a request ID and stores it on completed interactions, but
-non-streaming chat does not. Request IDs are not returned consistently or
-propagated through provider/tool logs. Failed and filtered attempts do not have
-a uniform event record.
+Both chat modes now create/accept a UUID request ID and return/store it for
+completed/filtered exchanges. It is not yet propagated through every provider/
+tool log or durable audit event, and failed attempts do not yet have the Stage 4
+uniform audit record.
 
 Required work:
 
@@ -266,23 +268,24 @@ Required work:
 
 ### 4. Persistence consistency and schema enforcement
 
-User and assistant messages are two independent inserts. A failure between them
-can leave a half-conversation. Client retries have no idempotency key and can
-create duplicate provider charges/history. The collection has indexes but no
-MongoDB validator.
+**Stage 3 application implementation complete.** UUID idempotency keys are
+leased before provider work; completed exchanges replay without provider cost;
+active duplicates and mismatched key reuse return 409. User/assistant records
+use one transaction where MongoDB supports sessions and repeatable pair upserts
+in offline development. A dry-run-first reconciliation command inventories
+stale leases and partial pairs without fabricating content.
 
-The current index set lacks the natural history index
-`(customer_id, timestamp desc)`. The existing
-`(customer_id, conversation_id, timestamp)` index helps conversation lookup but
-does not efficiently serve all customer history sorted only by time.
+The interaction/request validators enforce canonical string ownership, UUIDs,
+roles, languages, dates, numeric metadata, versioned ciphertext, and retention.
+Indexes cover owner/time keyset history, owner/conversation/time, encrypted
+search, retention, exchange uniqueness, request uniqueness/recovery, and request
+TTL. Legacy backfill canonicalizes ObjectId owners and inventory reports legacy
+shape. Conversation context and selected tool reads now use database-side limits
+and minimal projections.
 
-Required work:
-
-- define an atomic/idempotent interaction write strategy and retry state;
-- validate role, language, UUID, timestamps, token/latency types, encryption,
-  and retention fields at the MongoDB boundary;
-- add the owner/timestamp history index and verify query plans; and
-- reconcile legacy customer-ID shapes before tightening validation/indexes.
+Deployment condition: run inventory/backfill first, then install/verify the
+validators and indexes and execute the opt-in real-Mongo validator, transaction,
+unique-index, and `explain()` gate against an isolated replica-set database.
 
 ## Correctness and Maintainability Findings
 
@@ -384,9 +387,10 @@ approval and real-provider/load evidence remain deployment conditions.
 
 ### Stage 3: Persistence and query scalability
 
-Add schema validation, appropriate indexes, database-side bounds/cursor
-pagination, idempotency, and consistent two-message persistence. Verify against
-isolated real MongoDB.
+**Application implementation complete.** Schema validation, production indexes,
+signed keyset pagination, bounded/projected queries, idempotency leases/replay,
+transaction-backed pairs, retry reconciliation, and local tests are implemented.
+The isolated real-Mongo proof remains a deployment gate.
 
 ### Stage 4: Tool safety, audit, and observability
 
@@ -485,8 +489,10 @@ Production approval requires all of the following:
   validated and documented.
 - [x] Provider configuration fails safely and public errors disclose no provider
   internals.
-- [ ] MongoDB validators/indexes and Redis atomic limits pass isolated real
-  integration tests.
+- [x] MongoDB validators, indexes, idempotency, signed cursors, and bounded
+  persistence/query behavior are implemented and locally tested.
+- [ ] MongoDB validators/indexes/transactions/query plans and Redis atomic limits
+  pass isolated real integration tests.
 - [ ] Durable metadata-only audit, end-to-end correlation, metrics, dashboards,
   and actionable alerts are operational.
 - [ ] Streaming correctness, disconnect, proxy, and load tests pass.
@@ -495,7 +501,7 @@ Production approval requires all of the following:
   and token-accounting contract tests.
 - [ ] Provider privacy terms, secrets, backup/restore, incident response, and
   rollback evidence are reviewed for the deployment target.
-- [x] The full local repository suite passes after Stage 2 (1,145 passed, 28 skipped).
+- [x] The full local repository suite passes after Stage 3 (1,157 passed, 30 skipped).
 - [ ] The final deployment smoke gate passes.
 
 ## Review Boundaries

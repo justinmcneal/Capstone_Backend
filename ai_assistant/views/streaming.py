@@ -20,9 +20,18 @@ from ai_assistant.models import AIInteraction
 from ai_assistant.services import get_llm_service
 from ai_assistant.services.context_builder import get_context_for_intent
 from ai_assistant.services.exception_types import NON_FATAL_EXCEPTIONS
+from ai_assistant.services.idempotency import (
+    claim,
+    mark_complete,
+    mark_failed,
+    request_fingerprint,
+)
 from ai_assistant.services.knowledge_base import check_prohibited_content
 from ai_assistant.services.llm_service import SYSTEM_PROMPT, needs_user_context
-from ai_assistant.services.request_limits import validate_chat_message
+from ai_assistant.services.request_limits import (
+    resolve_request_id,
+    validate_chat_message,
+)
 from ai_assistant.services.tools import TOOL_SCHEMAS
 from ai_assistant.views.chat_views import (
     ALLOWED_LANGUAGES,
@@ -53,7 +62,9 @@ class StreamingChatView(ConsentRequiredMixin, APIView):
 
     def post(self, request):
         """Stream AI response as Server-Sent Events"""
-        request_id = str(uuid.uuid4())
+        request_id, validation_error = resolve_request_id(request)
+        if validation_error:
+            return validation_error
         logger.info("LLM stream start", extra={"request_id": request_id, "customer_id": request.user.customer_id})
         
         has_consent, result = self.check_ai_consent(request)
@@ -90,12 +101,63 @@ class StreamingChatView(ConsentRequiredMixin, APIView):
                 status_code=status.HTTP_400_BAD_REQUEST
             )
         language = requested_language
+
+        request_claim = claim(
+            customer_id,
+            request_id,
+            fingerprint=request_fingerprint(message, raw_conversation_id or '', language),
+        )
+        if request_claim['state'] == 'conflict':
+            return error_response(
+                message='Idempotency-Key was already used for a different request',
+                code='AI_IDEMPOTENCY_KEY_REUSED',
+                status_code=status.HTTP_409_CONFLICT,
+            )
+        if request_claim['state'] == 'in_progress':
+            return error_response(
+                message='An identical AI request is already processing',
+                code='AI_REQUEST_IN_PROGRESS',
+                status_code=status.HTTP_409_CONFLICT,
+            )
+        if request_claim['state'] == 'replay':
+            assistant = request_claim['interactions'][-1]
+
+            def replay_stream():
+                yield f"event: token\ndata: {json.dumps({'content': assistant.response})}\n\n"
+                yield f"event: done\ndata: {json.dumps({'model': assistant.model_used, 'tokens_used': assistant.tokens_used or 0, 'response_time_ms': assistant.response_time_ms, 'conversation_id': assistant.conversation_id, 'tools_called': [], 'request_id': request_id, 'replayed': True})}\n\n"
+
+            return self._streaming_response(replay_stream())
         
         is_prohibited, redirect_response = check_prohibited_content(message)
         if is_prohibited:
+            filtered_response = escape_llm_output(redirect_response)
+            AIInteraction.save_exchange(
+                AIInteraction(
+                    customer_id=customer_id,
+                    message=message,
+                    response='',
+                    language=language,
+                    conversation_id=conversation_id,
+                    role='user',
+                    request_id=request_id,
+                ),
+                AIInteraction(
+                    customer_id=customer_id,
+                    message='',
+                    response=filtered_response,
+                    language=language,
+                    conversation_id=conversation_id,
+                    role='assistant',
+                    model_used='content_filter',
+                    response_time_ms=0,
+                    request_id=request_id,
+                ),
+            )
+            mark_complete(customer_id, request_id)
+
             def filtered_stream():
-                yield f"event: token\ndata: {json.dumps({'content': escape_llm_output(redirect_response)})}\n\n"
-                yield f"event: done\ndata: {json.dumps({'filtered': True})}\n\n"
+                yield f"event: token\ndata: {json.dumps({'content': filtered_response})}\n\n"
+                yield f"event: done\ndata: {json.dumps({'filtered': True, 'request_id': request_id})}\n\n"
             
             response = StreamingHttpResponse(
                 filtered_stream(),
@@ -117,6 +179,7 @@ class StreamingChatView(ConsentRequiredMixin, APIView):
         llm = get_llm_service(use_case='chat')
         
         if not llm.is_available():
+            mark_failed(customer_id, request_id)
             return error_response(
                 message="AI service is currently unavailable",
                 code='AI_PROVIDER_UNAVAILABLE',
@@ -176,8 +239,6 @@ class StreamingChatView(ConsentRequiredMixin, APIView):
                                 role='user',
                                 request_id=request_id
                             )
-                            user_interaction.save()
-                            
                             ai_interaction = AIInteraction(
                                 customer_id=customer_id,
                                 message='',
@@ -190,11 +251,15 @@ class StreamingChatView(ConsentRequiredMixin, APIView):
                                 tokens_used=tokens_used,
                                 request_id=request_id
                             )
-                            ai_interaction.save()
+                            AIInteraction.save_exchange(user_interaction, ai_interaction)
+                            mark_complete(customer_id, request_id)
+                        else:
+                            mark_failed(customer_id, request_id)
                         
-                        yield f"event: done\ndata: {json.dumps({'model': model_used, 'tokens_used': tokens_used, 'response_time_ms': elapsed_ms, 'conversation_id': conversation_id, 'tools_called': tools_called})}\n\n"
+                        yield f"event: done\ndata: {json.dumps({'model': model_used, 'tokens_used': tokens_used, 'response_time_ms': elapsed_ms, 'conversation_id': conversation_id, 'tools_called': tools_called, 'request_id': request_id})}\n\n"
                     
                     elif chunk_type == 'error':
+                        mark_failed(customer_id, request_id)
                         error_data = {
                             'content': escape_llm_output(chunk.get('content', 'Unknown error')),
                             'code': chunk.get('code', 'AI_PROVIDER_ERROR'),
@@ -203,6 +268,7 @@ class StreamingChatView(ConsentRequiredMixin, APIView):
                         break
                         
             except NON_FATAL_EXCEPTIONS as e:
+                mark_failed(customer_id, request_id)
                 logger.error(f"Stream error: {e!s}")
                 yield f"event: error\ndata: {json.dumps({'content': escape_llm_output('Stream error occurred')})}\n\n"
         
@@ -210,6 +276,13 @@ class StreamingChatView(ConsentRequiredMixin, APIView):
             event_stream(),
             content_type='text/event-stream'
         )
+        response['Cache-Control'] = 'no-cache'
+        response['X-Accel-Buffering'] = 'no'
+        return response
+
+    @staticmethod
+    def _streaming_response(stream):
+        response = StreamingHttpResponse(stream, content_type='text/event-stream')
         response['Cache-Control'] = 'no-cache'
         response['X-Accel-Buffering'] = 'no'
         return response

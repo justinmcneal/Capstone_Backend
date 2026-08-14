@@ -12,15 +12,14 @@ Validates SSE formatting and streaming endpoint behavior:
 """
 import json
 from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
 
 import pytest
-from unittest.mock import patch, MagicMock
 
-from ai_assistant.views import StreamingChatView
-from ai_assistant.views.chat_views import EventStreamRenderer
 from accounts.authentication import AuthenticatedUser
 from accounts.utils.access_control import AccessControlMixin
-
+from ai_assistant.views import StreamingChatView
+from ai_assistant.views.chat_views import EventStreamRenderer
 
 # =============================================================================
 # HELPERS
@@ -194,4 +193,5 @@ class TestSSEFrameFormatting:
         event_names = [name for name, _ in frames]
         assert event_names == ['token', 'done']
         assert frames[0][1]['content'] == mock_check_prohibited.return_value[1]
-        assert frames[1][1] == {'filtered': True}
+        assert frames[1][1]['filtered'] is True
+        assert frames[1][1]['request_id']

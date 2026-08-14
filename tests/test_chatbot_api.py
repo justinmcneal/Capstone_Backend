@@ -41,9 +41,9 @@ def _create_customer_with_ai_consent(ai_consent=True):
     return customer
 
 
-def _auth_request(path, payload, customer_id):
+def _auth_request(path, payload, customer_id, **headers):
     factory = APIRequestFactory()
-    request = factory.post(path, payload, format="json")
+    request = factory.post(path, payload, format="json", **headers)
     user = AuthenticatedUser(
         customer_id=customer_id,
         email="user@example.com",
@@ -91,6 +91,47 @@ def _stream_to_text(streaming_response):
 
 
 class TestChatView:
+    def test_idempotency_key_replays_without_second_provider_call(self, monkeypatch):
+        customer = _create_customer_with_ai_consent(ai_consent=True)
+        calls = {'count': 0}
+
+        class MockLLM:
+            def is_available(self):
+                return True
+
+            def chat_with_tools(self, **kwargs):
+                calls['count'] += 1
+                return {
+                    'success': True,
+                    'response': 'Idempotent answer',
+                    'model': 'mock-llm',
+                    'response_time_ms': 12,
+                    'tokens_used': 4,
+                }
+
+        monkeypatch.setattr(
+            'ai_assistant.views.chat.get_llm_service', lambda use_case=None: MockLLM()
+        )
+        key = str(uuid.uuid4())
+        headers = {'HTTP_IDEMPOTENCY_KEY': key}
+        first = ChatView.as_view()(
+            _auth_request('/api/ai/chat/', {'message': 'Hello'}, customer.id, **headers)
+        )
+        second = ChatView.as_view()(
+            _auth_request('/api/ai/chat/', {'message': 'Hello'}, customer.id, **headers)
+        )
+        conflict = ChatView.as_view()(
+            _auth_request('/api/ai/chat/', {'message': 'Different'}, customer.id, **headers)
+        )
+
+        assert first.status_code == 200
+        assert second.status_code == 200
+        assert second.data['data']['replayed'] is True
+        assert second.data['data']['request_id'] == key
+        assert conflict.status_code == 409
+        assert conflict.data['code'] == 'AI_IDEMPOTENCY_KEY_REUSED'
+        assert calls['count'] == 1
+
     def test_chat_requires_message(self):
         customer = _create_customer_with_ai_consent(ai_consent=True)
         request = _auth_request("/api/ai/chat/", {"message": ""}, customer.id)

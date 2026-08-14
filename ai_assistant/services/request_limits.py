@@ -1,5 +1,7 @@
 """Shared request validation for normal and streaming AI endpoints."""
 
+import uuid
+
 from django.conf import settings
 from rest_framework import status
 
@@ -46,3 +48,22 @@ def validate_chat_message(raw_message, request=None):
             status_code=status.HTTP_400_BAD_REQUEST,
         )
     return message, None
+
+
+def resolve_request_id(request):
+    """Validate an optional UUID idempotency key or generate one."""
+    headers = getattr(request, 'headers', {})
+    raw_value = headers.get('Idempotency-Key') if headers else None
+    if not raw_value:
+        raw_value = getattr(request, 'META', {}).get('HTTP_IDEMPOTENCY_KEY')
+    if not raw_value:
+        return str(uuid.uuid4()), None
+    try:
+        return str(uuid.UUID(str(raw_value))), None
+    except (TypeError, ValueError):
+        return None, error_response(
+            message='Idempotency-Key must be a valid UUID',
+            code='AI_IDEMPOTENCY_KEY_INVALID',
+            errors={'Idempotency-Key': 'Invalid UUID format'},
+            status_code=status.HTTP_400_BAD_REQUEST,
+        )

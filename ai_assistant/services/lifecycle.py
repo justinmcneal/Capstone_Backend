@@ -98,10 +98,14 @@ def delete_customer_ai_data(db, customer_id):
         }},
     )
     remaining = collection.count_documents(owner_query)
+    request_deleted = db['ai_chat_requests'].delete_many(
+        {'customer_id': str(customer_id)}
+    )
     return {
         'deleted': int(deleted.deleted_count),
         'held_pseudonymized': int(held.modified_count),
         'remaining': int(remaining),
+        'idempotency_records_deleted': int(request_deleted.deleted_count),
     }
 
 
@@ -113,6 +117,7 @@ def ai_interaction_inventory(*, limit=10000):
         'plaintext_sensitive_fields': 0,
         'missing_retention': 0,
         'invalid_customer_id': 0,
+        'legacy_customer_id_shape': 0,
         'invalid_role': 0,
         'invalid_language': 0,
         'stale_search_index': 0,
@@ -130,6 +135,8 @@ def ai_interaction_inventory(*, limit=10000):
         owner = str(raw.get('customer_id') or '')
         if not (ObjectId.is_valid(owner) or owner.startswith('deleted:')):
             counters['invalid_customer_id'] += 1
+        if isinstance(raw.get('customer_id'), ObjectId):
+            counters['legacy_customer_id_shape'] += 1
         if raw.get('role', 'user') not in {'user', 'assistant'}:
             counters['invalid_role'] += 1
         if raw.get('language', 'en') not in {'en', 'tl'}:
@@ -148,6 +155,8 @@ def prepare_legacy_ai_backfill(raw):
         raise ValueError('Invalid interaction language')
     if not interaction.customer_id:
         raise ValueError('Missing customer_id')
+    if not str(interaction.customer_id).startswith('deleted:'):
+        interaction.customer_id = str(interaction.customer_id)
     interaction.interaction_schema_version = 2
     interaction.retention_policy_version = (
         raw.get('retention_policy_version')

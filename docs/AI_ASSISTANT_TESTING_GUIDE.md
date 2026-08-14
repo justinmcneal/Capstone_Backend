@@ -10,20 +10,20 @@ This guide covers the AI Assistant's API, consent and customer isolation,
 context/tool safety, chat persistence, SSE behavior, provider integration,
 privacy lifecycle, observability, and deployment validation.
 
-The focused Stage 1–2 offline suite passed during the review:
+The focused Stage 1–3 offline suite passed during the review:
 
 ```text
-188 passed in 1.36 seconds
+200 passed
 ```
 
 That result verifies the current local/mocked implementation only. It is not a
 substitute for the real MongoDB, Redis, provider, proxy, load, privacy-lifecycle,
 and monitoring gates described below.
 
-The complete local repository suite also passed after Stage 2:
+The complete local repository suite also passed after Stage 3:
 
 ```text
-1145 passed, 28 skipped, 1 warning in 50.86 seconds
+1157 passed, 30 skipped
 ```
 
 ## Safety Rules
@@ -71,7 +71,8 @@ capacity recommendations:
 | `AI_ASSISTANT_MESSAGE_MAX_BYTES` | `16000` | Maximum raw message UTF-8 bytes. |
 | `AI_ASSISTANT_REQUEST_MAX_BYTES` | `20000` | Maximum declared request body bytes. |
 | `AI_ASSISTANT_HISTORY_SEARCH_MAX_CHARS` | `200` | Maximum history-search length. |
-| `AI_ASSISTANT_HISTORY_MAX_PAGE` | `200` | Maximum accepted offset page pending Stage 3 cursor work. |
+| `AI_ASSISTANT_HISTORY_MAX_PAGE` | `200` | Maximum legacy offset page; new clients should use signed cursors. |
+| `AI_ASSISTANT_IDEMPOTENCY_LEASE_SECONDS` | `900` | Active-request lease; must exceed the longest provider/stream execution. |
 | `AI_ASSISTANT_MAX_OUTPUT_TOKENS` | `512` | Hard output cap supplied to the provider. |
 | `AI_ASSISTANT_MAX_TOOL_ROUNDS` | `3` | Maximum tool-selection iterations. |
 | `AI_ASSISTANT_MAX_TOOL_CALLS_PER_REQUEST` | `6` | Maximum aggregate tool calls in one request. |
@@ -103,7 +104,11 @@ Request:
 `message` is required. `conversation_id` is generated when omitted. `language`
 accepts only `en` or `tl` and otherwise defaults to the customer's saved
 language. A successful response includes `response`, `conversation_id`,
-`model`, and `response_time_ms` inside the shared response envelope.
+`model`, `response_time_ms`, and `request_id` inside the shared response
+envelope. Clients should send a UUID `Idempotency-Key` header and reuse it only
+when retrying the same logical request. A completed retry returns
+`replayed=true` without another provider call; an active duplicate or reuse for
+different content returns 409.
 
 Current bounded error behavior:
 
@@ -111,6 +116,7 @@ Current bounded error behavior:
 - 413: request/message UTF-8 byte limit exceeded;
 - 401: missing/invalid authentication;
 - 403: wrong role or missing/current-policy consent;
+- 409: active duplicate or mismatched `Idempotency-Key` reuse;
 - 429: endpoint throttle exceeded;
 - 503: provider is not configured, reachable, authenticated, or the provider
   call fails; public responses use stable codes and never include provider bodies;
@@ -154,7 +160,9 @@ Query parameters:
 
 | Parameter | Current rule |
 | --- | --- |
-| `page` | Positive integer; default 1; capped by `AI_ASSISTANT_HISTORY_MAX_PAGE` (default 200). |
+| `pagination` | Set to `cursor` for the preferred signed keyset flow. |
+| `cursor` | Opaque signed `next_cursor` returned by the previous cursor page. |
+| `page` | Compatibility mode: positive integer; default 1; capped by `AI_ASSISTANT_HISTORY_MAX_PAGE` (default 200). |
 | `limit` | Positive integer; default 50; capped at 100. |
 | `search` | Optional keyed blind-token search; all words must match; capped by `AI_ASSISTANT_HISTORY_SEARCH_MAX_CHARS` (default 200). |
 
@@ -188,6 +196,7 @@ focused command is:
 .venv/bin/pytest -q \
   tests/test_ai_stage1_privacy_lifecycle.py \
   tests/test_ai_stage2_provider_boundary.py \
+  tests/test_ai_stage3_persistence_scalability.py \
   tests/test_ai_model_methods.py \
   tests/test_ai_streaming.py \
   tests/test_chatbot_api.py \
@@ -212,6 +221,7 @@ Static checks for the module and its focused tests:
 .venv/bin/ruff check ai_assistant \
   tests/test_ai_stage1_privacy_lifecycle.py \
   tests/test_ai_stage2_provider_boundary.py \
+  tests/test_ai_stage3_persistence_scalability.py \
   tests/test_ai_model_methods.py \
   tests/test_ai_streaming.py \
   tests/test_chatbot_api.py \
@@ -239,6 +249,7 @@ modules and are required for the current focused count.
 | Auxiliary APIs | Suggestion languages/cache, provider status shape, education cache/topic lookup, and FAQ cache. |
 | Stage 1 privacy lifecycle | Ciphertext storage/read, keyed history search, retention/legal hold, allowlisted export, pseudonymous held evidence, retryable account deletion, inventory, and dry-run backfill. |
 | Stage 2 provider boundary | Message/request/search/page bounds, configurable throttle, hard generation limits, provider selection, readiness states, stable errors, safe GET retry, no paid-POST retry, stream concurrency lifetime, and circuit opening. |
+| Stage 3 persistence/scalability | Idempotent exchange pairs, lease/replay/conflict behavior, signed cursor continuity/tamper rejection, bounded conversation reads, validators, indexes, and owner-shape reconciliation. |
 
 Most persistence and external behavior in these tests is mocked or in-memory.
 
@@ -262,29 +273,28 @@ For every endpoint, verify:
 ### Input boundaries
 
 Automated tests cover empty messages, UUIDs, languages, UTF-8 request/message
-bounds, history search/page bounds, and stable errors. Stage 3 must still cover:
+bounds, history search/page bounds, stable errors, maximum database conversation
+context, and signed cursor continuity/tamper rejection. Additional edge cases remain:
 
 - whitespace-only and control-character-only messages;
 - deeply nested/non-string JSON values;
 - very long Tagalog/Unicode input;
-- maximum conversation-history size enforced by the database query;
-- cursor pagination and database-side conversation bounds.
 
 ### Persistence and idempotency
 
-Stage 1 verifies encryption and lifecycle behavior locally. Later persistence
-stages must additionally verify:
+Stages 1 and 3 verify encryption/lifecycle plus local persistence/idempotency.
+Current tests prove one pair per request, completed replay without another
+provider call, active/mismatched conflicts, stale-lease recovery, and cursor/
+index/validator definitions. Deployment tests must additionally verify:
 
-1. one logical request creates exactly one user and one assistant record;
-2. an identical idempotency key never calls the provider or writes twice;
-3. failure after the first write is recoverable and does not expose a permanent
+1. failure after the first write is recoverable and does not expose a permanent
    half-conversation;
-4. filtered, failed, disconnected, and successful requests follow the documented
+2. filtered, failed, disconnected, and successful requests follow the documented
    storage policy;
-5. message/response ciphertext is unreadable directly while keyed keyword search
+3. message/response ciphertext is unreadable directly while keyed keyword search
    remains functional;
-6. key rotation preserves application reads; and
-7. response/request IDs match structured logs, audits, and metrics.
+4. key rotation preserves application reads; and
+5. response/request IDs match structured logs, audits, and metrics.
 
 ### Output correctness
 
@@ -320,8 +330,16 @@ owning modules.
 
 ## Real MongoDB Gate
 
-This gate does not yet have an opt-in test module. Implement it as part of the
-persistence/lifecycle stage and run it only against an isolated database.
+The opt-in module is `tests/test_ai_stage3_real_mongo.py`. Run it only against
+an explicitly isolated replica-set database whose name ends in `_test`,
+`_testing`, or `_isolated`:
+
+```bash
+AI_ASSISTANT_REAL_MONGO_URI='<isolated replica-set URI>' \
+AI_ASSISTANT_REAL_MONGO_DB='ai_assistant_isolated' \
+.venv/bin/pytest -q -m deployment_integration \
+  tests/test_ai_stage3_real_mongo.py
+```
 
 Required assertions:
 
@@ -338,6 +356,19 @@ Required assertions:
 
 Do not mark this gate complete using mongomock alone; it does not reproduce all
 MongoDB validator, index, transaction, collation, or concurrency behavior.
+
+Before installing validators/indexes on a deployment target, run the existing
+inventory/backfill dry run and the request reconciliation dry run:
+
+```bash
+.venv/bin/python manage.py ai_interaction_inventory
+.venv/bin/python manage.py backfill_ai_interactions
+.venv/bin/python manage.py reconcile_ai_chat_requests
+```
+
+Only after review, use the approved initialization workflow and optionally
+`reconcile_ai_chat_requests --apply`. Never apply reconciliation merely to make
+a partial exchange look complete; partial content requires retry/operator review.
 
 ## Real Redis and Rate-Limit Gate
 
@@ -512,11 +543,12 @@ encryption, concurrency, or provider privacy.
 
 ## Release Evidence Checklist
 
-- [x] Stage 1–2 focused offline suite passes (188 tests on 2026-08-14).
-- [x] Full local repository suite passes after Stage 2 (1145 passed, 28 skipped).
+- [x] Stage 1–3 focused offline suite passes (200 tests on 2026-08-14).
+- [x] Full local repository suite passes after Stage 3 (1157 passed, 30 skipped).
 - [x] AI conversation encryption and shared key-rotation tests pass locally.
 - [x] Retention, legal hold, export, account-deletion, and retry tests pass locally.
 - [x] Stage 2 request/provider boundary tests pass locally.
+- [x] Stage 3 persistence, idempotency, cursor, validator, and index tests pass locally.
 - [ ] Deployment-target inventory/backfill is reviewed, applied, and clean.
 - [ ] Isolated real MongoDB validator/index/query-plan/concurrency gate passes.
 - [ ] Real Redis multi-worker atomic limit/cache gate passes.
@@ -545,7 +577,7 @@ encryption, concurrency, or provider privacy.
 
 ## Review Boundary
 
-The 2026-08-14 Stage 1–2 review ran the focused and full local suites with
+The 2026-08-14 Stage 1–3 review ran the focused and full local suites with
 offline test settings. It
 did not read `.env`, use customer data, call Groq/Ollama, initialize a database,
 run Redis integration, modify deployment state, or perform load/proxy tests.

@@ -4,8 +4,8 @@ LoanApplication Model - Customer loan applications.
 
 from bson import ObjectId
 from django.conf import settings
-from config.field_encryption import decrypt_fields, encrypt_fields, encrypt_value
 
+from config.field_encryption import decrypt_fields, encrypt_fields, encrypt_value
 from loans.utils.time import utcnow
 
 
@@ -642,10 +642,10 @@ class LoanApplication:
         return cls.from_dict(doc)
 
     @classmethod
-    def find(cls, query, sort=None, skip=None, limit=None):
+    def find(cls, query, sort=None, skip=None, limit=None, projection=None):
         db = get_db()
         collection = db[cls.collection_name]
-        cursor = collection.find(query)
+        cursor = collection.find(query, projection)
         if sort:
             cursor = cursor.sort(sort)
         if skip:
@@ -668,8 +668,13 @@ class LoanApplication:
             return None
 
     @classmethod
-    def find_by_customer(cls, customer_id):
-        return cls.find({"customer_id": str(customer_id)}, sort=[("created_at", -1)])
+    def find_by_customer(cls, customer_id, limit=None, projection=None):
+        return cls.find(
+            {"customer_id": str(customer_id)},
+            sort=[("created_at", -1)],
+            limit=limit,
+            projection=projection,
+        )
 
     @classmethod
     def find_pending(cls):

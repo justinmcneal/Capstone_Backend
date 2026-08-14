@@ -29,6 +29,12 @@ from accounts.models import (  # noqa: E402
     RefreshTokenEntry,
 )
 from ai_assistant.models import AIInteraction  # noqa: E402
+from ai_assistant.services.idempotency import (  # noqa: E402
+    create_indexes as create_ai_request_indexes,
+)
+from ai_assistant.services.idempotency import (  # noqa: E402
+    create_validator as create_ai_request_validator,
+)
 from analytics.models import AuditLog  # noqa: E402
 from documents.models import (  # noqa: E402
     Document,
@@ -210,11 +216,19 @@ def create_indexes():
     try:
         print("Creating indexes for AIInteraction collection...")
         AIInteraction.create_indexes()
+        AIInteraction.create_validator()
+        create_ai_request_indexes()
+        create_ai_request_validator()
         print("✓ AIInteraction indexes created")
-    except (DuplicateKeyError, OperationFailure):
-        print("⚠ AIInteraction indexes already exist, skipping")
+    except DuplicateKeyError:
+        print("⚠ AIInteraction indexes contain duplicates; reconcile before retrying")
+        raise
+    except OperationFailure as e:
+        print(f"✗ AIInteraction validator/index error: {e}")
+        raise
     except Exception as e:
         print(f"✗ AIInteraction error: {e}")
+        raise
 
     # Loan indexes
     try:

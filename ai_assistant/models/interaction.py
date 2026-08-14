@@ -8,7 +8,10 @@ from datetime import datetime, timedelta, timezone
 
 from bson import ObjectId
 from django.conf import settings
+from django.core import signing
+from django.core.exceptions import ImproperlyConfigured
 from pymongo import ASCENDING, DESCENDING, ReturnDocument
+from pymongo.operations import UpdateOne
 
 from config.field_encryption import decrypt_fields, encrypt_fields
 
@@ -195,6 +198,76 @@ class AIInteraction:
             self._id = result.inserted_id
         
         return self
+
+    @classmethod
+    def save_exchange(cls, user_interaction, assistant_interaction):
+        """Persist one idempotent user/assistant exchange as a single DB unit."""
+        if not user_interaction.request_id or user_interaction.request_id != assistant_interaction.request_id:
+            raise ValueError('Both exchange records require the same request_id')
+        if user_interaction.role != 'user' or assistant_interaction.role != 'assistant':
+            raise ValueError('An exchange requires user then assistant roles')
+
+        collection = get_db()[cls.collection_name]
+        owner = str(user_interaction.customer_id)
+        operations = []
+        for interaction in (user_interaction, assistant_interaction):
+            interaction.customer_id = owner
+            data = interaction.to_dict()
+            data.pop('_id', None)
+            operations.append(
+                UpdateOne(
+                    {
+                        'customer_id': owner,
+                        'request_id': interaction.request_id,
+                        'role': interaction.role,
+                    },
+                    {'$setOnInsert': data},
+                    upsert=True,
+                )
+            )
+
+        database = get_db()
+        client = getattr(database, 'client', None)
+        if client is not None and hasattr(client, 'start_session'):
+            try:
+                with client.start_session() as session, session.start_transaction():
+                    collection.bulk_write(operations, ordered=True, session=session)
+            except NotImplementedError:
+                cls._save_exchange_without_transactions(
+                    collection, user_interaction, assistant_interaction
+                )
+        else:
+            cls._save_exchange_without_transactions(
+                collection, user_interaction, assistant_interaction
+            )
+        return cls.find_by_request_id(owner, user_interaction.request_id)
+
+    @classmethod
+    def _save_exchange_without_transactions(
+        cls, collection, user_interaction, assistant_interaction
+    ):
+        """Development fallback; repeatable upserts repair an interrupted pair."""
+        for interaction in (user_interaction, assistant_interaction):
+            data = interaction.to_dict()
+            data.pop('_id', None)
+            collection.update_one(
+                {
+                    'customer_id': str(interaction.customer_id),
+                    'request_id': interaction.request_id,
+                    'role': interaction.role,
+                },
+                {'$setOnInsert': data},
+                upsert=True,
+            )
+
+    @classmethod
+    def find_by_request_id(cls, customer_id, request_id):
+        query = {
+            **cls._customer_query(customer_id),
+            'request_id': str(request_id),
+            'customer_hidden_at': None,
+        }
+        return cls.find(query, sort=[('timestamp', 1), ('_id', 1)], limit=2)
     
     def delete(self):
         if self._id:
@@ -269,19 +342,79 @@ class AIInteraction:
 
         interactions = [cls.from_dict(doc) for doc in cursor]
         return interactions, total_count
+
+    @classmethod
+    def find_by_customer_cursor(
+        cls,
+        customer_id,
+        *,
+        limit=50,
+        cursor=None,
+        search_query=None,
+    ):
+        """Use a signed keyset cursor so deep history never scans an offset."""
+        limit = max(1, min(int(limit), 100))
+        query = cls._customer_query(customer_id)
+        query['customer_hidden_at'] = None
+        constraints = []
+        if search_query:
+            for term in cls._search_words(search_query):
+                constraints.append({
+                    'search_tokens': {
+                        '$in': [
+                            hmac.new(key, term.encode('utf-8'), hashlib.sha256).hexdigest()
+                            for key in cls._search_keys()
+                        ]
+                    }
+                })
+        if cursor:
+            try:
+                boundary = signing.loads(cursor, salt='ai-history-cursor')
+                timestamp = datetime.fromisoformat(boundary['timestamp'])
+                object_id = ObjectId(boundary['id'])
+            except (signing.BadSignature, KeyError, TypeError, ValueError):
+                raise ValueError('Invalid history cursor') from None
+            constraints.append({
+                '$or': [
+                    {'timestamp': {'$lt': timestamp}},
+                    {'timestamp': timestamp, '_id': {'$lt': object_id}},
+                ]
+            })
+        if constraints:
+            query['$and'] = constraints
+
+        raw_rows = list(
+            get_db()[cls.collection_name]
+            .find(query)
+            .sort([('timestamp', -1), ('_id', -1)])
+            .limit(limit + 1)
+        )
+        has_more = len(raw_rows) > limit
+        raw_rows = raw_rows[:limit]
+        next_cursor = None
+        if has_more and raw_rows:
+            last = raw_rows[-1]
+            next_cursor = signing.dumps(
+                {'timestamp': last['timestamp'].isoformat(), 'id': str(last['_id'])},
+                salt='ai-history-cursor',
+                compress=True,
+            )
+        return [cls.from_dict(row) for row in raw_rows], next_cursor
     
     @classmethod
-    def find_by_conversation(cls, conversation_id, customer_id=None):
-        """Get all messages in a conversation, optionally scoped to a customer."""
+    def find_by_conversation(cls, conversation_id, customer_id=None, limit=10):
+        """Get a bounded recent conversation in chronological order."""
         query = {'conversation_id': str(conversation_id)}
         if customer_id is not None:
             query.update(cls._customer_query(customer_id))
             query['customer_hidden_at'] = None
 
-        return cls.find(
+        recent = cls.find(
             query,
-            sort=[('timestamp', 1)]
+            sort=[('timestamp', -1), ('_id', -1)],
+            limit=max(1, min(int(limit), 50)),
         )
+        return list(reversed(recent))
 
     @classmethod
     def find_by_id(cls, interaction_id):
@@ -358,7 +491,7 @@ class AIInteraction:
         collection.create_index('conversation_id')
         collection.create_index('timestamp')
         collection.create_index(
-            [('customer_id', ASCENDING), ('timestamp', DESCENDING)],
+            [('customer_id', ASCENDING), ('timestamp', DESCENDING), ('_id', DESCENDING)],
             name='ai_history_by_customer',
         )
         collection.create_index(
@@ -372,4 +505,67 @@ class AIInteraction:
         collection.create_index(
             [('customer_id', ASCENDING), ('search_tokens', ASCENDING)],
             name='ai_history_search',
+        )
+        collection.create_index(
+            [('customer_id', ASCENDING), ('request_id', ASCENDING), ('role', ASCENDING)],
+            name='ai_exchange_idempotency',
+            unique=True,
+            partialFilterExpression={'request_id': {'$type': 'string'}},
+        )
+
+    @classmethod
+    def create_validator(cls):
+        """Install the production validator after legacy backfill is clean."""
+        if not getattr(settings, 'FIELD_ENCRYPTION_KEY', ''):
+            raise ImproperlyConfigured(
+                'FIELD_ENCRYPTION_KEY is required before installing the AI validator'
+            )
+        encrypted_or_empty = {
+            'oneOf': [
+                {'enum': ['', None]},
+                {'bsonType': 'string', 'pattern': '^enc::v2::[0-9a-f]{12}::'},
+            ]
+        }
+        validator = {
+            '$jsonSchema': {
+                'bsonType': 'object',
+                'required': [
+                    'customer_id', 'conversation_id', 'role', 'language',
+                    'message', 'response', 'timestamp', 'created_at',
+                    'interaction_schema_version', 'retention_policy_version',
+                    'retention_expires_at', 'legal_hold',
+                ],
+                'properties': {
+                    'customer_id': {'bsonType': 'string'},
+                    'conversation_id': {
+                        'bsonType': 'string',
+                        'pattern': '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$',
+                    },
+                    'request_id': {
+                        'bsonType': ['string', 'null'],
+                        'pattern': '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$',
+                    },
+                    'role': {'enum': ['user', 'assistant']},
+                    'language': {'enum': ['en', 'tl']},
+                    'message': encrypted_or_empty,
+                    'response': encrypted_or_empty,
+                    'legal_hold_reason': encrypted_or_empty,
+                    'timestamp': {'bsonType': 'date'},
+                    'created_at': {'bsonType': 'date'},
+                    'response_time_ms': {
+                        'bsonType': ['int', 'long', 'null'], 'minimum': 0,
+                    },
+                    'tokens_used': {
+                        'bsonType': ['int', 'long', 'null'], 'minimum': 0,
+                    },
+                    'interaction_schema_version': {'enum': [2]},
+                    'retention_policy_version': {'bsonType': 'string'},
+                    'retention_expires_at': {'bsonType': 'date'},
+                    'legal_hold': {'bsonType': 'bool'},
+                },
+            }
+        }
+        get_db().command(
+            'collMod', cls.collection_name, validator=validator,
+            validationLevel='strict', validationAction='error',
         )

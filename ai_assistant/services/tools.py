@@ -15,6 +15,7 @@ import json
 import logging
 from datetime import datetime
 
+from bson import ObjectId
 from django.conf import settings
 from django.core.cache import cache
 
@@ -25,6 +26,14 @@ from loans.services.qualification import (
 )
 
 logger = logging.getLogger('ai_assistant')
+
+
+def _owner_query(field, customer_id):
+    value = str(customer_id)
+    candidates = [value]
+    if ObjectId.is_valid(value):
+        candidates.insert(0, ObjectId(value))
+    return {field: candidates[0] if len(candidates) == 1 else {'$in': candidates}}
 
 
 def _profile_missing_labels(profile):
@@ -321,7 +330,14 @@ def _get_document_status(customer_id, **kwargs):
     if cached is not None:
         return cached
 
-    docs = Document.find_by_customer(customer_id)
+    docs = Document.find_by_customer(
+        customer_id,
+        limit=20,
+        projection={
+            'customer_id': 1, 'document_type': 1, 'status': 1,
+            'verified': 1, 'uploaded_at': 1, 'storage_state': 1,
+        },
+    )
     if not docs:
         result = {"documents": [], "summary": "No documents uploaded yet."}
         cache.set(cache_key, result, TOOL_CACHE_TTL['document_status'])
@@ -336,13 +352,20 @@ def _get_document_status(customer_id, **kwargs):
             "verified": getattr(doc, 'verified', False),
         })
 
-    approved = sum(1 for d in doc_list if d['status'] == 'approved')
-    pending = sum(1 for d in doc_list if d['status'] in ('pending', 'needs_review'))
-    rejected = sum(1 for d in doc_list if d['status'] == 'rejected')
+    collection = settings.MONGODB[Document.collection_name]
+    owner_query = Document.available_query(Document._customer_query(customer_id))
+    total = collection.count_documents(owner_query)
+    approved = collection.count_documents({**owner_query, 'status': 'approved'})
+    pending = collection.count_documents(
+        {**owner_query, 'status': {'$in': ['pending', 'needs_review']}}
+    )
+    rejected = collection.count_documents({**owner_query, 'status': 'rejected'})
 
     result = {
         "documents": doc_list,
-        "summary": f"{len(doc_list)} document(s): {approved} approved, {pending} pending, {rejected} rejected"
+        "total": total,
+        "truncated": total > len(doc_list),
+        "summary": f"{total} document(s): {approved} approved, {pending} pending, {rejected} rejected"
     }
     cache.set(cache_key, result, TOOL_CACHE_TTL['document_status'])
     return result
@@ -358,14 +381,22 @@ def _get_loan_status(customer_id, **kwargs):
     if cached is not None:
         return cached
 
-    apps = LoanApplication.find_by_customer(customer_id)
+    apps = LoanApplication.find_by_customer(
+        customer_id,
+        limit=5,
+        projection={
+            'customer_id': 1, 'status': 1, 'requested_amount': 1,
+            'approved_amount': 1, 'term_months': 1, 'purpose': 1,
+            'created_at': 1, 'decision_date': 1, 'disbursed_amount': 1,
+        },
+    )
     if not apps:
         result = {"applications": [], "summary": "No loan applications yet."}
         cache.set(cache_key, result, TOOL_CACHE_TTL['loan_status'])
         return result
 
     app_list = []
-    for app in apps[:5]:
+    for app in apps:
         app_data = {
             "status": getattr(app, 'status', 'unknown'),
             "requested_amount": getattr(app, 'requested_amount', None),
@@ -378,13 +409,12 @@ def _get_loan_status(customer_id, **kwargs):
         # Include disbursed amount and blockchain status for disbursed loans
         if getattr(app, 'status', None) == 'disbursed':
             app_data["disbursed_amount"] = getattr(app, 'disbursed_amount', None)
-            app_data["blockchain_tx_hashes"] = getattr(app, 'blockchain_tx_hashes', {})
         app_list.append(app_data)
 
     result = {
         "applications": app_list,
-        "total": len(apps),
-        "summary": f"{len(apps)} application(s). Most recent: {app_list[0]['status']}" if app_list else "None"
+        "total": LoanApplication.count({'customer_id': str(customer_id)}),
+        "summary": f"{LoanApplication.count({'customer_id': str(customer_id)})} application(s). Most recent: {app_list[0]['status']}" if app_list else "None"
     }
     cache.set(cache_key, result, TOOL_CACHE_TTL['loan_status'])
     return result
@@ -394,7 +424,10 @@ def _get_repayment_schedule(customer_id, **kwargs):
     from loans.models.application import LoanApplication
     from loans.models.repayment import RepaymentSchedule
 
-    apps = LoanApplication.find_by_customer(customer_id)
+    apps = LoanApplication.find_by_customer(
+        customer_id, limit=10,
+        projection={'customer_id': 1, 'status': 1, 'approved_amount': 1, 'disbursed_amount': 1, 'created_at': 1},
+    )
     disbursed = [a for a in apps if getattr(a, 'status', '') == 'disbursed']
 
     if not disbursed:
@@ -445,7 +478,10 @@ def _get_next_payment_due(customer_id, **kwargs):
     from loans.models.application import LoanApplication
     from loans.models.repayment import RepaymentSchedule
 
-    apps = LoanApplication.find_by_customer(customer_id)
+    apps = LoanApplication.find_by_customer(
+        customer_id, limit=10,
+        projection={'customer_id': 1, 'status': 1, 'approved_amount': 1, 'disbursed_amount': 1, 'created_at': 1},
+    )
     disbursed = [a for a in apps if getattr(a, 'status', '') == 'disbursed']
 
     if not disbursed:
@@ -480,11 +516,18 @@ def _get_next_payment_due(customer_id, **kwargs):
 def _get_payment_history(customer_id, limit=5, **kwargs):
     from loans.models.payment import LoanPayment
 
-    payments = LoanPayment.find_by_customer(customer_id)
+    payments = LoanPayment.find_by_customer(
+        customer_id,
+        limit=limit,
+        projection={
+            'customer_id': 1, 'amount': 1, 'payment_method': 1,
+            'installment_number': 1, 'recorded_at': 1, 'reference': 1,
+        },
+    )
     if not payments:
         return {"payments": [], "summary": "No payment history yet."}
 
-    recent = payments[:limit]
+    recent = payments
     payment_list = []
     for p in recent:
         recorded_at = getattr(p, 'recorded_at', None)
@@ -498,8 +541,10 @@ def _get_payment_history(customer_id, limit=5, **kwargs):
 
     return {
         "payments": payment_list,
-        "total_payments": len(payments),
-        "summary": f"{len(payments)} total payment(s). Showing last {len(recent)}."
+        "total_payments": settings.MONGODB[LoanPayment.collection_name].count_documents(
+            {'customer_id': str(customer_id)}
+        ),
+        "summary": f"Showing the latest {len(recent)} payment(s)."
     }
 
 
@@ -643,39 +688,41 @@ def _get_customer_dashboard(customer_id, **kwargs):
         return cached
 
     db = settings.MONGODB
+    application_owner = _owner_query('customer_id', customer_id)
+    document_owner = _owner_query('customer_id', customer_id)
 
     # Application counts
     applications = {
         "total": db["loan_applications"].count_documents(
-            {"customer_id": str(customer_id)}
+            application_owner
         ),
         "pending": db["loan_applications"].count_documents(
             {
-                "customer_id": str(customer_id),
+                **application_owner,
                 "status": {"$in": ["submitted", "under_review"]},
             }
         ),
         "approved": db["loan_applications"].count_documents(
-            {"customer_id": str(customer_id), "status": "approved"}
+            {**application_owner, "status": "approved"}
         ),
         "rejected": db["loan_applications"].count_documents(
-            {"customer_id": str(customer_id), "status": "rejected"}
+            {**application_owner, "status": "rejected"}
         ),
         "disbursed": db["loan_applications"].count_documents(
-            {"customer_id": str(customer_id), "status": "disbursed"}
+            {**application_owner, "status": "disbursed"}
         ),
     }
 
     # Document counts
     documents = {
         "total": db["documents"].count_documents(
-            {"customer_id": str(customer_id)}
+            document_owner
         ),
         "verified": db["documents"].count_documents(
-            {"customer_id": str(customer_id), "verified": True}
+            {**document_owner, "verified": True}
         ),
         "pending": db["documents"].count_documents(
-             {"customer_id": str(customer_id), "status": {"$in": ["pending", "needs_review"]}}
+             {**document_owner, "status": {"$in": ["pending", "needs_review"]}}
         ),
     }
 
@@ -688,7 +735,7 @@ def _get_customer_dashboard(customer_id, **kwargs):
     has_alternative = bool(alternative and alternative.profile_completed)
     has_id = (
         db["documents"].count_documents(
-            {"customer_id": str(customer_id), "document_type": "valid_id"}
+            {**document_owner, "document_type": "valid_id"}
         )
         > 0
     )
@@ -710,7 +757,7 @@ def _get_customer_dashboard(customer_id, **kwargs):
 
     # AI session count
     ai_sessions = db["ai_interactions"].count_documents(
-        {"customer_id": str(customer_id)}
+        _owner_query('customer_id', customer_id)
     )
 
     result = {
@@ -743,7 +790,7 @@ def _get_notification_status(customer_id, **kwargs):
         return cached
 
     # Build owner query (customers strictly by user_id)
-    owner_query = {'user_id': str(customer_id)}
+    owner_query = _owner_query('user_id', customer_id)
     if not customer_id:
         return {"unread_count": 0, "recent_notifications": [], "summary": "No notifications."}
 

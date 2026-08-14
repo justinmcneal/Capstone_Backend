@@ -130,7 +130,12 @@ def test_account_cleanup_deletes_normal_and_pseudonymizes_held(ai_encryption):
 
     counts = delete_customer_ai_data(ai_encryption.MONGODB, customer_id)
 
-    assert counts == {'deleted': 2, 'held_pseudonymized': 1, 'remaining': 0}
+    assert counts == {
+        'deleted': 2,
+        'held_pseudonymized': 1,
+        'remaining': 0,
+        'idempotency_records_deleted': 0,
+    }
     assert AIInteraction.find_by_id(ordinary.id) is None
     assert AIInteraction.find_by_id(legacy_object_id.id) is None
     raw_held = ai_encryption.MONGODB[AIInteraction.collection_name].find_one(
