@@ -1,6 +1,7 @@
 import logging
 import math
 
+from django.conf import settings
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
@@ -49,6 +50,13 @@ class ChatHistoryView(ConsentRequiredMixin, APIView):
                     errors={'page': 'page must be a positive integer'},
                     status_code=status.HTTP_400_BAD_REQUEST
                 )
+            if page > settings.AI_ASSISTANT_HISTORY_MAX_PAGE:
+                return error_response(
+                    message="Requested history page is too large",
+                    code='AI_HISTORY_PAGE_EXCEEDED',
+                    errors={'page': f'Must not exceed {settings.AI_ASSISTANT_HISTORY_MAX_PAGE}'},
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                )
             limit = self._parse_positive_int(request.query_params.get('limit', 50))
             if limit is None:
                 return error_response(
@@ -58,6 +66,18 @@ class ChatHistoryView(ConsentRequiredMixin, APIView):
                 )
             limit = min(limit, 100)
             search_query = sanitize_text(request.query_params.get('search', ''))
+            if len(search_query) > settings.AI_ASSISTANT_HISTORY_SEARCH_MAX_CHARS:
+                return error_response(
+                    message="History search is too long",
+                    code='AI_HISTORY_SEARCH_EXCEEDED',
+                    errors={
+                        'search': (
+                            'Must not exceed '
+                            f'{settings.AI_ASSISTANT_HISTORY_SEARCH_MAX_CHARS} characters'
+                        )
+                    },
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                )
 
             interactions, total_messages = AIInteraction.find_by_customer_paginated(
                 customer_id=customer_id,

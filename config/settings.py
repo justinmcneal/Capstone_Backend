@@ -14,6 +14,7 @@ import json
 import os
 import re
 from pathlib import Path
+from urllib.parse import urlparse
 
 from cryptography.fernet import Fernet
 from django.core.exceptions import ImproperlyConfigured
@@ -912,10 +913,93 @@ CONSENT_POLICY_CONTENT_SHA256 = os.getenv(
 GROQ_QUALIFICATION_MODEL = os.getenv('GROQ_QUALIFICATION_MODEL', GROQ_MODEL)
 
 # LLM Provider Configuration
-# Set LLM_PROVIDER to 'groq' or 'ollama' to switch AI backends
-LLM_PROVIDER = os.getenv('LLM_PROVIDER', 'groq')
-OLLAMA_BASE_URL = os.getenv('OLLAMA_BASE_URL', 'http://localhost:11434')
-OLLAMA_MODEL = os.getenv('OLLAMA_MODEL', 'llama3.1')
+LLM_PROVIDER = (os.getenv('LLM_PROVIDER') or 'groq').strip().lower()
+if LLM_PROVIDER not in {'groq', 'ollama'}:
+    raise ImproperlyConfigured('LLM_PROVIDER must be groq or ollama')
+
+OLLAMA_BASE_URL = (os.getenv('OLLAMA_BASE_URL') or 'http://localhost:11434').strip().rstrip('/')
+_ollama_url = urlparse(OLLAMA_BASE_URL)
+if _ollama_url.scheme not in {'http', 'https'} or not _ollama_url.netloc:
+    raise ImproperlyConfigured('OLLAMA_BASE_URL must be an absolute HTTP(S) URL')
+
+OLLAMA_MODEL = (os.getenv('OLLAMA_MODEL') or 'llama3.1').strip()
+if not OLLAMA_MODEL:
+    raise ImproperlyConfigured('OLLAMA_MODEL must not be blank')
+
+for _groq_model_setting in ('GROQ_MODEL', 'GROQ_CHAT_MODEL', 'GROQ_QUALIFICATION_MODEL'):
+    if not str(globals().get(_groq_model_setting, '')).strip():
+        raise ImproperlyConfigured(f'{_groq_model_setting} must not be blank')
+
+AI_ASSISTANT_MESSAGE_MAX_CHARS = int(os.getenv('AI_ASSISTANT_MESSAGE_MAX_CHARS') or '4000')
+AI_ASSISTANT_MESSAGE_MAX_BYTES = int(os.getenv('AI_ASSISTANT_MESSAGE_MAX_BYTES') or '16000')
+AI_ASSISTANT_REQUEST_MAX_BYTES = int(os.getenv('AI_ASSISTANT_REQUEST_MAX_BYTES') or '20000')
+AI_ASSISTANT_HISTORY_SEARCH_MAX_CHARS = int(
+    os.getenv('AI_ASSISTANT_HISTORY_SEARCH_MAX_CHARS') or '200'
+)
+AI_ASSISTANT_HISTORY_MAX_PAGE = int(os.getenv('AI_ASSISTANT_HISTORY_MAX_PAGE') or '200')
+AI_ASSISTANT_CHAT_RATE = (os.getenv('AI_ASSISTANT_CHAT_RATE') or '100/hour').strip()
+AI_ASSISTANT_MAX_OUTPUT_TOKENS = int(os.getenv('AI_ASSISTANT_MAX_OUTPUT_TOKENS') or '512')
+AI_ASSISTANT_MAX_TOOL_ROUNDS = int(os.getenv('AI_ASSISTANT_MAX_TOOL_ROUNDS') or '3')
+AI_ASSISTANT_MAX_TOOL_CALLS_PER_REQUEST = int(
+    os.getenv('AI_ASSISTANT_MAX_TOOL_CALLS_PER_REQUEST') or '6'
+)
+AI_ASSISTANT_MAX_CONCURRENT_REQUESTS = int(
+    os.getenv('AI_ASSISTANT_MAX_CONCURRENT_REQUESTS') or '8'
+)
+AI_ASSISTANT_CONNECT_TIMEOUT_SECONDS = float(
+    os.getenv('AI_ASSISTANT_CONNECT_TIMEOUT_SECONDS') or '5'
+)
+AI_ASSISTANT_READ_TIMEOUT_SECONDS = float(
+    os.getenv('AI_ASSISTANT_READ_TIMEOUT_SECONDS') or '120'
+)
+AI_ASSISTANT_PROVIDER_RETRY_ATTEMPTS = int(
+    os.getenv('AI_ASSISTANT_PROVIDER_RETRY_ATTEMPTS') or '2'
+)
+AI_ASSISTANT_PROVIDER_RETRY_BACKOFF_SECONDS = float(
+    os.getenv('AI_ASSISTANT_PROVIDER_RETRY_BACKOFF_SECONDS') or '0.25'
+)
+AI_ASSISTANT_CIRCUIT_FAILURE_THRESHOLD = int(
+    os.getenv('AI_ASSISTANT_CIRCUIT_FAILURE_THRESHOLD') or '5'
+)
+AI_ASSISTANT_CIRCUIT_RECOVERY_SECONDS = float(
+    os.getenv('AI_ASSISTANT_CIRCUIT_RECOVERY_SECONDS') or '30'
+)
+
+_ai_integer_bounds = {
+    'AI_ASSISTANT_MESSAGE_MAX_CHARS': (1, 20000),
+    'AI_ASSISTANT_MESSAGE_MAX_BYTES': (1, 80000),
+    'AI_ASSISTANT_REQUEST_MAX_BYTES': (1, 100000),
+    'AI_ASSISTANT_HISTORY_SEARCH_MAX_CHARS': (1, 1000),
+    'AI_ASSISTANT_HISTORY_MAX_PAGE': (1, 10000),
+    'AI_ASSISTANT_MAX_OUTPUT_TOKENS': (1, 4096),
+    'AI_ASSISTANT_MAX_TOOL_ROUNDS': (0, 10),
+    'AI_ASSISTANT_MAX_TOOL_CALLS_PER_REQUEST': (1, 25),
+    'AI_ASSISTANT_MAX_CONCURRENT_REQUESTS': (1, 100),
+    'AI_ASSISTANT_PROVIDER_RETRY_ATTEMPTS': (1, 5),
+    'AI_ASSISTANT_CIRCUIT_FAILURE_THRESHOLD': (1, 100),
+}
+for _name, (_minimum, _maximum) in _ai_integer_bounds.items():
+    if not _minimum <= globals()[_name] <= _maximum:
+        raise ImproperlyConfigured(f'{_name} must be between {_minimum} and {_maximum}')
+
+if AI_ASSISTANT_MESSAGE_MAX_BYTES < AI_ASSISTANT_MESSAGE_MAX_CHARS:
+    raise ImproperlyConfigured(
+        'AI_ASSISTANT_MESSAGE_MAX_BYTES must be at least AI_ASSISTANT_MESSAGE_MAX_CHARS'
+    )
+if AI_ASSISTANT_REQUEST_MAX_BYTES < AI_ASSISTANT_MESSAGE_MAX_BYTES:
+    raise ImproperlyConfigured(
+        'AI_ASSISTANT_REQUEST_MAX_BYTES must be at least AI_ASSISTANT_MESSAGE_MAX_BYTES'
+    )
+if not re.fullmatch(r'[1-9][0-9]*/(second|minute|hour|day)', AI_ASSISTANT_CHAT_RATE):
+    raise ImproperlyConfigured('AI_ASSISTANT_CHAT_RATE must use DRF format, for example 100/hour')
+for _name, _minimum, _maximum in (
+    ('AI_ASSISTANT_CONNECT_TIMEOUT_SECONDS', 0.1, 30),
+    ('AI_ASSISTANT_READ_TIMEOUT_SECONDS', 1, 300),
+    ('AI_ASSISTANT_PROVIDER_RETRY_BACKOFF_SECONDS', 0, 10),
+    ('AI_ASSISTANT_CIRCUIT_RECOVERY_SECONDS', 1, 600),
+):
+    if not _minimum <= globals()[_name] <= _maximum:
+        raise ImproperlyConfigured(f'{_name} must be between {_minimum} and {_maximum}')
 
 # =============================================================================
 # BLOCKCHAIN INTEGRATION (Smart Contracts via web3.py)

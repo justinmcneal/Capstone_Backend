@@ -10,20 +10,20 @@ This guide covers the AI Assistant's API, consent and customer isolation,
 context/tool safety, chat persistence, SSE behavior, provider integration,
 privacy lifecycle, observability, and deployment validation.
 
-The focused offline suite passed during the review:
+The focused Stage 1–2 offline suite passed during the review:
 
 ```text
-176 passed in 1.21 seconds
+188 passed in 1.36 seconds
 ```
 
 That result verifies the current local/mocked implementation only. It is not a
 substitute for the real MongoDB, Redis, provider, proxy, load, privacy-lifecycle,
 and monitoring gates described below.
 
-The complete local repository suite also passed after Stage 1:
+The complete local repository suite also passed after Stage 2:
 
 ```text
-1133 passed, 28 skipped, 1 warning in 51.29 seconds
+1145 passed, 28 skipped, 1 warning in 50.86 seconds
 ```
 
 ## Safety Rules
@@ -59,6 +59,33 @@ Suggestions, status, education, and FAQs still require an authenticated
 customer, but do not require AI consent because they do not invoke the LLM or
 read personal AI history.
 
+## Stage 2 Boundary Configuration
+
+The defaults below are development/testing baselines, not automatic production
+capacity recommendations:
+
+| Setting | Default | Purpose |
+| --- | ---: | --- |
+| `AI_ASSISTANT_CHAT_RATE` | `100/hour` | Per-authenticated-user DRF chat/stream throttle. |
+| `AI_ASSISTANT_MESSAGE_MAX_CHARS` | `4000` | Maximum sanitized message characters. |
+| `AI_ASSISTANT_MESSAGE_MAX_BYTES` | `16000` | Maximum raw message UTF-8 bytes. |
+| `AI_ASSISTANT_REQUEST_MAX_BYTES` | `20000` | Maximum declared request body bytes. |
+| `AI_ASSISTANT_HISTORY_SEARCH_MAX_CHARS` | `200` | Maximum history-search length. |
+| `AI_ASSISTANT_HISTORY_MAX_PAGE` | `200` | Maximum accepted offset page pending Stage 3 cursor work. |
+| `AI_ASSISTANT_MAX_OUTPUT_TOKENS` | `512` | Hard output cap supplied to the provider. |
+| `AI_ASSISTANT_MAX_TOOL_ROUNDS` | `3` | Maximum tool-selection iterations. |
+| `AI_ASSISTANT_MAX_TOOL_CALLS_PER_REQUEST` | `6` | Maximum aggregate tool calls in one request. |
+| `AI_ASSISTANT_MAX_CONCURRENT_REQUESTS` | `8` | Per-process provider calls/streams. |
+| `AI_ASSISTANT_CONNECT_TIMEOUT_SECONDS` | `5` | Provider connection timeout. |
+| `AI_ASSISTANT_READ_TIMEOUT_SECONDS` | `120` | Provider response/read timeout. |
+| `AI_ASSISTANT_PROVIDER_RETRY_ATTEMPTS` | `2` | Safe readiness GET attempts; chat POSTs always use one. |
+| `AI_ASSISTANT_PROVIDER_RETRY_BACKOFF_SECONDS` | `0.25` | Exponential readiness retry base delay. |
+| `AI_ASSISTANT_CIRCUIT_FAILURE_THRESHOLD` | `5` | Consecutive transient failures before opening. |
+| `AI_ASSISTANT_CIRCUIT_RECOVERY_SECONDS` | `30` | Open-circuit recovery interval. |
+
+Invalid provider/model/URL/rate/range combinations raise
+`ImproperlyConfigured` during startup.
+
 ## API Reference
 
 ### `POST /api/ai/chat/`
@@ -78,17 +105,17 @@ accepts only `en` or `tl` and otherwise defaults to the customer's saved
 language. A successful response includes `response`, `conversation_id`,
 `model`, and `response_time_ms` inside the shared response envelope.
 
-Current error behavior:
+Current bounded error behavior:
 
-- 400: empty message, invalid UUID, or unsupported language;
+- 400: empty/over-character-limit message, invalid UUID, or unsupported language;
+- 413: request/message UTF-8 byte limit exceeded;
 - 401: missing/invalid authentication;
 - 403: wrong role or missing/current-policy consent;
 - 429: endpoint throttle exceeded;
-- 503: provider is not configured/available before the call; and
-- 500: provider call failure, empty model output, or handled processing error.
-
-Production hardening must add a documented message-size response and normalize
-upstream failures without returning provider details.
+- 503: provider is not configured, reachable, authenticated, or the provider
+  call fails; public responses use stable codes and never include provider bodies;
+  and
+- 500: empty model output, persistence failure, or another handled internal error.
 
 ### `POST /api/ai/chat/stream/`
 
@@ -127,9 +154,9 @@ Query parameters:
 
 | Parameter | Current rule |
 | --- | --- |
-| `page` | Positive integer; default 1. No current maximum. |
+| `page` | Positive integer; default 1; capped by `AI_ASSISTANT_HISTORY_MAX_PAGE` (default 200). |
 | `limit` | Positive integer; default 50; capped at 100. |
-| `search` | Optional case-insensitive keyword search backed by keyed blind tokens. All supplied words must match; no current input-length bound. |
+| `search` | Optional keyed blind-token search; all words must match; capped by `AI_ASSISTANT_HISTORY_SEARCH_MAX_CHARS` (default 200). |
 
 The response includes `history`, `total`, `page`, `limit`, `total_messages`,
 `total_pages`, and `has_more`. Results must contain only the authenticated
@@ -147,7 +174,7 @@ delete account data in other modules.
 | Method and path | Expected result |
 | --- | --- |
 | `GET /api/ai/suggestions/?language=en` | Cached English or Tagalog conversation starters. |
-| `GET /api/ai/status/` | Provider, selected model, configured/available flags. Groq availability currently checks key presence only. |
+| `GET /api/ai/status/` | Provider/model plus configured, reachable, authenticated, selected-model availability/degradation, and circuit states from a bounded live probe. |
 | `GET /api/ai/education/` | Topic IDs and titles. |
 | `GET /api/ai/education/<topic>/` | Cached topic content or 404. |
 | `GET /api/ai/faqs/` | Cached static FAQ list and count. |
@@ -160,6 +187,7 @@ focused command is:
 ```bash
 .venv/bin/pytest -q \
   tests/test_ai_stage1_privacy_lifecycle.py \
+  tests/test_ai_stage2_provider_boundary.py \
   tests/test_ai_model_methods.py \
   tests/test_ai_streaming.py \
   tests/test_chatbot_api.py \
@@ -183,6 +211,7 @@ Static checks for the module and its focused tests:
 ```bash
 .venv/bin/ruff check ai_assistant \
   tests/test_ai_stage1_privacy_lifecycle.py \
+  tests/test_ai_stage2_provider_boundary.py \
   tests/test_ai_model_methods.py \
   tests/test_ai_streaming.py \
   tests/test_chatbot_api.py \
@@ -209,6 +238,7 @@ modules and are required for the current focused count.
 | Tools | Fixed schemas, raw executor isolation, customer cache keys, parameter bounds/coercion, cost accounting, and safe error results. |
 | Auxiliary APIs | Suggestion languages/cache, provider status shape, education cache/topic lookup, and FAQ cache. |
 | Stage 1 privacy lifecycle | Ciphertext storage/read, keyed history search, retention/legal hold, allowlisted export, pseudonymous held evidence, retryable account deletion, inventory, and dry-run backfill. |
+| Stage 2 provider boundary | Message/request/search/page bounds, configurable throttle, hard generation limits, provider selection, readiness states, stable errors, safe GET retry, no paid-POST retry, stream concurrency lifetime, and circuit opening. |
 
 Most persistence and external behavior in these tests is mocked or in-memory.
 
@@ -231,16 +261,14 @@ For every endpoint, verify:
 
 ### Input boundaries
 
-Existing tests cover empty messages, UUIDs, and languages. Add tests before
-production for:
+Automated tests cover empty messages, UUIDs, languages, UTF-8 request/message
+bounds, history search/page bounds, and stable errors. Stage 3 must still cover:
 
-- maximum accepted UTF-8 bytes and characters;
 - whitespace-only and control-character-only messages;
 - deeply nested/non-string JSON values;
 - very long Tagalog/Unicode input;
 - maximum conversation-history size enforced by the database query;
-- bounded search text and maximum page/cursor; and
-- stable 400/413 errors without reflecting sensitive input.
+- cursor pagination and database-side conversation bounds.
 
 ### Persistence and idempotency
 
@@ -313,7 +341,8 @@ MongoDB validator, index, transaction, collation, or concurrency behavior.
 
 ## Real Redis and Rate-Limit Gate
 
-After the limiter is made atomic/configurable, use a dedicated Redis database
+The endpoint rate is configurable, while Stage 4 must make tool accounting
+atomic. Use a dedicated Redis database and test:
 and test:
 
 - simultaneous calls cannot exceed the minute/hour budget;
@@ -462,8 +491,8 @@ Use Insomnia, curl, or the customer client with a synthetic verified customer.
 1. Log in and retain the customer access token.
 2. Read the current consent policy and grant current data/AI consent through the
    accounts consent endpoint.
-3. Call `/api/ai/status/`; treat it as configuration information until real
-   upstream readiness is implemented.
+3. Call `/api/ai/status/`; confirm configured, reachable, authenticated,
+   available/degraded, and circuit fields match the selected provider.
 4. Call `/api/ai/suggestions/` in `en` and `tl`.
 5. Ask a general question through `/chat/` and confirm no personal-data tool is
    unnecessarily invoked.
@@ -483,10 +512,11 @@ encryption, concurrency, or provider privacy.
 
 ## Release Evidence Checklist
 
-- [x] Stage 1-focused offline suite passes (176 tests on 2026-08-14).
-- [x] Full local repository suite passes after Stage 1 (1133 passed, 28 skipped).
+- [x] Stage 1–2 focused offline suite passes (188 tests on 2026-08-14).
+- [x] Full local repository suite passes after Stage 2 (1145 passed, 28 skipped).
 - [x] AI conversation encryption and shared key-rotation tests pass locally.
 - [x] Retention, legal hold, export, account-deletion, and retry tests pass locally.
+- [x] Stage 2 request/provider boundary tests pass locally.
 - [ ] Deployment-target inventory/backfill is reviewed, applied, and clean.
 - [ ] Isolated real MongoDB validator/index/query-plan/concurrency gate passes.
 - [ ] Real Redis multi-worker atomic limit/cache gate passes.
@@ -506,15 +536,16 @@ encryption, concurrency, or provider privacy.
 | 403 `CONSENT_REQUIRED` | Both consent flags, current policy version/hash, and account role. |
 | 429 | Endpoint throttle and tool-budget state in the shared cache. |
 | 503 before chat starts | Provider configuration/readiness and selected model. |
-| 500 from `/chat/` | Protected provider logs, malformed response, tool error, or persistence failure; do not expose the raw provider body. |
+| 503 from `/chat/` | Provider authentication/reachability, circuit/concurrency state, or protected provider logs; public output intentionally omits the raw provider body. |
 | HTTP 200 stream with no answer | Inspect `error`/`done` frames, proxy buffering, provider stream termination, and disconnect logs. |
 | Missing history | Consent, customer-ID storage shape, persistence completion, and encryption read path. |
 | Wrong counts | Tool query scope, legacy ID shape, database-side limits, cache invalidation, and source record status. |
 | Limits differ across workers | Confirm Redis cache is enabled/shared and atomic limiter code is deployed. |
-| Status says available but calls fail | Current Groq status checks key presence only; verify upstream authentication/model manually until readiness is hardened. |
+| Status is degraded/unavailable | Inspect configured/reachable/authenticated/circuit fields, then protected provider logs and network policy. |
 
 ## Review Boundary
 
-The 2026-08-14 review ran the focused local suite with offline test settings. It
+The 2026-08-14 Stage 1–2 review ran the focused and full local suites with
+offline test settings. It
 did not read `.env`, use customer data, call Groq/Ollama, initialize a database,
 run Redis integration, modify deployment state, or perform load/proxy tests.

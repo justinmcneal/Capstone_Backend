@@ -3,6 +3,7 @@ Chatbot API tests for /api/ai/chat/ and /api/ai/chat/stream/.
 """
 import json
 import uuid
+
 from bson import ObjectId
 from django.core.cache import cache
 from rest_framework.test import APIRequestFactory, force_authenticate
@@ -177,7 +178,7 @@ class TestChatView:
         assert response.data["status"] == "error"
         assert "unavailable" in response.data["message"].lower()
 
-    def test_chat_returns_500_when_llm_fails(self, monkeypatch):
+    def test_chat_returns_stable_503_when_llm_fails(self, monkeypatch):
         customer = _create_customer_with_ai_consent(ai_consent=True)
 
         class MockLLM:
@@ -192,9 +193,10 @@ class TestChatView:
         request = _auth_request("/api/ai/chat/", {"message": "Hello AI"}, customer.id)
         response = ChatView.as_view()(request)
 
-        assert response.status_code == 500
+        assert response.status_code == 503
         assert response.data["status"] == "error"
-        assert "llm backend failed" in response.data["message"].lower()
+        assert response.data["message"] == "AI service is temporarily unavailable"
+        assert "llm backend failed" not in str(response.data).lower()
 
     def test_chat_returns_500_on_empty_ai_response(self, monkeypatch):
         customer = _create_customer_with_ai_consent(ai_consent=True)

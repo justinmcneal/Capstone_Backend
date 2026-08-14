@@ -102,14 +102,32 @@ class AIStatusView(AccessControlMixin, APIView):
 
         llm = get_llm_service(use_case='chat')
         
-        is_available = llm.is_available()
+        if hasattr(llm, 'readiness'):
+            readiness = llm.readiness()
+        else:
+            available = llm.is_available()
+            readiness = {
+                'available': available,
+                'configured': bool(llm.api_key),
+                'reachable': available,
+                'authenticated': available,
+                'model_available': available,
+                'state': 'available' if available else 'unavailable',
+                'circuit': 'unknown',
+            }
+        is_available = readiness['available']
         
         return success_response(
             data={
                 'available': is_available,
                 'provider': llm.provider,
                 'current_model': llm.model if is_available else None,
-                'api_configured': bool(llm.api_key)
+                'api_configured': readiness['configured'],
+                'reachable': readiness['reachable'],
+                'authenticated': readiness['authenticated'],
+                'model_available': readiness['model_available'],
+                'state': readiness['state'],
+                'circuit': readiness['circuit'],
             },
             message="AI status retrieved"
         )

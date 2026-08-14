@@ -22,6 +22,7 @@ from ai_assistant.services.context_builder import get_context_for_intent
 from ai_assistant.services.exception_types import NON_FATAL_EXCEPTIONS
 from ai_assistant.services.knowledge_base import check_prohibited_content
 from ai_assistant.services.llm_service import SYSTEM_PROMPT, needs_user_context
+from ai_assistant.services.request_limits import validate_chat_message
 from ai_assistant.services.tools import TOOL_SCHEMAS
 from ai_assistant.views.chat_views import (
     ALLOWED_LANGUAGES,
@@ -62,12 +63,9 @@ class StreamingChatView(ConsentRequiredMixin, APIView):
         user = request.user
         customer_id = user.customer_id
         
-        message = sanitize_text(request.data.get('message', ''))
-        if not message:
-            return error_response(
-                message="Message is required",
-                status_code=status.HTTP_400_BAD_REQUEST
-            )
+        message, validation_error = validate_chat_message(request.data.get('message'), request)
+        if validation_error:
+            return validation_error
         
         raw_conversation_id = request.data.get('conversation_id')
         if raw_conversation_id:
@@ -121,6 +119,7 @@ class StreamingChatView(ConsentRequiredMixin, APIView):
         if not llm.is_available():
             return error_response(
                 message="AI service is currently unavailable",
+                code='AI_PROVIDER_UNAVAILABLE',
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE
             )
         
@@ -196,7 +195,11 @@ class StreamingChatView(ConsentRequiredMixin, APIView):
                         yield f"event: done\ndata: {json.dumps({'model': model_used, 'tokens_used': tokens_used, 'response_time_ms': elapsed_ms, 'conversation_id': conversation_id, 'tools_called': tools_called})}\n\n"
                     
                     elif chunk_type == 'error':
-                        yield f"event: error\ndata: {json.dumps({'content': escape_llm_output(chunk.get('content', 'Unknown error'))})}\n\n"
+                        error_data = {
+                            'content': escape_llm_output(chunk.get('content', 'Unknown error')),
+                            'code': chunk.get('code', 'AI_PROVIDER_ERROR'),
+                        }
+                        yield f"event: error\ndata: {json.dumps(error_data)}\n\n"
                         break
                         
             except NON_FATAL_EXCEPTIONS as e:

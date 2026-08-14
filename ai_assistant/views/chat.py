@@ -25,6 +25,7 @@ from ai_assistant.services.context_builder import (
 from ai_assistant.services.exception_types import NON_FATAL_EXCEPTIONS
 from ai_assistant.services.knowledge_base import check_prohibited_content
 from ai_assistant.services.llm_service import SYSTEM_PROMPT, needs_user_context
+from ai_assistant.services.request_limits import validate_chat_message
 from ai_assistant.services.tools import TOOL_SCHEMAS
 
 logger = logging.getLogger('ai_assistant')
@@ -103,12 +104,9 @@ class ChatView(ConsentRequiredMixin, APIView):
             user = request.user
             customer_id = user.customer_id
             
-            message = sanitize_text(request.data.get('message', ''))
-            if not message:
-                return error_response(
-                    message="Message is required",
-                    status_code=status.HTTP_400_BAD_REQUEST
-                )
+            message, validation_error = validate_chat_message(request.data.get('message'), request)
+            if validation_error:
+                return validation_error
             
             raw_conversation_id = request.data.get('conversation_id')
             if raw_conversation_id:
@@ -177,8 +175,8 @@ class ChatView(ConsentRequiredMixin, APIView):
             
             if not llm.is_available():
                 return error_response(
-                    message="AI service is currently unavailable. Please configure GROQ_API_KEY.",
-                    errors={'hint': 'Get free API key at https://console.groq.com'},
+                    message="AI service is currently unavailable",
+                    code='AI_PROVIDER_UNAVAILABLE',
                     status_code=status.HTTP_503_SERVICE_UNAVAILABLE
                 )
             
@@ -199,8 +197,9 @@ class ChatView(ConsentRequiredMixin, APIView):
             
             if not result['success']:
                 return error_response(
-                    message=result.get('error', 'Failed to get AI response'),
-                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
+                    message='AI service is temporarily unavailable',
+                    code=result.get('code', 'AI_PROVIDER_ERROR'),
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE
                 )
 
             ai_response = escape_llm_output(sanitize_multiline_text(result.get('response', '')))

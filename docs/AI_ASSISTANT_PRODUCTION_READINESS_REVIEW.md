@@ -15,31 +15,34 @@ API prefix: `/api/ai/`
 The module already provides authenticated English/Tagalog chat, tool-assisted
 answers based on the current customer's data, SSE streaming, consent checks,
 history, static education content, and a choice of Groq or Ollama. Its local
-automated behavior is strong: the Stage 1 focused review suite completed with
-**176 passing tests** on 2026-08-14.
+automated behavior is strong: the Stage 1–2 focused review suite completed with
+**188 passing tests** on 2026-08-14.
 
-Stage 1 data-governance code is complete: conversation content is encrypted when
+Stage 1 data-governance code and Stage 2 request/provider-boundary code are complete: conversation content is encrypted when
 a field key is configured, history search uses keyed blind tokens, new records
 receive versioned retention metadata, legal holds and bounded cleanup exist,
 account export includes allowlisted history, and final account deletion performs
-resumable AI cleanup. Production approval still requires reviewing and applying
-the dry-run legacy backfill against the target database. Tool auditing is not
-durable, production metrics are absent, request/provider bounds are incomplete,
-and real provider, MongoDB, Redis, load, and proxy behavior remain unproven.
+resumable AI cleanup. Chat input, history search/page, rate, token, tool,
+timeout, and concurrency policies are validated and configurable. Provider
+configuration fails at startup when invalid; readiness checks authentication
+and reachability; public failures are stable; and safe readiness retries,
+circuit breaking, and concurrency slots are enforced. Production approval still
+requires target backfill, provider/privacy approval, and real provider,
+MongoDB, Redis, load, proxy, audit, and monitoring evidence.
 
 | Area | Status | Summary |
 | --- | --- | --- |
 | Authentication and customer scoping | Implemented | Every endpoint requires JWT authentication and customer role checks. Conversation and tool data are scoped with the authenticated customer ID. |
 | Consent | Implemented | Chat, streaming chat, and history require current data and AI consent. Static status, education, FAQ, and suggestion endpoints do not send personal data to an LLM. |
-| Non-streaming chat | Implemented; hardening required | Tool calling, history context, content filtering, bilingual responses, and persistence work, but request limits, idempotency, full correlation, and provider error normalization remain. |
+| Non-streaming chat | Stage 2 implemented; later hardening remains | Tool calling, history context, content filtering, bilingual responses, bounded requests/provider work, and stable provider errors work. Idempotency, database-side context bounds, and full correlation remain. |
 | Streaming chat | Implemented; hardening required | SSE framing and persistence are tested. Disconnect handling, proxy/load proof, error semantics, and a double-escaping defect remain. |
 | Read-only customer tools | Implemented; hardening required | Ten customer-scoped tools are available. Rate limiting is non-atomic, one expensive tool is under-costed, and durable tool audit is missing. |
 | Context minimization | Partial | Context builders limit list sizes and omit direct credentials, but the declared redaction/masking lists are not actually applied as a generic enforcement layer. |
 | Conversation storage | Stage 1 implemented; deployment backfill pending | Message, response, and hold reason use versioned field encryption; keyed search tokens preserve keyword search; retention, legal holds, export, and resumable account cleanup are implemented. MongoDB schema validation and target backfill evidence remain. |
-| Provider integration | Partial | Groq and Ollama are supported through an OpenAI-compatible interface. Configuration validation, truthful upstream readiness, resiliency, and real-provider contract tests remain. |
+| Provider integration | Stage 2 implemented; deployment proof pending | Groq and Ollama use validated configuration, authenticated/reachable readiness states, stable errors, bounded timeouts, safe GET retries, a circuit breaker, and per-process concurrency slots. Real-provider contract and privacy approval remain. |
 | Knowledge and response quality | Partial | A centralized prompt, simple prohibited-content checks, and many behavior tests exist. There is no versioned evaluation set, feedback loop, groundedness threshold, or adversarial safety gate. |
 | Observability | Partial | Timing, model, token count, streaming request ID, and ordinary logs exist. Non-streaming correlation, Prometheus metrics, durable audit, dashboards, and alerts do not. |
-| Local automated tests | Passing | 176 Stage 1-focused tests passed; external services and real MongoDB behavior remain unproven. |
+| Local automated tests | Passing through Stage 2 | 188 focused tests and the full 1,145-test local suite pass; 28 external opt-in tests are skipped and real deployment behavior remains unproven. |
 | Deployment validation | Missing | No recorded real Groq/Ollama, MongoDB, Redis, concurrent-load, SSE proxy, secret rotation, or incident-response evidence exists. |
 
 ## Module Responsibilities
@@ -79,12 +82,12 @@ owned by their respective modules.
 
 | Method and path | Consent | Status | Notes |
 | --- | --- | --- | --- |
-| `POST /api/ai/chat/` | Required | Implemented; hardening required | JSON chat with tool calling and stored history. |
+| `POST /api/ai/chat/` | Required | Stage 2 implemented; later hardening remains | Bounded JSON chat with tool calling, stable provider failures, and stored history. |
 | `POST /api/ai/chat/stream/` | Required | Implemented; hardening required | SSE events: `tool_call`, `tool_result`, `token`, `done`, and `error`. |
-| `GET /api/ai/history/` | Required | Implemented; query hardening required | Owner-scoped offset pagination, limit capped at 100, optional encrypted keyword search using keyed blind tokens. |
+| `GET /api/ai/history/` | Required | Input bounds implemented; query hardening remains | Owner-scoped pagination has a configured maximum page, limit capped at 100, and bounded encrypted keyword search. Cursor/database query improvements remain Stage 3. |
 | `DELETE /api/ai/history/` | Required | Implemented | Deletes all interactions belonging to the authenticated customer. |
 | `GET /api/ai/suggestions/` | Not required | Implemented | Static English/Tagalog suggestions cached by language. |
-| `GET /api/ai/status/` | Not required | Partial | For Groq, `available` currently means an API key exists; it does not prove the upstream service works. |
+| `GET /api/ai/status/` | Not required | Implemented; deployment proof pending | Reports configured, reachable, authenticated, selected-model availability/degradation, and circuit state using a bounded provider probe. |
 | `GET /api/ai/education/` | Not required | Implemented | Lists static education topics. |
 | `GET /api/ai/education/<topic>/` | Not required | Implemented | Returns one cached topic or 404. |
 | `GET /api/ai/faqs/` | Not required | Implemented | Returns cached static FAQs. |
@@ -169,53 +172,74 @@ Deployment condition still open: run the count-only inventory and review the
 backfill dry run against the deployment target before applying it. Stage 3 will
 add the MongoDB validator and isolated real-Mongo query/index proof.
 
+## Verified Stage 2: Request and Provider Boundary
+
+Implemented application behavior:
+
+- request/message UTF-8 bytes, sanitized characters, history search, and page
+  number have validated configurable limits;
+- chat rate defaults to `100/hour` for the current test policy and is no longer
+  hard-coded in the throttle class;
+- output token, tool-round, total tool-call, connect/read timeout, safe retry,
+  circuit, and per-process provider-concurrency policies fail startup when
+  invalid;
+- only idempotent readiness GETs retry transient failures; paid chat POSTs do
+  not automatically retry and create duplicate cost;
+- streaming responses retain their concurrency slot until consumed or closed;
+- status reports configuration, reachability, authentication, selected-model
+  availability/degradation, and circuit state; and
+- customer responses use stable error codes without raw provider bodies, URLs,
+  credentials, or exception text.
+
+### Outbound provider data contract
+
+With current AI consent, the selected Groq/Ollama provider may receive the
+sanitized customer question, up to six recent conversation entries, the system
+prompt, fixed tool schemas, and only the result fields documented in the tool
+catalog above. Depending on the question, those results can contain profile/
+business completion state, document types/statuses, loan and repayment status,
+payment dates/amounts, product data, readiness blockers, aggregate dashboard
+counts, and notification status. Direct passwords, OTPs, API/private keys, bank
+account numbers, uploaded document bytes, document filenames, and unrelated
+customer records are outside the approved application contract.
+
+This documents current code behavior; deployment approval still requires the
+organization to approve the chosen provider's retention, training, subprocessors,
+data-residency, deletion, incident, and contractual terms.
+
 ## Remaining Production-Blocking Gaps
 
 ### 1. Request, cost, and query bounds
 
-Chat messages have no explicit byte/character limit. History search has no
-search-length bound and page has no maximum offset. `find_by_conversation()` loads the entire
-conversation before Python slices it. Several tools load all matching records
-and slice afterward.
+**Stage 2 application boundary complete.** Chat requests enforce configured
+UTF-8 byte and sanitized-character limits before filtering/provider work.
+History search length and page number are bounded. Chat rate (currently
+`100/hour` for testing), output tokens, tool rounds, total tool calls,
+connect/read timeouts, and provider concurrency are validated settings. Bound
+violations return stable 400, 413, or DRF 429 responses.
 
-`ChatRateThrottle` is hard-coded to `1000/hour`; it is not an environment-based
-production cost policy and does not limit concurrent long-lived calls. One
-request can perform multiple provider rounds with 120–180 second timeouts.
-
-Required work:
-
-- validate maximum request bytes/message characters and bounded history fields;
-- bound conversation history in MongoDB and replace unrestricted offsets with
-  a maximum offset or cursor pagination;
-- use projections and database-side limits for tool queries;
-- make chat rate, tool budgets, timeout, token, tool-round, and concurrency
-  limits validated settings; and
-- return a documented 400/413/429 response when a bound is exceeded.
+Remaining Stage 3 query work: `find_by_conversation()` still loads the entire
+conversation before Python slicing, offset pagination should be replaced with a
+cursor/database-enforced maximum, and several tools still need projection and
+database-side limit audits. These are persistence/query gaps, not missing
+Stage 2 request/provider controls.
 
 ### 2. Provider boundary and failure behavior
 
-`LLM_PROVIDER`, model names, timeouts, and Ollama URL are not validated at
-startup. Unknown provider values silently become Groq. Groq `is_available()`
-only checks whether a key is non-empty, so `/status/` and `/api/health/` can
-report availability for an invalid key or provider outage.
+**Stage 2 application boundary complete.** Invalid provider, model, URL, rate,
+and numeric settings fail startup. Unknown runtime providers are rejected.
+`/status/` distinguishes configured, reachable, authenticated, selected-model
+availability, degradation, and circuit state. Provider bodies/details are protected-log-only;
+customers receive stable error codes. Calls use bounded connect/read timeouts,
+safe transient retries are limited to idempotent readiness GETs, paid chat POSTs
+are never retried automatically, and circuit/concurrency controls cover normal
+and streaming provider calls.
 
-Provider error text can be returned to customers, provider calls have no retry
-policy/circuit breaker, and the synchronous HTTP path can occupy request workers
-for minutes. There is no approved-provider/data-processing checklist or real
-provider contract test.
-
-Required work:
-
-- fail startup on invalid provider/model/URL/limit configuration;
-- distinguish configured, reachable, authenticated, degraded, and unavailable;
-- map upstream failures to stable public errors and keep detailed provider text
-  only in protected logs;
-- add bounded connect/read timeouts, limited retry/backoff for safe transient
-  failures, a circuit breaker, and concurrency control;
-- document which customer fields may leave the system and approve provider
-  retention/training/data-residency terms; and
-- prove the selected provider/model supports the required streaming and tool
-  contract in the deployment environment.
+Deployment conditions still open: approve which minimized customer fields may
+reach the selected provider and its retention/training/data-residency terms,
+then run the real-provider chat/tool/streaming/timeout/token contract gate with
+synthetic data. Per-process concurrency also requires deployment load evidence;
+it is intentionally not represented as a distributed quota.
 
 ### 3. Durable audit, correlation, and monitoring
 
@@ -353,8 +377,10 @@ real-Mongo evidence remain release operations, not application-code gaps.
 
 ### Stage 2: Request and provider boundary
 
-Add validated settings, input/token/tool/time/concurrency limits, stable public
-errors, provider readiness states, retry/backoff, and circuit breaking.
+**Application implementation complete.** Validated input/rate/token/tool/time/
+concurrency limits, stable errors, truthful readiness states, safe retry/backoff,
+circuit breaking, and local boundary tests are implemented. Provider privacy
+approval and real-provider/load evidence remain deployment conditions.
 
 ### Stage 3: Persistence and query scalability
 
@@ -455,9 +481,9 @@ Production approval requires all of the following:
   retryable account deletion are implemented and locally verified.
 - [ ] Deployment-target AI inventory/backfill is reviewed, applied, and returns
   zero plaintext, missing-retention, or stale-search-index findings.
-- [ ] Input, pagination, token, tool, timeout, rate, and concurrency limits are
+- [x] Input, pagination, token, tool, timeout, rate, and concurrency limits are
   validated and documented.
-- [ ] Provider configuration fails safely and public errors disclose no provider
+- [x] Provider configuration fails safely and public errors disclose no provider
   internals.
 - [ ] MongoDB validators/indexes and Redis atomic limits pass isolated real
   integration tests.
@@ -469,7 +495,7 @@ Production approval requires all of the following:
   and token-accounting contract tests.
 - [ ] Provider privacy terms, secrets, backup/restore, incident response, and
   rollback evidence are reviewed for the deployment target.
-- [x] The full local repository suite passes after Stage 1.
+- [x] The full local repository suite passes after Stage 2 (1,145 passed, 28 skipped).
 - [ ] The final deployment smoke gate passes.
 
 ## Review Boundaries

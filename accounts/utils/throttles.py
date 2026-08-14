@@ -153,7 +153,8 @@ class SafeUserRateThrottle(UserRateThrottle):
 class ChatRateThrottle(SafeUserRateThrottle):
     """User-based throttling for AI chat endpoint."""
 
-    rate = "1000/hour"
+    def get_rate(self):
+        return getattr(settings, "AI_ASSISTANT_CHAT_RATE", "100/hour")
 
 
 class PreQualifyRateThrottle(SafeUserRateThrottle):
