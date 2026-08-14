@@ -42,14 +42,19 @@ class OfficerScheduleView(LoanOfficerRequiredMixin, APIView):
         if not has_scope:
             return scope_result
 
-        # Only disbursed loans have schedules
-        if app.status not in {"disbursed", "completed", "written_off"}:
+        schedule = RepaymentSchedule.find_by_loan(application_id)
+
+        # Existing schedules are authoritative for legacy loans whose application
+        # status was not advanced when the schedule was created.
+        if not schedule and app.status not in {
+            "disbursed",
+            "completed",
+            "written_off",
+        }:
             return error_response(
                 message="Repayment schedule is only available for disbursed loans",
                 status_code=status.HTTP_400_BAD_REQUEST,
             )
-
-        schedule = RepaymentSchedule.find_by_loan(application_id)
 
         if not schedule:
             return error_response(

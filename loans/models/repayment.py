@@ -487,11 +487,22 @@ class RepaymentSchedule:
             if paid_off:
                 schedule_updates.update({"status": "paid_off", "paid_off_at": utcnow()})
 
+            version_filter = {"accounting_version": current.accounting_version}
+            if current.accounting_version == 0:
+                # Schedules created before accounting_version was introduced
+                # have no field. This match initializes it for later writes.
+                version_filter = {
+                    "$or": [
+                        {"accounting_version": 0},
+                        {"accounting_version": {"$exists": False}},
+                    ]
+                }
+
             result = collection.update_one(
                 {
                     "_id": self._id,
-                    "accounting_version": current.accounting_version,
                     "applied_payment_tokens": {"$ne": payment_token},
+                    **version_filter,
                 },
                 {
                     "$set": schedule_updates,
@@ -645,11 +656,21 @@ class RepaymentSchedule:
                 )
 
             now = utcnow()
+            version_filter = {"accounting_version": current.accounting_version}
+            if current.accounting_version == 0:
+                # Schedules created before accounting_version was introduced
+                # have no field. This match initializes it for later writes.
+                version_filter = {
+                    "$or": [
+                        {"accounting_version": 0},
+                        {"accounting_version": {"$exists": False}},
+                    ]
+                }
             result = collection.update_one(
                 {
                     "_id": self._id,
-                    "accounting_version": current.accounting_version,
                     "applied_payment_tokens": {"$ne": payment_token},
+                    **version_filter,
                 },
                 {
                     "$set": {

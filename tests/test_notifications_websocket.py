@@ -117,7 +117,7 @@ class TestNotificationConsumerWebSocket:
             await communicator.send_json_to({"action": "ping"})
             response = await communicator.receive_json_from()
             assert response["type"] == "pong"
-            assert "timestamp" in response
+            assert "timestamp" in response["data"]
 
         await communicator.disconnect()
 
@@ -138,7 +138,36 @@ class TestNotificationConsumerWebSocket:
             await communicator.send_to(text_data="not-valid-json{{{{")
             response = await communicator.receive_json_from()
             assert response["type"] == "error"
-            assert "Invalid JSON" in response["message"]
+            assert response["data"] == {
+                "code": "invalid_json",
+                "message": "Invalid JSON",
+            }
+
+        await communicator.disconnect()
+
+    @pytest.mark.anyio
+    async def test_non_object_message_returns_canonical_error(self):
+        communicator = WebsocketCommunicator(_make_app(), "/ws/notifications/")
+        communicator.scope["user"] = _FakeUser()
+
+        with patch(
+            "notifications.consumer.NotificationConsumer.get_unread_count",
+            new_callable=AsyncMock,
+            return_value=0,
+        ):
+            connected, _ = await communicator.connect()
+            assert connected
+            await communicator.receive_json_from()
+
+            await communicator.send_json_to(["ping"])
+            response = await communicator.receive_json_from()
+            assert response == {
+                "type": "error",
+                "data": {
+                    "code": "invalid_message",
+                    "message": "Message must be a JSON object",
+                },
+            }
 
         await communicator.disconnect()
 
@@ -167,8 +196,10 @@ class TestNotificationConsumerWebSocket:
                 })
                 response = await communicator.receive_json_from()
                 assert response["type"] == "mark_read_response"
-                assert response["success"] is True
-                assert response["notification_id"] == "64a1b2c3d4e5f6789abcdef0"
+                assert response["data"] == {
+                    "success": True,
+                    "notification_id": "64a1b2c3d4e5f6789abcdef0",
+                }
 
         await communicator.disconnect()
 

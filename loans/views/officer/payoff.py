@@ -45,7 +45,11 @@ class EarlyPayoffView(LoanOfficerRequiredMixin, APIView):
         )
         if not has_scope:
             return None, None, scope_result
-        if application.status not in {"disbursed", "completed"}:
+
+        schedule = RepaymentSchedule.find_by_loan(application_id)
+        # Existing schedules are authoritative for legacy loans whose
+        # application status was not advanced when the schedule was created.
+        if not schedule and application.status not in {"disbursed", "completed"}:
             return (
                 None,
                 None,
@@ -54,7 +58,6 @@ class EarlyPayoffView(LoanOfficerRequiredMixin, APIView):
                     status_code=status.HTTP_400_BAD_REQUEST,
                 ),
             )
-        schedule = RepaymentSchedule.find_by_loan(application_id)
         if not schedule:
             return (
                 None,
@@ -128,6 +131,11 @@ class EarlyPayoffView(LoanOfficerRequiredMixin, APIView):
         except PaymentConflictError as exc:
             return error_response(
                 message=str(exc), status_code=status.HTTP_409_CONFLICT
+            )
+        except RuntimeError:
+            return error_response(
+                message="The loan changed before payoff could be posted. Refresh the quote and retry.",
+                status_code=status.HTTP_409_CONFLICT,
             )
         except (PaymentServiceError, ValueError) as exc:
             return error_response(

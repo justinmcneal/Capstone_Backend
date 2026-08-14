@@ -398,14 +398,34 @@ curl -X POST /api/notifications/register-token/ \
 
 ### Connection
 
-**URL:** `ws://<host>/ws/notifications/`
+**URL:** `wss://<host>/ws/notifications/` in production (`ws://` is local-development only)
 
-**Auth:** JWT token passed via query string or `sec-websocket-protocol` header.
+**Browser staff auth:** Open `/ws/notifications/` without a JavaScript-readable token. The browser sends the configured HttpOnly access cookie. The access cookie path must cover both `/api/` and `/ws/`; the default is `/`. The refresh cookie remains limited to `/api/auth/` and is never accepted by the WebSocket.
 
-Example:
+**Customer mobile compatibility:** The customer mobile app may continue to send its access token in the `token` query parameter or as the `access_token`-marked WebSocket subprotocol until a coordinated mobile migration removes those transports. Admin and loan-officer query/subprotocol tokens are rejected.
+
+Mobile query example:
 ```
 ws://localhost:8000/ws/notifications/?token=<access_token>
 ```
+
+Subprotocol clients send `access_token` plus the access JWT as separate protocol values. Do not put staff tokens into browser JavaScript, URLs, local storage, logs, analytics, or error messages.
+
+All transports use the same live authentication boundary as protected HTTP requests. The handshake validates the access-token signature and purpose, blacklist state, account role/state/verification, session membership, security version, and forced-password state. Missing or rejected credentials close with code `4001`.
+
+### Canonical Server Frames
+
+Every server frame has `type` and `data` at the top level:
+
+```json
+{"type":"connection_established","data":{"unread_count":3}}
+{"type":"notification","data":{"id":"notification-id","subject":"Loan update"}}
+{"type":"mark_read_response","data":{"success":true,"notification_id":"notification-id"}}
+{"type":"pong","data":{"timestamp":"2026-08-13T10:15:30+00:00"}}
+{"type":"error","data":{"code":"invalid_json","message":"Invalid JSON"}}
+```
+
+Error codes currently include `invalid_json`, `invalid_message`, `invalid_notification_id`, and `unsupported_action`.
 
 ### Supported Actions
 
@@ -433,6 +453,9 @@ WebSocket groups are role-qualified: `notifications_<user_type>_<user_id>`. This
 
 - The WebSocket consumer does **not** yet support `mark_all_read`, delete, or unread-count fetch; those still require REST calls.
 - Connection lifecycle is handled automatically by Django Channels.
+- REST inbox and unread-count endpoints remain authoritative when real-time delivery is unavailable.
+- Production must use TLS (`wss://`), exact `ALLOWED_HOSTS`/origin configuration, and a trusted reverse proxy that preserves the `Origin` and `Cookie` headers. CSRF tokens do not authenticate a WebSocket handshake; the origin validator is therefore a required browser-cookie control.
+- Never enable wildcard origins or restore browser-readable JWT storage to work around a failed handshake.
 
 ---
 
@@ -543,13 +566,15 @@ GET /api/notifications/unread-count/
 
 ### WebSocket Smoke Test
 
-1. Open WebSocket connection with valid JWT.
+1. For staff Web, log in with cookie transport and open `/ws/notifications/` without a token in JavaScript or the URL. For customer mobile compatibility, use a valid access query/subprotocol token.
 2. Verify `connection_established` message includes `unread_count`.
-3. Send `ping` and verify `pong` response.
+3. Send `ping` and verify `pong.data.timestamp`.
 4. Trigger a notification event from the backend.
 5. Verify `notification` message arrives over WebSocket.
-6. Send `mark_read` with a valid notification ID and verify response.
+6. Send `mark_read` with a valid notification ID and verify `mark_read_response.data`.
 7. Close connection and verify cleanup.
+8. Verify missing, refresh, revoked, stale-security-version, inactive, and forced-password credentials close with `4001`.
+9. Verify accounts with the same raw ID but different roles do not share events or mutations.
 
 ---
 
@@ -645,7 +670,7 @@ Templates are rendered by `notifications/services/email_sender.py` using Django'
 4. Marking read **overwrites** delivery status (`sent`/`pending`/`failed` → `read`).
 5. List response includes `unread_count` even when filtering — it always reflects total unread, not filtered count.
 6. Customer ownership is **strictly by `user_id`** — seed notifications with the correct `customer_id`.
-7. WebSocket connections require a valid JWT in the query string or `sec-websocket-protocol` header.
+7. Staff WebSocket connections use the HttpOnly access cookie. Customer mobile query/subprotocol access tokens remain temporarily supported; rejected credentials close with `4001`.
 8. To test email delivery end-to-end, assert on MongoDB `status: sent` and `sent_at` after async send completes.
 9. Notification preferences (opt-in/opt-out) are under `/api/profile/notifications/` — separate from this inbox API.
 10. Generate diverse `notification_type` values by running the full loan lifecycle (see `docs/LOANS_TESTING_GUIDE.md` smoke sequence).

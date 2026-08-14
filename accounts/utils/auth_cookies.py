@@ -19,7 +19,7 @@ def set_auth_cookies(response, access_token: str, refresh_token: str):
     secure = getattr(settings, "AUTH_COOKIE_SECURE", not settings.DEBUG)
     httponly = getattr(settings, "AUTH_COOKIE_HTTPONLY", True)
     samesite = getattr(settings, "AUTH_COOKIE_SAMESITE", "Lax")
-    access_path = getattr(settings, "AUTH_ACCESS_COOKIE_PATH", "/api/")
+    access_path = getattr(settings, "AUTH_ACCESS_COOKIE_PATH", "/")
     refresh_path = getattr(settings, "AUTH_REFRESH_COOKIE_PATH", "/api/auth/")
 
     access_max_age = _cookie_max_age_from_token(access_token, AccessToken)
@@ -48,7 +48,7 @@ def set_auth_cookies(response, access_token: str, refresh_token: str):
 def clear_auth_cookies(response):
     access_name = getattr(settings, "AUTH_ACCESS_COOKIE_NAME", "access_token")
     refresh_name = getattr(settings, "AUTH_REFRESH_COOKIE_NAME", "refresh_token")
-    access_path = getattr(settings, "AUTH_ACCESS_COOKIE_PATH", "/api/")
+    access_path = getattr(settings, "AUTH_ACCESS_COOKIE_PATH", "/")
     refresh_path = getattr(settings, "AUTH_REFRESH_COOKIE_PATH", "/api/auth/")
 
     response.delete_cookie(access_name, path=access_path)

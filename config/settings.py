@@ -16,6 +16,7 @@ import re
 from pathlib import Path
 
 from cryptography.fernet import Fernet
+from corsheaders.defaults import default_headers
 from django.core.exceptions import ImproperlyConfigured
 from django.core.management.utils import get_random_secret_key
 from dotenv import load_dotenv
@@ -698,6 +699,10 @@ if env_bool('CORS_ALLOW_ALL_ORIGINS', False):
 else:
     CORS_ALLOWED_ORIGINS = os.getenv('CORS_ALLOWED_ORIGINS', 'http://localhost:3000,http://localhost:5173').split(',')
 CORS_ALLOW_CREDENTIALS = True
+CORS_ALLOW_HEADERS = (
+    *default_headers,
+    'idempotency-key',
+)
 
 # CSRF / SameSite policy
 SESSION_COOKIE_SAMESITE = os.getenv('SESSION_COOKIE_SAMESITE', 'Lax')
@@ -712,7 +717,7 @@ AUTH_COOKIE_SECURE = env_bool('AUTH_COOKIE_SECURE', not DEBUG)
 AUTH_COOKIE_HTTPONLY = env_bool('AUTH_COOKIE_HTTPONLY', True)
 AUTH_COOKIE_SAMESITE = os.getenv('AUTH_COOKIE_SAMESITE', 'Lax')
 AUTH_COOKIE_PATH = os.getenv('AUTH_COOKIE_PATH', '/')
-AUTH_ACCESS_COOKIE_PATH = os.getenv('AUTH_ACCESS_COOKIE_PATH', '/api/')
+AUTH_ACCESS_COOKIE_PATH = os.getenv('AUTH_ACCESS_COOKIE_PATH', '/')
 AUTH_REFRESH_COOKIE_PATH = os.getenv('AUTH_REFRESH_COOKIE_PATH', '/api/auth/')
 CSRF_TRUSTED_ORIGINS = [
     origin.strip()
