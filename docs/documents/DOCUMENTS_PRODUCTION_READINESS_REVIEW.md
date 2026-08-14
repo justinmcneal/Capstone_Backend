@@ -475,6 +475,14 @@ following:
   and
 - reconciliation of the one known development local-storage orphan before that
   storage is reused or migrated.
+  - Image analysis is gated by a global feature flag and the customer's recorded
+  AI consent. PDFs skip image analysis.
+- Quality checks cover minimum dimensions, aspect ratio, brightness, and blur
+  when optional image dependencies are available.
+- A MobileNetV2 classifier and training command exist for seven image classes.
+- Confidence, expected/predicted type, quality score, analysis mode, and issues
+  can be persisted with the document.
+- A failed quality/type result changes the initial status to needs_review.
 
 Only after this evidence is approved may operators enable presigned uploads.
 PDFs remain disabled unless their separate residual risk is approved.
