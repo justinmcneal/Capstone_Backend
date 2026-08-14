@@ -10,20 +10,21 @@ This guide covers the AI Assistant's API, consent and customer isolation,
 context/tool safety, chat persistence, SSE behavior, provider integration,
 privacy lifecycle, observability, and deployment validation.
 
-The focused Stage 1–5 offline suite passed during the review:
+The focused Stage 1–6 AI test files passed during the review:
 
 ```text
-217 passed
+140 passed, 6 skipped
 ```
 
-That result verifies the current local/mocked implementation only. It is not a
-substitute for the real MongoDB, Redis, provider, proxy, load, privacy-lifecycle,
-and monitoring gates described below.
+The six skips are two isolated-real-Mongo cases and four Stage 6 deployment
+probes. This result verifies the current local/mocked implementation only. It
+is not a substitute for the real MongoDB, Redis, provider, proxy, load,
+privacy-lifecycle, and monitoring gates described below.
 
-The complete local repository suite also passed after Stage 5:
+The complete local repository suite also passed after Stage 6:
 
 ```text
-1194 passed, 30 skipped
+1202 passed, 34 skipped
 ```
 
 ## Safety Rules
@@ -85,6 +86,22 @@ capacity recommendations:
 | `AI_ASSISTANT_PROVIDER_RETRY_BACKOFF_SECONDS` | `0.25` | Exponential readiness retry base delay. |
 | `AI_ASSISTANT_CIRCUIT_FAILURE_THRESHOLD` | `5` | Consecutive transient failures before opening. |
 | `AI_ASSISTANT_CIRCUIT_RECOVERY_SECONDS` | `30` | Open-circuit recovery interval. |
+
+Stage 6 deployment evidence is fail-closed. Keep these values blank/`False` in
+development; set them in the deployed environment only after the named result
+has been reviewed:
+
+| Setting | Development default | Release meaning |
+| --- | ---: | --- |
+| `AI_ASSISTANT_QUALITY_REPORT_PATH` | blank | Approved report generated from the repository benchmark. |
+| `AI_ASSISTANT_PROVIDER_PRIVACY_APPROVED` | `False` | Provider terms and data handling are approved. |
+| `AI_ASSISTANT_PROVIDER_CONTRACT_VERIFIED` | `False` | Selected provider/model passes synthetic chat and stream probes. |
+| `AI_ASSISTANT_REDIS_VERIFIED` | `False` | Shared deployment Redis atomicity is proven. |
+| `AI_ASSISTANT_PROXY_STREAMING_VERIFIED` | `False` | Target proxy preserves SSE and disconnect behavior. |
+| `AI_ASSISTANT_LOAD_TEST_VERIFIED` | `False` | Approved representative capacity gate passes. |
+| `AI_ASSISTANT_BACKUP_RESTORE_VERIFIED` | `False` | Encrypted AI records were backed up and restored successfully. |
+| `AI_ASSISTANT_SECRET_ROTATION_VERIFIED` | `False` | Provider and encryption-key rotation was rehearsed. |
+| `AI_ASSISTANT_INCIDENT_ROLLBACK_APPROVED` | `False` | Incident response and rollback evidence is approved. |
 
 Invalid provider/model/URL/rate/range combinations raise
 `ImproperlyConfigured` during startup.
@@ -581,6 +598,92 @@ error, rate-limit, and token thresholds are initial safe defaults; calibrate
 them from approved load/cost evidence and record the final alert routes before
 production approval.
 
+## Stage 6 Quality and Deployment Gate
+
+The repository benchmark contains 18 synthetic cases: nine English and nine
+Tagalog. It covers platform accuracy, grounded synthetic customer facts,
+privacy, credential safety, approval guarantees, prompt injection, and
+bilingual quality. Responses require human review on the documented 0–4
+rubric; the backend does not pretend that string matching is a model-quality
+assessment.
+
+Collect outputs only after approving provider cost and data handling. The
+command sends every synthetic prompt to the currently selected provider and
+writes a review template; it never reads customer records:
+
+```bash
+.venv/bin/python manage.py collect_ai_quality_responses \
+  --output /secure/release-evidence/ai-quality-assessments.json \
+  --i-understand-provider-costs
+```
+
+For every assessment, an authorized reviewer must replace the reviewer
+placeholder and supply a 0–4 integer for exactly the dimensions listed in
+`ai_assistant/evaluation/quality_gate_v1.json`. Mark `critical_failure=true`
+for any privacy disclosure, credential exposure, unsafe approval guarantee, or
+other critical rubric failure. Then create the signed-off result:
+
+```bash
+.venv/bin/python manage.py evaluate_ai_quality \
+  /secure/release-evidence/ai-quality-assessments.json \
+  --output /secure/release-evidence/ai-quality-report.json
+```
+
+The evaluator fails if a case is missing, duplicated, unscored, or below the
+approved thresholds. The resulting report is bound to the dataset version and
+SHA-256. `ai_release_check` additionally binds it to the selected provider and
+model, so changing the benchmark, provider, or model requires a fresh review.
+Keep response and report files outside source control.
+
+The deployment probes are skipped by default and use synthetic traffic. Each
+flag is a deliberate opt-in because provider/proxy/load probes incur provider
+cost and create AI history for the dedicated synthetic customer:
+
+```bash
+RUN_AI_PROVIDER_DEPLOYMENT_TESTS=1 \
+  .venv/bin/pytest -q -m deployment_integration \
+  tests/test_ai_stage6_deployment_integrations.py::test_selected_real_provider_chat_and_stream_contract
+
+RUN_AI_REDIS_DEPLOYMENT_TESTS=1 \
+AI_ASSISTANT_DEPLOYMENT_REDIS_URL='<deployment Redis URL>' \
+  .venv/bin/pytest -q -m deployment_integration \
+  tests/test_ai_stage6_deployment_integrations.py::test_two_clients_share_atomic_redis_state
+
+RUN_AI_PROXY_DEPLOYMENT_TESTS=1 \
+AI_ASSISTANT_DEPLOYMENT_STREAM_URL='https://backend.example/api/ai/chat/stream/' \
+AI_ASSISTANT_DEPLOYMENT_CUSTOMER_TOKEN='<short-lived synthetic customer token>' \
+  .venv/bin/pytest -q -m deployment_integration \
+  tests/test_ai_stage6_deployment_integrations.py::test_target_proxy_preserves_sse_terminal_contract
+
+RUN_AI_LOAD_DEPLOYMENT_TESTS=1 \
+AI_ASSISTANT_DEPLOYMENT_CHAT_URL='https://backend.example/api/ai/chat/' \
+AI_ASSISTANT_DEPLOYMENT_CUSTOMER_TOKEN='<short-lived synthetic customer token>' \
+AI_ASSISTANT_DEPLOYMENT_LOAD_REQUESTS=10 \
+AI_ASSISTANT_DEPLOYMENT_LOAD_CONCURRENCY=2 \
+  .venv/bin/pytest -q -m deployment_integration \
+  tests/test_ai_stage6_deployment_integrations.py::test_representative_deployed_chat_load
+```
+
+The proxy synthetic customer must be verified, have current data/AI consent,
+and contain reviewed synthetic document fixtures so the probe can prove the
+tool-call, tool-result, token, and single-terminal-event contract. Review
+provider token/cost totals, latency percentiles, Redis state, metrics, alerts,
+and history cleanup after each exercise.
+
+After the human report and every named deployment exercise is approved, set
+the Stage 6 evidence settings in the deployed environment and run the read-only
+final check:
+
+```bash
+.venv/bin/python manage.py ai_release_check
+.venv/bin/python manage.py ai_release_check --json
+```
+
+This command does not create indexes, alter validators, call the provider, or
+write evidence. It pings MongoDB and inspects current configuration, indexes,
+validators, monitoring assets, the quality report binding, and recorded
+approval flags. A failed item keeps the command non-zero.
+
 ## Manual Smoke Sequence
 
 Use Insomnia, curl, or the customer client with a synthetic verified customer.
@@ -609,8 +712,9 @@ encryption, concurrency, or provider privacy.
 
 ## Release Evidence Checklist
 
-- [x] Stage 1–5 focused offline suite passes (217 tests on 2026-08-14).
-- [x] Full local repository suite passes after Stage 5 (1194 passed, 30 skipped).
+- [x] Focused AI files pass locally after Stage 6 (140 passed, 6 opt-in skips
+  on 2026-08-14).
+- [x] Full local repository suite passes after Stage 6 (1202 passed, 34 skipped).
 - [x] AI conversation encryption and shared key-rotation tests pass locally.
 - [x] Retention, legal hold, export, account-deletion, and retry tests pass locally.
 - [x] Stage 2 request/provider boundary tests pass locally.
@@ -619,6 +723,9 @@ encryption, concurrency, or provider privacy.
   results, metrics, dashboards, and alert assets pass locally.
 - [x] Stage 5 single-pass escaping, filtered persistence, malformed/truncated/
   empty stream, terminal-event, and disconnect cleanup tests pass locally.
+- [x] Versioned balanced synthetic bilingual benchmark, deterministic scoring,
+  report binding, opt-in deployment probes, and fail-closed release command are
+  implemented and pass their offline tests.
 - [ ] Deployment-target inventory/backfill is reviewed, applied, and clean.
 - [ ] Isolated real MongoDB validator/index/query-plan/concurrency gate passes.
 - [ ] Real Redis multi-worker atomic limit/cache gate passes.
@@ -648,7 +755,7 @@ encryption, concurrency, or provider privacy.
 
 ## Review Boundary
 
-The 2026-08-14 Stage 1–5 review ran the focused and full local suites with
+The 2026-08-14 Stage 1–6 review ran the focused and full local suites with
 offline test settings. It
 did not read `.env`, use customer data, call Groq/Ollama, initialize a database,
 run Redis integration, modify deployment state, or perform load/proxy tests.

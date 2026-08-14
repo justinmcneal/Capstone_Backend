@@ -30,9 +30,10 @@ quality.
 
 ## Executive Summary
 
-The AI Assistant is **complete through Stage 5 at the application-code and local
-automated-test level**. It is not yet ready for production approval because
-bilingual quality evaluation and deployment validation remain.
+The AI Assistant is **application-complete through Stage 6 at the repository
+and local automated-test level**. It is not yet ready for production approval
+because the bilingual benchmark requires human scoring and the real provider,
+Redis, proxy, load, recovery, and privacy gates require deployment evidence.
 
 Nine customer endpoints provide English/Tagalog chat, streaming chat, history,
 provider status, suggestions, education, and FAQs. Chat can use ten fixed,
@@ -48,16 +49,22 @@ queries, MongoDB validators, production indexes, atomic tool budgets, durable
 metadata-only tool audit, end-to-end correlation, metrics, dashboards, and
 alerts. Streaming now fails closed for malformed/truncated providers, closes
 upstream work on disconnect, persists content after exactly one escaping pass,
-and emits one correlated terminal event. Stage 6 remains open.
+and emits one correlated terminal event. Stage 6 now supplies the versioned
+synthetic benchmark, deterministic scoring, evidence binding, opt-in deployment
+probes, and a fail-closed release command; executing and approving the external
+gates remains deployment work.
 
 Current local baseline:
 
-- Focused Stage 1–5 AI suite: **217 passed** on 2026-08-14.
-- Full repository suite: **1,194 passed and 30 opt-in integration tests skipped**
+- Focused AI test files through Stage 6: **140 passed and 6 opt-in integration
+  tests skipped** on 2026-08-14.
+- Full repository suite: **1,202 passed and 34 opt-in integration tests skipped**
   on 2026-08-14.
 - The skipped cases require explicitly approved real MongoDB, Redis, provider,
   proxy, load, privacy, or monitoring environments.
 - The review did not read `.env`, inspect customer data, or call a live model.
+- Stage 6 offline gate: **8 passed and 4 explicitly opt-in deployment probes
+  skipped** on 2026-08-14.
 
 ## Verified Implemented Foundations
 
@@ -250,14 +257,16 @@ reverse proxy/load balancer.
 
 ### 6. Model quality and knowledge governance
 
-**Status: Partial; release criteria are not yet defined**
+**Status: Repository quality gate implemented; human approval pending**
 
-The module has a centralized prompt, English/Tagalog static knowledge, simple
-prohibited-content handling, and behavioral tests. It does not yet have a
-versioned bilingual evaluation set, approved groundedness/safety thresholds,
-adversarial prompt-injection and privacy-leak gates, or a feedback-driven quality
-loop. The static knowledge base is manually maintained and is not automatically
-checked against current routes, settings, products, policies, or client flows.
+The module has a centralized prompt, English/Tagalog static knowledge,
+prohibited-content handling, behavioral tests, and a versioned 18-case balanced
+synthetic bilingual evaluation set. Deterministic scoring enforces accuracy,
+groundedness, language, safety, privacy, adversarial, category, and critical-
+failure thresholds. Reports are bound to the dataset hash, provider, and model.
+The selected provider outputs still require authorized human scoring before
+deployment. A feedback-driven quality loop and automatic static-knowledge drift
+checks remain optional post-baseline improvements rather than release claims.
 
 RAG is optional, not an automatic requirement. It should be introduced only if
 an approved corpus outgrows the current versioned prompt/FAQ approach, because
@@ -265,12 +274,13 @@ it adds ingestion, freshness, authorization, privacy, and citation obligations.
 
 ### 7. Automated evidence and release environment
 
-**Status: Local evidence complete through Stage 5; deployment evidence pending**
+**Status: Local evidence complete through Stage 6; deployment evidence pending**
 
 Local suites cover authentication, consent, owner isolation, lifecycle,
 encryption/search, idempotency, bounded queries, provider boundary behavior,
 context/tool validation, atomic in-process races, metadata audit, monitoring
-asset structure, and SSE syntax. They do not prove real MongoDB
+asset structure, SSE syntax, quality scoring, evidence binding, or release-check
+fail-closed behavior. They do not prove real MongoDB
 transactions/query plans, shared Redis atomicity, real Groq/Ollama behavior,
 concurrent load, proxy streaming, provider secret rotation, monitoring/alerts,
 backup/restore, incident response, or model quality thresholds.
@@ -335,10 +345,16 @@ count.
 
 ### Stage 6 — Model quality and deployment validation
 
-**Status: Pending**
+**Status: Repository implementation complete; deployment execution pending**
 
-- [ ] Create a versioned English/Tagalog accuracy, groundedness, safety,
-  privacy, and adversarial evaluation set with approved thresholds.
+- [x] Create a versioned, synthetic English/Tagalog accuracy, groundedness,
+  safety, privacy, and adversarial evaluation set with explicit thresholds.
+- [x] Add deterministic human-score validation and bind an approved report to
+  the dataset SHA-256, dataset version, selected provider, and selected model.
+- [x] Add explicit-cost opt-in response collection, real provider/stream,
+  shared Redis, proxy SSE, and bounded load probes using synthetic data.
+- [x] Add a read-only `ai_release_check` that fails closed unless repository,
+  quality, configuration, and recorded deployment-evidence gates all pass.
 - [ ] Run real-provider chat/tool/stream/token and representative load gates
   using synthetic data.
 - [ ] Rehearse provider/key failure, backup/restore, incident response, and
@@ -381,11 +397,12 @@ loan decisions or mutate their records.
 
 ## Release Gate
 
-The AI Assistant is application-complete through Stage 5 but is **not production
-ready yet**. Do not approve a production deployment until Stage 6 is
-complete, the target inventory/backfill and real-Mongo/Redis/provider/proxy/load
-gates pass, provider privacy terms are approved, bilingual safety/quality meets
-versioned thresholds, and the final deployment smoke test succeeds.
+The AI Assistant repository is application-complete through Stage 6 but is
+**not production ready yet**. Do not approve a production deployment until the
+target inventory/backfill and real-Mongo/Redis/provider/proxy/load gates pass,
+provider privacy terms are approved, the bilingual human review meets the
+versioned thresholds, recovery/rotation rehearsals have evidence, and the
+final deployed smoke test and `ai_release_check` succeed.
 
 The `100/hour` chat throttle is the explicitly accepted development/testing
 value. It does not block continued implementation, but the deployed rate must
