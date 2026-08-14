@@ -3,9 +3,11 @@ Chatbot API tests for /api/ai/chat/ and /api/ai/chat/stream/.
 """
 import json
 import uuid
+from unittest.mock import patch
 
 from bson import ObjectId
 from django.core.cache import cache
+from django.test import override_settings
 from rest_framework.test import APIRequestFactory, force_authenticate
 
 from accounts.authentication import AuthenticatedUser
@@ -91,6 +93,21 @@ def _stream_to_text(streaming_response):
 
 
 class TestChatView:
+    @override_settings(AI_ASSISTANT_ENABLED=False)
+    def test_incident_kill_switch_fails_before_provider_or_persistence(self):
+        customer = _create_customer_with_ai_consent(ai_consent=True)
+        request = _auth_request(
+            "/api/ai/chat/", {"message": "Synthetic incident probe"}, customer.id
+        )
+        with patch(
+            "ai_assistant.views.chat.get_llm_service"
+        ) as provider:
+            response = ChatView.as_view()(request)
+
+        assert response.status_code == 503
+        assert response.data["code"] == "AI_ASSISTANT_DISABLED"
+        assert provider.call_count == 0
+
     def test_idempotency_key_replays_without_second_provider_call(self, monkeypatch):
         customer = _create_customer_with_ai_consent(ai_consent=True)
         calls = {'count': 0}
@@ -669,6 +686,20 @@ class TestContentEndpoints:
         assert data["provider"] == "groq"
         assert data["current_model"] == "llama-mock"
         assert data["api_configured"] is True
+
+    @override_settings(AI_ASSISTANT_ENABLED=False, LLM_PROVIDER="ollama")
+    def test_ai_status_reports_incident_kill_switch_without_provider_call(self):
+        customer = _create_customer_with_ai_consent(ai_consent=True)
+        request = _auth_get_request("/api/ai/status/", customer.id)
+
+        with patch("ai_assistant.views.auxiliary.get_llm_service") as provider:
+            response = AIStatusView.as_view()(request)
+
+        assert response.status_code == 200
+        assert response.data["data"]["available"] is False
+        assert response.data["data"]["state"] == "disabled"
+        assert response.data["data"]["circuit"] == "disabled"
+        assert provider.call_count == 0
 
     def test_education_topics_cache_and_topic_lookup(self):
         cache.clear()

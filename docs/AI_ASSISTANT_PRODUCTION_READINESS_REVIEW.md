@@ -1,6 +1,6 @@
 # AI Assistant Production Readiness Review
 
-Last updated: 2026-08-14
+Last updated: 2026-08-15
 
 Scope: `ai_assistant/`, `/api/ai/`, AI interaction and request persistence,
 customer-scoped read-only tools, Groq/Ollama provider boundaries, SSE delivery,
@@ -32,8 +32,10 @@ quality.
 
 The AI Assistant is **application-complete through Stage 6 at the repository
 and local automated-test level**. It is not yet ready for production approval
-because the bilingual benchmark requires human scoring and the real provider,
-Redis, proxy, load, recovery, and privacy gates require deployment evidence.
+because the production MongoDB, Redis, proxy, load, monitoring, and recovery
+topology does not exist yet. The controlled customer-visible quality baseline
+now passes; the underlying raw model's limitations remain documented and are
+contained for the approved stable/high-risk intents.
 
 Nine customer endpoints provide English/Tagalog chat, streaming chat, history,
 provider status, suggestions, education, and FAQs. Chat can use ten fixed,
@@ -56,15 +58,45 @@ gates remains deployment work.
 
 Current local baseline:
 
-- Focused AI test files through Stage 6: **140 passed and 6 opt-in integration
-  tests skipped** on 2026-08-14.
-- Full repository suite: **1,202 passed and 34 opt-in integration tests skipped**
-  on 2026-08-14.
+- Focused safety/knowledge/chat/stream regression suite: **94 passed** on
+  2026-08-15.
+- Full repository suite: **1,226 passed and 35 opt-in integration tests skipped**
+  on 2026-08-15.
 - The skipped cases require explicitly approved real MongoDB, Redis, provider,
   proxy, load, privacy, or monitoring environments.
-- The review did not read `.env`, inspect customer data, or call a live model.
-- Stage 6 offline gate: **8 passed and 4 explicitly opt-in deployment probes
+- Offline implementation review did not inspect customer data. The explicitly
+  approved deployment exercises loaded configured secrets without printing
+  them and called only the local provider with synthetic prompts.
+- Stage 6 offline gate: **8 passed and 5 explicitly opt-in deployment probes
   skipped** on 2026-08-14.
+- Owner-designated deployment MongoDB evidence on 2026-08-14: the pre-user
+  inventory was clean with 0 AI interactions, dry run and applied backfill both
+  reported 0 changes, request reconciliation reported no stale/partial
+  exchanges, and the isolated real-Mongo gate passed **2 tests** with no
+  temporary collections remaining. `DEBUG=True` describes the current backend
+  runtime and does not change the database's deployment designation.
+- Configured Ollama `llama3.1` evidence on 2026-08-14/15: all 18 synthetic
+  bilingual benchmark responses were collected and the opt-in real-provider
+  chat/stream contract probe passed **1 test**. After prompt hardening, a
+  provider-independent safety boundary, and lower-variance/shorter generation,
+  owner-accepted AI-generated raw-model rerun improved from **3/18 to 13/18
+  cases** (72.2% overall; 100% critical). After reviewed deterministic guidance
+  and provider-output validation were added, the unchanged system-level
+  benchmark passed **18/18** with 10 policy responses, 8 controlled-guidance
+  responses, and 0 provider-generated responses. Deployed tool/proxy behavior
+  and load remain.
+- Configured development Redis evidence on 2026-08-14: two independent clients
+  and two spawned processes shared atomic counters/TTLs successfully (**2 tests
+  passed**); random probe keys were removed. Deployed-worker proof remains.
+- Test-cluster recovery evidence on 2026-08-14: an encrypted backup restored 28
+  collections and 106 documents with zero count mismatches into an isolated
+  database; rotation changed 18 protected fields across 5 records and strict
+  verification reported zero failures. The isolated database and temporary
+  encrypted archive were removed after the rehearsal.
+- Local monitoring evidence on 2026-08-14: backend metrics responded, Prometheus
+  was ready with 1/1 healthy target and 8 loaded rules, and Grafana 13.1.3
+  reported a healthy database. No AI request series existed yet because the
+  provider probe bypassed the HTTP API; deployed scrape/alert routing remains.
 
 ## Verified Implemented Foundations
 
@@ -111,6 +143,10 @@ customer:
   hosts, credentials, or exception text.
 - Streaming calls retain a provider concurrency slot until the response is
   consumed or closed.
+- `AI_ASSISTANT_ENABLED=False` is an incident kill switch: after workers are
+  restarted, chat and stream fail before provider/persistence work with stable
+  HTTP 503 `AI_ASSISTANT_DISABLED`, status reports `disabled`, and authenticated
+  static education/FAQ content remains available.
 
 ### Tool-assisted customer context
 
@@ -178,7 +214,7 @@ ciphertext rotation and blind-token rebuilding are complete.
 
 ### 2. Request, provider, and cost boundary
 
-**Status: Complete at code and automated-test level; real-provider approval remains**
+**Status: Provider topology approved; controlled assistant quality passed**
 
 Stage 2 validates raw UTF-8 byte size, sanitized characters, history search and
 page bounds, the current `100/hour` development chat rate, output tokens, tool
@@ -192,10 +228,22 @@ documented tool-result fields. Passwords, OTPs, private/API keys, bank account
 numbers, uploaded file bytes, document filenames, and unrelated customer data
 are outside the application contract.
 
-Production approval still requires organizational review of the chosen
-provider's retention, training, subprocessors, data residency, deletion,
-incident, and contractual terms, followed by a synthetic real-provider contract
-test. The concurrency limit is per process and still needs multi-worker load
+The system owner approved self-hosted, loopback/private Ollama as the intended
+privacy topology on 2026-08-14. Ollama's published policy states that local
+runs do not send prompts/data to Ollama. Approval is conditional on keeping
+inference private, blocking unintended egress, complying with the
+[Ollama Privacy Policy](https://ollama.com/privacy), the
+[Ollama Terms](https://ollama.com/terms), and the
+[Llama 3.1 Community License](https://github.com/meta-llama/llama-models/blob/main/models/llama3_1/LICENSE),
+including required attribution. It does not
+cover Ollama Cloud, Groq, another model, or another network topology; any such
+change requires a new review. Raw `llama3.1` generation did not independently
+meet the quality threshold, so stable/high-risk intents use reviewed policy or
+deterministic guidance before provider execution and non-streaming provider
+text is checked for internal names, unsupported tool claims, unapproved UI
+controls, delivery guarantees, and obvious language mismatch. The resulting
+customer-visible system baseline passes the approved quality gate. The
+concurrency limit remains per process and still needs multi-worker deployment
 evidence.
 
 ### 3. Persistence consistency and query scalability
@@ -257,16 +305,37 @@ reverse proxy/load balancer.
 
 ### 6. Model quality and knowledge governance
 
-**Status: Repository quality gate implemented; human approval pending**
+**Status: Controlled system-level quality gate passed**
 
 The module has a centralized prompt, English/Tagalog static knowledge,
 prohibited-content handling, behavioral tests, and a versioned 18-case balanced
 synthetic bilingual evaluation set. Deterministic scoring enforces accuracy,
 groundedness, language, safety, privacy, adversarial, category, and critical-
 failure thresholds. Reports are bound to the dataset hash, provider, and model.
-The selected provider outputs still require authorized human scoring before
-deployment. A feedback-driven quality loop and automatic static-knowledge drift
-checks remain optional post-baseline improvements rather than release claims.
+At the owner's direction, explicitly identified AI-generated reviews scored
+the Ollama `llama3.1` outputs. The original run passed 3/18 cases (16.7%
+overall; 10% critical) and exposed fabricated customer/tool data and a supposed
+system prompt. The hardened 2026-08-15 rerun passed 13/18 (72.2% overall; 100%
+critical). Privacy, credential safety, approval safety, prompt injection,
+safety, and groundedness now meet their thresholds. The remaining failures are
+English/Tagalog platform guidance, one Tagalog repayment response, and both
+bilingual guidance cases; accuracy was 79.2% and language quality 77.3%, below
+the required 80% minimums, while category thresholds also remained unmet.
+Both raw-model reports are retained as failing evidence and must not be
+represented as passing raw-model evaluations. The response-control layer then
+assigned reviewed deterministic guidance to stable workflows and retained the
+hard policy boundary for sensitive/adversarial requests. The unchanged third
+run passed 18/18 cases and every dimension/category threshold at 100%: 10
+responses were policy-controlled, 8 were deterministic guidance, and 0 invoked
+provider generation. Execution modes are recorded per assessment and in the
+run summary so the system-level result cannot be misrepresented as a raw-model
+score. This passing report may be used as the local quality artifact; deployment
+must store it in approved evidence storage and bind its path through
+`AI_ASSISTANT_QUALITY_REPORT_PATH`.
+
+Uncontrolled long-tail generation still requires monitoring and can benefit
+from a stronger bilingual model later, but model replacement is no longer a
+release blocker for the currently approved benchmark and controlled intents.
 
 RAG is optional, not an automatic requirement. It should be introduced only if
 an approved corpus outgrows the current versioned prompt/FAQ approach, because
@@ -279,11 +348,13 @@ it adds ingestion, freshness, authorization, privacy, and citation obligations.
 Local suites cover authentication, consent, owner isolation, lifecycle,
 encryption/search, idempotency, bounded queries, provider boundary behavior,
 context/tool validation, atomic in-process races, metadata audit, monitoring
-asset structure, SSE syntax, quality scoring, evidence binding, or release-check
-fail-closed behavior. They do not prove real MongoDB
-transactions/query plans, shared Redis atomicity, real Groq/Ollama behavior,
-concurrent load, proxy streaming, provider secret rotation, monitoring/alerts,
-backup/restore, incident response, or model quality thresholds.
+asset structure, SSE syntax, quality scoring, evidence binding, and release-
+check fail-closed behavior. Approved exercises also prove the selected
+deployment MongoDB inventory/backup, isolated real MongoDB behavior, local
+multi-process Redis, local Ollama chat/stream, isolated restore, and field-key
+rotation. They do not prove the future deployed Redis/provider/worker topology,
+concurrent load, proxy streaming, deployed monitoring/alerts, or incident
+ownership.
 
 ## Remediation Plan
 
@@ -298,7 +369,10 @@ count.
 - [x] Add versioned retention, bounded cleanup, and legal holds.
 - [x] Integrate bounded export and retryable account deletion/pseudonymization.
 - [x] Provide dry-run-first inventory/backfill and lifecycle tests.
-- [ ] Review and apply inventory/backfill against the selected deployment copy.
+- [x] Review and apply inventory/backfill against the owner-designated
+  deployment database; the 2026-08-14 pre-user inventory was empty and clean.
+- [ ] Repeat inventory/backfill review against the same deployment database
+  immediately before release to detect records added after this review.
 
 ### Stage 2 — Request and provider boundary
 
@@ -309,7 +383,13 @@ count.
 - [x] Add stable failures, truthful readiness, safe GET retry, circuit breaking,
   and streaming concurrency-slot ownership.
 - [x] Document the outbound provider data contract.
-- [ ] Approve provider privacy terms and prove the contract with synthetic data.
+- [x] Prove the selected development provider's basic chat/stream contract with
+  synthetic English/Tagalog data (Ollama `llama3.1`, 1 passed on 2026-08-14).
+- [x] Record owner approval for private self-hosted Ollama terms/topology,
+  conditional on license attribution, private inference, and no cloud egress.
+- [x] Pass the bound customer-visible quality gate using the approved private
+  Ollama topology plus reviewed policy/deterministic response controls; raw
+  model limitations remain explicitly recorded.
 
 ### Stage 3 — Persistence and query scalability
 
@@ -319,7 +399,8 @@ count.
 - [x] Persist exchange pairs transactionally with repeatable development repair.
 - [x] Add signed cursor history and bounded/projected context/tool queries.
 - [x] Add validators, indexes, canonicalization, and reconciliation tooling.
-- [ ] Execute the isolated real-Mongo transaction/index/query-plan gate.
+- [x] Execute the isolated real-Mongo validator/index/encrypted-write/query-plan
+  gate (2 passed on 2026-08-14; temporary collections removed).
 
 ### Stage 4 — Tool safety, audit, and observability
 
@@ -330,6 +411,9 @@ count.
 - [x] Propagate one request ID across chat, provider, tools, persistence, logs,
   and durable metadata-only audit events.
 - [x] Add Prometheus metrics, dashboards, alerts, and operational guidance.
+- [x] Prove shared atomic counter state through two independent clients and two
+  spawned processes against development Redis (2 passed on 2026-08-14).
+- [x] Verify local backend metrics, Prometheus target/rules, and Grafana health.
 - [ ] Prove multi-process Redis accounting and monitoring/alert operation in the
   selected deployment topology.
 
@@ -355,10 +439,16 @@ count.
   shared Redis, proxy SSE, and bounded load probes using synthetic data.
 - [x] Add a read-only `ai_release_check` that fails closed unless repository,
   quality, configuration, and recorded deployment-evidence gates all pass.
-- [ ] Run real-provider chat/tool/stream/token and representative load gates
-  using synthetic data.
-- [ ] Rehearse provider/key failure, backup/restore, incident response, and
-  rollback, then run the final deployment smoke gate.
+- [x] Collect all 18 real-provider synthetic bilingual benchmark responses.
+- [x] Complete the owner-accepted AI-generated reviews, preserve the raw-model
+  failures (3/18 before; 13/18 after), then pass the unchanged controlled
+  system-level benchmark (18/18; 10 policy, 8 deterministic, 0 provider).
+- [x] Rehearse the designated database's encrypted backup through an isolated
+  restore, field-key rotation/verification, provider failures, and kill switch.
+- [ ] Run deployed tool/token/proxy/load gates using synthetic data and retain
+  the passing controlled quality artifact in approved deployment evidence.
+- [ ] Repeat recovery, alerting, incident response, and rollback in the selected
+  production topology, then run the final deployment smoke gate.
 
 ## API and Client Impact Notes
 
@@ -378,6 +468,9 @@ count.
 - Clients should stop loading on `done`, `error`, 401, 403, 409, 429, 503, or
   disconnect and must not automatically duplicate a stream without preserving
   the same idempotency key.
+- HTTP 503 `AI_ASSISTANT_DISABLED` is an intentional incident/maintenance state;
+  clients should show a temporary-unavailability message and must not retry in
+  a tight loop.
 - Consent failures include current-policy metadata for the customer consent-
   renewal flow.
 
@@ -400,9 +493,9 @@ loan decisions or mutate their records.
 The AI Assistant repository is application-complete through Stage 6 but is
 **not production ready yet**. Do not approve a production deployment until the
 target inventory/backfill and real-Mongo/Redis/provider/proxy/load gates pass,
-provider privacy terms are approved, the bilingual human review meets the
-versioned thresholds, recovery/rotation rehearsals have evidence, and the
-final deployed smoke test and `ai_release_check` succeed.
+provider privacy terms/topology are approved, the selected model meets the
+versioned bilingual thresholds, production recovery/rotation rehearsals have
+evidence, and the final deployed smoke test and `ai_release_check` succeed.
 
 The `100/hour` chat throttle is the explicitly accepted development/testing
 value. It does not block continued implementation, but the deployed rate must

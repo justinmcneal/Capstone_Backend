@@ -15,6 +15,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
+from django.test import override_settings
 
 from accounts.authentication import AuthenticatedUser
 from accounts.utils.access_control import AccessControlMixin
@@ -93,6 +94,17 @@ class TestStreamingInputValidation:
             'language': 'jp',
         }))
         assert response.status_code == 400
+
+    @override_settings(AI_ASSISTANT_ENABLED=False)
+    def test_incident_kill_switch_returns_json_before_stream_starts(self):
+        with patch("ai_assistant.views.streaming.get_llm_service") as provider:
+            response = _call_view(
+                _make_fake_request(data={"message": "Synthetic incident probe"})
+            )
+
+        assert response.status_code == 503
+        assert response.data["code"] == "AI_ASSISTANT_DISABLED"
+        assert provider.call_count == 0
 
 
 # =============================================================================

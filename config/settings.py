@@ -16,8 +16,8 @@ import re
 from pathlib import Path
 from urllib.parse import urlparse
 
-from cryptography.fernet import Fernet
 from corsheaders.defaults import default_headers
+from cryptography.fernet import Fernet
 from django.core.exceptions import ImproperlyConfigured
 from django.core.management.utils import get_random_secret_key
 from dotenv import load_dotenv
@@ -925,6 +925,7 @@ CONSENT_POLICY_CONTENT_SHA256 = os.getenv(
 GROQ_QUALIFICATION_MODEL = os.getenv('GROQ_QUALIFICATION_MODEL', GROQ_MODEL)
 
 # LLM Provider Configuration
+AI_ASSISTANT_ENABLED = env_bool('AI_ASSISTANT_ENABLED', True)
 LLM_PROVIDER = (os.getenv('LLM_PROVIDER') or 'groq').strip().lower()
 if LLM_PROVIDER not in {'groq', 'ollama'}:
     raise ImproperlyConfigured('LLM_PROVIDER must be groq or ollama')

@@ -34,11 +34,16 @@ from ai_assistant.services.exception_types import NON_FATAL_EXCEPTIONS
 # Import from centralized knowledge base
 from ai_assistant.services.knowledge_base import (
     build_system_prompt,
+    check_prohibited_content,
 )
 from ai_assistant.services.provider_boundary import (
     ProviderCircuitOpen,
     ProviderConcurrencyExceeded,
     provider_session,
+)
+from ai_assistant.services.response_controls import (
+    controlled_guidance_response,
+    validate_provider_response,
 )
 
 logger = logging.getLogger('ai_assistant')
@@ -52,6 +57,45 @@ GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
 
 _session = provider_session
 PUBLIC_PROVIDER_ERROR = "AI service is temporarily unavailable. Please try again later."
+
+
+def _policy_result(message, *, model, provider, request_id=None):
+    """Apply the deterministic safety boundary before any provider or tool call."""
+    prohibited, response = check_prohibited_content(str(message or ""))
+    if not prohibited:
+        return None
+    result = {
+        'success': True,
+        'response': response,
+        'model': model,
+        'provider': provider,
+        'response_time_ms': 0,
+        'tokens_used': 0,
+        'tools_called': [],
+        'policy_intercepted': True,
+    }
+    if request_id:
+        result['request_id'] = request_id
+    return result
+
+
+def _controlled_result(message, *, language, model, provider, request_id=None):
+    response = controlled_guidance_response(message, language=language)
+    if not response:
+        return None
+    result = {
+        'success': True,
+        'response': response,
+        'model': model,
+        'provider': provider,
+        'response_time_ms': 0,
+        'tokens_used': 0,
+        'tools_called': [],
+        'controlled_response': True,
+    }
+    if request_id:
+        result['request_id'] = request_id
+    return result
 
 def _get_config():
     """Read LLM config from Django settings (which reads .env via load_dotenv)."""
@@ -347,8 +391,8 @@ class GroqService:
         conversation_history=None,
         language='en',
         system_prompt=None,
-        temperature=0.7,
-        max_tokens=512,
+        temperature=0.2,
+        max_tokens=256,
         top_p=0.9,
     ):
         """
@@ -362,7 +406,7 @@ class GroqService:
             language: 'en' for English, 'tl' for Tagalog
             system_prompt: Optional custom system prompt override
             temperature: Sampling temperature
-            max_tokens: Maximum output tokens (default 512 for concise responses)
+            max_tokens: Maximum output tokens (default 256 for concise responses)
             top_p: Nucleus sampling parameter
         
         Returns:
@@ -379,6 +423,19 @@ class GroqService:
             print(result['response'])  # AI reply in Tagalog
         """
         max_tokens = self._bounded_limits(max_tokens)
+        policy_result = _policy_result(
+            message, model=self.model, provider=self.provider
+        )
+        if policy_result:
+            return policy_result
+        controlled_result = _controlled_result(
+            message,
+            language=language,
+            model=self.model,
+            provider=self.provider,
+        )
+        if controlled_result:
+            return controlled_result
         # Check if API key is configured
         if not self.api_key:
             return self._provider_failure()
@@ -434,13 +491,19 @@ class GroqService:
                 choice = result.get('choices', [{}])[0]
                 usage = result.get('usage', {})
                 
+                provider_text, violations = validate_provider_response(
+                    choice.get('message', {}).get('content', ''),
+                    message=message,
+                    language=language,
+                )
                 return {
                     'success': True,
-                    'response': choice.get('message', {}).get('content', ''),
+                    'response': provider_text,
                     'model': self.model,
                     'provider': self.provider,
                     'response_time_ms': elapsed_ms,
-                    'tokens_used': usage.get('total_tokens', 0)
+                    'tokens_used': usage.get('total_tokens', 0),
+                    'response_validation_violations': violations,
                 }
             else:
                 # API returned an error
@@ -567,8 +630,8 @@ class GroqService:
         language='en',
         system_prompt=None,
         tools=None,
-        temperature=0.7,
-        max_tokens=512,
+        temperature=0.2,
+        max_tokens=256,
         top_p=0.9,
         max_tool_rounds=3,
         request_id=None,
@@ -585,7 +648,7 @@ class GroqService:
             system_prompt: Optional system prompt override
             tools: List of tool schemas (OpenAI format)
             temperature: Sampling temperature
-            max_tokens: Max output tokens (default 512 for concise responses)
+            max_tokens: Max output tokens (default 256 for concise responses)
             top_p: Nucleus sampling
             max_tool_rounds: Max tool call iterations to prevent infinite loops
 
@@ -595,6 +658,23 @@ class GroqService:
         from ai_assistant.services.tools import execute_tool_result
 
         max_tokens, max_tool_rounds = self._bounded_limits(max_tokens, max_tool_rounds)
+        policy_result = _policy_result(
+            message,
+            model=self.model,
+            provider=self.provider,
+            request_id=request_id,
+        )
+        if policy_result:
+            return policy_result
+        controlled_result = _controlled_result(
+            message,
+            language=language,
+            model=self.model,
+            provider=self.provider,
+            request_id=request_id,
+        )
+        if controlled_result:
+            return controlled_result
         if not self.api_key:
             return self._provider_failure(request_id=request_id)
 
@@ -730,14 +810,21 @@ class GroqService:
                     continue
                 else:
                     elapsed_ms = int((time.time() - start_time) * 1000)
+                    provider_text, violations = validate_provider_response(
+                        assistant_message.get('content', ''),
+                        message=message,
+                        language=language,
+                        tools_called=tools_called,
+                    )
                     return {
                         'success': True,
-                        'response': assistant_message.get('content', ''),
+                        'response': provider_text,
                         'model': self.model,
                         'provider': self.provider,
                         'response_time_ms': elapsed_ms,
                         'tokens_used': total_tokens,
                         'tools_called': tools_called,
+                        'response_validation_violations': violations,
                     }
 
             except requests.Timeout as exc:
@@ -762,8 +849,8 @@ class GroqService:
         conversation_history=None,
         language='en',
         system_prompt=None,
-        temperature=0.7,
-        max_tokens=512,
+        temperature=0.2,
+        max_tokens=256,
         top_p=0.9,
     ):
         """
@@ -778,6 +865,35 @@ class GroqService:
             {'type': 'error', 'content': '...'} - Error occurred
         """
         max_tokens = self._bounded_limits(max_tokens)
+        policy_result = _policy_result(
+            message, model=self.model, provider=self.provider
+        )
+        if policy_result:
+            yield {'type': 'token', 'content': policy_result['response']}
+            yield {
+                'type': 'done',
+                'model': self.model,
+                'provider': self.provider,
+                'tokens_used': 0,
+                'policy_intercepted': True,
+            }
+            return
+        controlled_result = _controlled_result(
+            message,
+            language=language,
+            model=self.model,
+            provider=self.provider,
+        )
+        if controlled_result:
+            yield {'type': 'token', 'content': controlled_result['response']}
+            yield {
+                'type': 'done',
+                'model': self.model,
+                'provider': self.provider,
+                'tokens_used': 0,
+                'controlled_response': True,
+            }
+            return
         if not self.api_key:
             yield {'type': 'error', 'content': PUBLIC_PROVIDER_ERROR, 'code': 'AI_PROVIDER_ERROR'}
             return
@@ -838,8 +954,8 @@ class GroqService:
         language='en',
         system_prompt=None,
         tools=None,
-        temperature=0.7,
-        max_tokens=512,
+        temperature=0.2,
+        max_tokens=256,
         top_p=0.9,
         max_tool_rounds=3,
         request_id=None,
@@ -860,6 +976,41 @@ class GroqService:
         from ai_assistant.services.tools import execute_tool_result
 
         max_tokens, max_tool_rounds = self._bounded_limits(max_tokens, max_tool_rounds)
+        policy_result = _policy_result(
+            message,
+            model=self.model,
+            provider=self.provider,
+            request_id=request_id,
+        )
+        if policy_result:
+            yield {'type': 'token', 'content': policy_result['response']}
+            yield {
+                'type': 'done',
+                'model': self.model,
+                'provider': self.provider,
+                'tokens_used': 0,
+                'tools_called': [],
+                'policy_intercepted': True,
+            }
+            return
+        controlled_result = _controlled_result(
+            message,
+            language=language,
+            model=self.model,
+            provider=self.provider,
+            request_id=request_id,
+        )
+        if controlled_result:
+            yield {'type': 'token', 'content': controlled_result['response']}
+            yield {
+                'type': 'done',
+                'model': self.model,
+                'provider': self.provider,
+                'tokens_used': 0,
+                'tools_called': [],
+                'controlled_response': True,
+            }
+            return
         if not self.api_key:
             yield {'type': 'error', 'content': PUBLIC_PROVIDER_ERROR, 'code': 'AI_PROVIDER_ERROR'}
             return

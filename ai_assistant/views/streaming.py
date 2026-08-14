@@ -3,6 +3,7 @@ import logging
 import time
 import uuid
 
+from django.conf import settings
 from django.http import StreamingHttpResponse
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
@@ -75,6 +76,12 @@ class StreamingChatView(AIRequestMetricsMixin, ConsentRequiredMixin, APIView):
 
     def post(self, request):
         """Stream AI response as Server-Sent Events"""
+        if not getattr(settings, 'AI_ASSISTANT_ENABLED', True):
+            return error_response(
+                message="AI assistant is temporarily disabled",
+                code="AI_ASSISTANT_DISABLED",
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
         request_id, validation_error = resolve_request_id(request)
         if validation_error:
             return validation_error

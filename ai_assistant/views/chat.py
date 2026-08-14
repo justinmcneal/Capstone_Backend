@@ -137,6 +137,12 @@ class ChatView(AIRequestMetricsMixin, ConsentRequiredMixin, APIView):
     def post(self, request):
         """Send a message to the AI assistant"""
         try:
+            if not getattr(settings, 'AI_ASSISTANT_ENABLED', True):
+                return error_response(
+                    message="AI assistant is temporarily disabled",
+                    code="AI_ASSISTANT_DISABLED",
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                )
             has_consent, result = self.check_ai_consent(request)
             if not has_consent:
                 return result

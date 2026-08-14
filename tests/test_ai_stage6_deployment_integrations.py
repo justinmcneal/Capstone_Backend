@@ -1,6 +1,7 @@
 """Explicitly opted-in Stage 6 probes using synthetic data only."""
 
 import json
+import multiprocessing
 import os
 import uuid
 from concurrent.futures import ThreadPoolExecutor
@@ -12,6 +13,15 @@ from redis import Redis
 from ai_assistant.services import get_llm_service
 
 pytestmark = pytest.mark.deployment_integration
+
+
+def _increment_redis_counter(url, key, count):
+    client = Redis.from_url(url)
+    try:
+        for _ in range(count):
+            client.incr(key)
+    finally:
+        client.close()
 
 
 def _opt_in(flag, *required):
@@ -73,6 +83,38 @@ def test_two_clients_share_atomic_redis_state():
         first.delete(key)
         first.close()
         second.close()
+
+
+def test_two_processes_share_atomic_redis_state():
+    values = _opt_in(
+        "RUN_AI_REDIS_DEPLOYMENT_TESTS", "AI_ASSISTANT_DEPLOYMENT_REDIS_URL"
+    )
+    key = f"ai-assistant:process-release-probe:{uuid.uuid4().hex}"
+    client = Redis.from_url(values["AI_ASSISTANT_DEPLOYMENT_REDIS_URL"])
+    context = multiprocessing.get_context("spawn")
+    processes = [
+        context.Process(
+            target=_increment_redis_counter,
+            args=(values["AI_ASSISTANT_DEPLOYMENT_REDIS_URL"], key, 25),
+        )
+        for _ in range(2)
+    ]
+    try:
+        assert client.set(key, 0, ex=60, nx=True)
+        for process in processes:
+            process.start()
+        for process in processes:
+            process.join(timeout=15)
+        assert all(process.exitcode == 0 for process in processes)
+        assert int(client.get(key)) == 50
+        assert client.ttl(key) > 0
+    finally:
+        for process in processes:
+            if process.is_alive():
+                process.terminate()
+                process.join(timeout=5)
+        client.delete(key)
+        client.close()
 
 
 def test_target_proxy_preserves_sse_terminal_contract():

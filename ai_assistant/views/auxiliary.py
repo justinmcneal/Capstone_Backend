@@ -1,6 +1,7 @@
 import logging
 from typing import ClassVar
 
+from django.conf import settings
 from django.core.cache import cache
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
@@ -99,6 +100,22 @@ class AIStatusView(AccessControlMixin, APIView):
         has_permission, result = self.require_customer(request)
         if not has_permission:
             return result
+
+        if not getattr(settings, 'AI_ASSISTANT_ENABLED', True):
+            return success_response(
+                data={
+                    'available': False,
+                    'provider': settings.LLM_PROVIDER,
+                    'current_model': None,
+                    'api_configured': False,
+                    'reachable': False,
+                    'authenticated': False,
+                    'model_available': False,
+                    'state': 'disabled',
+                    'circuit': 'disabled',
+                },
+                message="AI status retrieved",
+            )
 
         llm = get_llm_service(use_case='chat')
         

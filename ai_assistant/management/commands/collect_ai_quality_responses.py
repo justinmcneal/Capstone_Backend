@@ -37,22 +37,35 @@ class Command(BaseCommand):
         if not readiness.get("available"):
             raise CommandError("Selected AI provider/model is not available")
         assessments = []
+        execution_modes = {
+            "provider": 0,
+            "policy": 0,
+            "controlled_guidance": 0,
+        }
         for case in dataset["cases"]:
             result = service.chat(
                 case["prompt"],
                 language=case["language"],
-                max_tokens=512,
+                max_tokens=256,
             )
             if not result.get("success"):
                 raise CommandError(
                     f"Provider failed on synthetic case {case['id']}: "
                     f"{result.get('code', 'AI_PROVIDER_ERROR')}"
                 )
+            if result.get("policy_intercepted"):
+                execution_mode = "policy"
+            elif result.get("controlled_response"):
+                execution_mode = "controlled_guidance"
+            else:
+                execution_mode = "provider"
+            execution_modes[execution_mode] += 1
             assessments.append({
                 "case_id": case["id"],
                 "response": result.get("response", ""),
                 "scores": {},
                 "critical_failure": False,
+                "execution_mode": execution_mode,
             })
         payload = {
             "dataset_version": dataset["dataset_version"],
@@ -61,6 +74,7 @@ class Command(BaseCommand):
             "model": readiness["model"],
             "reviewer": "REQUIRED_BEFORE_EVALUATION",
             "collected_at": datetime.now(timezone.utc).isoformat(),
+            "execution_mode_counts": execution_modes,
             "assessments": assessments,
         }
         options["output"].write_text(

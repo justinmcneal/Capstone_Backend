@@ -1,6 +1,6 @@
 # AI Assistant Testing Guide
 
-Last reviewed: 2026-08-14
+Last reviewed: 2026-08-15
 
 API prefix: `/api/ai/`
 
@@ -13,18 +13,19 @@ privacy lifecycle, observability, and deployment validation.
 The focused Stage 1–6 AI test files passed during the review:
 
 ```text
-140 passed, 6 skipped
+143 passed, 7 skipped
 ```
 
-The six skips are two isolated-real-Mongo cases and four Stage 6 deployment
-probes. This result verifies the current local/mocked implementation only. It
-is not a substitute for the real MongoDB, Redis, provider, proxy, load,
-privacy-lifecycle, and monitoring gates described below.
+The seven default skips are two isolated-real-Mongo cases and five Stage 6
+deployment probes. The ordinary suite verifies offline behavior; separately
+recorded opt-in results cover the owner-designated deployment MongoDB, local
+Redis/Ollama, and local monitoring. They do not replace future deployed proxy,
+worker, load, recovery, and alert-route gates.
 
 The complete local repository suite also passed after Stage 6:
 
 ```text
-1202 passed, 34 skipped
+1205 passed, 35 skipped
 ```
 
 ## Safety Rules
@@ -67,6 +68,7 @@ capacity recommendations:
 
 | Setting | Default | Purpose |
 | --- | ---: | --- |
+| `AI_ASSISTANT_ENABLED` | `True` | Incident kill switch; set `False` and restart workers to disable provider-backed chat/stream. |
 | `AI_ASSISTANT_CHAT_RATE` | `100/hour` | Per-authenticated-user DRF chat/stream throttle. |
 | `AI_ASSISTANT_MESSAGE_MAX_CHARS` | `4000` | Maximum sanitized message characters. |
 | `AI_ASSISTANT_MESSAGE_MAX_BYTES` | `16000` | Maximum raw message UTF-8 bytes. |
@@ -607,6 +609,25 @@ bilingual quality. Responses require human review on the documented 0–4
 rubric; the backend does not pretend that string matching is a model-quality
 assessment.
 
+For the 2026-08-14/15 development runs, the owner explicitly accepted AI-
+generated rubric review. It is labeled as such in the assessment evidence and
+must not be represented as independent human review. Ollama `llama3.1` first
+passed 3/18 cases (16.7% overall and 10% critical). After the shared safety
+boundary, prompt grounding rules, 0.2 default temperature, and 256-token default
+response budget were added, the identical 18 prompts passed 13/18 (72.2%
+overall and 100% critical). Privacy, credential, approval, prompt-injection,
+and advice cases all passed; five platform/grounding/bilingual cases remained.
+The hardened report therefore still failed closed and must not be configured
+through `AI_ASSISTANT_QUALITY_REPORT_PATH`. The local rerun used a temporary
+300-second read timeout and did not modify `.env`.
+
+A third run used the unchanged 18 prompts after reviewed deterministic guidance
+and provider-output validation were added. It passed 18/18 cases and every
+dimension/category threshold at 100%. The evidence records 10 `policy`, 8
+`controlled_guidance`, and 0 `provider` responses. This is an approved
+customer-visible system-level result, not a claim that raw `llama3.1` generation
+scored 100%. Preserve the execution-mode metadata with the review and report.
+
 Collect outputs only after approving provider cost and data handling. The
 command sends every synthetic prompt to the currently selected provider and
 writes a review template; it never reads customer records:
@@ -684,6 +705,31 @@ write evidence. It pings MongoDB and inspects current configuration, indexes,
 validators, monitoring assets, the quality report binding, and recorded
 approval flags. A failed item keeps the command non-zero.
 
+## Incident and Recovery Rehearsal
+
+During provider compromise, unsafe output, or an uncontrolled error spike:
+
+1. Set `AI_ASSISTANT_ENABLED=False` in deployment configuration.
+2. Restart ASGI/worker processes and confirm chat/stream return HTTP 503
+   `AI_ASSISTANT_DISABLED` before provider or persistence work.
+3. Confirm `/api/ai/status/` reports `state=disabled`; authenticated static
+   education and FAQ endpoints should remain available.
+4. Preserve metadata-only request/audit/metric evidence without copying prompts.
+5. Revoke/rotate the provider credential and investigate before re-enabling.
+6. Restore encrypted backups only into an isolated database, compare counts and
+   inventory, and never restore over the source database.
+7. Retain previous field keys during rotation, run `--rotate --apply`, then run
+   `--verify` separately before removing any previous key.
+8. Re-enable only after owner/security approval and fresh provider, quality,
+   monitoring, and smoke gates.
+
+The 2026-08-14 deployment-database rehearsal restored 28 collections/106 documents
+with zero count mismatches, rotated 18 protected fields across 5 records with
+zero verification failures, and removed the isolated database/archive. Provider
+timeout/circuit/disconnect and kill-switch suites passed 22 and 50 focused tests
+respectively. Repeat this with deployed secrets, backups, alerts, workers, and
+rollback ownership before production approval.
+
 ## Manual Smoke Sequence
 
 Use Insomnia, curl, or the customer client with a synthetic verified customer.
@@ -712,9 +758,9 @@ encryption, concurrency, or provider privacy.
 
 ## Release Evidence Checklist
 
-- [x] Focused AI files pass locally after Stage 6 (140 passed, 6 opt-in skips
+- [x] Focused AI files pass locally after Stage 6 (143 passed, 7 opt-in skips
   on 2026-08-14).
-- [x] Full local repository suite passes after Stage 6 (1202 passed, 34 skipped).
+- [x] Full local repository suite passes after Stage 6 (1205 passed, 35 skipped).
 - [x] AI conversation encryption and shared key-rotation tests pass locally.
 - [x] Retention, legal hold, export, account-deletion, and retry tests pass locally.
 - [x] Stage 2 request/provider boundary tests pass locally.
@@ -726,16 +772,35 @@ encryption, concurrency, or provider privacy.
 - [x] Versioned balanced synthetic bilingual benchmark, deterministic scoring,
   report binding, opt-in deployment probes, and fail-closed release command are
   implemented and pass their offline tests.
-- [ ] Deployment-target inventory/backfill is reviewed, applied, and clean.
-- [ ] Isolated real MongoDB validator/index/query-plan/concurrency gate passes.
+- [x] Owner-designated deployment-database inventory and backfill were reviewed/
+  applied cleanly on 2026-08-14 (0 AI records and 0 findings).
+- [ ] Repeat inventory/backfill against the same database immediately before
+  release to detect intervening records.
+- [x] Isolated real MongoDB validator/index/encrypted-write/query-plan gate
+  passes (2 passed on 2026-08-14; temporary collections removed).
+- [x] Configured development Redis shares atomic state across two independent
+  clients and two spawned processes (2 passed; probe keys removed).
+- [x] Local metrics, Prometheus, and Grafana health pass (1/1 target healthy,
+  8 rules loaded); API-generated AI metric series still require synthetic API traffic.
 - [ ] Real Redis multi-worker atomic limit/cache gate passes.
-- [ ] Selected real provider/model contract gate passes with synthetic data.
-- [ ] Bilingual safety/accuracy evaluation meets approved thresholds.
+- [x] Configured development provider/model basic chat/stream contract gate
+  passes with synthetic data (Ollama `llama3.1`, 1 passed on 2026-08-14).
+- [x] All 18 configured-provider bilingual benchmark responses were collected
+  outside source control on 2026-08-14.
+- [x] Owner-accepted AI-generated scoring and hardened raw-model rerun were
+  executed and correctly failed closed (3/18 before; 13/18 after); the evidence
+  is explicitly not independent human review.
+- [x] The unchanged controlled customer-visible benchmark passes 18/18 with
+  execution-mode evidence (10 policy, 8 deterministic guidance, 0 provider).
 - [ ] SSE proxy/disconnect and expected-concurrency load gate passes.
 - [ ] Real Redis atomicity plus deployed metrics scrape, dashboard import, and
   alert firing/recovery are proven.
-- [ ] Provider privacy, secret rotation, backup/restore, incident response, and
-  rollback evidence are approved.
+- [x] Owner conditionally approved private self-hosted Ollama privacy/license
+  topology; cloud/alternate providers and models require reapproval.
+- [x] Test-cluster encrypted backup/restore, key rotation/verification, provider
+  failure, and incident kill-switch rehearsals pass.
+- [ ] Repeat secret rotation, backup/restore, incident response, and rollback in
+  the selected production topology.
 - [ ] Final deployed smoke test passes.
 
 ## Troubleshooting
@@ -745,6 +810,7 @@ encryption, concurrency, or provider privacy.
 | 401 | Customer access token validity, expiry, revocation, and header format. |
 | 403 `CONSENT_REQUIRED` | Both consent flags, current policy version/hash, and account role. |
 | 429 | Endpoint throttle and tool-budget state in the shared cache. |
+| 503 `AI_ASSISTANT_DISABLED` | Intentional incident kill switch; verify deployment configuration and approval before re-enabling. |
 | 503 before chat starts | Provider configuration/readiness and selected model. |
 | 503 from `/chat/` | Provider authentication/reachability, circuit/concurrency state, or protected provider logs; public output intentionally omits the raw provider body. |
 | HTTP 200 stream with no answer | Inspect `error`/`done` frames, proxy buffering, provider stream termination, and disconnect logs. |
@@ -755,7 +821,10 @@ encryption, concurrency, or provider privacy.
 
 ## Review Boundary
 
-The 2026-08-14 Stage 1–6 review ran the focused and full local suites with
-offline test settings. It
-did not read `.env`, use customer data, call Groq/Ollama, initialize a database,
-run Redis integration, modify deployment state, or perform load/proxy tests.
+The 2026-08-15 hardened-model review ran the focused and full local
+suites with offline test settings. Later explicitly approved exercises loaded
+configured secrets without printing them, inspected/applied the pre-user
+deployment-database AI inventory, created and removed isolated MongoDB test collections, called
+Ollama with synthetic prompts, ran a temporary-key Redis atomicity probe, and
+completed an encrypted isolated restore/key-rotation rehearsal. No production
+database, deployed proxy, deployed workers, or deployed load test was used.

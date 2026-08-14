@@ -76,6 +76,9 @@ def ai_release_readiness(db):
         else bool(getattr(settings, "OLLAMA_BASE_URL", ""))
     )
     checks = {
+        "ai_assistant_enabled": bool(
+            getattr(settings, "AI_ASSISTANT_ENABLED", True)
+        ),
         "debug_disabled": not bool(settings.DEBUG),
         "field_encryption_configured": bool(
             getattr(settings, "FIELD_ENCRYPTION_KEY", "")
