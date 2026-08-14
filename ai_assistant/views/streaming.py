@@ -16,6 +16,17 @@ from accounts.utils.validation_utils import (
     sanitize_multiline_text,
     sanitize_text,
 )
+from ai_assistant.metrics import (
+    AI_ACTIVE_STREAMS,
+    AI_PERSISTENCE_FAILURES,
+    AI_PROVIDER_LATENCY,
+    AI_PROVIDER_REQUESTS,
+    AI_REQUESTS,
+    AI_TOKENS,
+    decrement,
+    increment,
+    observe,
+)
 from ai_assistant.models import AIInteraction
 from ai_assistant.services import get_llm_service
 from ai_assistant.services.context_builder import get_context_for_intent
@@ -35,6 +46,7 @@ from ai_assistant.services.request_limits import (
 from ai_assistant.services.tools import TOOL_SCHEMAS
 from ai_assistant.views.chat_views import (
     ALLOWED_LANGUAGES,
+    AIRequestMetricsMixin,
     ConsentRequiredMixin,
     EventStreamRenderer,
 )
@@ -42,7 +54,7 @@ from ai_assistant.views.chat_views import (
 logger = logging.getLogger('ai_assistant')
 
 
-class StreamingChatView(ConsentRequiredMixin, APIView):
+class StreamingChatView(AIRequestMetricsMixin, ConsentRequiredMixin, APIView):
     """
     Streaming chat endpoint using Server-Sent Events (SSE).
     
@@ -59,6 +71,7 @@ class StreamingChatView(ConsentRequiredMixin, APIView):
     permission_classes = (IsAuthenticated,)
     throttle_classes = (ChatRateThrottle,)
     renderer_classes = (EventStreamRenderer,)
+    metrics_endpoint = 'chat_stream'
 
     def post(self, request):
         """Stream AI response as Server-Sent Events"""
@@ -159,13 +172,7 @@ class StreamingChatView(ConsentRequiredMixin, APIView):
                 yield f"event: token\ndata: {json.dumps({'content': filtered_response})}\n\n"
                 yield f"event: done\ndata: {json.dumps({'filtered': True, 'request_id': request_id})}\n\n"
             
-            response = StreamingHttpResponse(
-                filtered_stream(),
-                content_type='text/event-stream'
-            )
-            response['Cache-Control'] = 'no-cache'
-            response['X-Accel-Buffering'] = 'no'
-            return response
+            return self._streaming_response(filtered_stream())
         
         history = AIInteraction.find_by_conversation(
             conversation_id=conversation_id,
@@ -180,6 +187,11 @@ class StreamingChatView(ConsentRequiredMixin, APIView):
         
         if not llm.is_available():
             mark_failed(customer_id, request_id)
+            increment(
+                AI_PROVIDER_REQUESTS,
+                provider=str(getattr(llm, 'provider', 'unknown')),
+                outcome='unavailable',
+            )
             return error_response(
                 message="AI service is currently unavailable",
                 code='AI_PROVIDER_UNAVAILABLE',
@@ -208,6 +220,7 @@ class StreamingChatView(ConsentRequiredMixin, APIView):
                     language=language,
                     system_prompt=contextualized_prompt,
                     tools=TOOL_SCHEMAS,
+                    request_id=request_id,
                 ):
                     chunk_type = chunk.get('type')
                     
@@ -253,13 +266,60 @@ class StreamingChatView(ConsentRequiredMixin, APIView):
                             )
                             AIInteraction.save_exchange(user_interaction, ai_interaction)
                             mark_complete(customer_id, request_id)
+                            increment(
+                                AI_TOKENS,
+                                amount=max(0, int(tokens_used or 0)),
+                                provider=str(
+                                    chunk.get('provider')
+                                    or getattr(llm, 'provider', 'unknown')
+                                ),
+                            )
+                            provider_name = str(
+                                chunk.get('provider')
+                                or getattr(llm, 'provider', 'unknown')
+                            )
+                            increment(
+                                AI_PROVIDER_REQUESTS,
+                                provider=provider_name,
+                                outcome='success',
+                            )
+                            observe(
+                                AI_PROVIDER_LATENCY,
+                                elapsed_ms / 1000,
+                                provider=provider_name,
+                                operation='stream',
+                            )
+                            increment(
+                                AI_REQUESTS,
+                                endpoint='chat_stream_completion',
+                                outcome='success',
+                            )
                         else:
                             mark_failed(customer_id, request_id)
+                            increment(
+                                AI_PERSISTENCE_FAILURES,
+                                operation='empty_stream',
+                            )
                         
                         yield f"event: done\ndata: {json.dumps({'model': model_used, 'tokens_used': tokens_used, 'response_time_ms': elapsed_ms, 'conversation_id': conversation_id, 'tools_called': tools_called, 'request_id': request_id})}\n\n"
                     
                     elif chunk_type == 'error':
                         mark_failed(customer_id, request_id)
+                        provider_outcome = {
+                            'AI_PROVIDER_TIMEOUT': 'timeout',
+                            'AI_PROVIDER_BUSY': 'busy',
+                            'AI_PROVIDER_CIRCUIT_OPEN': 'circuit_open',
+                        }.get(chunk.get('code'), 'error')
+                        increment(
+                            AI_PROVIDER_REQUESTS,
+                            provider=str(getattr(llm, 'provider', 'unknown')),
+                            outcome=provider_outcome,
+                        )
+                        increment(
+                            AI_REQUESTS,
+                            endpoint='chat_stream_completion',
+                            outcome='error',
+                        )
                         error_data = {
                             'content': escape_llm_output(chunk.get('content', 'Unknown error')),
                             'code': chunk.get('code', 'AI_PROVIDER_ERROR'),
@@ -267,22 +327,35 @@ class StreamingChatView(ConsentRequiredMixin, APIView):
                         yield f"event: error\ndata: {json.dumps(error_data)}\n\n"
                         break
                         
-            except NON_FATAL_EXCEPTIONS as e:
+            except NON_FATAL_EXCEPTIONS:
                 mark_failed(customer_id, request_id)
-                logger.error(f"Stream error: {e!s}")
+                increment(AI_PERSISTENCE_FAILURES, operation='stream_request')
+                increment(
+                    AI_REQUESTS,
+                    endpoint='chat_stream_completion',
+                    outcome='error',
+                )
+                logger.error(
+                    "AI stream request failed",
+                    extra={'request_id': request_id},
+                )
                 yield f"event: error\ndata: {json.dumps({'content': escape_llm_output('Stream error occurred')})}\n\n"
         
-        response = StreamingHttpResponse(
-            event_stream(),
-            content_type='text/event-stream'
-        )
-        response['Cache-Control'] = 'no-cache'
-        response['X-Accel-Buffering'] = 'no'
-        return response
+        return self._streaming_response(event_stream())
 
     @staticmethod
     def _streaming_response(stream):
-        response = StreamingHttpResponse(stream, content_type='text/event-stream')
+        def observed_stream():
+            increment(AI_ACTIVE_STREAMS)
+            try:
+                yield from stream
+            finally:
+                decrement(AI_ACTIVE_STREAMS)
+
+        response = StreamingHttpResponse(
+            observed_stream(),
+            content_type='text/event-stream',
+        )
         response['Cache-Control'] = 'no-cache'
         response['X-Accel-Buffering'] = 'no'
         return response

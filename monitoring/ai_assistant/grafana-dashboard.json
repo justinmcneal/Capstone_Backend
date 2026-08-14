@@ -1,0 +1,77 @@
+{
+  "annotations": {"list": []},
+  "editable": false,
+  "graphTooltip": 1,
+  "panels": [
+    {
+      "datasource": {"type": "prometheus", "uid": "capstone-prometheus"},
+      "fieldConfig": {"defaults": {"unit": "reqps"}},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
+      "id": 1,
+      "targets": [{"expr": "sum by (endpoint, outcome) (rate(ai_assistant_requests_total[5m]))", "legendFormat": "{{endpoint}} {{outcome}}", "refId": "A"}],
+      "title": "Request rate and outcomes",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "capstone-prometheus"},
+      "fieldConfig": {"defaults": {"unit": "s"}},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0},
+      "id": 2,
+      "targets": [{"expr": "histogram_quantile(0.95, sum by (le, endpoint) (rate(ai_assistant_request_duration_seconds_bucket[5m])))", "legendFormat": "{{endpoint}}", "refId": "A"}],
+      "title": "Request latency p95",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "capstone-prometheus"},
+      "fieldConfig": {"defaults": {"unit": "short"}},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8},
+      "id": 3,
+      "targets": [{"expr": "sum by (tool, outcome) (rate(ai_assistant_tool_calls_total[5m]))", "legendFormat": "{{tool}} {{outcome}}", "refId": "A"}],
+      "title": "Tool outcomes",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "capstone-prometheus"},
+      "fieldConfig": {"defaults": {"unit": "s"}},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8},
+      "id": 4,
+      "targets": [{"expr": "histogram_quantile(0.95, sum by (le, tool) (rate(ai_assistant_tool_duration_seconds_bucket[5m])))", "legendFormat": "{{tool}}", "refId": "A"}],
+      "title": "Tool latency p95",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "capstone-prometheus"},
+      "fieldConfig": {"defaults": {"unit": "short"}},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 16},
+      "id": 5,
+      "targets": [
+        {"expr": "sum by (window) (rate(ai_assistant_tool_budget_rejections_total[5m]))", "legendFormat": "budget {{window}}", "refId": "A"},
+        {"expr": "rate(ai_assistant_audit_write_failures_total[5m])", "legendFormat": "audit writes", "refId": "B"},
+        {"expr": "sum by (operation) (rate(ai_assistant_persistence_failures_total[5m]))", "legendFormat": "persistence {{operation}}", "refId": "C"}
+      ],
+      "title": "Safety and persistence failures",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "capstone-prometheus"},
+      "fieldConfig": {"defaults": {"unit": "short"}},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 16},
+      "id": 6,
+      "targets": [
+        {"expr": "sum by (provider) (rate(ai_assistant_tokens_total[5m]))", "legendFormat": "tokens {{provider}}", "refId": "A"},
+        {"expr": "ai_assistant_active_streams", "legendFormat": "active streams", "refId": "B"},
+        {"expr": "sum by (provider, outcome) (rate(ai_assistant_provider_requests_total[5m]))", "legendFormat": "provider {{provider}} {{outcome}}", "refId": "C"},
+        {"expr": "histogram_quantile(0.95, sum by (le, provider, operation) (rate(ai_assistant_provider_duration_seconds_bucket[5m])))", "legendFormat": "provider p95 {{provider}} {{operation}}", "refId": "D"}
+      ],
+      "title": "Provider usage and active streams",
+      "type": "timeseries"
+    }
+  ],
+  "schemaVersion": 39,
+  "tags": ["ai-assistant", "capstone"],
+  "templating": {"list": []},
+  "time": {"from": "now-6h", "to": "now"},
+  "title": "Capstone AI Assistant Operations",
+  "uid": "capstone-ai-assistant",
+  "version": 1
+}

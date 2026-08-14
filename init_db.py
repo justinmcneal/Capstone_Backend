@@ -28,7 +28,7 @@ from accounts.models import (  # noqa: E402
     LoginActivity,
     RefreshTokenEntry,
 )
-from ai_assistant.models import AIInteraction  # noqa: E402
+from ai_assistant.models import AIActivityEvent, AIInteraction  # noqa: E402
 from ai_assistant.services.idempotency import (  # noqa: E402
     create_indexes as create_ai_request_indexes,
 )
@@ -219,6 +219,8 @@ def create_indexes():
         AIInteraction.create_validator()
         create_ai_request_indexes()
         create_ai_request_validator()
+        AIActivityEvent.create_indexes()
+        AIActivityEvent.create_validator()
         print("✓ AIInteraction indexes created")
     except DuplicateKeyError:
         print("⚠ AIInteraction indexes contain duplicates; reconcile before retrying")

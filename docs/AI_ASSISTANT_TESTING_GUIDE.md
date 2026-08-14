@@ -10,20 +10,20 @@ This guide covers the AI Assistant's API, consent and customer isolation,
 context/tool safety, chat persistence, SSE behavior, provider integration,
 privacy lifecycle, observability, and deployment validation.
 
-The focused Stage 1–3 offline suite passed during the review:
+The focused Stage 1–4 offline suite passed during the review:
 
 ```text
-200 passed
+207 passed
 ```
 
 That result verifies the current local/mocked implementation only. It is not a
 substitute for the real MongoDB, Redis, provider, proxy, load, privacy-lifecycle,
 and monitoring gates described below.
 
-The complete local repository suite also passed after Stage 3:
+The complete local repository suite also passed after Stage 4:
 
 ```text
-1157 passed, 30 skipped
+1184 passed, 30 skipped
 ```
 
 ## Safety Rules
@@ -76,6 +76,8 @@ capacity recommendations:
 | `AI_ASSISTANT_MAX_OUTPUT_TOKENS` | `512` | Hard output cap supplied to the provider. |
 | `AI_ASSISTANT_MAX_TOOL_ROUNDS` | `3` | Maximum tool-selection iterations. |
 | `AI_ASSISTANT_MAX_TOOL_CALLS_PER_REQUEST` | `6` | Maximum aggregate tool calls in one request. |
+| `AI_ASSISTANT_TOOL_COST_PER_MINUTE` | `30` | Shared weighted tool-attempt budget per customer/minute. |
+| `AI_ASSISTANT_TOOL_COST_PER_HOUR` | `200` | Shared weighted tool-attempt budget per customer/hour. |
 | `AI_ASSISTANT_MAX_CONCURRENT_REQUESTS` | `8` | Per-process provider calls/streams. |
 | `AI_ASSISTANT_CONNECT_TIMEOUT_SECONDS` | `5` | Provider connection timeout. |
 | `AI_ASSISTANT_READ_TIMEOUT_SECONDS` | `120` | Provider response/read timeout. |
@@ -197,6 +199,7 @@ focused command is:
   tests/test_ai_stage1_privacy_lifecycle.py \
   tests/test_ai_stage2_provider_boundary.py \
   tests/test_ai_stage3_persistence_scalability.py \
+  tests/test_ai_stage4_observability.py \
   tests/test_ai_model_methods.py \
   tests/test_ai_streaming.py \
   tests/test_chatbot_api.py \
@@ -222,6 +225,7 @@ Static checks for the module and its focused tests:
   tests/test_ai_stage1_privacy_lifecycle.py \
   tests/test_ai_stage2_provider_boundary.py \
   tests/test_ai_stage3_persistence_scalability.py \
+  tests/test_ai_stage4_observability.py \
   tests/test_ai_model_methods.py \
   tests/test_ai_streaming.py \
   tests/test_chatbot_api.py \
@@ -250,6 +254,7 @@ modules and are required for the current focused count.
 | Stage 1 privacy lifecycle | Ciphertext storage/read, keyed history search, retention/legal hold, allowlisted export, pseudonymous held evidence, retryable account deletion, inventory, and dry-run backfill. |
 | Stage 2 provider boundary | Message/request/search/page bounds, configurable throttle, hard generation limits, provider selection, readiness states, stable errors, safe GET retry, no paid-POST retry, stream concurrency lifetime, and circuit opening. |
 | Stage 3 persistence/scalability | Idempotent exchange pairs, lease/replay/conflict behavior, signed cursor continuity/tamper rejection, bounded conversation reads, validators, indexes, and owner-shape reconciliation. |
+| Stage 4 tool safety/observability | Atomic pre-execution budgets, failed-attempt charging, explicit dashboard cost/schema, metadata-only durable tool audit, request-ID propagation, truthful tool results, low-cardinality metrics, and monitoring assets. |
 
 Most persistence and external behavior in these tests is mocked or in-memory.
 
@@ -372,16 +377,16 @@ a partial exchange look complete; partial content requires retry/operator review
 
 ## Real Redis and Rate-Limit Gate
 
-The endpoint rate is configurable, while Stage 4 must make tool accounting
-atomic. Use a dedicated Redis database and test:
-and test:
+The endpoint rate is configurable and Stage 4 uses atomic cache `add`/`incr`/
+`decr` reservations before validation or execution. Use a dedicated Redis
+database and test:
 
 - simultaneous calls cannot exceed the minute/hour budget;
 - expensive tools consume their configured cost, including
   `get_customer_dashboard`;
 - failed/unknown/repeated calls consume the intended abuse budget;
 - request and tool limits are shared across two application processes;
-- TTL/retry-after values match the implemented fixed/sliding-window policy;
+- TTL/retry-after values match the implemented fixed-window policy;
 - Redis outage follows the approved fail-open or fail-closed policy; and
 - cache invalidation is visible across workers.
 
@@ -499,7 +504,8 @@ customer feature; the latter must be part of the durable account lifecycle.
 
 ## Observability Gate
 
-After AI metrics/audit are implemented, verify without exposing content:
+Stage 4 implements metadata-only audit events and the application metric
+families below. Verify them without exposing content:
 
 - every chat has one request ID across response, interaction metadata, provider
   log, tool log, and audit event;
@@ -514,6 +520,57 @@ After AI metrics/audit are implemented, verify without exposing content:
 
 Use Prometheus/Grafana locally for development if desired, but final evidence
 must scrape the deployed backend topology and exercise the deployed alert path.
+
+## AI Operations Runbook
+
+The ASGI/WSGI startup path exposes AI metrics through the same private metrics
+sidecar used by Analytics. With the backend configured to expose metrics on
+`127.0.0.1:8001`, start a local AI-focused Prometheus instance:
+
+```bash
+mkdir -p /tmp/capstone-ai-prometheus-live
+prometheus \
+  --config.file="$PWD/monitoring/ai_assistant/prometheus-smoke.yml" \
+  --storage.tsdb.path=/tmp/capstone-ai-prometheus-live \
+  --web.listen-address=127.0.0.1:9090
+```
+
+Provision the repository dashboards in Grafana. Both variables are supplied so
+the existing Analytics dashboard and the AI dashboard can coexist:
+
+```bash
+ANALYTICS_DASHBOARD_PATH="$PWD/monitoring/analytics" \
+AI_ASSISTANT_DASHBOARD_PATH="$PWD/monitoring/ai_assistant" \
+GF_SECURITY_ADMIN_USER=admin \
+GF_SECURITY_ADMIN_PASSWORD=admin \
+/opt/homebrew/opt/grafana/bin/grafana server \
+  --homepath /opt/homebrew/opt/grafana/share/grafana \
+  --config /opt/homebrew/etc/grafana/grafana.ini \
+  --packaging=brew \
+  cfg:default.paths.provisioning="$PWD/monitoring/grafana/provisioning" \
+  cfg:server.http_addr=127.0.0.1 \
+  cfg:server.http_port=3000
+```
+
+Open `/metrics` on port 8001, Prometheus targets/rules on port 9090, and the
+Grafana dashboard at
+`http://127.0.0.1:3000/d/capstone-ai-assistant/capstone-ai-assistant-operations`.
+Generate synthetic chat and streaming traffic, including one tool-backed
+question, then confirm request/provider/tool/token/stream series appear without
+customer IDs, prompts, responses, tool arguments, or provider bodies.
+
+Validate the assets before import:
+
+```bash
+promtool check config monitoring/ai_assistant/prometheus-smoke.yml
+promtool check rules monitoring/ai_assistant/prometheus-rules.yml
+.venv/bin/pytest -q tests/test_ai_stage4_observability.py
+```
+
+Investigate audit-write or persistence alerts immediately. Provider latency,
+error, rate-limit, and token thresholds are initial safe defaults; calibrate
+them from approved load/cost evidence and record the final alert routes before
+production approval.
 
 ## Manual Smoke Sequence
 
@@ -543,19 +600,22 @@ encryption, concurrency, or provider privacy.
 
 ## Release Evidence Checklist
 
-- [x] Stage 1–3 focused offline suite passes (200 tests on 2026-08-14).
-- [x] Full local repository suite passes after Stage 3 (1157 passed, 30 skipped).
+- [x] Stage 1–4 focused offline suite passes (207 tests on 2026-08-14).
+- [x] Full local repository suite passes after Stage 4 (1184 passed, 30 skipped).
 - [x] AI conversation encryption and shared key-rotation tests pass locally.
 - [x] Retention, legal hold, export, account-deletion, and retry tests pass locally.
 - [x] Stage 2 request/provider boundary tests pass locally.
 - [x] Stage 3 persistence, idempotency, cursor, validator, and index tests pass locally.
+- [x] Stage 4 atomic budget, durable metadata audit, correlation, truthful tool
+  results, metrics, dashboards, and alert assets pass locally.
 - [ ] Deployment-target inventory/backfill is reviewed, applied, and clean.
 - [ ] Isolated real MongoDB validator/index/query-plan/concurrency gate passes.
 - [ ] Real Redis multi-worker atomic limit/cache gate passes.
 - [ ] Selected real provider/model contract gate passes with synthetic data.
 - [ ] Bilingual safety/accuracy evaluation meets approved thresholds.
 - [ ] SSE proxy/disconnect and expected-concurrency load gate passes.
-- [ ] Correlation, durable audit, metrics, dashboards, and alerts are proven.
+- [ ] Real Redis atomicity plus deployed metrics scrape, dashboard import, and
+  alert firing/recovery are proven.
 - [ ] Provider privacy, secret rotation, backup/restore, incident response, and
   rollback evidence are approved.
 - [ ] Final deployed smoke test passes.
@@ -577,7 +637,7 @@ encryption, concurrency, or provider privacy.
 
 ## Review Boundary
 
-The 2026-08-14 Stage 1–3 review ran the focused and full local suites with
+The 2026-08-14 Stage 1–4 review ran the focused and full local suites with
 offline test settings. It
 did not read `.env`, use customer data, call Groq/Ollama, initialize a database,
 run Redis integration, modify deployment state, or perform load/proxy tests.

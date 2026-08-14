@@ -213,9 +213,13 @@ class GroqService:
         return max_tokens, rounds
 
     @staticmethod
-    def _provider_failure(exc=None):
+    def _provider_failure(exc=None, request_id=None):
         if exc is not None:
-            logger.warning('AI provider request failed: %s', type(exc).__name__)
+            logger.warning(
+                'AI provider request failed: %s',
+                type(exc).__name__,
+                extra={'request_id': request_id},
+            )
         if isinstance(exc, ProviderConcurrencyExceeded):
             code = 'AI_PROVIDER_BUSY'
         elif isinstance(exc, ProviderCircuitOpen):
@@ -341,7 +345,13 @@ class GroqService:
         except requests.RequestException as e:
             return self._provider_failure(e)
     
-    def _execute_tools_parallel(self, tool_calls, customer_id, max_workers=4):
+    def _execute_tools_parallel(
+        self,
+        tool_calls,
+        customer_id,
+        request_id=None,
+        max_workers=4,
+    ):
         """
         Execute multiple tool calls concurrently using ThreadPoolExecutor.
         Includes rate limiting and safety checks.
@@ -365,22 +375,35 @@ class GroqService:
             except json.JSONDecodeError:
                 tool_args = {}
             
-            logger.info(f"[Parallel] Tool call: {tool_name}({tool_args}) for customer {customer_id}")
+            logger.info(
+                "AI parallel tool call started",
+                extra={'request_id': request_id, 'tool': tool_name},
+            )
             
             # Use safe executor with rate limiting and validation
-            result = safe_execute_tool(tool_name, tool_args, customer_id)
+            result = safe_execute_tool(
+                tool_name,
+                tool_args,
+                customer_id,
+                request_id=request_id,
+            )
             
             if result['success']:
-                return (tool_call_id, tool_name, result['result'])
+                return (tool_call_id, tool_name, result['result'], True)
             elif result.get('rate_limited'):
                 # Return rate limit error as tool result
                 return (tool_call_id, tool_name, json.dumps({
                     "error": result['error'],
                     "rate_limited": True,
                     "retry_after_seconds": result.get('retry_after_seconds', 60)
-                }))
+                }), False)
             else:
-                return (tool_call_id, tool_name, json.dumps({"error": result['error']}))
+                return (
+                    tool_call_id,
+                    tool_name,
+                    json.dumps({"error": result['error']}),
+                    False,
+                )
         
         results = []
         # Use ThreadPoolExecutor for I/O-bound MongoDB queries
@@ -393,18 +416,25 @@ class GroqService:
                 idx = future_to_idx[future]
                 try:
                     results[idx] = future.result()
-                except NON_FATAL_EXCEPTIONS as e:
+                except NON_FATAL_EXCEPTIONS:
                     # Handle individual tool failure
                     tool_call = tool_calls[idx]
                     tool_name = tool_call.get('function', {}).get('name', 'unknown')
-                    logger.error(f"Parallel tool error ({tool_name}): {e}")
+                    logger.error(
+                        "AI parallel tool execution failed",
+                        extra={'request_id': request_id, 'tool': tool_name},
+                    )
                     results[idx] = (
                         tool_call.get('id', ''),
                         tool_name,
-                        json.dumps({"error": "Failed to retrieve data"})
+                        json.dumps({"error": "Failed to retrieve data"}),
+                        False,
                     )
         
-        logger.info(f"[Parallel] Executed {len(tool_calls)} tools concurrently")
+        logger.info(
+            "AI parallel tools completed",
+            extra={'request_id': request_id, 'tool_count': len(tool_calls)},
+        )
         return results
     
     def generate(self, prompt):
@@ -434,6 +464,7 @@ class GroqService:
         max_tokens=512,
         top_p=0.9,
         max_tool_rounds=3,
+        request_id=None,
     ):
         """
         Send a message with function calling support.
@@ -454,11 +485,11 @@ class GroqService:
         Returns:
             dict with success, response, model, response_time_ms, tokens_used, tools_called
         """
-        from ai_assistant.services.tools import execute_tool
+        from ai_assistant.services.tools import execute_tool_result
 
         max_tokens, max_tool_rounds = self._bounded_limits(max_tokens, max_tool_rounds)
         if not self.api_key:
-            return self._provider_failure()
+            return self._provider_failure(request_id=request_id)
 
         start_time = time.time()
         total_tokens = 0
@@ -505,8 +536,12 @@ class GroqService:
                 )
 
                 if response.status_code != 200:
-                    logger.error("AI provider returned HTTP %s", response.status_code)
-                    return self._provider_failure()
+                    logger.error(
+                        "AI provider returned HTTP %s",
+                        response.status_code,
+                        extra={'request_id': request_id},
+                    )
+                    return self._provider_failure(request_id=request_id)
 
                 result = response.json()
                 usage = result.get('usage', {})
@@ -519,7 +554,10 @@ class GroqService:
                 tool_calls = assistant_message.get('tool_calls')
                 if tool_calls and finish_reason == 'tool_calls':
                     if self._tool_budget_exceeded(len(tools_called) + len(tool_calls)):
-                        logger.warning('AI tool-call budget exceeded')
+                        logger.warning(
+                            'AI tool-call budget exceeded',
+                            extra={'request_id': request_id},
+                        )
                         return {
                             'success': False,
                             'error': PUBLIC_PROVIDER_ERROR,
@@ -530,8 +568,12 @@ class GroqService:
                     # Execute tools in parallel for better performance
                     if len(tool_calls) > 1:
                         # Multiple tools - run concurrently
-                        tool_results = self._execute_tools_parallel(tool_calls, customer_id)
-                        for tool_call_id, tool_name, tool_result in tool_results:
+                        tool_results = self._execute_tools_parallel(
+                            tool_calls,
+                            customer_id,
+                            request_id=request_id,
+                        )
+                        for tool_call_id, tool_name, tool_result, _success in tool_results:
                             tools_called.append(tool_name)
                             messages.append({
                                 "role": "tool",
@@ -548,8 +590,28 @@ class GroqService:
                         except json.JSONDecodeError:
                             tool_args = {}
 
-                        logger.info(f"Tool call: {tool_name}({tool_args}) for customer {customer_id}")
-                        tool_result = execute_tool(tool_name, tool_args, customer_id)
+                        logger.info(
+                            "AI tool call started",
+                            extra={'request_id': request_id, 'tool': tool_name},
+                        )
+                        execution = execute_tool_result(
+                            tool_name,
+                            tool_args,
+                            customer_id,
+                            request_id=request_id,
+                        )
+                        if execution.get('success'):
+                            tool_result = execution['result']
+                        elif execution.get('rate_limited'):
+                            tool_result = json.dumps({
+                                'error': execution['error'],
+                                'rate_limited': True,
+                                'retry_after_seconds': execution.get(
+                                    'retry_after_seconds', 60
+                                ),
+                            })
+                        else:
+                            tool_result = json.dumps({'error': execution['error']})
                         tools_called.append(tool_name)
 
                         messages.append({
@@ -572,11 +634,11 @@ class GroqService:
                     }
 
             except requests.Timeout as exc:
-                return self._provider_failure(exc)
+                return self._provider_failure(exc, request_id=request_id)
             except requests.RequestException as e:
-                return self._provider_failure(e)
+                return self._provider_failure(e, request_id=request_id)
             except json.JSONDecodeError:
-                return self._provider_failure()
+                return self._provider_failure(request_id=request_id)
 
         elapsed_ms = int((time.time() - start_time) * 1000)
         return {
@@ -700,6 +762,7 @@ class GroqService:
         max_tokens=512,
         top_p=0.9,
         max_tool_rounds=3,
+        request_id=None,
     ):
         """
         Stream chat with function calling support.
@@ -714,7 +777,7 @@ class GroqService:
             {'type': 'done', ...} - Stream complete
             {'type': 'error', 'content': '...'} - Error
         """
-        from ai_assistant.services.tools import execute_tool
+        from ai_assistant.services.tools import execute_tool_result
 
         max_tokens, max_tool_rounds = self._bounded_limits(max_tokens, max_tool_rounds)
         if not self.api_key:
@@ -764,7 +827,11 @@ class GroqService:
                 )
 
                 if response.status_code != 200:
-                    logger.error("AI provider returned HTTP %s", response.status_code)
+                    logger.error(
+                        "AI provider returned HTTP %s",
+                        response.status_code,
+                        extra={'request_id': request_id},
+                    )
                     yield {'type': 'error', 'content': PUBLIC_PROVIDER_ERROR, 'code': 'AI_PROVIDER_ERROR'}
                     return
 
@@ -776,7 +843,10 @@ class GroqService:
 
                 if tool_calls and finish_reason == 'tool_calls':
                     if self._tool_budget_exceeded(len(tools_called) + len(tool_calls)):
-                        logger.warning('AI streaming tool-call budget exceeded')
+                        logger.warning(
+                            'AI streaming tool-call budget exceeded',
+                            extra={'request_id': request_id},
+                        )
                         yield {
                             'type': 'error',
                             'content': PUBLIC_PROVIDER_ERROR,
@@ -794,12 +864,20 @@ class GroqService:
                             yield {'type': 'tool_call', 'name': tool_name}
                         
                         # Execute all tools concurrently
-                        tool_results = self._execute_tools_parallel(tool_calls, customer_id)
+                        tool_results = self._execute_tools_parallel(
+                            tool_calls,
+                            customer_id,
+                            request_id=request_id,
+                        )
                         
                         # Yield results and add to messages
-                        for tool_call_id, tool_name, tool_result in tool_results:
+                        for tool_call_id, tool_name, tool_result, success in tool_results:
                             tools_called.append(tool_name)
-                            yield {'type': 'tool_result', 'name': tool_name, 'success': True}
+                            yield {
+                                'type': 'tool_result',
+                                'name': tool_name,
+                                'success': success,
+                            }
                             messages.append({
                                 "role": "tool",
                                 "tool_call_id": tool_call_id,
@@ -817,10 +895,31 @@ class GroqService:
 
                         yield {'type': 'tool_call', 'name': tool_name}
                         
-                        tool_result = execute_tool(tool_name, tool_args, customer_id)
+                        execution = execute_tool_result(
+                            tool_name,
+                            tool_args,
+                            customer_id,
+                            request_id=request_id,
+                        )
+                        if execution.get('success'):
+                            tool_result = execution['result']
+                        elif execution.get('rate_limited'):
+                            tool_result = json.dumps({
+                                'error': execution['error'],
+                                'rate_limited': True,
+                                'retry_after_seconds': execution.get(
+                                    'retry_after_seconds', 60
+                                ),
+                            })
+                        else:
+                            tool_result = json.dumps({'error': execution['error']})
                         tools_called.append(tool_name)
 
-                        yield {'type': 'tool_result', 'name': tool_name, 'success': True}
+                        yield {
+                            'type': 'tool_result',
+                            'name': tool_name,
+                            'success': bool(execution.get('success')),
+                        }
 
                         messages.append({
                             "role": "tool",
@@ -836,7 +935,7 @@ class GroqService:
                 yield {'type': 'error', 'content': PUBLIC_PROVIDER_ERROR, 'code': 'AI_PROVIDER_TIMEOUT'}
                 return
             except requests.RequestException as exc:
-                failure = self._provider_failure(exc)
+                failure = self._provider_failure(exc, request_id=request_id)
                 yield {'type': 'error', 'content': failure['error'], 'code': failure['code']}
                 return
 
@@ -898,7 +997,7 @@ class GroqService:
         except requests.Timeout:
             yield {'type': 'error', 'content': PUBLIC_PROVIDER_ERROR, 'code': 'AI_PROVIDER_TIMEOUT'}
         except requests.RequestException as exc:
-            failure = self._provider_failure(exc)
+            failure = self._provider_failure(exc, request_id=request_id)
             yield {'type': 'error', 'content': failure['error'], 'code': failure['code']}
 
 

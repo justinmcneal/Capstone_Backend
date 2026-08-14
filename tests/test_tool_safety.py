@@ -39,6 +39,21 @@ class MockCache:
     
     def set(self, key, value, timeout=None):
         self._store[key] = value
+
+    def add(self, key, value, timeout=None):
+        if key in self._store:
+            return False
+        self._store[key] = value
+        return True
+
+    def incr(self, key, delta=1):
+        if key not in self._store:
+            raise ValueError("Key is not present")
+        self._store[key] += delta
+        return self._store[key]
+
+    def decr(self, key, delta=1):
+        return self.incr(key, -delta)
     
     def delete(self, key):
         self._store.pop(key, None)

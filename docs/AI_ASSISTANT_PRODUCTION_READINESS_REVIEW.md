@@ -30,10 +30,10 @@ quality.
 
 ## Executive Summary
 
-The AI Assistant is **complete through Stage 3 at the application-code and local
+The AI Assistant is **complete through Stage 4 at the application-code and local
 automated-test level**. It is not yet ready for production approval because
-tool/audit observability, streaming correctness, bilingual quality evaluation,
-and deployment validation remain.
+streaming correctness, bilingual quality evaluation, and deployment validation
+remain.
 
 Nine customer endpoints provide English/Tagalog chat, streaming chat, history,
 provider status, suggestions, education, and FAQs. Chat can use ten fixed,
@@ -41,17 +41,18 @@ read-only, customer-scoped tools. Current AI/data consent is required whenever
 personal data or conversation history is processed. No administrator or loan-
 officer AI endpoint is registered.
 
-Stages 1 through 3 added encrypted interaction content, keyed search, retention,
+Stages 1 through 4 added encrypted interaction content, keyed search, retention,
 legal holds, export/deletion integration, validated request/provider limits,
 stable provider failures, bounded provider concurrency, idempotency leases,
 transaction-backed exchange persistence, signed cursor history, bounded domain
-queries, MongoDB validators, and production indexes. Stages 4 through 6 remain
-open and are described below.
+queries, MongoDB validators, production indexes, atomic tool budgets, durable
+metadata-only tool audit, end-to-end correlation, metrics, dashboards, and
+alerts. Stages 5 and 6 remain open and are described below.
 
 Current local baseline:
 
-- Focused Stage 1–3 AI suite: **200 passed** on 2026-08-14.
-- Full repository suite: **1,157 passed and 30 opt-in integration tests skipped**
+- Focused Stage 1–4 AI suite: **207 passed** on 2026-08-14.
+- Full repository suite: **1,184 passed and 30 opt-in integration tests skipped**
   on 2026-08-14.
 - The skipped cases require explicitly approved real MongoDB, Redis, provider,
   proxy, load, privacy, or monitoring environments.
@@ -66,7 +67,7 @@ customer:
 
 | Route | Consent boundary | Implementation status |
 | --- | --- | --- |
-| `POST chat/` | Current data and AI consent | Stage 3 complete; Stage 4 correlation/audit remains |
+| `POST chat/` | Current data and AI consent | Stage 4 complete; deployment monitoring proof remains |
 | `POST chat/stream/` | Current data and AI consent | Stage 3 complete; Stage 5 stream hardening remains |
 | `GET history/` | Current data and AI consent | Implemented with cursor and bounded offset modes |
 | `DELETE history/` | Current data and AI consent | Implemented with legal-hold preservation |
@@ -206,22 +207,26 @@ index, and `explain()` tests against an isolated replica-set database.
 
 ### 4. Tool safety, durable audit, and observability
 
-**Status: Partial; Stage 4 application work remains**
+**Status: Complete at code and automated-test level; deployment proof remains**
 
-Tool names and arguments are allowlisted and owner-scoped, and request IDs exist
-for completed or filtered exchanges. However, tool budget accounting currently
-uses a non-atomic cache read/write sequence, failed calls are not uniformly
-budgeted, and the dashboard tool is absent from the explicit cost table. The
-existing tool auditor writes ordinary logs only and its recent-call query is a
-placeholder.
+Stage 4 reserves fixed-window minute/hour tool cost with atomic cache operations
+before validation/execution, so concurrent and failed attempts cannot bypass the
+budget. The aggregate dashboard has an explicit cost/schema and SSE success is
+derived from the actual safe-executor result. Redis keys use a keyed customer
+fingerprint rather than a raw ID.
 
-Stage 4 must make shared rate accounting atomic, correct tool costs and result
-semantics, propagate the request ID across provider/tool/persistence paths, and
-store durable metadata-only events. Audit data must exclude prompts, responses,
-tool payloads, and unnecessary customer PII. Low-cardinality Prometheus metrics,
-dashboards, alerts, log retention, and access rules must cover request outcomes,
-latency, timeouts, active streams, token/tool use, rate limiting, and persistence
-failures.
+Each attempt writes a 90-day-default metadata-only event with a blind customer
+subject, request ID, fixed tool name, outcome, duration, and cost. Prompts,
+responses, parameters, error text, raw customer IDs, and provider bodies are not
+stored. Correlation IDs reach chat, provider, tools, persistence, logs, and
+audit. Low-cardinality metrics cover HTTP/provider/tool outcomes and latency,
+budget rejections, tokens, active streams, and audit/persistence failures.
+Prometheus rules and an importable Grafana dashboard are included.
+
+Deployment must still prove shared Redis atomicity across processes, import the
+rules/dashboard, calibrate thresholds, and exercise the real alert route. The
+tool audit TTL must be approved against the deployment's security/compliance
+retention policy.
 
 ### 5. Streaming and response correctness
 
@@ -256,11 +261,12 @@ it adds ingestion, freshness, authorization, privacy, and citation obligations.
 
 ### 7. Automated evidence and release environment
 
-**Status: Local evidence complete through Stage 3; deployment evidence pending**
+**Status: Local evidence complete through Stage 4; deployment evidence pending**
 
 Local suites cover authentication, consent, owner isolation, lifecycle,
 encryption/search, idempotency, bounded queries, provider boundary behavior,
-context/tool validation, and SSE syntax. They do not prove real MongoDB
+context/tool validation, atomic in-process races, metadata audit, monitoring
+asset structure, and SSE syntax. They do not prove real MongoDB
 transactions/query plans, shared Redis atomicity, real Groq/Ollama behavior,
 concurrent load, proxy streaming, provider secret rotation, monitoring/alerts,
 backup/restore, incident response, or model quality thresholds.
@@ -303,13 +309,15 @@ count.
 
 ### Stage 4 — Tool safety, audit, and observability
 
-**Status: Next implementation stage**
+**Status: Complete at code and automated-test level**
 
-- [ ] Make shared tool budget accounting atomic and include failed attempts.
-- [ ] Correct the tool-cost registry and tool-result success contract.
-- [ ] Propagate one request ID across chat, provider, tools, persistence, logs,
+- [x] Make shared tool budget accounting atomic and include failed attempts.
+- [x] Correct the tool-cost registry and tool-result success contract.
+- [x] Propagate one request ID across chat, provider, tools, persistence, logs,
   and durable metadata-only audit events.
-- [ ] Add Prometheus metrics, dashboards, alerts, and operational guidance.
+- [x] Add Prometheus metrics, dashboards, alerts, and operational guidance.
+- [ ] Prove multi-process Redis accounting and monitoring/alert operation in the
+  selected deployment topology.
 
 ### Stage 5 — Streaming and response correctness
 
@@ -365,8 +373,8 @@ loan decisions or mutate their records.
 
 ## Release Gate
 
-The AI Assistant is application-complete through Stage 3 but is **not production
-ready yet**. Do not approve a production deployment until Stages 4–6 are
+The AI Assistant is application-complete through Stage 4 but is **not production
+ready yet**. Do not approve a production deployment until Stages 5–6 are
 complete, the target inventory/backfill and real-Mongo/Redis/provider/proxy/load
 gates pass, provider privacy terms are approved, bilingual safety/quality meets
 versioned thresholds, and the final deployment smoke test succeeds.

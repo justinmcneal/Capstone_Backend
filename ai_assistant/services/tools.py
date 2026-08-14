@@ -218,13 +218,24 @@ TOOL_SCHEMAS = [
 # TOOL EXECUTORS - Functions that query MongoDB and return results
 # =============================================================================
 
-def execute_tool(tool_name, tool_args, customer_id):
+def execute_tool_result(tool_name, tool_args, customer_id, request_id=None):
+    """Execute a tool and retain its structured safety outcome."""
+    return safe_execute_tool(
+        tool_name,
+        tool_args or {},
+        customer_id,
+        skip_rate_limit=False,
+        request_id=request_id,
+    )
+
+
+def execute_tool(tool_name, tool_args, customer_id, request_id=None):
     """
     Execute a tool by name with safety checks (rate limiting, validation, auditing).
     Returns the result as a JSON string.
     All tools are read-only and scoped to the authenticated customer.
     """
-    result = safe_execute_tool(tool_name, tool_args or {}, customer_id, skip_rate_limit=False)
+    result = execute_tool_result(tool_name, tool_args, customer_id, request_id=request_id)
 
     if result.get('success'):
         return result['result']

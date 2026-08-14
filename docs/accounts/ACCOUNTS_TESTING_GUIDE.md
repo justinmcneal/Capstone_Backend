@@ -60,7 +60,8 @@ dependency is unavailable.
 - Body token transport is the default. A client may request `token_transport:
   "cookie"` in a login/verification request or send `X-Token-Transport: cookie`.
 - Cookie mode sets HttpOnly access and refresh cookies and removes token fields
-  from JSON. The default access-cookie path is `/api/`; the refresh-cookie path is
+  from JSON. The default access-cookie path is `/` so authenticated WebSocket
+  handshakes can receive it; the refresh-cookie path is
   `/api/auth/`.
 - Cookie clients must first call `GET /csrf-token/`, keep the `csrftoken` cookie,
   and send `X-CSRFToken` with the returned `data.csrf_token` on every unsafe API

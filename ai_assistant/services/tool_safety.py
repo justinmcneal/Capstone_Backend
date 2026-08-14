@@ -4,19 +4,32 @@ TOOL SAFETY - Rate limiting and validation for AI tool calls
 =============================================================================
 
 Implements safety policies to prevent abuse of tool calls:
-- Per-user rate limiting with sliding window
+- Per-user atomic fixed-window rate limiting
 - Tool parameter validation with Pydantic
 - Tool call auditing and logging
 - Graceful degradation when limits reached
 =============================================================================
 """
+import hashlib
+import hmac
 import logging
 import time
 from dataclasses import dataclass, field
 from typing import Any, ClassVar
 
+from django.conf import settings
 from django.core.cache import cache
+from pymongo.errors import PyMongoError
 
+from ai_assistant.metrics import (
+    AI_AUDIT_WRITE_FAILURES,
+    AI_TOOL_BUDGET_REJECTIONS,
+    AI_TOOL_CALLS,
+    AI_TOOL_LATENCY,
+    increment,
+    observe,
+)
+from ai_assistant.models import AIActivityEvent
 from ai_assistant.services.exception_types import NON_FATAL_EXCEPTIONS
 
 logger = logging.getLogger('ai_assistant')
@@ -30,10 +43,16 @@ logger = logging.getLogger('ai_assistant')
 class RateLimitConfig:
     """Rate limiting configuration for tool calls."""
     # Calls per window
-    max_calls_per_minute: int = 30
-    max_calls_per_hour: int = 200
-    max_calls_per_session: int = 50  # Per conversation session
-    
+    max_calls_per_minute: int = getattr(
+        settings,
+        'AI_ASSISTANT_TOOL_COST_PER_MINUTE',
+        30,
+    )
+    max_calls_per_hour: int = getattr(
+        settings,
+        'AI_ASSISTANT_TOOL_COST_PER_HOUR',
+        200,
+    )
     # Per-tool limits (some tools more expensive than others)
     tool_costs: dict[str, int] = field(default_factory=lambda: {
         # Cost multiplier (1 = normal, 2 = counts as 2 calls, etc.)
@@ -45,13 +64,10 @@ class RateLimitConfig:
         'get_payment_history': 2,  # Can be large
         'get_loan_products': 1,  # Cached
         'get_application_readiness': 3,  # Multiple DB queries
+        'get_customer_dashboard': 3,  # Multiple aggregate/count queries
         'get_notification_status': 1,  # Single DB query
     })
     
-    # Cooldown after hitting limit (seconds)
-    cooldown_seconds: int = 60
-
-
 # Global config - can be overridden in settings
 RATE_LIMIT_CONFIG = RateLimitConfig()
 
@@ -69,21 +85,49 @@ class ToolRateLimiter:
     def __init__(self, config: RateLimitConfig | None = None):
         self.config = config or RATE_LIMIT_CONFIG
     
-    def _get_cache_key(self, customer_id: str, window: str) -> str:
-        """Generate cache key for rate limit tracking."""
-        return f"tool_ratelimit:{customer_id}:{window}"
+    def _get_cache_key(
+        self,
+        customer_id: str,
+        window: str,
+        window_seconds: int,
+    ) -> str:
+        """Generate a fixed-window cache key without storing raw tool data."""
+        bucket = int(time.time()) // window_seconds
+        subject = hmac.new(
+            str(settings.SECRET_KEY).encode('utf-8'),
+            str(customer_id).encode('utf-8'),
+            hashlib.sha256,
+        ).hexdigest()[:32]
+        return f"tool_ratelimit:{subject}:{window}:{bucket}"
     
     def _get_current_count(self, customer_id: str, window: str, window_seconds: int) -> int:
         """Get current call count for a window."""
-        key = self._get_cache_key(customer_id, window)
-        count = cache.get(key, 0)
-        return count
+        key = self._get_cache_key(customer_id, window, window_seconds)
+        return int(cache.get(key, 0) or 0)
     
-    def _increment_count(self, customer_id: str, window: str, window_seconds: int, cost: int = 1):
-        """Increment call count for a window."""
-        key = self._get_cache_key(customer_id, window)
-        current = cache.get(key, 0)
-        cache.set(key, current + cost, window_seconds)
+    def _reserve_window(
+        self,
+        customer_id: str,
+        window: str,
+        window_seconds: int,
+        limit: int,
+        cost: int,
+    ) -> bool:
+        """Atomically reserve cost in one cache-backed fixed window."""
+        key = self._get_cache_key(customer_id, window, window_seconds)
+        cache.add(key, 0, timeout=window_seconds + 1)
+        updated = int(cache.incr(key, cost))
+        if updated <= limit:
+            return True
+        cache.decr(key, cost)
+        return False
+
+    def _release_window(self, customer_id, window, window_seconds, cost):
+        key = self._get_cache_key(customer_id, window, window_seconds)
+        try:
+            cache.decr(key, cost)
+        except ValueError:
+            logger.warning("AI tool budget rollback missed an expired cache key")
     
     def check_rate_limit(self, customer_id: str, tool_name: str) -> dict[str, Any]:
         """
@@ -115,13 +159,44 @@ class ToolRateLimiter:
             }
         
         return {'allowed': True}
+
+    def reserve_call(self, customer_id: str, tool_name: str) -> dict[str, Any]:
+        """Atomically charge an attempted tool call before validation/execution."""
+        tool_cost = self.config.tool_costs.get(tool_name, 1)
+        if not self._reserve_window(
+            customer_id,
+            'minute',
+            60,
+            self.config.max_calls_per_minute,
+            tool_cost,
+        ):
+            increment(AI_TOOL_BUDGET_REJECTIONS, window='minute')
+            return {
+                'allowed': False,
+                'reason': 'rate_limit_minute',
+                'retry_after_seconds': 60 - (int(time.time()) % 60),
+                'message': "You're asking too many questions too quickly. Please wait a moment.",
+            }
+        if not self._reserve_window(
+            customer_id,
+            'hour',
+            3600,
+            self.config.max_calls_per_hour,
+            tool_cost,
+        ):
+            self._release_window(customer_id, 'minute', 60, tool_cost)
+            increment(AI_TOOL_BUDGET_REJECTIONS, window='hour')
+            return {
+                'allowed': False,
+                'reason': 'rate_limit_hour',
+                'retry_after_seconds': 3600 - (int(time.time()) % 3600),
+                'message': "You've reached the hourly limit for data queries. Please try again later.",
+            }
+        return {'allowed': True, 'cost': tool_cost}
     
     def record_call(self, customer_id: str, tool_name: str):
-        """Record a successful tool call for rate limiting."""
-        tool_cost = self.config.tool_costs.get(tool_name, 1)
-        
-        self._increment_count(customer_id, 'minute', 60, tool_cost)
-        self._increment_count(customer_id, 'hour', 3600, tool_cost)
+        """Backward-compatible reservation helper used by diagnostics/tests."""
+        return self.reserve_call(customer_id, tool_name)
     
     def get_usage_stats(self, customer_id: str) -> dict[str, Any]:
         """Get current usage stats for a customer."""
@@ -163,6 +238,7 @@ class ToolParameterValidator:
         },
         'get_loan_products': {},
         'get_application_readiness': {},
+        'get_customer_dashboard': {},
         'get_notification_status': {},
     }
     
@@ -227,31 +303,52 @@ class ToolCallAuditor:
         params: dict[str, Any],
         success: bool,
         duration_ms: int,
-        error: str | None = None
+        error: str | None = None,
+        request_id: str | None = None,
+        outcome: str | None = None,
+        cost: int = 1,
     ):
-        """Log a tool call for auditing."""
-        log_data = {
-            'customer_id': customer_id,
-            'tool': tool_name,
-            'params': params,
-            'success': success,
-            'duration_ms': duration_ms,
-        }
-        
-        if error:
-            log_data['error'] = error
-            logger.warning(f"Tool call failed: {log_data}")
-        else:
-            logger.info(f"Tool call: {tool_name} for customer {customer_id} ({duration_ms}ms)")
+        """Persist and log metadata only; params/error content are never stored."""
+        outcome = outcome or ('success' if success else 'execution_error')
+        safe_tool_name = (
+            tool_name if tool_name in RATE_LIMIT_CONFIG.tool_costs else 'unknown'
+        )
+        try:
+            AIActivityEvent.record_tool_call(
+                customer_id=customer_id,
+                tool_name=safe_tool_name,
+                success=success,
+                outcome=outcome,
+                duration_ms=duration_ms,
+                cost=cost,
+                request_id=request_id,
+            )
+        except (PyMongoError, AttributeError, RuntimeError, TypeError, ValueError):
+            increment(AI_AUDIT_WRITE_FAILURES)
+            logger.error(
+                "AI tool audit persistence failed",
+                extra={
+                    'request_id': request_id,
+                    'tool': safe_tool_name,
+                    'outcome': outcome,
+                },
+            )
+        log_method = logger.info if success else logger.warning
+        log_method(
+            "AI tool call completed",
+            extra={
+                'request_id': request_id,
+                'tool': safe_tool_name,
+                'outcome': outcome,
+                'duration_ms': duration_ms,
+                'cost': cost,
+            },
+        )
     
     @staticmethod
     def get_recent_calls(customer_id: str, limit: int = 10) -> list[dict]:
-        """
-        Get recent tool calls for a customer.
-        (In production, this would query a proper audit log store)
-        """
-        # For now, just return empty - full audit logging would use a database
-        return []
+        """Return bounded metadata-only audit entries for internal diagnostics."""
+        return AIActivityEvent.recent_for_customer(customer_id, limit=limit)
 
 
 auditor = ToolCallAuditor()
@@ -265,7 +362,8 @@ def safe_execute_tool(
     tool_name: str,
     tool_args: dict[str, Any],
     customer_id: str,
-    skip_rate_limit: bool = False
+    skip_rate_limit: bool = False,
+    request_id: str | None = None,
 ) -> dict[str, Any]:
     """
     Safely execute a tool with rate limiting, validation, and auditing.
@@ -287,14 +385,21 @@ def safe_execute_tool(
     start_time = time.time()
     
     # 1. Check rate limit
+    tool_cost = get_tool_cost(tool_name)
+    metric_tool = tool_name if tool_name in RATE_LIMIT_CONFIG.tool_costs else 'unknown'
     if not skip_rate_limit:
-        limit_check = rate_limiter.check_rate_limit(customer_id, tool_name)
+        limit_check = rate_limiter.reserve_call(customer_id, tool_name)
         if not limit_check['allowed']:
+            outcome = f"rate_limited_{limit_check['reason'].removeprefix('rate_limit_')}"
             auditor.log_call(
                 customer_id, tool_name, tool_args,
                 success=False, duration_ms=0,
-                error=f"Rate limited: {limit_check['reason']}"
+                error=f"Rate limited: {limit_check['reason']}",
+                request_id=request_id,
+                outcome=outcome,
+                cost=tool_cost,
             )
+            increment(AI_TOOL_CALLS, tool=metric_tool, outcome=outcome)
             return {
                 'success': False,
                 'error': limit_check['message'],
@@ -310,8 +415,13 @@ def safe_execute_tool(
         auditor.log_call(
             customer_id, tool_name, tool_args,
             success=False, duration_ms=duration_ms,
-            error=f"Validation error: {e!s}"
+            error=f"Validation error: {e!s}",
+            request_id=request_id,
+            outcome='validation_error',
+            cost=tool_cost,
         )
+        increment(AI_TOOL_CALLS, tool=metric_tool, outcome='validation_error')
+        observe(AI_TOOL_LATENCY, duration_ms / 1000, tool=metric_tool)
         return {
             'success': False,
             'error': f"Invalid parameters: {e!s}",
@@ -324,15 +434,16 @@ def safe_execute_tool(
         result = json.dumps(result_data, default=str)
         duration_ms = int((time.time() - start_time) * 1000)
         
-        # 4. Record successful call for rate limiting
-        if not skip_rate_limit:
-            rate_limiter.record_call(customer_id, tool_name)
-        
-        # 5. Audit log
+        # 4. Audit metadata. Budget was reserved before validation/execution.
         auditor.log_call(
             customer_id, tool_name, validated_args,
-            success=True, duration_ms=duration_ms
+            success=True, duration_ms=duration_ms,
+            request_id=request_id,
+            outcome='success',
+            cost=tool_cost,
         )
+        increment(AI_TOOL_CALLS, tool=metric_tool, outcome='success')
+        observe(AI_TOOL_LATENCY, duration_ms / 1000, tool=metric_tool)
         
         return {
             'success': True,
@@ -346,9 +457,17 @@ def safe_execute_tool(
         auditor.log_call(
             customer_id, tool_name, tool_args,
             success=False, duration_ms=duration_ms,
-            error=str(e)
+            error=str(e),
+            request_id=request_id,
+            outcome='execution_error',
+            cost=tool_cost,
         )
-        logger.error(f"Tool execution error ({tool_name}): {e}")
+        increment(AI_TOOL_CALLS, tool=metric_tool, outcome='execution_error')
+        observe(AI_TOOL_LATENCY, duration_ms / 1000, tool=metric_tool)
+        logger.error(
+            "AI tool execution failed",
+            extra={'request_id': request_id, 'tool': tool_name},
+        )
         return {
             'success': False,
             'error': "Failed to retrieve data. Please try again.",
