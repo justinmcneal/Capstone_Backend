@@ -1,6 +1,7 @@
 # Notifications Production Readiness Review
 
 Date: 2026-07-29  
+Security update: 2026-08-13
 Scope: Static code review of `notifications/` and related inbox, email, WebSocket, push-notification, and assignment-event behavior.
 
 ## Executive Summary
@@ -59,8 +60,17 @@ No remaining low-priority findings.
 5. Assignment events are isolated into a dedicated service.  
    - `notifications/services/assignment_events.py` handles assign/reassign/unassign messaging with deduplicated recipients and structured metadata.
 
-6. WebSocket auth middleware decodes JWT from query string or `sec-websocket-protocol` header.  
-   - Supports both connection methods without requiring clients to share cookies.
+6. WebSocket authentication shares the protected HTTP access-token boundary.
+   - Staff browsers authenticate with the configured HttpOnly access cookie; no JWT is exposed to JavaScript.
+   - Customer mobile query/subprotocol access tokens remain temporarily compatible. Staff query/subprotocol tokens are rejected.
+   - Signature/purpose, blacklist, live account state, active session, role, security version, and forced-password state are checked before group membership.
+   - Missing, refresh, revoked, stale, or otherwise rejected credentials close with `4001`.
+   - The access cookie defaults to path `/` so it reaches `/ws/notifications/`; the refresh cookie remains scoped to `/api/auth/`.
+
+7. WebSocket frames use one canonical envelope.
+   - `connection_established`, `notification`, `mark_read_response`, `pong`, and `error` place their payload under `data`.
+   - Error payloads expose a stable code and sanitized message rather than credentials or raw internal exceptions.
+   - Owner groups and mark-read mutations remain qualified by both account ID and normalized role.
 
 ## Implementation Gaps Since Last Review
 
@@ -71,6 +81,7 @@ No remaining low-priority findings.
 - Celery task fixed to call existing `EmailSender.send()`.
 - Celery tests rewritten to match actual `EmailSender` API.
 - `Notification` and `DeviceToken` indexes bootstrapped in `init_db.py`.
+- Staff WebSocket cookie authentication, live-session validation, retained customer-mobile token compatibility, and canonical frames were added in the 2026-08-13 security update.
 
 ## Production Readiness Checklist
 
@@ -79,7 +90,7 @@ No remaining low-priority findings.
  - [x] Template-based email sender with 10+ notification helpers.
  - [x] Celery async email task with autoretry and backoff.
  - [x] Prometheus metrics for sync/async email sends.
- - [x] WebSocket real-time consumer with JWT auth and ping/pong.
+ - [x] WebSocket real-time consumer with live cookie/session auth, retained customer-mobile JWT compatibility, and canonical frames.
  - [x] Assignment event notifications with deduplication.
  - [x] FCM push notification support with stale-token cleanup.
  - [x] Fix `email_tasks.py` to call existing `EmailSender.send()`.
@@ -93,3 +104,5 @@ No remaining low-priority findings.
 
 - This review is code-level only (no live environment penetration testing).
 - Notification endpoints mutate state and trigger side effects (email sends, WebSocket broadcasts, MongoDB writes, FCM pushes); tests should mock external I/O and assert on created records and broadcast calls.
+- A production release must use `wss://`, exact allowed-host/origin values, and a trusted reverse proxy that preserves `Origin` and `Cookie`. Wildcard origins are not an acceptable cookie-authentication workaround.
+- REST inbox/unread APIs remain the authoritative fallback if the WebSocket or Redis channel layer is unavailable.

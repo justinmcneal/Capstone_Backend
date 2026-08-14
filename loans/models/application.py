@@ -584,12 +584,17 @@ class LoanApplication:
         return self.save()
 
     def mark_paid_off(
-        self, paid_off_at=None, actor_id=None, actor_type="system", source="settlement"
+        self,
+        paid_off_at=None,
+        actor_id=None,
+        actor_type="system",
+        source="settlement",
+        allow_legacy_schedule=False,
     ):
         """Idempotently close a disbursed loan after exact schedule settlement."""
         if self.status == "completed" and self.repayment_status == "paid_off":
             return self
-        if self.status != "disbursed":
+        if self.status != "disbursed" and not allow_legacy_schedule:
             raise ValueError("Only disbursed loans can be marked paid off")
         self._prev_status = self.status
         self.status = "completed"

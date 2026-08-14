@@ -123,13 +123,7 @@ class CustomJWTAuthentication(JWTAuthentication):
         if raw_token is None:
             return None
 
-        # Check if access token is blacklisted
-        if TokenUtils.is_token_blacklisted(raw_token, token_type="access"):
-            logger.warning("Attempt to use blacklisted access token")
-            raise AuthenticationFailed("Token has been revoked")
-
-        validated_token = self.get_validated_token(raw_token)
-        user = self.get_user(validated_token)
+        user, validated_token = self.authenticate_raw_token(raw_token)
         SessionActivityService.touch_active_session(
             user_id=user.customer_id,
             role=user.role,
@@ -140,15 +134,33 @@ class CustomJWTAuthentication(JWTAuthentication):
             url_name = getattr(
                 getattr(request, "resolver_match", None), "url_name", None
             )
-            if url_name not in self.TEMPORARY_PASSWORD_ALLOWED_URLS:
-                exc = PermissionDenied(
-                    "You must change your password before accessing this resource. "
-                    "Please use POST /change-password/.",
-                    code="password_change_required",
-                )
-                exc.status_code = 423
-                raise exc
+            self.enforce_password_change(user, url_name=url_name)
         return user, validated_token
+
+    def authenticate_raw_token(self, raw_token):
+        """Validate one access token against the live account/session boundary."""
+        if TokenUtils.is_token_blacklisted(raw_token, token_type="access"):
+            logger.warning("Attempt to use blacklisted access token")
+            raise AuthenticationFailed("Token has been revoked")
+
+        validated_token = self.get_validated_token(raw_token)
+        user = self.get_user(validated_token)
+        return user, validated_token
+
+    def enforce_password_change(self, user, *, url_name=None):
+        """Apply the protected-route forced-password gate to an auth user."""
+        if not user.must_change_password:
+            return
+        if url_name in self.TEMPORARY_PASSWORD_ALLOWED_URLS:
+            return
+
+        exc = PermissionDenied(
+            "You must change your password before accessing this resource. "
+            "Please use POST /change-password/.",
+            code="password_change_required",
+        )
+        exc.status_code = 423
+        raise exc
 
     @staticmethod
     def _get_live_user(customer_id, role):

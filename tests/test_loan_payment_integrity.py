@@ -145,6 +145,36 @@ def test_verified_payment_posts_once_when_replayed(schedule):
     assert LoanPayment.count({}) == 1
 
 
+def test_verified_payment_initializes_missing_legacy_accounting_version(
+    schedule, payment_db
+):
+    payment_db[RepaymentSchedule.collection_name].update_one(
+        {"_id": schedule._id},
+        {"$unset": {"accounting_version": ""}},
+    )
+    legacy_schedule = RepaymentSchedule.find_by_loan(schedule.loan_id)
+
+    payment, installment, replayed = post_verified_payment(
+        schedule=legacy_schedule,
+        installment_number=1,
+        amount=100,
+        payment_method="cash",
+        reference="CASH-LEGACY-VERSION",
+        notes="",
+        recorded_by="officer-1",
+        idempotency_key="officer:officer-1:legacy-version-1",
+        verification_source="officer_manual",
+    )
+
+    stored = payment_db[RepaymentSchedule.collection_name].find_one(
+        {"_id": schedule._id}
+    )
+    assert replayed is False
+    assert payment.payment_status == "posted"
+    assert installment["paid_amount"] == 100
+    assert stored["accounting_version"] == 1
+
+
 def test_second_payment_cannot_overpay_after_first_post(schedule):
     common = {
         "schedule": schedule,

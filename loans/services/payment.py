@@ -232,6 +232,7 @@ def _sync_paid_off_application(schedule, actor_id=None, actor_type="system"):
             actor_id=actor_id,
             actor_type=actor_type,
             source="verified_payment",
+            allow_legacy_schedule=True,
         )
 
 
