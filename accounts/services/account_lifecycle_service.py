@@ -329,6 +329,7 @@ class AccountLifecycleService:
             getattr(customer, "profile_cleanup_status", None) == "pending"
             or getattr(customer, "document_cleanup_status", None) in (None, "pending")
             or getattr(customer, "analytics_cleanup_status", None) in (None, "pending")
+            or getattr(customer, "ai_cleanup_status", None) in (None, "pending")
         ):
             return True
         scheduled_for = EmailUtils.to_aware_utc(
@@ -427,6 +428,12 @@ class AccountLifecycleService:
                     "analytics_cleanup_last_error": "",
                     "analytics_cleanup_last_attempt_at": None,
                     "analytics_cleanup_completed_at": None,
+                    "ai_cleanup_status": "pending",
+                    "ai_cleanup_counts": {},
+                    "ai_cleanup_attempts": 0,
+                    "ai_cleanup_last_error": "",
+                    "ai_cleanup_last_attempt_at": None,
+                    "ai_cleanup_completed_at": None,
                     "active": False,
                     "updated_at": now,
                 },
@@ -445,6 +452,8 @@ class AccountLifecycleService:
                         {"document_cleanup_status": {"$exists": False}},
                         {"analytics_cleanup_status": "pending"},
                         {"analytics_cleanup_status": {"$exists": False}},
+                        {"ai_cleanup_status": "pending"},
+                        {"ai_cleanup_status": {"$exists": False}},
                     ],
                 }
             )
@@ -501,6 +510,52 @@ class AccountLifecycleService:
                     }
                 },
             )
+
+        updated = Customer.from_dict(collection.find_one({"_id": updated._id}))
+        if updated.ai_cleanup_status in (None, "pending"):
+            from ai_assistant.services.lifecycle import delete_customer_ai_data
+
+            attempted_at = AccountLifecycleService._now()
+            collection.update_one(
+                {
+                    "_id": updated._id,
+                    "$or": [
+                        {"ai_cleanup_status": "pending"},
+                        {"ai_cleanup_status": {"$exists": False}},
+                    ],
+                },
+                {
+                    "$set": {
+                        "ai_cleanup_last_attempt_at": attempted_at,
+                        "updated_at": attempted_at,
+                    },
+                    "$inc": {"ai_cleanup_attempts": 1},
+                },
+            )
+            try:
+                counts = delete_customer_ai_data(settings.MONGODB, updated.id)
+            except Exception as exc:
+                collection.update_one(
+                    {"_id": updated._id},
+                    {
+                        "$set": {
+                            "ai_cleanup_status": "pending",
+                            "ai_cleanup_last_error": type(exc).__name__,
+                            "updated_at": AccountLifecycleService._now(),
+                        }
+                    },
+                )
+                raise
+            cleanup_complete = counts["remaining"] == 0
+            ai_update = {
+                "ai_cleanup_status": "complete" if cleanup_complete else "pending",
+                "ai_cleanup_counts": counts,
+                "ai_cleanup_last_error": "",
+                "updated_at": AccountLifecycleService._now(),
+            }
+            if cleanup_complete:
+                ai_update["ai_cleanup_completed_at"] = ai_update["updated_at"]
+            collection.update_one({"_id": updated._id}, {"$set": ai_update})
 
         updated = Customer.from_dict(collection.find_one({"_id": updated._id}))
         if updated.document_cleanup_status in (None, "pending"):
@@ -896,6 +951,7 @@ class AccountLifecycleService:
 
     @staticmethod
     def export_customer_data(customer):
+        from ai_assistant.services.lifecycle import export_customer_ai_history
         from analytics.services.lifecycle import export_customer_audit_data
         from documents.services.lifecycle import export_customer_documents
 
@@ -931,6 +987,9 @@ class AccountLifecycleService:
             "active_sessions": [session.to_dict() for session in sessions],
             "login_activity": [entry.to_dict() for entry in login_activity],
             "audit_logs": export_customer_audit_data(
+                settings.MONGODB, customer.id
+            ),
+            "ai_history": export_customer_ai_history(
                 settings.MONGODB, customer.id
             ),
             "notifications": [item.to_dict() for item in notifications],

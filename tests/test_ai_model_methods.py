@@ -54,8 +54,12 @@ class TestAIModelMethods:
         class FakeResult:
             deleted_count = 3
 
+        class FakeUpdateResult:
+            modified_count = 0
+
         fake_collection = type("FakeColl", (), {
             "delete_many": lambda *args, **kwargs: FakeResult(),
+            "update_many": lambda *args, **kwargs: FakeUpdateResult(),
         })()
 
         fake_db = {"ai_interactions": fake_collection}

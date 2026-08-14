@@ -18,6 +18,8 @@ class TogglePrometheusCommandTests(SimpleTestCase):
 
             with override_settings(
                 PROMETHEUS_METRICS_RUNTIME_FLAG_FILE=str(flag_file),
+                PROMETHEUS_METRICS_URL=None,
+                PROMETHEUS_METRICS_BASE_URL=None,
             ):
                 with patch.dict(os.environ, {"PROMETHEUS_METRICS_URL": metrics_url}, clear=False):
                     stdout = io.StringIO()

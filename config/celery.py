@@ -79,6 +79,10 @@ app.conf.beat_schedule = {
         "task": "analytics.audit_integrity_inventory",
         "schedule": crontab(hour=2, minute=30),
     },
+    "enforce-ai-assistant-retention-daily": {
+        "task": "ai_assistant.enforce_retention",
+        "schedule": crontab(hour=3, minute=0),
+    },
     "collect-analytics-operational-metrics-every-5-minutes": {
         "task": "analytics.collect_operational_metrics",
         "schedule": crontab(minute="*/5"),

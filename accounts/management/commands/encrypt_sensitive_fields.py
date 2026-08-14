@@ -2,6 +2,7 @@ from django.conf import settings
 from django.core.management.base import BaseCommand, CommandError
 
 from accounts.models import Admin, Customer, LoanOfficer
+from ai_assistant.models import AIInteraction
 from config.field_encryption import (
     FieldDecryptionError,
     decrypt_value,
@@ -32,6 +33,7 @@ ENCRYPTED_MODELS = (
     LoanPayment,
     LoanProduct,
     RepaymentSchedule,
+    AIInteraction,
 )
 
 # Retained as a public constant for operational tooling and tests. Deriving this
