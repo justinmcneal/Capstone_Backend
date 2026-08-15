@@ -21,6 +21,7 @@ from loans.services.disbursement import (
     execute_manual_disbursement,
 )
 from loans.services.payment import PaymentServiceError
+from loans.utils.serialization import disbursement_failure_code
 from loans.views.officer.base import LoanOfficerRequiredMixin
 
 logger = logging.getLogger("loans")
@@ -51,7 +52,7 @@ class DisburseView(LoanOfficerRequiredMixin, APIView):
                 if application.disbursed_at
                 else None
             ),
-            "disbursement_error": application.disbursement_error,
+            "disbursement_failure_code": disbursement_failure_code(application),
             "replayed": replayed,
             "eth_disbursement_tx_hash": application.eth_disbursement_tx_hash,
             "eth_disbursement_amount": application.eth_disbursement_amount,
@@ -115,7 +116,9 @@ class DisburseView(LoanOfficerRequiredMixin, APIView):
 
         reference = sanitize_text(request.data.get("reference", ""))
         external_reference = sanitize_text(request.data.get("external_reference", ""))
-        reference = reference or external_reference or f"DSB-{idempotency_key[-16:].upper()}"
+        reference = (
+            reference or external_reference or f"DSB-{idempotency_key[-16:].upper()}"
+        )
 
         if method in EXTERNAL_DISBURSEMENT_METHODS:
             try:
@@ -175,10 +178,11 @@ class DisburseView(LoanOfficerRequiredMixin, APIView):
             return error_response(
                 message=str(exc), status_code=status.HTTP_400_BAD_REQUEST
             )
-        except Exception as exc:
+        except Exception:
             logger.exception("Manual disbursement failed for loan %s", application.id)
             return error_response(
-                message=f"Disbursement failed safely: {exc}",
+                message="Loan disbursement could not be completed",
+                code="DISBURSEMENT_EXECUTION_FAILED",
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
@@ -208,9 +212,7 @@ class DisburseView(LoanOfficerRequiredMixin, APIView):
 
             customer = None
             if application.customer_id and ObjectId.is_valid(application.customer_id):
-                customer = Customer.find_one(
-                    {"_id": ObjectId(application.customer_id)}
-                )
+                customer = Customer.find_one({"_id": ObjectId(application.customer_id)})
             if customer and customer.email:
                 get_email_sender().send_loan_disbursed(
                     customer_email=customer.email,

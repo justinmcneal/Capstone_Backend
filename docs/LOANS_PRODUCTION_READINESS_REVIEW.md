@@ -37,37 +37,34 @@ durable wallet-disbursement design are implemented. Thirty-nine registered paths
 expose 46 HTTP method/path operations across customer, officer, and
 administrator roles.
 
-The most important blockers are not cosmetic:
+Stage 1 has closed the authorization and public-response defects identified by
+this review. The remaining blockers are lifecycle, settlement, persistence,
+privacy, and operational concerns:
 
-1. The officer blockchain-status endpoint does not apply application assignment
-   scope, so an officer who knows another application ID can retrieve its
-   blockchain status.
-2. Customer and officer blockchain responses serialize internal transaction
-   fields, and customer application/error responses can expose stored provider
-   exception text.
-3. Approval, rejection, assignment, reassignment, submission, resubmission, and
+1. Approval, rejection, assignment, reassignment, submission, resubmission, and
    internal-note updates use read-modify-save behavior rather than guarded
    atomic transitions. Concurrent decisions or edits can overwrite each other.
-4. GCash and bank-transfer payment/disbursement records can enter pending state,
+2. GCash and bank-transfer payment/disbursement records can enter pending state,
    but no provider callback, verification, settlement, expiry, or operator
    resolution workflow completes them.
-5. Loan collections have indexes but no MongoDB JSON-schema validators,
+3. Loan collections have indexes but no MongoDB JSON-schema validators,
    inventory/backfill commands, or loan-specific real-Mongo integration suite.
-6. Scheduled repayment scans and several payment/application query paths are
+4. Scheduled repayment scans and several payment/application query paths are
    unbounded or materialize large ID sets. Encrypted payment references cannot
    be searched with the current MongoDB regex query.
-7. Loan data is not included in customer account export and has no documented
+5. Loan data is not included in customer account export and has no documented
    retention, legal-hold, anonymization, or deletion policy integration.
-8. Encryption covers selected free-text fields, but application purpose/AI
+6. Encryption covers selected free-text fields, but application purpose/AI
    recommendation and several provider/blockchain failure-detail fields remain
    plaintext in their domain collections.
-9. Loans has one audit-failure counter but no complete loan/payment/disbursement
+7. Loans has one audit-failure counter but no complete loan/payment/disbursement
    metrics, dashboards, alerts, or bounded backlog gauges.
 
 Current automated baseline:
 
-- Loan/blockchain-related selection: **460 passed, 9 skipped, 713 deselected**
+- Loan/blockchain-related selection: **477 passed, 9 skipped, 713 deselected**
   on 2026-08-15.
+- Full repository regression: **1,243 passed, 35 skipped** on 2026-08-15.
 - The nine skips are real-Ganache integration cases and are not production-chain
   evidence.
 - The selection includes model, API, permission, qualification, payment,
@@ -85,12 +82,12 @@ Current automated baseline:
 | Applications | Partial | Owner-scoped create/list/detail/update/resubmit flows exist; several state changes are not atomic. |
 | Assignment | Partial | Admin assign/reassign and workload views exist; auto-assignment is unused and concurrent assignment is not guarded. |
 | Officer review | Partial | Assigned-scope review, notes, and missing-document requests exist; concurrent decisions/notes can overwrite. |
-| Cash/check disbursement | Implemented with remaining hardening | Idempotency and atomic disbursement claims exist; public error minimization and deployment concurrency proof remain. |
+| Cash/check disbursement | Implemented with remaining hardening | Idempotency, atomic disbursement claims, and safe public failures exist; deployment concurrency proof remains. |
 | Wallet disbursement/payment | Partial; deployment-gated | Confirmation, durable retries, leases, exact rebroadcast, and recovery exist; real-chain and multi-worker evidence remain. |
 | GCash/bank rails | Not complete | Requests are recorded as pending but no settlement lifecycle completes them. |
 | Repayment accounting | Implemented with policy gaps | Centavo math, optimistic schedule updates, penalties, and payoff exist; waiver credit and reversal/write-off policies remain. |
 | Retrieval/search/export | Partial | Role-scoped pagination and streaming audited exports exist; export totals and some supporting queries are unbounded, and encrypted-reference search is ineffective. |
-| Security and privacy | Partial | JWT, role/permission checks, assignment scope, encryption, idempotency, and audit exist; one scope defect, response leakage, and lifecycle gaps remain. |
+| Security and privacy | Stage 1 complete; later gaps remain | JWT, role/permission/assignment scope, explicit blockchain response contracts, stable public errors, encryption, idempotency, and audit exist. Lifecycle and data-governance work remains in later stages. |
 | MongoDB schema/indexes | Partial | Index declarations exist; validators, safe backfill tooling, and real-Mongo proof do not. |
 | Background processing | Partial | Celery/Beat jobs and blockchain recovery exist; some scans are unbounded and lack leases/checkpoints. |
 | Monitoring | Partial | Audit write failures are counted; end-to-end operational metrics, dashboards, and alerts are missing. |
@@ -135,8 +132,8 @@ All routes are mounted under `/api/loans/` and require authenticated JWTs.
 | `POST applications/<application_id>/resubmit/` | Rejected application back to draft | Implemented; non-atomic |
 | `GET applications/<application_id>/feedback/` | Owner rejection feedback | Implemented |
 | `POST applications/<application_id>/set-disbursement-method/` | Borrower preference | Implemented; external rails remain incomplete |
-| `GET applications/<application_id>/blockchain/` | Owner chain status | Partial; response exposes internal transaction fields |
-| `POST applications/<application_id>/wallet-payment/` | Verify confirmed ETH transfer and post | Partial; real-chain proof and public-error hardening remain |
+| `GET applications/<application_id>/blockchain/` | Owner chain status | Implemented with a customer-safe field allowlist; deployment-gated |
+| `POST applications/<application_id>/wallet-payment/` | Verify confirmed ETH transfer and post | Implemented with stable public failures; real-chain proof remains |
 | `GET system-wallet/` | Public payment wallet metadata for customer | Implemented when blockchain is configured |
 
 ### Administrator operations
@@ -148,7 +145,7 @@ All routes are mounted under `/api/loans/` and require authenticated JWTs.
 | `POST admin/applications/<application_id>/assign/` | Admin + `manage_loan_officers` | Partial; not concurrency guarded |
 | `POST admin/applications/<application_id>/reassign/` | Admin + `manage_loan_officers` | Partial; not concurrency guarded |
 | `GET admin/officers/workload/` | Admin + `manage_loan_officers` | Implemented; active-officer source is materialized before paging |
-| `GET admin/blockchain/transactions/` | Admin + `view_logs` | Partial; invalid filters/dates are ignored or clamped and free-form internals are returned |
+| `GET admin/blockchain/transactions/` | Admin + `view_logs` | Implemented with strict bounded filters and an administrator field allowlist; deployment-gated |
 
 ### Officer and administrator operations
 
@@ -174,7 +171,7 @@ assignment-limited.
 | `POST .../penalties/apply/` | Apply late penalty | Implemented with policy assumptions |
 | `POST .../penalties/waive/` | Waive penalty | Partial; previously paid penalty becomes recorded credit with no disposition workflow |
 | `GET/POST .../payoff/` | Quote / settle early payoff | Implemented |
-| `GET .../blockchain/` | Chain transaction/audit status | **Security blocker: assignment scope is missing** |
+| `GET .../blockchain/` | Scoped chain transaction/audit status | Implemented with assignment concealment and an officer-safe field allowlist; deployment-gated |
 | `GET officer/exchange-rate/` | Current ETH/PHP rate | Deployment-gated |
 | `GET officer/schedules/export/` | Streaming audited CSV/JSON export | Partial; no total-row cap and results are scanned once to count and again to stream |
 
@@ -295,24 +292,24 @@ the default queue.
 
 ### 1. Authorization and response minimization
 
-**Status: Partial — production blocker**
+**Status: Complete in application code and automated tests**
 
-1. Apply `check_application_scope(..., allow_unassigned=False)` to officer
-   blockchain status before returning any data.
-2. Add customer/officer blockchain serializers that return only approved
-   status, transaction hash, block/confirmation state, action, and safe dates.
-   Do not expose idempotency keys, free-form details, contract internals, or raw
-   exception fields.
-3. Remove `disbursement_error` from customer application responses or map it to
-   a stable customer-safe reason.
-4. Replace wallet verification and disbursement responses containing
-   `str(exc)` with stable public codes; retain correlated detail in protected
-   logs/audit only.
-5. Make admin blockchain query validation strict and bound free-form response
-   data according to the `view_logs` contract.
+1. Officer blockchain status now requires explicit application assignment
+   scope and conceals out-of-scope records as not found.
+2. Customer, officer, and administrator blockchain serializers expose explicit
+   role-appropriate field allowlists. Raw details, idempotency values, provider
+   errors, signed data, and contract internals are excluded.
+3. Customer and officer application/disbursement responses map stored failures
+   to stable public codes instead of returning `disbursement_error`.
+4. Wallet verification, wallet connection, exchange-rate, and unexpected
+   disbursement failures use stable codes while protected logs retain detail.
+5. Administrator blockchain filters reject unknown parameters, invalid enum or
+   date values, oversized searches, and out-of-range pagination. Search text is
+   treated literally and results are deterministically ordered.
 
-Release evidence: cross-officer negative tests, customer disclosure tests,
-stable-error tests, and authenticated route tests.
+Evidence: `tests/test_loans_stage1_security_contract.py` provides 17 focused
+regressions. The broader Loans selection passes with 477 passed and 9 opt-in
+Ganache tests skipped.
 
 ### 2. Atomic lifecycle and financial correctness
 
@@ -431,12 +428,11 @@ Prometheus rule tests, a healthy dashboard, and delivered test alerts.
 
 The stages below are the implementation order for taking Loans from its current
 partial state to production approval. They are based on dependency and risk,
-not an arbitrary stage count. No remediation stage was implemented during this
-documentation-only audit.
+not an arbitrary stage count.
 
 ### Stage 1 — Authorization and public response contract
 
-**Status: Not started**
+**Status: Complete — 2026-08-15**
 
 - Enforce officer assignment scope on blockchain-status reads.
 - Introduce separate customer, officer, and administrator blockchain response
@@ -450,7 +446,9 @@ documentation-only audit.
 
 **Exit condition:** every loan read/mutation has an explicit role, permission,
 owner/assignment, and response-field contract, and the Stage 1 security suite
-passes.
+passes. This exit condition is met by the 17 focused Stage 1 regressions and the
+477-test broader Loans selection. Deployment-gated blockchain behavior remains
+part of Stage 6, not a Stage 1 application-code gap.
 
 ### Stage 2 — Atomic lifecycle and financial mutation correctness
 

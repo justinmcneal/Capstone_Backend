@@ -1,23 +1,27 @@
-from rest_framework.views import APIView
-from rest_framework.permissions import IsAuthenticated
+import logging
+from datetime import datetime
+
 from bson import ObjectId
+from rest_framework import status
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.views import APIView
 
 from accounts.authentication import CustomJWTAuthentication
-from accounts.utils.response_helpers import success_response, error_response
+from accounts.utils.response_helpers import error_response, success_response
 from accounts.utils.validation_utils import sanitize_text
-from rest_framework import status
-from loans.models import LoanProduct, LoanApplication
+from loans.models import LoanApplication, LoanProduct
 from loans.serializers import (
+    ApplicationInternalNoteSerializer,
     LoanReviewSerializer,
     MissingDocumentsRequestSerializer,
-    ApplicationInternalNoteSerializer,
 )
 from loans.services.audit import record_loan_audit
 from loans.services.related_data import application_related_maps, find_models
-from loans.utils.serialization import serialize_internal_note
+from loans.utils.serialization import (
+    disbursement_failure_code,
+    serialize_internal_note,
+)
 from loans.views.officer.base import LoanOfficerRequiredMixin, internal_note_summary
-from datetime import datetime
-import logging
 
 logger = logging.getLogger("loans")
 
@@ -47,6 +51,7 @@ class OfficerApplicationListView(LoanOfficerRequiredMixin, APIView):
 
     def get(self, request):
         import re
+
         from accounts.models import Customer
 
         has_permission, result = self.check_officer_permission(request)
@@ -254,9 +259,7 @@ class OfficerApplicationListView(LoanOfficerRequiredMixin, APIView):
                 customer_ids = [c.id for c in customers if c]
 
                 # Search products
-                products = find_models(
-                    LoanProduct, {"name": regex}, limit=500
-                )
+                products = find_models(LoanProduct, {"name": regex}, limit=500)
                 product_ids = [p.id for p in products if p]
             else:
                 # Multiple terms - match all terms across customer fields
@@ -424,9 +427,9 @@ class OfficerApplicationDetailView(LoanOfficerRequiredMixin, APIView):
         product = LoanProduct.find_by_id(app.product_id)
 
         # Get complete customer profiles
-        from profiles.models import CustomerProfile, BusinessProfile, AlternativeData
-        from documents.models import Document
         from accounts.models import Customer
+        from documents.models import Document
+        from profiles.models import AlternativeData, BusinessProfile, CustomerProfile
 
         customer = Customer.find_one({"_id": ObjectId(app.customer_id)})
         personal = CustomerProfile.get_or_create(app.customer_id)
@@ -617,7 +620,7 @@ class OfficerApplicationDetailView(LoanOfficerRequiredMixin, APIView):
                     if app.disbursement_requested_at
                     else None
                 ),
-                "disbursement_error": app.disbursement_error,
+                "disbursement_failure_code": disbursement_failure_code(app),
                 "disbursed_at": (
                     app.disbursed_at.isoformat() if app.disbursed_at else None
                 ),

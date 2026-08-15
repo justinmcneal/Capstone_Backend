@@ -1,6 +1,7 @@
 import logging
 
 from accounts.utils.access_control import AccessControlMixin
+from loans.utils.serialization import disbursement_failure_code
 
 logger = logging.getLogger("loans")
 
@@ -47,7 +48,7 @@ def _serialize_customer_application_detail(app, product):
             if app.disbursement_requested_at
             else None
         ),
-        "disbursement_error": app.disbursement_error,
+        "disbursement_failure_code": disbursement_failure_code(app),
         "repayment_status": app.repayment_status,
         "paid_off_at": app.paid_off_at.isoformat() if app.paid_off_at else None,
         "disbursed_at": app.disbursed_at.isoformat() if app.disbursed_at else None,

@@ -33,8 +33,22 @@ The following repository selection passed on 2026-08-15:
   -k 'loan or blockchain or qualification or wallet_disbursement or repayment'
 ```
 
-Result: **460 passed, 9 skipped, 713 deselected**. The nine skipped tests require
+Result: **477 passed, 9 skipped, 713 deselected**. The nine skipped tests require
 a configured Ganache/RPC and deployed contracts.
+
+Stage 1 focused validation also passed:
+
+```bash
+.venv/bin/pytest -q tests/test_loans_stage1_security_contract.py
+```
+
+Result: **17 passed**. These cases cover cross-officer concealment, role-safe
+blockchain payloads, strict administrator queries, stable public failures, and
+disbursement/recovery response minimization.
+
+The full repository regression result after Stage 1 was **1,243 passed and 35
+skipped**. The skips remain explicitly opt-in external-service suites; they are
+not counted as deployment evidence.
 
 Run the complete repository suite before merging or releasing:
 
@@ -185,7 +199,7 @@ officer-or-admin boundary without assignment restriction.
 | `POST` | `officer/applications/<application_id>/penalties/apply/` | Scoped eligible installment |
 | `POST` | `officer/applications/<application_id>/penalties/waive/` | Scoped penalized installment |
 | `GET/POST` | `officer/applications/<application_id>/payoff/` | Quote / exact cash-check payoff |
-| `GET` | `officer/applications/<application_id>/blockchain/` | Must be scoped; current code has a known defect |
+| `GET` | `officer/applications/<application_id>/blockchain/` | Assigned officer/admin; out-of-scope records are concealed |
 | `GET` | `officer/exchange-rate/` | Blockchain enabled and provider available |
 | `GET` | `officer/schedules/export/` | Scoped, streaming, audited CSV/JSON; total currently unbounded |
 
@@ -482,7 +496,7 @@ mapping between each stage and its required test evidence.
 
 | Stage | Primary test scope | Current evidence status |
 | --- | --- | --- |
-| Stage 1 — Authorization and public response contract | Authenticated routes, role/permission/owner/assignment isolation, blockchain field allowlists, stable errors | Partial; existing role/scope tests pass, but the known officer blockchain defect and disclosure cases remain |
+| Stage 1 — Authorization and public response contract | Authenticated routes, role/permission/owner/assignment isolation, blockchain field allowlists, stable errors | **Complete:** 17 focused regressions pass; broader Loans selection passes |
 | Stage 2 — Atomic lifecycle and financial correctness | Concurrent review/assignment/notes, idempotent disbursement/payment/payoff, crash/replay | Partial under `mongomock`; loan-specific real-Mongo concurrency suite is missing |
 | Stage 3 — Settlement scope and approved policies | GCash/bank callbacks and reconciliation or disabled-rail tests; reversal/waiver/write-off policy cases | Not implemented; only pending claim/initiation behavior is testable |
 | Stage 4 — MongoDB schema and bounded execution | Validators, inventory/backfill, unique indexes, query plans, large fixtures, overlapping jobs | Not implemented for Loans; model index unit coverage exists |
@@ -509,11 +523,11 @@ For every application-specific endpoint, test:
 Out-of-scope customer/officer records should normally be concealed as 404 rather
 than confirming existence.
 
-The officer blockchain endpoint currently fails item 4 because it does not call
-the assignment-scope helper. Add a regression that fails before the fix and
-passes after it. Customer/officer blockchain payload tests must also reject
+Stage 1 now covers item 4 for officer blockchain access and verifies concealed
+404 behavior. Customer/officer blockchain payload tests also reject
 `idempotency_key`, free-form `details`, internal `error`, raw signed transaction,
-and contract-only fields.
+and contract-only fields. Preserve these regressions whenever the blockchain
+models or serializers change.
 
 ## Atomicity and Idempotency Tests
 
@@ -696,7 +710,7 @@ database URIs, raw signed transactions, or internal exception detail.
 
 ## Release Test Checklist
 
-- [ ] **Stage 1:** scope, permission, response-minimization, and stable-error
+- [x] **Stage 1:** scope, permission, response-minimization, and stable-error
       regressions pass.
 - [ ] **Stage 2:** real-Mongo atomic lifecycle/idempotency and crash/replay suite
       passes.
