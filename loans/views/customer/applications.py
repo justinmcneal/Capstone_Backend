@@ -8,7 +8,12 @@ from accounts.authentication import CustomJWTAuthentication
 from accounts.utils.response_helpers import error_response, success_response
 from accounts.utils.validation_utils import sanitize_text
 from analytics.models import AuditLog  # noqa: F401 - existing test patch target
-from loans.models import APPLICATION_STATUSES, LoanApplication, LoanProduct
+from loans.models import (
+    APPLICATION_STATUSES,
+    LoanApplication,
+    LoanProduct,
+    LoanTransitionConflict,
+)
 from loans.serializers import LoanApplicationSerializer
 from loans.services import (
     check_basic_eligibility,
@@ -143,6 +148,7 @@ class LoanApplyView(CustomerRoleRequiredMixin, APIView):
                     product_name=product.name,
                     amount=data["requested_amount"],
                     customer_id=customer_id,
+                    delivery_key=application.last_transition_id,
                 )
             except Exception as e:
                 logger.warning(f"Failed to send loan submitted email: {e}")
@@ -160,6 +166,7 @@ class LoanApplyView(CustomerRoleRequiredMixin, APIView):
                     "product": product.name,
                     "amount": data["requested_amount"],
                     "term": data["term_months"],
+                    "transition_id": application.last_transition_id,
                 },
                 ip_address=request.META.get("REMOTE_ADDR", ""),
             )
@@ -168,7 +175,7 @@ class LoanApplyView(CustomerRoleRequiredMixin, APIView):
             try:
                 from loans.blockchain.sync import sync_application
 
-                sync_application(application.id)
+                sync_application(application.id, application.last_transition_id)
             except Exception as e:
                 logger.warning(
                     f"Blockchain sync skipped for application {application.id}: {e}"
@@ -459,7 +466,14 @@ class ApplicationDetailView(CustomerRoleRequiredMixin, APIView):
                 app.preferred_disbursement_method = (
                     data["preferred_disbursement_method"] or None
                 )
-            app.submit()
+            try:
+                app.submit()
+            except LoanTransitionConflict:
+                return error_response(
+                    message="The application changed. Refresh and retry.",
+                    code="LOAN_TRANSITION_CONFLICT",
+                    status_code=status.HTTP_409_CONFLICT,
+                )
 
             logger.info(
                 f"Draft application updated and submitted: {app.id} by {customer_id}"
@@ -476,6 +490,7 @@ class ApplicationDetailView(CustomerRoleRequiredMixin, APIView):
                     product_name=product.name,
                     amount=requested_amount,
                     customer_id=customer_id,
+                    delivery_key=app.last_transition_id,
                 )
             except Exception as e:
                 logger.warning(f"Failed to send loan submitted email: {e}")
@@ -492,6 +507,7 @@ class ApplicationDetailView(CustomerRoleRequiredMixin, APIView):
                     "product": product.name,
                     "amount": requested_amount,
                     "term": term_months,
+                    "transition_id": app.last_transition_id,
                 },
                 ip_address=request.META.get("REMOTE_ADDR", ""),
             )
@@ -539,7 +555,14 @@ class ResubmitApplicationView(CustomerRoleRequiredMixin, APIView):
                 status_code=status.HTTP_400_BAD_REQUEST,
             )
 
-        app.resubmit(actor_id=customer_id)
+        try:
+            app.resubmit(actor_id=customer_id)
+        except LoanTransitionConflict:
+            return error_response(
+                message="The application changed. Refresh and retry.",
+                code="LOAN_TRANSITION_CONFLICT",
+                status_code=status.HTTP_409_CONFLICT,
+            )
 
         return success_response(
             data={

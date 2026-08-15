@@ -98,6 +98,7 @@ def _wallet_receipt(w3, tx_hash):
 def _complete_wallet_disbursement(application, owner):
     """Execute or resume one claimed wallet disbursement."""
     from bson import ObjectId
+
     from loans.blockchain.client import (
         get_web3,
         send_eth_transfer,
@@ -137,17 +138,13 @@ def _complete_wallet_disbursement(application, owner):
                 f"Wallet transaction {application.eth_disbursement_tx_hash} is pending"
             )
         elif application.eth_disbursement_raw_transaction:
-            LoanApplication.record_eth_rebroadcast(application.id)
             result = send_prepared_eth_transfer(
                 application.eth_disbursement_raw_transaction,
                 application.eth_disbursement_tx_hash,
                 application.eth_disbursement_recipient,
                 int(application.eth_disbursement_amount_wei),
-                on_broadcast=lambda tx_hash: LoanApplication.update_eth_disbursement(
-                    ObjectId(application.id),
-                    tx_hash=tx_hash,
-                    broadcast_at=utcnow(),
-                    tx_status="broadcast",
+                on_broadcast=lambda tx_hash: LoanApplication.record_eth_rebroadcast(
+                    application.id, tx_hash
                 ),
             )
         else:

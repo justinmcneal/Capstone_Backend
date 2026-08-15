@@ -77,6 +77,7 @@ class EmailSender:
         product_name,
         amount,
         customer_id=None,
+        delivery_key=None,
     ):
         """Send loan submission confirmation"""
         notification = create_and_broadcast_notification(
@@ -90,6 +91,7 @@ class EmailSender:
             related_type="loan",
             related_id=loan_id,
             channel="in_app",
+            idempotency_key=delivery_key,
         )
 
         return self.send(
@@ -112,6 +114,7 @@ class EmailSender:
         loan_id,
         approved_amount,
         customer_id=None,
+        delivery_key=None,
     ):
         """Send loan approval notification"""
         notification = create_and_broadcast_notification(
@@ -125,6 +128,7 @@ class EmailSender:
             related_type="loan",
             related_id=loan_id,
             channel="in_app",
+            idempotency_key=delivery_key,
         )
 
         return self.send(
@@ -146,6 +150,7 @@ class EmailSender:
         loan_id,
         reason,
         customer_id=None,
+        delivery_key=None,
     ):
         """Send loan rejection notification"""
         notification = create_and_broadcast_notification(
@@ -159,6 +164,7 @@ class EmailSender:
             related_type="loan",
             related_id=loan_id,
             channel="in_app",
+            idempotency_key=delivery_key,
         )
 
         return self.send(
@@ -291,6 +297,7 @@ class EmailSender:
         missing_documents,
         reason="",
         customer_id=None,
+        delivery_key=None,
     ):
         """Send missing documents request notification"""
         notification = create_and_broadcast_notification(
@@ -304,6 +311,7 @@ class EmailSender:
             related_type="loan",
             related_id=loan_id,
             channel="in_app",
+            idempotency_key=delivery_key,
         )
 
         return self.send(

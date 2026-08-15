@@ -37,13 +37,15 @@ durable wallet-disbursement design are implemented. Thirty-nine registered paths
 expose 46 HTTP method/path operations across customer, officer, and
 administrator roles.
 
-Stage 1 has closed the authorization and public-response defects identified by
-this review. The remaining blockers are lifecycle, settlement, persistence,
-privacy, and operational concerns:
+Stages 1 and 2 have closed the application-code authorization, response, and
+concurrent lifecycle defects identified by this review. Stage 2 still requires
+execution of its opt-in suite against an approved isolated real MongoDB target.
+The remaining blockers are release evidence, settlement, persistence, privacy,
+and operational concerns:
 
-1. Approval, rejection, assignment, reassignment, submission, resubmission, and
-   internal-note updates use read-modify-save behavior rather than guarded
-   atomic transitions. Concurrent decisions or edits can overwrite each other.
+1. The isolated real-Mongo Stage 2 suite exists but has not been executed
+   against an approved target; local `mongomock` concurrency is not deployment
+   evidence.
 2. GCash and bank-transfer payment/disbursement records can enter pending state,
    but no provider callback, verification, settlement, expiry, or operator
    resolution workflow completes them.
@@ -62,16 +64,17 @@ privacy, and operational concerns:
 
 Current automated baseline:
 
-- Loan/blockchain-related selection: **477 passed, 9 skipped, 713 deselected**
+- Loan/blockchain-related selection: **485 passed, 12 skipped, 713 deselected**
   on 2026-08-15.
-- Full repository regression: **1,243 passed, 35 skipped** on 2026-08-15.
-- The nine skips are real-Ganache integration cases and are not production-chain
-  evidence.
+- Full repository regression: **1,251 passed, 38 skipped** on 2026-08-15.
+- The 12 skips are nine real-Ganache cases and three opt-in Stage 2 real-Mongo
+  cases; skips are not deployment evidence.
 - The selection includes model, API, permission, qualification, payment,
   disbursement, repayment, export, audit, task, wallet-recovery, blockchain
   service, event-listener, and saga tests.
-- No loan-specific real-Mongo validator, transaction, uniqueness, or query-plan
-  suite was found.
+- A loan-specific Stage 2 real-Mongo concurrency suite is now present but has
+  not yet been executed. Validator, inventory, and query-plan work remains in
+  Stage 4.
 
 ## Current Status
 
@@ -79,9 +82,9 @@ Current automated baseline:
 | --- | --- | --- |
 | Product catalog | Implemented; pagination gap | Admin CRUD and soft deletion exist; customer listing silently caps results at 200. |
 | Qualification | Implemented | Rules enforce profile/document/product readiness; AI is advisory with deterministic fallback. |
-| Applications | Partial | Owner-scoped create/list/detail/update/resubmit flows exist; several state changes are not atomic. |
-| Assignment | Partial | Admin assign/reassign and workload views exist; auto-assignment is unused and concurrent assignment is not guarded. |
-| Officer review | Partial | Assigned-scope review, notes, and missing-document requests exist; concurrent decisions/notes can overwrite. |
+| Applications | Implemented; real-Mongo proof pending | Owner-scoped create/list/detail/update/resubmit flows use guarded submit/resubmit transitions and stable conflicts. |
+| Assignment | Implemented; real-Mongo proof pending | Admin assign/reassign transitions compare the expected status and assignee; competing stale requests cannot overwrite the winner. Auto-assignment remains unused. |
+| Officer review | Implemented; delivery hardening remains | Review decisions are one-winner transitions, encrypted note appends use retrying compare-and-set, and document-request history is atomically preserved. Durable notifications remain Stage 5 work. |
 | Cash/check disbursement | Implemented with remaining hardening | Idempotency, atomic disbursement claims, and safe public failures exist; deployment concurrency proof remains. |
 | Wallet disbursement/payment | Partial; deployment-gated | Confirmation, durable retries, leases, exact rebroadcast, and recovery exist; real-chain and multi-worker evidence remain. |
 | GCash/bank rails | Not complete | Requests are recorded as pending but no settlement lifecycle completes them. |
@@ -124,12 +127,12 @@ All routes are mounted under `/api/loans/` and require authenticated JWTs.
 | `GET products/` | Active product catalog | Implemented; 200-row cap is not paginated |
 | `GET products/<product_id>/` | Active product detail | Implemented |
 | `POST pre-qualify/` | Rules, readiness, score, recommendation | Implemented |
-| `POST apply/` | Validate readiness and submit application | Implemented; submission transition is not guarded |
+| `POST apply/` | Validate readiness and submit application | Implemented with an immutable transition ID |
 | `GET applications/` | Owner-scoped filtered pagination | Implemented |
 | `GET/PUT applications/<application_id>/` | Owner detail/draft update | Implemented |
 | `GET applications/<application_id>/schedule/` | Owner repayment schedule | Implemented |
 | `GET/POST applications/<application_id>/payments/` | History / external payment claim | Partial; POST only creates GCash/bank pending claims |
-| `POST applications/<application_id>/resubmit/` | Rejected application back to draft | Implemented; non-atomic |
+| `POST applications/<application_id>/resubmit/` | Rejected application back to draft | Implemented with expected-state conflict protection |
 | `GET applications/<application_id>/feedback/` | Owner rejection feedback | Implemented |
 | `POST applications/<application_id>/set-disbursement-method/` | Borrower preference | Implemented; external rails remain incomplete |
 | `GET applications/<application_id>/blockchain/` | Owner chain status | Implemented with a customer-safe field allowlist; deployment-gated |
@@ -142,8 +145,8 @@ All routes are mounted under `/api/loans/` and require authenticated JWTs.
 | --- | --- | --- |
 | `GET/POST admin/products/` | Admin + `manage_system` | Implemented |
 | `GET/PUT/DELETE admin/products/<product_id>/` | Admin + `manage_system` | Implemented; delete is soft deactivation |
-| `POST admin/applications/<application_id>/assign/` | Admin + `manage_loan_officers` | Partial; not concurrency guarded |
-| `POST admin/applications/<application_id>/reassign/` | Admin + `manage_loan_officers` | Partial; not concurrency guarded |
+| `POST admin/applications/<application_id>/assign/` | Admin + `manage_loan_officers` | Implemented with expected-assignee conflict protection |
+| `POST admin/applications/<application_id>/reassign/` | Admin + `manage_loan_officers` | Implemented with expected-assignee conflict protection |
 | `GET admin/officers/workload/` | Admin + `manage_loan_officers` | Implemented; active-officer source is materialized before paging |
 | `GET admin/blockchain/transactions/` | Admin + `view_logs` | Implemented with strict bounded filters and an administrator field allowlist; deployment-gated |
 
@@ -157,9 +160,9 @@ assignment-limited.
 | --- | --- | --- |
 | `GET officer/applications/` | Filtered, paginated assigned queue | Implemented with bounded 500-candidate search joins |
 | `GET officer/applications/<application_id>/` | Scoped detail | Implemented |
-| `POST .../notes/` | Append bounded internal note history | Partial; concurrent appends can be lost |
-| `POST .../request-missing-documents/` | Record request and notify customer | Partial; state write is non-atomic and email is best effort |
-| `PUT .../review/` | Approve or reject | Partial; decision transition is non-atomic |
+| `POST .../notes/` | Append bounded encrypted internal note history | Implemented with retrying compare-and-set; real-Mongo proof pending |
+| `POST .../request-missing-documents/` | Atomically record request/history and notify customer | State transition implemented; email remains best effort pending Stage 5 |
+| `PUT .../review/` | Approve or reject | Implemented as a one-winner expected-state transition |
 | `POST .../disburse/` | Cash/check/wallet/external disbursement initiation | Partial by rail |
 | `GET/POST .../wallet-disbursement/` | Inspect/reconcile/retry/safely cancel | Implemented; deployment-gated |
 | `POST officer/payments/` | Post cash/check payment | Implemented with idempotency and centavo allocation |
@@ -313,21 +316,25 @@ Ganache tests skipped.
 
 ### 2. Atomic lifecycle and financial correctness
 
-**Status: Partial — production blocker**
+**Status: Implemented locally — isolated real-Mongo execution pending**
 
-1. Replace approve/reject with one guarded `find_one_and_update` that requires
-   the expected status and current assignee. Exactly one concurrent decision
-   must win.
-2. Guard submission, resubmission, missing-document requests, assignment, and
-   reassignment with expected-state selectors and stable conflict responses.
-3. Append notes atomically with `$push`/`$slice`, rather than saving a stale
-   application copy.
-4. Add immutable transition/event IDs so mutation, audit, notification, and
-   blockchain synchronization can reconcile one logical action.
-5. Remove the duplicate `record_eth_rebroadcast()` call in wallet recovery and
-   test the rebroadcast counter.
-6. Add concurrency tests for review, assignment, notes, disbursement, payment,
-   payoff, and schedule completion against real MongoDB.
+1. Approve/reject now use one guarded `find_one_and_update` requiring a
+   reviewable status and the expected assignee; a stale loser receives
+   `LOAN_TRANSITION_CONFLICT`.
+2. Persisted submission, resubmission, missing-document requests, assignment,
+   and reassignment use expected-state selectors and stable conflict responses.
+3. Because internal-note history is encrypted as one field, note appends use a
+   bounded compare-and-set retry over the exact stored ciphertext instead of an
+   unsafe stale save. Accepted concurrent notes and the 100-entry bound are
+   preserved.
+4. Lifecycle mutations append immutable `loan_evt_*` identifiers. The same ID
+   is carried into audit metadata, idempotent notifications, and submission/
+   decision blockchain jobs.
+5. Wallet rebroadcast count now increments only from the successful broadcast
+   callback; failed sends do not inflate it.
+6. Eight focused local Stage 2 regressions pass. Three opt-in real-Mongo tests
+   cover review, assignment, notes, disbursement claims, payment tokens, payoff,
+   and schedule completion but remain unexecuted pending target approval.
 
 Release evidence: one-winner concurrent transition tests and crash/replay tests
 at every mutation boundary.
@@ -452,7 +459,7 @@ part of Stage 6, not a Stage 1 application-code gap.
 
 ### Stage 2 — Atomic lifecycle and financial mutation correctness
 
-**Status: Not started**
+**Status: Implemented locally — real-Mongo execution pending**
 
 - Make approval/rejection, submission/resubmission, assignment/reassignment,
   missing-document requests, and internal-note appends expected-state atomic.
@@ -464,7 +471,9 @@ part of Stage 6, not a Stage 1 application-code gap.
 
 **Exit condition:** concurrent decisions cannot overwrite one another, accepted
 notes are not lost, financial operations execute once, and every interrupted
-mutation has a tested reconciliation path.
+mutation has a tested reconciliation path. Local evidence passes; execute
+`tests/test_loans_stage2_real_mongo.py` against an approved isolated database to
+close the remaining Stage 2 release-evidence condition.
 
 ### Stage 3 — Settlement scope and approved lending policies
 

@@ -32,6 +32,7 @@ def _create_notification(
     related_type,
     related_id,
     occurred_at,
+    idempotency_key=None,
 ):
     """Persist one assignment notification and broadcast it best-effort."""
     notification = Notification(
@@ -48,8 +49,16 @@ def _create_notification(
         channel="in_app",
         status="sent",
         created_at=occurred_at,
+        idempotency_key=idempotency_key,
     )
-    notification.save()
+    if idempotency_key:
+        notification, created = Notification.create_idempotent(
+            notification, idempotency_key
+        )
+        if not created:
+            return notification
+    else:
+        notification.save()
 
     try:
         broadcast_notification_to_user(
@@ -75,6 +84,7 @@ def publish_assignment_notifications(
     related_id,
     entity_type="loan_application",
     occurred_at=None,
+    transition_id=None,
 ):
     """
     Persist and broadcast notifications for assign, reassign, or unassign.
@@ -107,6 +117,7 @@ def publish_assignment_notifications(
             "name": entity_name,
         },
         "occurred_at": occurred_at.isoformat(),
+        "transition_id": transition_id,
     }
 
     notification_specs = []
@@ -180,6 +191,9 @@ def publish_assignment_notifications(
                     related_type=related_type,
                     related_id=related_id,
                     occurred_at=occurred_at,
+                    idempotency_key=(
+                        f"{transition_id}:{audience}" if transition_id else None
+                    ),
                 )
             )
         except Exception:

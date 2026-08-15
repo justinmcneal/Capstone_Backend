@@ -33,8 +33,9 @@ The following repository selection passed on 2026-08-15:
   -k 'loan or blockchain or qualification or wallet_disbursement or repayment'
 ```
 
-Result: **477 passed, 9 skipped, 713 deselected**. The nine skipped tests require
-a configured Ganache/RPC and deployed contracts.
+Result after Stage 2: **485 passed, 12 skipped, 713 deselected**. Nine skips
+require Ganache/RPC and three are the explicitly opt-in Stage 2 real-Mongo
+suite.
 
 Stage 1 focused validation also passed:
 
@@ -46,9 +47,17 @@ Result: **17 passed**. These cases cover cross-officer concealment, role-safe
 blockchain payloads, strict administrator queries, stable public failures, and
 disbursement/recovery response minimization.
 
-The full repository regression result after Stage 1 was **1,243 passed and 35
+The full repository regression result after Stage 2 is **1,251 passed and 38
 skipped**. The skips remain explicitly opt-in external-service suites; they are
 not counted as deployment evidence.
+
+Stage 2 local validation:
+
+```bash
+.venv/bin/pytest -q tests/test_loans_stage2_atomic_lifecycle.py
+```
+
+Result: **8 passed**.
 
 Run the complete repository suite before merging or releasing:
 
@@ -271,9 +280,9 @@ Reject:
 ```
 
 The approved amount must not exceed the requested amount. Test invalid states,
-wrong assignee, and concurrent approve/reject attempts. The current code does
-not yet guarantee one winner under real concurrency; retain that as a failing or
-expected-gap integration case until remediated.
+wrong assignee, and concurrent approve/reject attempts. The guarded MongoDB
+transition now permits exactly one decision; the loser receives `409` with
+`LOAN_TRANSITION_CONFLICT`.
 
 ### Assign and reassign
 
@@ -497,7 +506,7 @@ mapping between each stage and its required test evidence.
 | Stage | Primary test scope | Current evidence status |
 | --- | --- | --- |
 | Stage 1 — Authorization and public response contract | Authenticated routes, role/permission/owner/assignment isolation, blockchain field allowlists, stable errors | **Complete:** 17 focused regressions pass; broader Loans selection passes |
-| Stage 2 — Atomic lifecycle and financial correctness | Concurrent review/assignment/notes, idempotent disbursement/payment/payoff, crash/replay | Partial under `mongomock`; loan-specific real-Mongo concurrency suite is missing |
+| Stage 2 — Atomic lifecycle and financial correctness | Concurrent review/assignment/notes, idempotent disbursement/payment/payoff, crash/replay | Application code and eight focused local regressions complete; three isolated real-Mongo tests added but execution is pending approval |
 | Stage 3 — Settlement scope and approved policies | GCash/bank callbacks and reconciliation or disabled-rail tests; reversal/waiver/write-off policy cases | Not implemented; only pending claim/initiation behavior is testable |
 | Stage 4 — MongoDB schema and bounded execution | Validators, inventory/backfill, unique indexes, query plans, large fixtures, overlapping jobs | Not implemented for Loans; model index unit coverage exists |
 | Stage 5 — Privacy, notifications, and observability | Export/retention/hold/pseudonymization, encryption rotation, outbox recovery, metrics/rules/dashboard | Partial shared infrastructure only; loan-specific implementation and evidence are missing |
@@ -547,8 +556,17 @@ multiple references to one in-memory object:
 - schedule paid off before application closure: lifecycle reconciliation closes
   once.
 
-The repository does not yet contain a loan-specific real-Mongo suite for these
-cases. Add it before production approval.
+The opt-in suite is `tests/test_loans_stage2_real_mongo.py`. It creates and
+drops only a random database whose name ends in `_isolated`:
+
+```bash
+RUN_LOANS_REAL_MONGO_TESTS=1 \
+REAL_MONGO_TEST_URI='<approved isolated MongoDB URI>' \
+.venv/bin/pytest -q tests/test_loans_stage2_real_mongo.py
+```
+
+Do not run this command against production. Record the exact target class and
+result before checking Stage 2 off below.
 
 ## Background Task Tests
 
@@ -712,8 +730,8 @@ database URIs, raw signed transactions, or internal exception detail.
 
 - [x] **Stage 1:** scope, permission, response-minimization, and stable-error
       regressions pass.
-- [ ] **Stage 2:** real-Mongo atomic lifecycle/idempotency and crash/replay suite
-      passes.
+- [ ] **Stage 2:** application code and local regressions pass; execute and
+      record the isolated real-Mongo atomic lifecycle/idempotency suite.
 - [ ] **Stage 3:** GCash/bank rails are complete or disabled, and approved
       penalty, waiver-credit, payoff, reversal, and write-off policies match
       implemented behavior.

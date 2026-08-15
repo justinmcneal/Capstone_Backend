@@ -218,6 +218,7 @@ AUDIT_ALLOWED_DETAIL_KEYS = frozenset(
         "status",
         "status_filter",
         "source",
+        "transition_id",
         "target_email",
         "term",
         "tx_hash",
@@ -277,6 +278,7 @@ _LOAN_TRANSITION_KEYS = frozenset(
         "paid_off_at",
         "previous_officer",
         "source",
+        "transition_id",
     }
 )
 
@@ -389,9 +391,11 @@ AUDIT_ACTION_DETAIL_KEYS.update(
         ),
         "document_legal_hold_set": frozenset({"reason", "revision"}),
         "document_legal_hold_release": frozenset({"revision"}),
-        "loan_submitted": frozenset({"amount", "product", "term"}),
+        "loan_submitted": frozenset(
+            {"amount", "product", "term", "transition_id"}
+        ),
         "loan_draft_updated_and_submitted": frozenset(
-            {"amount", "product", "term"}
+            {"amount", "product", "term", "transition_id"}
         ),
         "loan_assigned": _LOAN_TRANSITION_KEYS,
         "loan_reassigned": _LOAN_TRANSITION_KEYS,
@@ -402,9 +406,11 @@ AUDIT_ACTION_DETAIL_KEYS.update(
         "loan_disbursement_failed": _LOAN_TRANSITION_KEYS,
         "loan_disbursed": _LOAN_TRANSITION_KEYS,
         "loan_paid_off": _LOAN_TRANSITION_KEYS,
-        "loan_internal_note_added": frozenset({"customer_id", "note_preview"}),
+        "loan_internal_note_added": frozenset(
+            {"customer_id", "note_preview", "transition_id"}
+        ),
         "loan_missing_documents_requested": frozenset(
-            {"customer_id", "missing_documents", "reason"}
+            {"customer_id", "missing_documents", "reason", "transition_id"}
         ),
         "disbursement_method_set": frozenset({"disbursement_method"}),
         "wallet_disbursement_reconcile": frozenset({"tx_hash", "tx_status"}),

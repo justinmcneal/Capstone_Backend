@@ -10,6 +10,8 @@ from loans.blockchain.sync_common import (
     _finalize_tx,
     _monthly_rate_to_annual_bps,
     _risk_category_to_int,
+)
+from loans.blockchain.sync_common import (
     sync_schedule as _sync_schedule_common,
 )
 
@@ -25,27 +27,33 @@ def _is_enabled():
 # ---------------------------------------------------------------------------
 
 
-def sync_application(loan_id):
+def sync_application(loan_id, transition_id=None):
     """Sync a submitted loan application to the blockchain."""
     if not _is_enabled():
         return
     from loans.blockchain.tasks import sync_application_to_chain
+    if transition_id:
+        return sync_application_to_chain.delay(loan_id, transition_id)
     return sync_application_to_chain.delay(loan_id)
 
 
-def sync_approval(loan_id):
+def sync_approval(loan_id, transition_id=None):
     """Sync a loan approval to the blockchain."""
     if not _is_enabled():
         return
     from loans.blockchain.tasks import sync_approval_to_chain
+    if transition_id:
+        return sync_approval_to_chain.delay(loan_id, transition_id)
     return sync_approval_to_chain.delay(loan_id)
 
 
-def sync_rejection(loan_id):
+def sync_rejection(loan_id, transition_id=None):
     """Sync a loan rejection to the blockchain."""
     if not _is_enabled():
         return
     from loans.blockchain.tasks import sync_rejection_to_chain
+    if transition_id:
+        return sync_rejection_to_chain.delay(loan_id, transition_id)
     return sync_rejection_to_chain.delay(loan_id)
 
 
@@ -56,6 +64,7 @@ def sync_disbursement(loan_id, include_schedule=True):
     from loans.blockchain.tasks import sync_disbursement_to_chain
     if include_schedule:
         from celery import chain
+
         from loans.blockchain.tasks import sync_schedule_to_chain
         return chain(
             sync_disbursement_to_chain.s(loan_id),
@@ -128,8 +137,9 @@ def sync_consent(
 
 
 def _ensure_application_synced_for_approval(loan_id):
-    from loans.blockchain.client import call_view, get_contract
     from web3 import Web3
+
+    from loans.blockchain.client import call_view, get_contract
 
     loan_id_bytes = Web3.keccak(text=str(loan_id))
     contract = get_contract("loanApplication")
@@ -166,20 +176,22 @@ def _ensure_application_synced_for_approval(loan_id):
         )
 
 
-def _sync_application_impl(loan_id):
+def _sync_application_impl(loan_id, transition_id=None):
+    from web3 import Web3
+
+    from loans.blockchain.client import get_contract, send_transaction
     from loans.blockchain.services.application_service import (
         create_application_onchain,
         submit_application_onchain,
     )
-    from loans.blockchain.client import get_contract, send_transaction
     from loans.models.application import LoanApplication
-    from web3 import Web3
 
     tx_record = _create_tx_record(
         loan_id=loan_id,
         action="submit",
         contract_name="LoanApplication",
         method="createApplication+submitApplication",
+        details={"transition_id": transition_id} if transition_id else None,
     )
 
     try:
@@ -255,18 +267,25 @@ def _sync_application_impl(loan_id):
         _fail_tx(tx_record, exc, loan_id=loan_id)
 
 
-def _sync_approval_impl(loan_id):
+def _sync_approval_impl(loan_id, transition_id=None):
+    from web3 import Web3
+
+    from loans.blockchain.client import (
+        call_view,
+        get_account,
+        get_contract,
+        send_transaction,
+    )
     from loans.blockchain.services.approval_service import approve_loan_onchain
     from loans.blockchain.services.review_service import assign_officer_onchain
-    from loans.blockchain.client import call_view, get_account, get_contract, send_transaction
     from loans.models.application import LoanApplication
-    from web3 import Web3
 
     tx_record = _create_tx_record(
         loan_id=loan_id,
         action="approve",
         contract_name="LoanApproval",
         method="assignOfficer+approveLoan",
+        details={"transition_id": transition_id} if transition_id else None,
     )
 
     try:
@@ -351,18 +370,20 @@ def _sync_approval_impl(loan_id):
         _fail_tx(tx_record, exc, loan_id=loan_id)
 
 
-def _sync_rejection_impl(loan_id, raise_errors=False):
+def _sync_rejection_impl(loan_id, raise_errors=False, transition_id=None):
+    from web3 import Web3
+
+    from loans.blockchain.client import get_account, get_contract, send_transaction
     from loans.blockchain.services.approval_service import reject_loan_onchain
     from loans.blockchain.services.review_service import assign_officer_onchain
-    from loans.blockchain.client import get_account, get_contract, send_transaction
     from loans.models.application import LoanApplication
-    from web3 import Web3
 
     tx_record = _create_tx_record(
         loan_id=loan_id,
         action="reject",
         contract_name="LoanApproval",
         method="assignOfficer+rejectLoan",
+        details={"transition_id": transition_id} if transition_id else None,
     )
 
     try:
@@ -410,13 +431,14 @@ def _sync_rejection_impl(loan_id, raise_errors=False):
 
 
 def _sync_disbursement_impl(loan_id, include_schedule=True):
+    from web3 import Web3
+
+    from loans.blockchain.client import get_contract, send_transaction
     from loans.blockchain.services.disbursement_service import (
         complete_disbursement_onchain,
         set_method_onchain,
     )
-    from loans.blockchain.client import get_contract, send_transaction
     from loans.models.application import LoanApplication
-    from web3 import Web3
 
     tx_record = _create_tx_record(
         loan_id=loan_id,
@@ -481,6 +503,7 @@ def _sync_disbursement_impl(loan_id, include_schedule=True):
 def _execute_eth_disbursement(loan_id, app):
     """Send actual ETH to the customer's wallet for wallet-based disbursements."""
     from bson import ObjectId
+
     from loans.blockchain.client import get_web3, send_eth_transfer
     from loans.blockchain.services.eth_price_service import php_to_eth
     from loans.models.application import LoanApplication

@@ -55,7 +55,12 @@ def _actor_identity(account):
 
 
 def _notify_assignment_change(
-    application, *, assigned_by, assigned_to=None, previous_assignee=None
+    application,
+    *,
+    assigned_by,
+    assigned_to=None,
+    previous_assignee=None,
+    transition_id=None,
 ):
     """Publish assignment notifications without affecting assignment success."""
     try:
@@ -75,6 +80,7 @@ def _notify_assignment_change(
             previous_assignee=_assignment_party(previous_assignee),
             related_type="loan",
             related_id=application.id,
+            transition_id=transition_id,
         )
     except Exception:
         logger.exception(
@@ -109,6 +115,7 @@ def auto_assign_application(application):
             assigned_by=None,
             assigned_to=officer,
             previous_assignee=previous_officer,
+            transition_id=getattr(application, "last_transition_id", None),
         )
 
         return officer
@@ -151,6 +158,7 @@ def manual_assign_application(application, officer_id, assigned_by=None):
         assigned_by=assigned_by,
         assigned_to=officer,
         previous_assignee=previous_officer,
+        transition_id=getattr(application, "last_transition_id", None),
     )
 
     return officer
@@ -206,6 +214,7 @@ def reassign_application(application, new_officer_id, assigned_by=None):
         assigned_by=assigned_by,
         assigned_to=new_officer,
         previous_assignee=current_officer,
+        transition_id=getattr(application, "last_transition_id", None),
     )
 
     return new_officer

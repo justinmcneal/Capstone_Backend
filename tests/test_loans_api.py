@@ -21,17 +21,17 @@ from accounts.authentication import AuthenticatedUser
 from accounts.models import Admin, Customer, LoanOfficer
 from loans.models import LoanApplication, LoanProduct
 from loans.views.customer_views import (
-    LoanProductListView,
-    LoanProductDetailView,
-    PreQualifyView,
-    LoanApplyView,
-    MyApplicationsView,
     ApplicationDetailView,
+    LoanApplyView,
+    LoanProductDetailView,
+    LoanProductListView,
+    MyApplicationsView,
+    PreQualifyView,
 )
 from loans.views.officer_views import (
+    DisburseView,
     OfficerApplicationListView,
     OfficerReviewView,
-    DisburseView,
 )
 
 
@@ -499,7 +499,6 @@ class TestOfficerReviewView:
     def test_approve_application(self, monkeypatch):
         officer = _create_officer()
         app = LoanApplication(
-            _id=ObjectId(),
             customer_id=str(ObjectId()),
             product_id=str(ObjectId()),
             requested_amount=20000,
@@ -507,7 +506,7 @@ class TestOfficerReviewView:
             purpose="Working capital",
             status="under_review",
             assigned_officer=str(officer.id),
-        )
+        ).save()
 
         monkeypatch.setattr(
             LoanApplication,

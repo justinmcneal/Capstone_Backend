@@ -9,7 +9,7 @@ from rest_framework.views import APIView
 from accounts.authentication import CustomJWTAuthentication
 from accounts.utils.response_helpers import error_response, success_response
 from accounts.utils.validation_utils import sanitize_text
-from loans.models import LoanApplication, LoanProduct
+from loans.models import LoanApplication, LoanProduct, LoanTransitionConflict
 from loans.serializers import (
     ApplicationInternalNoteSerializer,
     LoanReviewSerializer,
@@ -700,6 +700,12 @@ class OfficerApplicationNotesView(LoanOfficerRequiredMixin, APIView):
                 author_role=getattr(user, "role", "loan_officer"),
                 content=serializer.validated_data["note"],
             )
+        except LoanTransitionConflict:
+            return error_response(
+                message="The application changed. Refresh and retry.",
+                code="LOAN_TRANSITION_CONFLICT",
+                status_code=status.HTTP_409_CONFLICT,
+            )
         except ValueError as e:
             return error_response(
                 message=str(e), status_code=status.HTTP_400_BAD_REQUEST
@@ -716,6 +722,7 @@ class OfficerApplicationNotesView(LoanOfficerRequiredMixin, APIView):
             details={
                 "customer_id": app.customer_id,
                 "note_preview": serializer.validated_data["note"][:120],
+                "transition_id": app.last_transition_id,
             },
             ip_address=request.META.get("REMOTE_ADDR", ""),
         )
@@ -799,6 +806,12 @@ class OfficerRequestMissingDocumentsView(LoanOfficerRequiredMixin, APIView):
                 missing_documents=data["missing_documents"],
                 reason=data.get("reason", ""),
             )
+        except LoanTransitionConflict:
+            return error_response(
+                message="The application changed. Refresh and retry.",
+                code="LOAN_TRANSITION_CONFLICT",
+                status_code=status.HTTP_409_CONFLICT,
+            )
         except ValueError as e:
             return error_response(
                 message=str(e), status_code=status.HTTP_400_BAD_REQUEST
@@ -816,6 +829,7 @@ class OfficerRequestMissingDocumentsView(LoanOfficerRequiredMixin, APIView):
                 "customer_id": app.customer_id,
                 "missing_documents": app.missing_documents_requested,
                 "reason": app.missing_documents_reason,
+                "transition_id": app.last_transition_id,
             },
             ip_address=request.META.get("REMOTE_ADDR", ""),
         )
@@ -843,6 +857,7 @@ class OfficerRequestMissingDocumentsView(LoanOfficerRequiredMixin, APIView):
                     missing_documents=app.missing_documents_requested,
                     reason=app.missing_documents_reason,
                     customer_id=app.customer_id,
+                    delivery_key=app.last_transition_id,
                 )
             except Exception as e:
                 logger.warning(f"Failed to send missing documents email: {e}")
@@ -934,11 +949,18 @@ class OfficerReviewView(LoanOfficerRequiredMixin, APIView):
                     status_code=status.HTTP_400_BAD_REQUEST,
                 )
 
-            app.approve(
-                officer_id=officer_id,
-                approved_amount=data["approved_amount"],
-                notes=data.get("notes", ""),
-            )
+            try:
+                app.approve(
+                    officer_id=officer_id,
+                    approved_amount=data["approved_amount"],
+                    notes=data.get("notes", ""),
+                )
+            except LoanTransitionConflict:
+                return error_response(
+                    message="The application was already reviewed or changed.",
+                    code="LOAN_TRANSITION_CONFLICT",
+                    status_code=status.HTTP_409_CONFLICT,
+                )
             logger.info(f"Application approved: {app.id} by {officer_id}")
             message = "Application approved"
 
@@ -953,6 +975,7 @@ class OfficerReviewView(LoanOfficerRequiredMixin, APIView):
                 details={
                     "approved_amount": data["approved_amount"],
                     "customer_id": app.customer_id,
+                    "transition_id": app.last_transition_id,
                 },
                 ip_address=request.META.get("REMOTE_ADDR", ""),
             )
@@ -969,6 +992,7 @@ class OfficerReviewView(LoanOfficerRequiredMixin, APIView):
                         loan_id=app.id,
                         approved_amount=data["approved_amount"],
                         customer_id=app.customer_id,
+                        delivery_key=app.last_transition_id,
                     )
                 except Exception as e:
                     logger.warning(f"Failed to send approval email: {e}")
@@ -977,16 +1001,23 @@ class OfficerReviewView(LoanOfficerRequiredMixin, APIView):
             try:
                 from loans.blockchain.sync import sync_approval
 
-                sync_approval(app.id)
+                sync_approval(app.id, app.last_transition_id)
             except Exception as e:
                 logger.warning(f"Blockchain sync skipped for approval {app.id}: {e}")
 
         else:
-            app.reject(
-                officer_id=officer_id,
-                reason=data["rejection_reason"],
-                notes=data.get("notes", ""),
-            )
+            try:
+                app.reject(
+                    officer_id=officer_id,
+                    reason=data["rejection_reason"],
+                    notes=data.get("notes", ""),
+                )
+            except LoanTransitionConflict:
+                return error_response(
+                    message="The application was already reviewed or changed.",
+                    code="LOAN_TRANSITION_CONFLICT",
+                    status_code=status.HTTP_409_CONFLICT,
+                )
             logger.info(f"Application rejected: {app.id} by {officer_id}")
             message = "Application rejected"
 
@@ -1001,6 +1032,7 @@ class OfficerReviewView(LoanOfficerRequiredMixin, APIView):
                 details={
                     "reason": data["rejection_reason"],
                     "customer_id": app.customer_id,
+                    "transition_id": app.last_transition_id,
                 },
                 ip_address=request.META.get("REMOTE_ADDR", ""),
             )
@@ -1017,6 +1049,7 @@ class OfficerReviewView(LoanOfficerRequiredMixin, APIView):
                         loan_id=app.id,
                         reason=data["rejection_reason"],
                         customer_id=app.customer_id,
+                        delivery_key=app.last_transition_id,
                     )
                 except Exception as e:
                     logger.warning(f"Failed to send rejection email: {e}")
@@ -1024,7 +1057,7 @@ class OfficerReviewView(LoanOfficerRequiredMixin, APIView):
             try:
                 from loans.blockchain.sync import sync_rejection
 
-                sync_rejection(app.id)
+                sync_rejection(app.id, app.last_transition_id)
             except Exception as e:
                 logger.warning(f"Blockchain sync skipped for rejection {app.id}: {e}")
 
