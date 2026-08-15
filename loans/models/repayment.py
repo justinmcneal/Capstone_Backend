@@ -357,6 +357,13 @@ class RepaymentSchedule:
         collection = db[cls.collection_name]
         collection.create_index("loan_id", unique=True)
         collection.create_index("customer_id")
+        collection.create_index(
+            [("status", 1), ("_id", 1)], name="schedule_status_job_scan"
+        )
+        collection.create_index(
+            [("customer_id", 1), ("created_at", -1), ("_id", -1)],
+            name="schedule_customer_created_page",
+        )
 
     @classmethod
     def update_blockchain_schedule_tx(cls, schedule_id, tx_hash):

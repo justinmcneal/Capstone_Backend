@@ -49,6 +49,7 @@ from loans.models import (  # noqa: E402
     LoanProduct,
     RepaymentSchedule,
 )
+from loans.services.persistence import install_loan_validators  # noqa: E402
 from notifications.models import Notification  # noqa: E402
 from notifications.models.device_token import DeviceToken  # noqa: E402
 from profiles.models import (  # noqa: E402
@@ -237,46 +238,67 @@ def create_indexes():
         print("Creating indexes for LoanApplication collection...")
         LoanApplication.create_indexes()
         print("✓ LoanApplication indexes created")
-    except (DuplicateKeyError, OperationFailure):
-        print("⚠ LoanApplication indexes already exist, skipping")
+    except (DuplicateKeyError, OperationFailure) as e:
+        print(f"✗ LoanApplication index error; review inventory/duplicates: {e}")
+        raise
     except Exception as e:
         print(f"✗ LoanApplication error: {e}")
+        raise
 
     try:
         print("Creating indexes for LoanProduct collection...")
         LoanProduct.create_indexes()
         print("✓ LoanProduct indexes created")
-    except (DuplicateKeyError, OperationFailure):
-        print("⚠ LoanProduct indexes already exist, skipping")
+    except (DuplicateKeyError, OperationFailure) as e:
+        print(f"✗ LoanProduct index error; review inventory/duplicates: {e}")
+        raise
     except Exception as e:
         print(f"✗ LoanProduct error: {e}")
+        raise
 
     try:
         print("Creating indexes for RepaymentSchedule collection...")
         RepaymentSchedule.create_indexes()
         print("✓ RepaymentSchedule indexes created")
-    except (DuplicateKeyError, OperationFailure):
-        print("⚠ RepaymentSchedule indexes already exist, skipping")
+    except (DuplicateKeyError, OperationFailure) as e:
+        print(f"✗ RepaymentSchedule index error; review inventory/duplicates: {e}")
+        raise
     except Exception as e:
         print(f"✗ RepaymentSchedule error: {e}")
+        raise
 
     try:
         print("Creating indexes for LoanPayment collection...")
         LoanPayment.create_indexes()
         print("✓ LoanPayment indexes created")
-    except (DuplicateKeyError, OperationFailure):
-        print("⚠ LoanPayment indexes already exist, skipping")
+    except (DuplicateKeyError, OperationFailure) as e:
+        print(f"✗ LoanPayment index error; review inventory/duplicates: {e}")
+        raise
     except Exception as e:
         print(f"✗ LoanPayment error: {e}")
+        raise
 
     try:
         print("Creating indexes for BlockchainTransaction collection...")
         BlockchainTransaction.create_indexes()
         print("✓ BlockchainTransaction indexes created")
-    except (DuplicateKeyError, OperationFailure):
-        print("⚠ BlockchainTransaction indexes already exist, skipping")
+    except (DuplicateKeyError, OperationFailure) as e:
+        print(f"✗ BlockchainTransaction index error; review inventory/duplicates: {e}")
+        raise
     except Exception as e:
         print(f"✗ BlockchainTransaction error: {e}")
+        raise
+
+    try:
+        print("Installing strict Loans collection validators...")
+        install_loan_validators()
+        print("✓ Loans validators installed")
+    except (DuplicateKeyError, OperationFailure) as e:
+        print(f"✗ Loans validator installation failed: {e}")
+        raise
+    except Exception as e:
+        print(f"✗ Loans validator error: {e}")
+        raise
 
     # Document indexes
     try:

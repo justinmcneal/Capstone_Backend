@@ -4,6 +4,7 @@ import csv
 import json
 from datetime import date, datetime, time, timedelta, timezone
 from io import StringIO
+from itertools import islice
 from typing import ClassVar
 
 from bson import ObjectId
@@ -23,6 +24,7 @@ from loans.services.audit import LoanAuditUnavailable, record_loan_audit
 from loans.views.officer.base import LoanOfficerRequiredMixin
 
 EXPORT_BATCH_SIZE = 200
+DEFAULT_EXPORT_MAX_ROWS = 10_000
 VALID_INSTALLMENT_STATUSES = {
     "pending",
     "partial",
@@ -340,9 +342,26 @@ class BulkRepaymentScheduleExportView(LoanOfficerRequiredMixin, APIView):
             )
 
         query = self._schedule_query(customer_id, start_date, end_date)
+
         def row_factory():
             return self._iter_rows(query, status_filter, actor_type, actor_id)
-        row_count = sum(1 for _row in row_factory())
+
+        max_rows = max(
+            1,
+            int(getattr(settings, "LOAN_EXPORT_MAX_ROWS", DEFAULT_EXPORT_MAX_ROWS)),
+        )
+        row_count = sum(1 for _row in islice(row_factory(), max_rows + 1))
+        if row_count > max_rows:
+            return error_response(
+                message="Export exceeds the synchronous row limit",
+                code="LOAN_EXPORT_LIMIT_EXCEEDED",
+                errors={
+                    "limit": (
+                        f"Narrow the filters to at most {max_rows} installment rows."
+                    )
+                },
+                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            )
         if not row_count:
             return error_response(
                 message="No repayment schedules found matching the filters",
@@ -375,4 +394,5 @@ class BulkRepaymentScheduleExportView(LoanOfficerRequiredMixin, APIView):
                 f'attachment; filename="repayment_schedules_{timestamp}.csv"'
             )
         response["X-Export-Row-Count"] = str(row_count)
+        response["X-Export-Max-Rows"] = str(max_rows)
         return response

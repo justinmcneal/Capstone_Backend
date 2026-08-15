@@ -37,27 +37,27 @@ durable wallet-disbursement design are implemented. Thirty-nine registered paths
 expose 46 HTTP method/path operations across customer, officer, and
 administrator roles.
 
-Stages 1 through 3 have closed the application-code authorization, response,
-concurrent lifecycle, and exposed-settlement-scope defects identified by this
-review. Stage 2 still requires
-execution of its opt-in suite against an approved isolated real MongoDB target.
+Stages 1 through 4 have closed the application-code authorization, response,
+concurrent lifecycle, exposed-settlement-scope, persistence-tooling, and bounded
+execution defects identified by this review. Stages 2 and 4 still require their
+opt-in suites to run against an approved isolated real MongoDB target.
 The current settlement baseline exposes cash/check, with wallet-to-wallet
 available only when blockchain is explicitly enabled. GCash and bank-transfer
 are planned integrations, but remain disabled until provider API access and the
 required financial-institution approval are obtained and verified. Their
 reserved persistence/contract values are intentionally retained for forward and
 historical compatibility. The
-remaining blockers are release evidence, persistence, privacy, and operational
-concerns:
+remaining blockers are release evidence, privacy, and operational concerns:
 
 1. The isolated real-Mongo Stage 2 suite exists but has not been executed
    against an approved target; local `mongomock` concurrency is not deployment
    evidence.
-2. Loan collections have indexes but no MongoDB JSON-schema validators,
-   inventory/backfill commands, or loan-specific real-Mongo integration suite.
-3. Scheduled repayment scans and several payment/application query paths are
-   unbounded or materialize large ID sets. Encrypted payment references cannot
-   be searched with the current MongoDB regex query.
+2. Stage 4 inventory/backfill commands, validators, compound indexes, and an
+   isolated real-Mongo suite exist, but have not been executed against a
+   reviewed deployment copy or approved isolated MongoDB target.
+3. Local query and job bounds are implemented; representative target-volume
+   query plans, multi-worker contention, and load/latency evidence remain
+   deployment validation.
 4. Loan data is not included in customer account export and has no documented
    retention, legal-hold, anonymization, or deletion policy integration.
 5. Encryption covers selected free-text fields, but application purpose/AI
@@ -68,23 +68,24 @@ concerns:
 
 Current automated baseline:
 
-- Loan/blockchain-related selection: **492 passed, 12 skipped, 713 deselected**
+- Loan/blockchain-related selection: **502 passed, 13 skipped, 713 deselected**
   on 2026-08-15.
-- Full repository regression: **1,258 passed, 38 skipped** on 2026-08-15.
-- The 12 skips are nine real-Ganache cases and three opt-in Stage 2 real-Mongo
-  cases; skips are not deployment evidence.
+- Full repository regression: **1,268 passed, 39 skipped** on 2026-08-15.
+- The 13 loan-selection skips are nine real-Ganache cases, three opt-in Stage 2
+  real-Mongo cases, and one opt-in Stage 4 real-Mongo case; skips are not
+  deployment evidence.
 - The selection includes model, API, permission, qualification, payment,
   disbursement, repayment, export, audit, task, wallet-recovery, blockchain
   service, event-listener, and saga tests.
-- A loan-specific Stage 2 real-Mongo concurrency suite is now present but has
-  not yet been executed. Validator, inventory, and query-plan work remains in
-  Stage 4.
+- Stage 4 focused validation: **10 passed, 1 skipped** on 2026-08-15. The skip
+  is the deliberately opt-in isolated real-Mongo validator/index/query-plan
+  case and is not deployment evidence.
 
 ## Current Status
 
 | Area | Status | Summary |
 | --- | --- | --- |
-| Product catalog | Implemented; pagination gap | Admin CRUD and soft deletion exist; customer listing silently caps results at 200. |
+| Product catalog | Implemented | Admin CRUD, soft deletion, and bounded customer pagination exist. |
 | Qualification | Implemented | Rules enforce profile/document/product readiness; AI is advisory with deterministic fallback. |
 | Applications | Implemented; real-Mongo proof pending | Owner-scoped create/list/detail/update/resubmit flows use guarded submit/resubmit transitions and stable conflicts. |
 | Assignment | Implemented; real-Mongo proof pending | Admin assign/reassign transitions compare the expected status and assignee; competing stale requests cannot overwrite the winner. Auto-assignment remains unused. |
@@ -93,10 +94,10 @@ Current automated baseline:
 | Wallet disbursement/payment | Partial; deployment-gated | Confirmation, durable retries, leases, exact rebroadcast, and recovery exist; real-chain and multi-worker evidence remain. |
 | GCash/bank rails | Planned; safely disabled | Public API and disbursement-model guards return `SETTLEMENT_RAIL_UNAVAILABLE` without creating a claim or disbursement. Reserved model, service, query, and contract values remain for the upcoming provider integrations. |
 | Repayment accounting | Implemented for the baseline | Versioned centavo math, optimistic schedule updates, exact payoff terms, and atomic penalty/waiver handling exist. Collected waiver credit is carried forward; a waiver requiring an external refund is rejected. Reserved reversal/write-off workflows remain unavailable. |
-| Retrieval/search/export | Partial | Role-scoped pagination and streaming audited exports exist; export totals and some supporting queries are unbounded, and encrypted-reference search is ineffective. |
+| Retrieval/search/export | Implemented locally; load proof pending | Role-scoped pagination, keyed exact payment-reference search, explicit supporting-search truncation, and a configurable 10,000-row synchronous export ceiling are implemented. |
 | Security and privacy | Stage 1 complete; later gaps remain | JWT, role/permission/assignment scope, explicit blockchain response contracts, stable public errors, encryption, idempotency, and audit exist. Lifecycle and data-governance work remains in later stages. |
-| MongoDB schema/indexes | Partial | Index declarations exist; validators, safe backfill tooling, and real-Mongo proof do not. |
-| Background processing | Partial | Celery/Beat jobs and blockchain recovery exist; some scans are unbounded and lack leases/checkpoints. |
+| MongoDB schema/indexes | Implemented locally; real-Mongo proof pending | Count-only inventory, dry-run-first backfill, strict validator manifests, compound indexes, and an isolated real-Mongo suite exist. Target execution remains pending. |
+| Background processing | Implemented locally; deployment proof pending | Overdue, lifecycle, and wallet reconciliation scans are batched, leased, checkpointed, routed to a dedicated queue, and time-bounded. Multi-worker/load proof remains. |
 | Monitoring | Partial | Audit write failures are counted; end-to-end operational metrics, dashboards, and alerts are missing. |
 | Production deployment | Not approved | Real MongoDB, Redis/Celery, chain/RPC, proxy, secrets, backup/restore, monitoring, and incident evidence remain. |
 
@@ -128,7 +129,7 @@ All routes are mounted under `/api/loans/` and require authenticated JWTs.
 
 | Method and route | Current behavior | Status |
 | --- | --- | --- |
-| `GET products/` | Active product catalog | Implemented; 200-row cap is not paginated |
+| `GET products/` | Active product catalog | Implemented with bounded pagination |
 | `GET products/<product_id>/` | Active product detail | Implemented |
 | `POST pre-qualify/` | Rules, readiness, score, recommendation | Implemented |
 | `POST apply/` | Validate readiness and submit application | Implemented with an immutable transition ID |
@@ -171,7 +172,7 @@ assignment-limited.
 | `GET/POST .../wallet-disbursement/` | Inspect/reconcile/retry/safely cancel | Implemented; deployment-gated |
 | `POST officer/payments/` | Post cash/check payment | Implemented with idempotency and centavo allocation |
 | `GET officer/payments/recent/` | Recent accessible payments | Partial; assigned application IDs are materialized without a bound |
-| `GET officer/payments/search/` | Filtered payment list and summary | Partial; unbounded supporting queries and ineffective ciphertext regex search |
+| `GET officer/payments/search/` | Filtered payment list and summary | Implemented with indexed scope/timing metadata, exact blind-reference search, pagination, and explicit supporting-search truncation |
 | `GET officer/active-loans/` | Scoped active-loan lookup | Implemented; requires search or customer ID |
 | `GET .../schedule/` | Scoped schedule detail | Implemented |
 | `GET .../payments/` | Scoped payment history | Implemented |
@@ -391,44 +392,49 @@ signed callback replay tests, reconciliation, and ledger balancing.
 
 ### 4. MongoDB schema, inventory, and query correctness
 
-**Status: Partial — production blocker**
+**Status: Implemented locally — deployment-copy execution pending**
 
-1. Add count-only inventory and dry-run-first backfill commands for legacy IDs,
-   statuses, money fields, encryption metadata, payment keys, and schedule
-   accounting versions.
-2. Reconcile duplicates before installing unique indexes.
-3. Add JSON-schema validators for all primary loan collections and blockchain
-   transaction records, including encrypted-field shapes.
-4. Add loan-specific real-Mongo tests for validators, indexes, unique claims,
-   atomic transitions, centavo updates, transactions where supported, and query
-   plans at representative volume.
-5. Add deterministic compound indexes for the actual owner/officer/status/date
-   list and scheduled-job queries.
-6. Replace regex search on encrypted payment `reference` with a normalized keyed
-   blind index or remove reference search from the contract.
+Implemented:
+
+- `loan_data_inventory` provides bounded, count-only detection of missing
+  fields/metadata, invalid statuses, plaintext or old-key ciphertext, and
+  duplicate unique values without returning sensitive values.
+- `backfill_loan_data` is dry-run-first, compare-and-set protected, rejects
+  truncated/invalid/conflicting runs, rotates configured encrypted fields, and
+  derives centavo, accounting, payment-scope, timing, lifecycle, and blind-index
+  metadata.
+- Strict JSON-schema validator manifests cover products, applications,
+  schedules, payments, and blockchain transactions, including encrypted-field
+  shapes. `init_db.py` now fails closed on index/validator errors.
+- Query-specific compound indexes cover customer/officer application pages,
+  payment reference/scope/timing pages, schedule scans, disbursement recovery,
+  and blockchain reconciliation.
+- Payment-reference search now uses a normalized keyed HMAC blind index and
+  supports previous encryption keys during rotation; ciphertext regex is gone.
+- An opt-in isolated real-Mongo suite installs the validators/indexes, rejects
+  invalid writes, inserts a representative payment fixture, and requires an
+  indexed reference-search plan.
 
 Release evidence: reviewed inventory, approved backup, applied backfill,
 validator/index manifest, clean post-inventory, and target query plans.
 
 ### 5. Bounded queries and background jobs
 
-**Status: Partial — required before production-scale traffic**
+**Status: Implemented locally — deployment load proof pending**
 
-- Paginate the customer product list rather than silently returning at most 200.
-- Replace officer payment queries that materialize every assigned/disbursed loan
-  ID with indexed aggregation or direct assignment metadata on payments.
-- Make `payment_status=on_time|late` database-computable or use a bounded
-  materialized classification; it currently scans all matches in Python.
-- Replace 500-record search candidate joins with indexed search/blind indexes or
-  explicit truncation metadata.
-- Page officer workload from MongoDB rather than loading all active officers.
-- Enforce an approved maximum/snapshot contract for synchronous schedule
-  exports or move large exports to a leased asynchronous job. Avoid the current
-  full pre-count plus second full streaming scan.
-- Batch and lease overdue, paid-off, and wallet reconciliation jobs. Persist a
-  checkpoint and prevent overlapping Beat runs.
-- Configure queue routing, time limits, batch sizes, and retry/dead-letter
-  behavior for all loan tasks.
+- Customer products and officer workload now use database pagination.
+- Payments store indexed officer scope, loan lifecycle, and timing metadata, so
+  recent/search/timing queries no longer materialize all assigned/disbursed loan
+  IDs or scan the full result in Python.
+- Supporting customer/product searches remain deliberately capped and publish
+  `search_truncated`; payment references use an exact blind index.
+- Synchronous schedule export rejects results above `LOAN_EXPORT_MAX_ROWS`
+  before returning a partial file.
+- Overdue, paid-off, and wallet reconciliation jobs use MongoDB leases, durable
+  `_id` checkpoints, bounded batches/runs, a dedicated Celery queue, late
+  acknowledgement, worker-loss rejection, and soft/hard time limits. Failed
+  financial records are not skipped into a lossy dead-letter path: the durable
+  checkpoint remains before the failure so the next scheduled run retries it.
 
 Release evidence: query-plan assertions, large-fixture tests, overlapping-worker
 tests, and representative load/latency measurements.
@@ -530,21 +536,26 @@ wallet evidence remain release conditions, not missing Stage 3 code.
 
 ### Stage 4 — MongoDB schema and bounded execution
 
-**Status: Not started**
+**Status: Implemented locally — real-Mongo and load execution pending**
 
-- Add inventory and dry-run-first backfill commands.
-- Reconcile duplicate/legacy records, then add loan collection validators and
-  the compound indexes required by production queries.
-- Replace ciphertext regex search with blind indexes or remove the unsupported
-  search contract.
-- Bound product, officer, payment, search, export, overdue, paid-off, and wallet
-  reconciliation paths.
-- Add isolated real-Mongo validator, index, atomicity, and query-plan tests plus
-  large-fixture/overlapping-worker coverage.
+- Added inventory and dry-run-first backfill commands.
+- Added validator and compound-index manifests; duplicate inventory must be
+  reviewed and reconciled before installation on a deployment copy.
+- Replaced ciphertext regex search with keyed exact blind indexes.
+- Bounded product, officer, payment, search, export, overdue, paid-off, and
+  wallet reconciliation paths.
+- Added isolated real-Mongo validator/index/query-plan proof and local
+  large-fixture/overlapping-worker coverage. Target execution remains pending.
 
 **Exit condition:** target-volume operations have deterministic bounds and
 query plans, validators reject invalid data, and scheduled work is batched,
 leased, checkpointed, and safe under overlap.
+
+The application-code exit condition is met by 10 focused local regressions.
+Final closure requires reviewing inventory/backfill against a deployment copy,
+then running the isolated Stage 4 real-Mongo suite and representative
+multi-worker/load evidence. No production database mutation was performed as
+part of this stage.
 
 ### Stage 5 — Privacy lifecycle, notification durability, and observability
 

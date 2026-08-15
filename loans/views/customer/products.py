@@ -37,12 +37,35 @@ class LoanProductListView(CustomerRoleRequiredMixin, APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        """Get all active loan products"""
+        """Get one bounded page of active loan products."""
         has_permission, result = self.check_customer_permission(request)
         if not has_permission:
             return result
 
-        products = LoanProduct.find(active_only=True, limit=200)
+        try:
+            page = int(request.query_params.get("page", 1))
+            page_size = int(request.query_params.get("page_size", 20))
+        except (TypeError, ValueError):
+            return error_response(
+                message="Invalid product pagination",
+                errors={"pagination": "page and page_size must be integers"},
+                status_code=status.HTTP_400_BAD_REQUEST,
+            )
+        if page < 1 or not 1 <= page_size <= 100:
+            return error_response(
+                message="Invalid product pagination",
+                errors={
+                    "pagination": "page must be >= 1 and page_size must be between 1 and 100"
+                },
+                status_code=status.HTTP_400_BAD_REQUEST,
+            )
+
+        total = LoanProduct.count(active_only=True)
+        products = LoanProduct.find(
+            active_only=True,
+            skip=(page - 1) * page_size,
+            limit=page_size,
+        )
 
         products_data = [
             {
@@ -70,7 +93,10 @@ class LoanProductListView(CustomerRoleRequiredMixin, APIView):
         return success_response(
             data={
                 "products": products_data,
-                "total": len(products_data),
+                "total": total,
+                "page": page,
+                "page_size": page_size,
+                "total_pages": (total + page_size - 1) // page_size,
                 "settlement_policy": public_settlement_policy(),
             },
             message="Loan products retrieved successfully",

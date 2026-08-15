@@ -138,6 +138,14 @@ class BlockchainTransaction:
         collection.create_index("status")
         collection.create_index("created_at")
         collection.create_index(
+            [("status", 1), ("created_at", 1), ("_id", 1)],
+            name="blockchain_status_reconcile",
+        )
+        collection.create_index(
+            [("loan_id", 1), ("action", 1), ("status", 1)],
+            name="blockchain_loan_action_status",
+        )
+        collection.create_index(
             "idempotency_key",
             unique=True,
             partialFilterExpression={"idempotency_key": {"$type": "string", "$gt": ""}},

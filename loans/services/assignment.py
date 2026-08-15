@@ -3,6 +3,7 @@
 import logging
 
 from bson import ObjectId
+from django.conf import settings
 
 from accounts.models import Customer, LoanOfficer
 from loans.models import LoanApplication
@@ -234,24 +235,71 @@ def get_officers_workload(page=1, page_size=20, search=None):
     """
     import re
 
-    # Base query for active officers
-    officers = LoanOfficer.find_active()
-
-    # Apply search filter
+    query = {"active": True}
     if search:
         search_regex = re.compile(re.escape(search), re.IGNORECASE)
-        officers = [
-            o
-            for o in officers
-            if search_regex.search(o.full_name) or search_regex.search(o.email)
+        query["$or"] = [
+            {"first_name": search_regex},
+            {"last_name": search_regex},
+            {"email": search_regex},
+            {"employee_id": search_regex},
         ]
 
-    total = len(officers)
-
-    # Apply pagination
-    start = (page - 1) * page_size
-    end = start + page_size
-    paginated_officers = officers[start:end]
+    db = settings.MONGODB
+    officer_collection = db[LoanOfficer.collection_name]
+    total = officer_collection.count_documents(query)
+    cursor = (
+        officer_collection.find(query)
+        .sort([("last_name", 1), ("first_name", 1), ("_id", 1)])
+        .skip((page - 1) * page_size)
+        .limit(page_size)
+    )
+    paginated_officers = [LoanOfficer.from_dict(document) for document in cursor]
+    officer_ids = [officer.id for officer in paginated_officers if officer]
+    workload = {
+        row["_id"]: {
+            "assigned": int(row.get("assigned", 0)),
+            "pending": int(row.get("pending", 0)),
+        }
+        for row in db[LoanApplication.collection_name].aggregate(
+            [
+                {"$match": {"assigned_officer": {"$in": officer_ids}}},
+                {
+                    "$group": {
+                        "_id": "$assigned_officer",
+                        "assigned": {
+                            "$sum": {
+                                "$cond": [
+                                    {
+                                        "$in": [
+                                            "$status",
+                                            [
+                                                "submitted",
+                                                "under_review",
+                                                "approved",
+                                                "disbursed",
+                                            ],
+                                        ]
+                                    },
+                                    1,
+                                    0,
+                                ]
+                            }
+                        },
+                        "pending": {
+                            "$sum": {
+                                "$cond": [
+                                    {"$in": ["$status", ["submitted", "under_review"]]},
+                                    1,
+                                    0,
+                                ]
+                            }
+                        },
+                    }
+                },
+            ]
+        )
+    }
 
     return {
         "officers": [
@@ -260,20 +308,8 @@ def get_officers_workload(page=1, page_size=20, search=None):
                 "employee_id": officer.employee_id,
                 "name": officer.full_name,
                 "email": officer.email,
-                "assigned_count": LoanApplication.count(
-                    {
-                        "assigned_officer": officer.id,
-                        "status": {
-                            "$in": [
-                                "submitted",
-                                "under_review",
-                                "approved",
-                                "disbursed",
-                            ]
-                        },
-                    }
-                ),
-                "pending_count": officer.get_pending_count(),
+                "assigned_count": workload.get(officer.id, {}).get("assigned", 0),
+                "pending_count": workload.get(officer.id, {}).get("pending", 0),
                 "active": officer.active,
             }
             for officer in paginated_officers

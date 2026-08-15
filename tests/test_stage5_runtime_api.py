@@ -48,6 +48,7 @@ def test_payment_search_default_path_paginates_and_summarizes_full_result(
                 "amount": 100,
                 "installment_number": 1,
                 "payment_status": "posted",
+                "loan_disbursed": True,
                 "recorded_at": datetime(2026, 1, 1, tzinfo=timezone.utc),
             },
             {
@@ -56,6 +57,7 @@ def test_payment_search_default_path_paginates_and_summarizes_full_result(
                 "amount": 250,
                 "installment_number": 2,
                 "payment_status": "posted",
+                "loan_disbursed": True,
                 "recorded_at": datetime(2026, 1, 2, tzinfo=timezone.utc),
             },
         ]

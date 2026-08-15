@@ -818,12 +818,36 @@ CELERY_TIMEZONE = 'UTC'
 CELERY_TASK_ROUTES = {
     'blockchain.*': {'queue': 'blockchain'},
     'loans.execute_wallet_disbursement_task': {'queue': 'blockchain'},
+    'loans.tasks.check_overdue_installments_task': {'queue': 'loans'},
+    'loans.reconcile_repayment_lifecycle': {'queue': 'loans'},
+    'loans.reconcile_wallet_disbursements_task': {'queue': 'loans'},
 }
 
 # MongoDB-backed leases coordinate the single configured blockchain sender.
 BLOCKCHAIN_NONCE_LOCK_WAIT_SECONDS = 15
 BLOCKCHAIN_NONCE_LEASE_SECONDS = 180
 BLOCKCHAIN_RECONCILIATION_BATCH_SIZE = 250
+
+# Loans persistence and bounded synchronous/background execution.
+LOAN_EXPORT_MAX_ROWS = int(os.getenv("LOAN_EXPORT_MAX_ROWS", "10000"))
+LOAN_JOB_BATCH_SIZE = int(os.getenv("LOAN_JOB_BATCH_SIZE", "200"))
+LOAN_JOB_MAX_BATCHES = int(os.getenv("LOAN_JOB_MAX_BATCHES", "10"))
+LOAN_JOB_LEASE_SECONDS = int(os.getenv("LOAN_JOB_LEASE_SECONDS", "900"))
+LOAN_TASK_SOFT_TIME_LIMIT = int(os.getenv("LOAN_TASK_SOFT_TIME_LIMIT", "840"))
+LOAN_TASK_TIME_LIMIT = int(os.getenv("LOAN_TASK_TIME_LIMIT", "900"))
+CELERY_TASK_ANNOTATIONS = {
+    task_name: {
+        "acks_late": True,
+        "reject_on_worker_lost": True,
+        "soft_time_limit": LOAN_TASK_SOFT_TIME_LIMIT,
+        "time_limit": LOAN_TASK_TIME_LIMIT,
+    }
+    for task_name in (
+        "loans.tasks.check_overdue_installments_task",
+        "loans.reconcile_repayment_lifecycle",
+        "loans.reconcile_wallet_disbursements_task",
+    )
+}
 
 # Logging Configuration
 LOGGING = {

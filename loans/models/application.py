@@ -1138,6 +1138,28 @@ class LoanApplication:
         collection.create_index("submitted_at")
         collection.create_index("disbursement_status")
         collection.create_index(
+            [("customer_id", 1), ("status", 1), ("created_at", -1), ("_id", -1)],
+            name="application_customer_status_page",
+        )
+        collection.create_index(
+            [
+                ("assigned_officer", 1),
+                ("status", 1),
+                ("submitted_at", -1),
+                ("_id", -1),
+            ],
+            name="application_officer_status_page",
+        )
+        collection.create_index(
+            [
+                ("status", 1),
+                ("disbursement_status", 1),
+                ("disbursement_method", 1),
+                ("_id", 1),
+            ],
+            name="application_disbursement_reconcile",
+        )
+        collection.create_index(
             "disbursement_idempotency_key",
             unique=True,
             partialFilterExpression={

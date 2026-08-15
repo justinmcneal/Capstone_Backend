@@ -226,7 +226,7 @@ officer-or-admin boundary without assignment restriction.
 | `GET/POST` | `officer/applications/<application_id>/payoff/` | Quote / exact cash-check payoff |
 | `GET` | `officer/applications/<application_id>/blockchain/` | Assigned officer/admin; out-of-scope records are concealed |
 | `GET` | `officer/exchange-rate/` | Blockchain enabled and provider available |
-| `GET` | `officer/schedules/export/` | Scoped, streaming, audited CSV/JSON; total currently unbounded |
+| `GET` | `officer/schedules/export/` | Scoped, streaming, audited CSV/JSON with a configurable synchronous row ceiling |
 
 ## Core Request Examples
 
@@ -497,7 +497,8 @@ Test `status`, `search`, `min_amount`, `max_amount`, `start_date`, `end_date`,
 - invalid enums/sort fields;
 - other-officer and unassigned applications;
 - identical timestamps requiring deterministic tie behavior; and
-- more than the current 500 supporting search candidates to expose truncation.
+- more than 500 supporting search candidates and assert
+  `search_truncated=true` rather than silent omission.
 
 ### Payment search
 
@@ -508,8 +509,8 @@ Test `search`, `loan_id`, `customer_id`, `disbursed_only`, `payment_status`,
 - `on_time`/`late` classification at large result counts;
 - posted versus pending/failed records;
 - summaries over the complete filtered result, not just the page; and
-- reference search after encryption. The current ciphertext regex search should
-  be treated as a known failing capability until a blind index is implemented.
+- exact reference search after encryption and across configured previous keys;
+  assert that neither plaintext nor ciphertext regex is queried.
 
 ### Schedule export
 
@@ -529,7 +530,7 @@ mapping between each stage and its required test evidence.
 | Stage 1 — Authorization and public response contract | Authenticated routes, role/permission/owner/assignment isolation, blockchain field allowlists, stable errors | **Complete:** 17 focused regressions pass; broader Loans selection passes |
 | Stage 2 — Atomic lifecycle and financial correctness | Concurrent review/assignment/notes, idempotent disbursement/payment/payoff, crash/replay | Application code and eight focused local regressions complete; three isolated real-Mongo tests added but execution is pending approval |
 | Stage 3 — Settlement scope and approved policies | Disabled GCash/bank rails, feature-gated wallet, public policy contract, concurrent penalty/waiver credit, explicit payoff/rate terms | **Complete in application code:** seven focused regressions and the broader Loans selection pass; institutional policy approval and optional deployed-wallet evidence remain release gates |
-| Stage 4 — MongoDB schema and bounded execution | Validators, inventory/backfill, unique indexes, query plans, large fixtures, overlapping jobs | Not implemented for Loans; model index unit coverage exists |
+| Stage 4 — MongoDB schema and bounded execution | Validators, inventory/backfill, unique indexes, query plans, large fixtures, overlapping jobs | **Implemented locally:** 10 focused regressions pass; the isolated real-Mongo proof is present but not yet executed |
 | Stage 5 — Privacy, notifications, and observability | Export/retention/hold/pseudonymization, encryption rotation, outbox recovery, metrics/rules/dashboard | Partial shared infrastructure only; loan-specific implementation and evidence are missing |
 | Stage 6 — Real-environment release validation | Deployment MongoDB, Redis/Celery, optional chain, HTTPS, load, backup/restore, rollback, dashboards/alerts | Pending deployment topology |
 
@@ -606,9 +607,11 @@ Direct task/unit coverage should verify:
 - audit/event reconciliation is repeatable.
 
 Deployment/load coverage must additionally verify bounded batches, checkpoints,
-overlapping Beat executions, queue separation, time limits, retry exhaustion,
-broker outage, worker termination, and backlog alerting. The current overdue,
-paid-off, and wallet reconciliation scans are not yet bounded.
+overlapping Beat executions, queue separation, time limits, broker outage,
+worker termination, retry-from-checkpoint, and backlog alerting. Overdue,
+paid-off, and wallet reconciliation are now locally bounded, leased, and
+checkpointed; failed records deliberately remain before the checkpoint rather
+than being skipped into a lossy dead-letter path.
 
 ## Blockchain Testing
 
@@ -653,7 +656,40 @@ approved network topology and prove:
 Never run a value-transfer test against a real funded wallet without explicit
 approval of the wallet, network, amount, and recipient.
 
-## MongoDB Deployment Tests to Add
+## MongoDB Inventory, Backfill, and Deployment Tests
+
+Run the read-only inventory first:
+
+```bash
+.venv/bin/python manage.py loan_data_inventory --limit 10000
+```
+
+Backfill defaults to a dry run. If any collection is truncated, increase the
+limit and repeat; the command refuses to report a clean run when it did not scan
+the complete collection:
+
+```bash
+.venv/bin/python manage.py backfill_loan_data --limit 10000
+```
+
+Only after backup, reviewed duplicate reconciliation, and an approved dry run,
+apply the backfill, repeat inventory until clean, and then run `python init_db.py`
+to install indexes and strict validators. Both apply/init commands mutate
+MongoDB and require explicit approval for the exact target.
+
+The opt-in Stage 4 suite creates and drops only a random database whose name
+ends in `_isolated`:
+
+```bash
+RUN_LOANS_STAGE4_REAL_MONGO_TESTS=1 \
+REAL_MONGO_TEST_URI='<approved isolated MongoDB URI>' \
+.venv/bin/pytest -q tests/test_loans_stage4_real_mongo.py
+```
+
+Do not point this command at production. The present suite proves validator
+installation/rejection, index creation, a 500-payment fixture, and an indexed
+blind-reference query plan. The Stage 2 isolated suite separately proves atomic
+lifecycle behavior.
 
 Use a dedicated opt-in marker and a unique temporary database. At minimum:
 
@@ -760,8 +796,10 @@ database URIs, raw signed transactions, or internal exception detail.
       feature-gated, waiver credits are carried forward or rejected safely, and
       payoff/rate/accounting contracts are explicit. Institutional/legal policy
       approval and optional deployed-wallet proof remain release conditions.
-- [ ] **Stage 4:** inventory/backfill, validators/indexes, representative query
-      plans, bounded exports/jobs, and overlap/load tests pass.
+- [ ] **Stage 4 deployment evidence:** local inventory/backfill,
+      validators/indexes, bounded exports/jobs, and overlap regressions pass;
+      execute the isolated real-Mongo suite and representative multi-worker/load
+      tests against an approved target.
 - [ ] **Stage 5:** customer export, retention/legal hold/anonymization,
       encryption rotation, notification outbox recovery, metrics, dashboards,
       and Prometheus rule tests pass.
@@ -788,6 +826,8 @@ database URIs, raw signed transactions, or internal exception detail.
 - `tests/test_loans_stage1_security_contract.py`
 - `tests/test_loans_stage2_atomic_lifecycle.py`
 - `tests/test_loans_stage2_real_mongo.py`
+- `tests/test_loans_stage4_persistence_scalability.py`
+- `tests/test_loans_stage4_real_mongo.py`
 - `tests/test_loans_stage3_settlement_policy.py`
 - `tests/test_qualification_enforcement.py`
 - `tests/test_wallet_disbursement_tasks.py`

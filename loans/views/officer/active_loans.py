@@ -1,20 +1,21 @@
-from rest_framework.views import APIView
-from rest_framework.permissions import IsAuthenticated
+import re
+
 from bson import ObjectId
+from rest_framework import status
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.views import APIView
 
 from accounts.authentication import CustomJWTAuthentication
-from accounts.utils.response_helpers import success_response, error_response
+from accounts.models import Customer
+from accounts.utils.response_helpers import error_response, success_response
 from accounts.utils.validation_utils import sanitize_text
-from rest_framework import status
 from loans.models import LoanApplication, RepaymentSchedule
-from loans.views.officer.base import LoanOfficerRequiredMixin
 from loans.services.related_data import (
     application_related_maps,
-    find_models,
+    find_models_bounded,
     model_map_by_ids,
 )
-from accounts.models import Customer
-import re
+from loans.views.officer.base import LoanOfficerRequiredMixin
 
 
 class ActiveLoansView(LoanOfficerRequiredMixin, APIView):
@@ -50,6 +51,7 @@ class ActiveLoansView(LoanOfficerRequiredMixin, APIView):
 
         # Build customer query and support direct ID lookups
         direct_schedules = []
+        search_truncated = False
         if customer_id_filter:
             # Direct customer ID filter - query by _id
             try:
@@ -79,7 +81,7 @@ class ActiveLoansView(LoanOfficerRequiredMixin, APIView):
 
                 # Also include phone and email search with the full original query
                 full_regex = re.compile(f".*{re.escape(search)}.*", re.IGNORECASE)
-                customers = find_models(
+                customers, search_truncated = find_models_bounded(
                     Customer,
                     {
                         "$or": [
@@ -95,7 +97,7 @@ class ActiveLoansView(LoanOfficerRequiredMixin, APIView):
             else:
                 # Single word search: use original logic
                 regex = re.compile(f".*{re.escape(search)}.*", re.IGNORECASE)
-                customers = find_models(
+                customers, search_truncated = find_models_bounded(
                     Customer,
                     {
                         "$or": [
@@ -129,12 +131,13 @@ class ActiveLoansView(LoanOfficerRequiredMixin, APIView):
 
         customer_cache = {c.id: c for c in customers if c and c.id}
         customer_ids = list(customer_cache)
-        schedules = find_models(
+        schedules, schedules_truncated = find_models_bounded(
             RepaymentSchedule,
             {"customer_id": {"$in": customer_ids}},
             limit=500,
             sort=[("created_at", -1)],
         )
+        search_truncated = search_truncated or schedules_truncated
         schedules_by_id = {schedule.id: schedule for schedule in schedules if schedule}
         for schedule in direct_schedules:
             if schedule and schedule.id:
@@ -215,6 +218,10 @@ class ActiveLoansView(LoanOfficerRequiredMixin, APIView):
             append_schedule(schedule, customer)
 
         return success_response(
-            data={"loans": loans_data, "total": len(loans_data)},
+            data={
+                "loans": loans_data,
+                "total": len(loans_data),
+                "search_truncated": search_truncated,
+            },
             message="Active loans retrieved",
         )

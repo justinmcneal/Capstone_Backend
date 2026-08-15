@@ -16,7 +16,10 @@ from loans.serializers import (
     MissingDocumentsRequestSerializer,
 )
 from loans.services.audit import record_loan_audit
-from loans.services.related_data import application_related_maps, find_models
+from loans.services.related_data import (
+    application_related_maps,
+    find_models_bounded,
+)
 from loans.utils.serialization import (
     disbursement_failure_code,
     serialize_internal_note,
@@ -237,6 +240,7 @@ class OfficerApplicationListView(LoanOfficerRequiredMixin, APIView):
         # Keyword search - need to handle customer name search with multi-word support
         customer_ids = []
         product_ids = []
+        search_truncated = False
         if search_query:
             # Split search query into terms for multi-word search
             search_terms = search_query.strip().split()
@@ -244,7 +248,7 @@ class OfficerApplicationListView(LoanOfficerRequiredMixin, APIView):
             if len(search_terms) == 1:
                 # Single term - simple regex search
                 regex = re.compile(f".*{re.escape(search_terms[0])}.*", re.IGNORECASE)
-                customers = find_models(
+                customers, customers_truncated = find_models_bounded(
                     Customer,
                     {
                         "$or": [
@@ -259,7 +263,10 @@ class OfficerApplicationListView(LoanOfficerRequiredMixin, APIView):
                 customer_ids = [c.id for c in customers if c]
 
                 # Search products
-                products = find_models(LoanProduct, {"name": regex}, limit=500)
+                products, products_truncated = find_models_bounded(
+                    LoanProduct, {"name": regex}, limit=500
+                )
+                search_truncated = customers_truncated or products_truncated
                 product_ids = [p.id for p in products if p]
             else:
                 # Multiple terms - match all terms across customer fields
@@ -277,7 +284,7 @@ class OfficerApplicationListView(LoanOfficerRequiredMixin, APIView):
                         }
                     )
 
-                customers = find_models(
+                customers, customers_truncated = find_models_bounded(
                     Customer, {"$and": customer_and_conditions}, limit=500
                 )
                 customer_ids = [c.id for c in customers if c]
@@ -288,9 +295,10 @@ class OfficerApplicationListView(LoanOfficerRequiredMixin, APIView):
                     term_regex = re.compile(f".*{re.escape(term)}.*", re.IGNORECASE)
                     product_and_conditions.append({"name": term_regex})
 
-                products = find_models(
+                products, products_truncated = find_models_bounded(
                     LoanProduct, {"$and": product_and_conditions}, limit=500
                 )
+                search_truncated = customers_truncated or products_truncated
                 product_ids = [p.id for p in products if p]
 
         # Build final query with customer and product search
@@ -385,6 +393,7 @@ class OfficerApplicationListView(LoanOfficerRequiredMixin, APIView):
                 "page": page,
                 "page_size": page_size,
                 "total_pages": (total_count + page_size - 1) // page_size,
+                "search_truncated": search_truncated,
             },
             message="Applications retrieved",
         )

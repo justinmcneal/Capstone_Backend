@@ -28,14 +28,16 @@ def check_overdue_installments_task():
 
     from loans.blockchain.sync import sync_overdue
     from loans.models import RepaymentSchedule
+    from loans.services.job_control import run_bounded_scan
 
     now = utcnow()
     updated_count = 0
 
-    for doc in db["repayment_schedules"].find({}):
+    def process(doc):
+        nonlocal updated_count
         schedule = RepaymentSchedule.from_dict(doc)
         if not schedule:
-            continue
+            return
 
         overdue_installments = schedule.mark_overdue_installments(as_of=now)
         for installment_number in overdue_installments:
@@ -51,9 +53,18 @@ def check_overdue_installments_task():
 
         updated_count += len(overdue_installments)
 
+    scan = run_bounded_scan(
+        "check_overdue_installments",
+        "repayment_schedules",
+        {"status": "active"},
+        process,
+    )
+
     if updated_count:
         logger.info("Marked %s overdue installments", updated_count)
 
+    if not scan["lease_acquired"]:
+        logger.info("Overdue scan skipped because another worker owns the lease")
     return {"overdue_marked": updated_count}
 
 
@@ -65,18 +76,28 @@ def reconcile_repayment_lifecycle_task():
         return {"paid_off_reconciled": 0}
 
     from loans.models import LoanApplication, RepaymentSchedule
+    from loans.services.job_control import run_bounded_scan
 
     reconciled = 0
-    for document in db["repayment_schedules"].find({"status": {"$ne": "paid_off"}}):
+
+    def process(document):
+        nonlocal reconciled
         schedule = RepaymentSchedule.from_dict(document)
         if not schedule or not schedule.is_paid_off():
-            continue
+            return
         schedule._mark_paid_off_if_complete()
         schedule.save()
         application = LoanApplication.find_by_id(schedule.loan_id)
         if application and application.status == "disbursed":
             application.mark_paid_off(schedule.paid_off_at)
         reconciled += 1
+
+    run_bounded_scan(
+        "reconcile_repayment_lifecycle",
+        "repayment_schedules",
+        {"status": {"$ne": "paid_off"}},
+        process,
+    )
     return {"paid_off_reconciled": reconciled}
 
 
@@ -309,16 +330,24 @@ def reconcile_wallet_disbursements_task():
     if db is None:
         return {"enqueued": 0}
 
+    from loans.services.job_control import run_bounded_scan
+
     enqueued = 0
-    cursor = db["loan_applications"].find(
+
+    def process(document):
+        nonlocal enqueued
+        execute_wallet_disbursement_task.delay(str(document["_id"]))
+        enqueued += 1
+
+    run_bounded_scan(
+        "reconcile_wallet_disbursements",
+        "loan_applications",
         {
             "status": "approved",
             "disbursement_status": "pending",
             "disbursement_method": "wallet",
         },
-        {"_id": 1},
+        process,
+        projection={"_id": 1},
     )
-    for doc in cursor:
-        execute_wallet_disbursement_task.delay(str(doc["_id"]))
-        enqueued += 1
     return {"enqueued": enqueued}
