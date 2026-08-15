@@ -33,7 +33,7 @@ The following repository selection passed on 2026-08-15:
   -k 'loan or blockchain or qualification or wallet_disbursement or repayment'
 ```
 
-Result after Stage 2: **485 passed, 12 skipped, 713 deselected**. Nine skips
+Result after Stage 3: **492 passed, 12 skipped, 713 deselected**. Nine skips
 require Ganache/RPC and three are the explicitly opt-in Stage 2 real-Mongo
 suite.
 
@@ -47,7 +47,7 @@ Result: **17 passed**. These cases cover cross-officer concealment, role-safe
 blockchain payloads, strict administrator queries, stable public failures, and
 disbursement/recovery response minimization.
 
-The full repository regression result after Stage 2 is **1,251 passed and 38
+The full repository regression result after Stage 3 is **1,258 passed and 38
 skipped**. The skips remain explicitly opt-in external-service suites; they are
 not counted as deployment evidence.
 
@@ -58,6 +58,16 @@ Stage 2 local validation:
 ```
 
 Result: **8 passed**.
+
+Stage 3 focused policy validation:
+
+```bash
+.venv/bin/pytest -q tests/test_loans_stage3_settlement_policy.py
+```
+
+Result: **7 passed**. These cases prove the published rail scope, disabled
+provider guards, stable no-mutation failures, penalty concurrency, waiver-credit
+carry-forward, and rejection when a waiver would require an external refund.
 
 Run the complete repository suite before merging or releasing:
 
@@ -165,7 +175,7 @@ The latter two are reserved until corresponding policy and API workflows exist.
 | `GET` | `applications/` | Customer role; owner rows only |
 | `GET/PUT` | `applications/<application_id>/` | Owner; PUT only for draft |
 | `GET` | `applications/<application_id>/schedule/` | Owner; disbursed/closed lifecycle |
-| `GET/POST` | `applications/<application_id>/payments/` | Owner; POST only GCash/bank pending claim |
+| `GET/POST` | `applications/<application_id>/payments/` | Owner; GET history, while disabled GCash/bank POST returns stable 503 without mutation |
 | `POST` | `applications/<application_id>/resubmit/` | Owner; rejected only |
 | `GET` | `applications/<application_id>/feedback/` | Owner; rejected only |
 | `POST` | `applications/<application_id>/set-disbursement-method/` | Owner; allowed lifecycle |
@@ -318,8 +328,8 @@ Idempotency-Key: disburse-<uuid>
 - Cash/check should return an executed disbursement and one schedule.
 - Wallet should return HTTP 202 pending, then complete only after the worker
   confirms the transfer and creates/reuses the schedule.
-- GCash/bank transfer currently return HTTP 202 pending and have no completion
-  workflow. Do not assert that acceptance means settlement.
+- GCash/bank transfer return `503 SETTLEMENT_RAIL_UNAVAILABLE` without creating
+  a disbursement. Wallet is accepted only when blockchain is enabled.
 - Replaying an identical key/payload must not create another schedule or send
   another transfer.
 - Reusing a key for an incompatible request must fail.
@@ -362,9 +372,10 @@ Idempotency-Key: claim-<uuid>
 }
 ```
 
-Expected current result is `pending_verification`; the schedule must not be
-credited. A future provider callback/operator verification suite must prove the
-pending-to-posted/failed lifecycle before this rail is released.
+Expected result is HTTP `503` with code `SETTLEMENT_RAIL_UNAVAILABLE`. No
+`LoanPayment` or schedule mutation may occur. A future provider implementation
+must add signed callback/operator verification, expiry, retry, reconciliation,
+and pending-to-posted/failed tests before this rail is enabled.
 
 ### Wallet payment
 
@@ -409,9 +420,11 @@ POST /api/loans/officer/applications/<application-id>/penalties/waive/
 }
 ```
 
-Assert repeatability, eligibility, audit fields, balance recalculation, and the
-current `waiver_credit_centavos` behavior when a paid penalty is waived. The
-financial disposition of that credit remains a policy gap.
+Assert optimistic-concurrency conflict behavior, policy-version audit fields,
+and balance recalculation. If part of a collected penalty is waived, assert its
+credit is atomically applied to later unpaid installments. If no later balance
+can absorb all credit, assert the waiver fails without mutation because an
+external refund rail is not implemented.
 
 ### Early payoff
 
@@ -436,8 +449,10 @@ Idempotency-Key: payoff-<uuid>
 }
 ```
 
-Assert the schedule becomes `paid_off`, the application becomes `completed`,
-remaining balance is zero, and replay creates no second payment.
+Assert the quote includes its timestamp, all-remaining-scheduled-balance basis,
+exact-amount requirement, half-up centavo rounding, and accounting-policy
+version. The schedule must become `paid_off`, the application `completed`, the
+remaining balance zero, and replay must create no second payment.
 
 ### Wallet disbursement recovery
 
@@ -507,7 +522,7 @@ mapping between each stage and its required test evidence.
 | --- | --- | --- |
 | Stage 1 — Authorization and public response contract | Authenticated routes, role/permission/owner/assignment isolation, blockchain field allowlists, stable errors | **Complete:** 17 focused regressions pass; broader Loans selection passes |
 | Stage 2 — Atomic lifecycle and financial correctness | Concurrent review/assignment/notes, idempotent disbursement/payment/payoff, crash/replay | Application code and eight focused local regressions complete; three isolated real-Mongo tests added but execution is pending approval |
-| Stage 3 — Settlement scope and approved policies | GCash/bank callbacks and reconciliation or disabled-rail tests; reversal/waiver/write-off policy cases | Not implemented; only pending claim/initiation behavior is testable |
+| Stage 3 — Settlement scope and approved policies | Disabled GCash/bank rails, feature-gated wallet, public policy contract, concurrent penalty/waiver credit, explicit payoff/rate terms | **Complete in application code:** seven focused regressions and the broader Loans selection pass; institutional policy approval and optional deployed-wallet evidence remain release gates |
 | Stage 4 — MongoDB schema and bounded execution | Validators, inventory/backfill, unique indexes, query plans, large fixtures, overlapping jobs | Not implemented for Loans; model index unit coverage exists |
 | Stage 5 — Privacy, notifications, and observability | Export/retention/hold/pseudonymization, encryption rotation, outbox recovery, metrics/rules/dashboard | Partial shared infrastructure only; loan-specific implementation and evidence are missing |
 | Stage 6 — Real-environment release validation | Deployment MongoDB, Redis/Celery, optional chain, HTTPS, load, backup/restore, rollback, dashboards/alerts | Pending deployment topology |
@@ -687,11 +702,13 @@ inventory and dry-run backfill have been reviewed and backed up.
 6. Backend verifies chain facts and posts it once.
 7. Reconciliation reports no off-chain/on-chain drift.
 
-### External-provider branch
+### Disabled external-provider branch
 
-GCash/bank transfer can currently be tested only through pending initiation.
-There is no complete happy path until provider settlement is implemented. The
-client must show “pending verification,” not “paid” or “disbursed.”
+Submit GCash and bank-transfer payment/disbursement requests and assert stable
+`503 SETTLEMENT_RAIL_UNAVAILABLE` responses. Verify no payment, claim,
+disbursement attempt, schedule balance, or application state changes. There is
+no provider happy path in the approved baseline; clients must hide these choices
+using the published settlement policy.
 
 ## Expected HTTP Outcomes
 
@@ -699,7 +716,7 @@ client must show “pending verification,” not “paid” or “disbursed.”
 | --- | --- |
 | `200` | Successful read/update or idempotent replay |
 | `201` | New product/application/payment resource created where applicable |
-| `202` | Wallet/external operation accepted but not yet confirmed |
+| `202` | Enabled wallet operation accepted but not yet confirmed |
 | `400` | Invalid body/filter/state/amount/term/key format |
 | `401` | Missing, invalid, expired, or revoked authentication |
 | `403` | Role or named-permission denial |
@@ -707,7 +724,7 @@ client must show “pending verification,” not “paid” or “disbursed.”
 | `409` | Idempotency mismatch, duplicate claim, or concurrent-state conflict |
 | `429` | Pre-qualification or shared request throttle exceeded |
 | `500` | Unexpected internal failure; response must not include exception text |
-| `503` | Disabled/unavailable chain, rate provider, or required dependency |
+| `503` | Disabled settlement rail, unavailable chain/rate provider, or required dependency |
 
 ## Manual API Checklist
 
@@ -732,9 +749,10 @@ database URIs, raw signed transactions, or internal exception detail.
       regressions pass.
 - [ ] **Stage 2:** application code and local regressions pass; execute and
       record the isolated real-Mongo atomic lifecycle/idempotency suite.
-- [ ] **Stage 3:** GCash/bank rails are complete or disabled, and approved
-      penalty, waiver-credit, payoff, reversal, and write-off policies match
-      implemented behavior.
+- [x] **Stage 3 application code:** GCash/bank rails are disabled, wallet is
+      feature-gated, waiver credits are carried forward or rejected safely, and
+      payoff/rate/accounting contracts are explicit. Institutional/legal policy
+      approval and optional deployed-wallet proof remain release conditions.
 - [ ] **Stage 4:** inventory/backfill, validators/indexes, representative query
       plans, bounded exports/jobs, and overlap/load tests pass.
 - [ ] **Stage 5:** customer export, retention/legal hold/anonymization,
@@ -760,6 +778,10 @@ database URIs, raw signed transactions, or internal exception detail.
 - `tests/test_loans_api.py`
 - `tests/test_loans_api_stubs.py`
 - `tests/test_loans_smoke.py`
+- `tests/test_loans_stage1_security_contract.py`
+- `tests/test_loans_stage2_atomic_lifecycle.py`
+- `tests/test_loans_stage2_real_mongo.py`
+- `tests/test_loans_stage3_settlement_policy.py`
 - `tests/test_qualification_enforcement.py`
 - `tests/test_wallet_disbursement_tasks.py`
 - `tests/test_stage4_blockchain_recovery.py`

@@ -1,20 +1,15 @@
-import logging
-
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 
 from accounts.authentication import CustomJWTAuthentication
 from accounts.utils.response_helpers import error_response, success_response
-from accounts.utils.validation_utils import sanitize_text
-from analytics.models import AuditLog  # noqa: F401 - existing test patch target
 from loans.models import LoanApplication
-from loans.services.audit import record_loan_audit
 from loans.services.payment_queries import payment_history_page
-
-logger = logging.getLogger("loans")
-
-
+from loans.services.settlement_policy import (
+    SettlementRailUnavailable,
+    require_customer_provider_payment,
+)
 from loans.views.customer.base import CustomerRoleRequiredMixin
 
 
@@ -214,45 +209,7 @@ class PaymentHistoryView(CustomerRoleRequiredMixin, APIView):
                 status_code=status.HTTP_400_BAD_REQUEST,
             )
 
-        amount_raw = request.data.get("amount")
-        installment_number_raw = request.data.get("installment_number")
         payment_method = request.data.get("payment_method", "bank_transfer")
-        reference = sanitize_text(request.data.get("reference", ""))
-        notes = sanitize_text(request.data.get("notes", ""))
-
-        if installment_number_raw in (None, ""):
-            return error_response(
-                message="installment_number is required",
-                status_code=status.HTTP_400_BAD_REQUEST,
-            )
-
-        try:
-            installment_number = int(installment_number_raw)
-        except (TypeError, ValueError):
-            return error_response(
-                message="installment_number must be an integer",
-                status_code=status.HTTP_400_BAD_REQUEST,
-            )
-
-        if installment_number < 1:
-            return error_response(
-                message="installment_number must be at least 1",
-                status_code=status.HTTP_400_BAD_REQUEST,
-            )
-
-        try:
-            amount = float(amount_raw)
-        except (TypeError, ValueError):
-            return error_response(
-                message="amount must be a valid number",
-                status_code=status.HTTP_400_BAD_REQUEST,
-            )
-
-        if amount <= 0:
-            return error_response(
-                message="amount must be greater than 0",
-                status_code=status.HTTP_400_BAD_REQUEST,
-            )
 
         if payment_method in {"cash", "check"}:
             return error_response(
@@ -266,135 +223,16 @@ class PaymentHistoryView(CustomerRoleRequiredMixin, APIView):
                 status_code=status.HTTP_400_BAD_REQUEST,
             )
 
-        valid_methods = {"gcash", "bank_transfer"}
-        if payment_method not in valid_methods:
-            return error_response(
-                message="Invalid payment_method",
-                status_code=status.HTTP_400_BAD_REQUEST,
-            )
-
-        if not reference:
-            return error_response(
-                message="A provider or bank reference is required for verification",
-                status_code=status.HTTP_400_BAD_REQUEST,
-            )
-
-        idempotency_key = request.headers.get("Idempotency-Key") or request.data.get(
-            "idempotency_key"
-        )
-
-        from loans.models import RepaymentSchedule
-
-        schedule = RepaymentSchedule.find_by_loan(application_id)
-        if not schedule:
-            return error_response(
-                message="Repayment schedule not found",
-                status_code=status.HTTP_404_NOT_FOUND,
-            )
-
-        if str(schedule.customer_id) != str(customer_id):
-            return error_response(
-                message="Repayment schedule not found",
-                status_code=status.HTTP_404_NOT_FOUND,
-            )
-
-        installment = schedule.get_installment(installment_number)
-        if not installment:
-            return error_response(
-                message=f"Installment #{installment_number} not found",
-                status_code=status.HTTP_404_NOT_FOUND,
-            )
-
-        if installment.get("status") == "paid":
-            return error_response(
-                message=f"Installment #{installment_number} is already fully paid",
-                status_code=status.HTTP_400_BAD_REQUEST,
-            )
-
-        remaining = installment["total_amount"] - installment.get("paid_amount", 0)
-
-        # Include penalty in remaining amount if applied
-        if installment.get("penalty_status") == "applied":
-            remaining += installment.get("penalty_amount", 0)
-
-        if amount - remaining > 0.01:
-            return error_response(
-                message=f"Amount exceeds remaining balance of ₱{remaining:.2f}",
-                status_code=status.HTTP_400_BAD_REQUEST,
-            )
-
-        from loans.services.payment import (
-            PaymentConflictError,
-            PaymentServiceError,
-            create_pending_submission,
-            scoped_idempotency_key,
-        )
-
         try:
-            payment, replayed = create_pending_submission(
-                schedule=schedule,
-                installment_number=installment_number,
-                amount=amount,
-                payment_method=payment_method,
-                reference=reference,
-                notes=notes,
-                customer_id=customer_id,
-                idempotency_key=scoped_idempotency_key(
-                    "customer", customer_id, idempotency_key
-                ),
-            )
-        except PaymentConflictError as exc:
+            require_customer_provider_payment(payment_method)
+        except SettlementRailUnavailable as exc:
             return error_response(
-                message=str(exc), status_code=status.HTTP_409_CONFLICT
+                message=str(exc),
+                code=exc.code,
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             )
-        except PaymentServiceError as exc:
+        except ValueError as exc:
             return error_response(
-                message=str(exc), status_code=status.HTTP_400_BAD_REQUEST
+                message=str(exc),
+                status_code=status.HTTP_400_BAD_REQUEST,
             )
-
-        if not replayed:
-            record_loan_audit(
-                action="customer_payment_submitted",
-                user_id=str(customer_id),
-                user_type="customer",
-                description=f"Customer payment submitted for verification - ₱{amount:,.2f} for installment #{installment_number}",
-                resource_type="payment",
-                resource_id=payment.id,
-                details={
-                    "loan_id": application_id,
-                    "amount": amount,
-                    "installment": installment_number,
-                    "method": payment_method,
-                    "payment_status": payment.payment_status,
-                },
-                ip_address=request.META.get("REMOTE_ADDR", ""),
-            )
-
-        logger.info(
-            "Customer payment submitted: loan=%s installment=%s amount=%s customer=%s",
-            application_id,
-            installment_number,
-            amount,
-            customer_id,
-        )
-
-        return success_response(
-            data={
-                "payment_id": payment.id,
-                "loan_id": application_id,
-                "installment_number": installment_number,
-                "amount": amount,
-                "payment_method": payment_method,
-                "payment_status": payment.payment_status,
-                "reference": reference,
-                "recorded_at": (
-                    payment.recorded_at.isoformat() if payment.recorded_at else None
-                ),
-                "installment_status": installment["status"],
-                "remaining_balance": schedule.get_remaining_balance(),
-                "balance_applied": False,
-                "replayed": replayed,
-            },
-            message="Payment submitted and pending verification",
-            status_code=status.HTTP_202_ACCEPTED,
-        )

@@ -1,6 +1,7 @@
 from rest_framework import serializers
-from documents.models import DOCUMENT_TYPES
+
 from accounts.serializers.base_serializers import InputSanitizationMixin
+from documents.models import DOCUMENT_TYPES
 from loans.services.product_rules import validate_product_bounds
 
 
@@ -51,6 +52,16 @@ class LoanApplicationSerializer(InputSanitizationMixin, serializers.Serializer):
         required=False,
         allow_blank=True,
     )
+
+    def validate_preferred_disbursement_method(self, value):
+        if not value:
+            return value
+        from loans.services.settlement_policy import require_disbursement_method
+
+        try:
+            return require_disbursement_method(value)
+        except ValueError as exc:
+            raise serializers.ValidationError(str(exc)) from exc
 
 
 class PreQualifyRequestSerializer(InputSanitizationMixin, serializers.Serializer):

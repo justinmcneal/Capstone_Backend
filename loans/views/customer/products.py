@@ -18,6 +18,7 @@ from loans.services.product_rules import (
     ProductRuleViolation,
     validate_application_terms,
 )
+from loans.services.settlement_policy import public_settlement_policy
 
 logger = logging.getLogger("loans")
 
@@ -67,7 +68,11 @@ class LoanProductListView(CustomerRoleRequiredMixin, APIView):
         ]
 
         return success_response(
-            data={"products": products_data, "total": len(products_data)},
+            data={
+                "products": products_data,
+                "total": len(products_data),
+                "settlement_policy": public_settlement_policy(),
+            },
             message="Loan products retrieved successfully",
         )
 
@@ -115,6 +120,7 @@ class LoanProductDetailView(CustomerRoleRequiredMixin, APIView):
                 "min_business_months": product.min_business_months,
                 "min_monthly_income": product.min_monthly_income,
                 "target_description": product.target_description,
+                "settlement_policy": public_settlement_policy(),
             },
             message="Product details retrieved",
         )

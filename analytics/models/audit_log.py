@@ -435,10 +435,10 @@ AUDIT_ACTION_DETAIL_KEYS.update(
         ),
         "repayment_schedule_exported": frozenset({"filters", "format", "row_count"}),
         "penalty_applied": frozenset(
-            {"amount", "installment_number", "loan_id", "reason"}
+            {"amount", "installment_number", "loan_id", "reason", "policy_version"}
         ),
         "penalty_waived": frozenset(
-            {"amount", "installment_number", "loan_id", "reason"}
+            {"amount", "installment_number", "loan_id", "reason", "policy_version"}
         ),
         "analytics_privileged_read": frozenset(),
     }

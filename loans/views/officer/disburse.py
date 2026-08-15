@@ -21,6 +21,10 @@ from loans.services.disbursement import (
     execute_manual_disbursement,
 )
 from loans.services.payment import PaymentServiceError
+from loans.services.settlement_policy import (
+    SettlementRailUnavailable,
+    require_disbursement_method,
+)
 from loans.utils.serialization import disbursement_failure_code
 from loans.views.officer.base import LoanOfficerRequiredMixin
 
@@ -105,13 +109,20 @@ class DisburseView(LoanOfficerRequiredMixin, APIView):
 
         stored_method = application.preferred_disbursement_method
         method = stored_method or (
-            sanitize_text(request.data.get("method", "bank_transfer")).lower()
-            or "bank_transfer"
+            sanitize_text(request.data.get("method", "cash")).lower() or "cash"
         )
         if method not in MANUAL_DISBURSEMENT_METHODS | EXTERNAL_DISBURSEMENT_METHODS:
             return error_response(
                 message="Invalid disbursement method",
                 status_code=status.HTTP_400_BAD_REQUEST,
+            )
+        try:
+            method = require_disbursement_method(method)
+        except SettlementRailUnavailable as exc:
+            return error_response(
+                message=str(exc),
+                code=exc.code,
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             )
 
         reference = sanitize_text(request.data.get("reference", ""))

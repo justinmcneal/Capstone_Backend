@@ -26,6 +26,7 @@ from loans.services.product_rules import (
     validate_application_terms,
 )
 from loans.services.related_data import find_models, model_map_by_ids
+from loans.services.settlement_policy import SettlementRailUnavailable
 
 logger = logging.getLogger("loans")
 
@@ -653,7 +654,10 @@ class SetDisbursementMethodView(CustomerRoleRequiredMixin, APIView):
     Customer: Set preferred disbursement method after loan approval.
 
     POST /api/loans/applications/<id>/set-disbursement-method/
-    Body: { "disbursement_method": "gcash" | "bank_transfer" }
+    Body: { "disbursement_method": "cash" | "check" | "wallet" }
+
+    Wallet is available only when blockchain support is enabled. Provider rails
+    return a stable unavailable response until their settlement lifecycle exists.
     """
 
     authentication_classes = [CustomJWTAuthentication]
@@ -686,6 +690,12 @@ class SetDisbursementMethodView(CustomerRoleRequiredMixin, APIView):
 
         try:
             app.set_preferred_disbursement_method(disbursement_method)
+        except SettlementRailUnavailable as exc:
+            return error_response(
+                message=str(exc),
+                code=exc.code,
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
         except ValueError as e:
             return error_response(
                 message=str(e), status_code=status.HTTP_400_BAD_REQUEST

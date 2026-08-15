@@ -163,6 +163,9 @@ class TestLoanProductListView:
         assert response.status_code == 200, response.data
         assert len(response.data["data"]["products"]) == 1
         assert response.data["data"]["products"][0]["name"] == "Micro Loan"
+        assert response.data["data"]["settlement_policy"][
+            "available_disbursement_methods"
+        ] == ["cash", "check"]
 
 
 class TestLoanProductDetailView:
@@ -205,6 +208,9 @@ class TestLoanProductDetailView:
         response = LoanProductDetailView.as_view()(request, product_id=product.id)
         assert response.status_code == 200
         assert response.data["data"]["name"] == "Micro Loan"
+        assert response.data["data"]["settlement_policy"][
+            "provider_payment_submission_enabled"
+        ] is False
 
 
 class TestPreQualifyView:

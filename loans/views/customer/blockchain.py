@@ -486,6 +486,8 @@ class SystemWalletInfoView(CustomerRoleRequiredMixin, APIView):
                 "chain_id": settings.BLOCKCHAIN_CHAIN_ID,
                 "eth_php_rate": rate_info["rate"],
                 "rate_source": rate_info["source"],
+                "rate_basis": "verification_time",
+                "rate_max_age_seconds": 300,
                 "rate_cached_at": (
                     datetime.fromtimestamp(
                         rate_info["fetched_at"], tz=timezone.utc

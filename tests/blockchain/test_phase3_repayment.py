@@ -146,7 +146,14 @@ class TestSystemWalletInfoView:
     def test_view_returns_all_required_fields(self):
         """Structural: response includes all required wallet info fields."""
         source = inspect.getsource(SystemWalletInfoView)
-        for field in ["wallet_address", "chain_id", "eth_php_rate", "rate_source"]:
+        for field in [
+            "wallet_address",
+            "chain_id",
+            "eth_php_rate",
+            "rate_source",
+            "rate_basis",
+            "rate_max_age_seconds",
+        ]:
             assert f"'{field}'" in source or f'"{field}"' in source, (
                 f"Missing field: {field}"
             )
@@ -297,6 +304,8 @@ class TestSystemWalletInfoFlow:
         assert data["chain_id"] == 1337
         assert data["eth_php_rate"] == 130000.0
         assert data["rate_source"] == "cryptocompare"
+        assert data["rate_basis"] == "verification_time"
+        assert data["rate_max_age_seconds"] == 300
 
     @patch.object(
         SystemWalletInfoView, "check_customer_permission", return_value=(True, None)

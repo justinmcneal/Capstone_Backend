@@ -37,36 +37,37 @@ durable wallet-disbursement design are implemented. Thirty-nine registered paths
 expose 46 HTTP method/path operations across customer, officer, and
 administrator roles.
 
-Stages 1 and 2 have closed the application-code authorization, response, and
-concurrent lifecycle defects identified by this review. Stage 2 still requires
+Stages 1 through 3 have closed the application-code authorization, response,
+concurrent lifecycle, and exposed-settlement-scope defects identified by this
+review. Stage 2 still requires
 execution of its opt-in suite against an approved isolated real MongoDB target.
-The remaining blockers are release evidence, settlement, persistence, privacy,
-and operational concerns:
+The approved initial settlement baseline exposes cash/check, with wallet
+available only when blockchain is explicitly enabled. GCash and bank-transfer
+provider rails are disabled until a verified integration is implemented. The
+remaining blockers are release evidence, persistence, privacy, and operational
+concerns:
 
 1. The isolated real-Mongo Stage 2 suite exists but has not been executed
    against an approved target; local `mongomock` concurrency is not deployment
    evidence.
-2. GCash and bank-transfer payment/disbursement records can enter pending state,
-   but no provider callback, verification, settlement, expiry, or operator
-   resolution workflow completes them.
-3. Loan collections have indexes but no MongoDB JSON-schema validators,
+2. Loan collections have indexes but no MongoDB JSON-schema validators,
    inventory/backfill commands, or loan-specific real-Mongo integration suite.
-4. Scheduled repayment scans and several payment/application query paths are
+3. Scheduled repayment scans and several payment/application query paths are
    unbounded or materialize large ID sets. Encrypted payment references cannot
    be searched with the current MongoDB regex query.
-5. Loan data is not included in customer account export and has no documented
+4. Loan data is not included in customer account export and has no documented
    retention, legal-hold, anonymization, or deletion policy integration.
-6. Encryption covers selected free-text fields, but application purpose/AI
+5. Encryption covers selected free-text fields, but application purpose/AI
    recommendation and several provider/blockchain failure-detail fields remain
    plaintext in their domain collections.
-7. Loans has one audit-failure counter but no complete loan/payment/disbursement
+6. Loans has one audit-failure counter but no complete loan/payment/disbursement
    metrics, dashboards, alerts, or bounded backlog gauges.
 
 Current automated baseline:
 
-- Loan/blockchain-related selection: **485 passed, 12 skipped, 713 deselected**
+- Loan/blockchain-related selection: **492 passed, 12 skipped, 713 deselected**
   on 2026-08-15.
-- Full repository regression: **1,251 passed, 38 skipped** on 2026-08-15.
+- Full repository regression: **1,258 passed, 38 skipped** on 2026-08-15.
 - The 12 skips are nine real-Ganache cases and three opt-in Stage 2 real-Mongo
   cases; skips are not deployment evidence.
 - The selection includes model, API, permission, qualification, payment,
@@ -85,10 +86,10 @@ Current automated baseline:
 | Applications | Implemented; real-Mongo proof pending | Owner-scoped create/list/detail/update/resubmit flows use guarded submit/resubmit transitions and stable conflicts. |
 | Assignment | Implemented; real-Mongo proof pending | Admin assign/reassign transitions compare the expected status and assignee; competing stale requests cannot overwrite the winner. Auto-assignment remains unused. |
 | Officer review | Implemented; delivery hardening remains | Review decisions are one-winner transitions, encrypted note appends use retrying compare-and-set, and document-request history is atomically preserved. Durable notifications remain Stage 5 work. |
-| Cash/check disbursement | Implemented with remaining hardening | Idempotency, atomic disbursement claims, and safe public failures exist; deployment concurrency proof remains. |
+| Cash/check disbursement | Implemented with remaining hardening | Idempotency, atomic disbursement claims, safe public failures, and a cash default exist; deployment concurrency proof remains. |
 | Wallet disbursement/payment | Partial; deployment-gated | Confirmation, durable retries, leases, exact rebroadcast, and recovery exist; real-chain and multi-worker evidence remain. |
-| GCash/bank rails | Not complete | Requests are recorded as pending but no settlement lifecycle completes them. |
-| Repayment accounting | Implemented with policy gaps | Centavo math, optimistic schedule updates, penalties, and payoff exist; waiver credit and reversal/write-off policies remain. |
+| GCash/bank rails | Safely disabled | API and model guards return `SETTLEMENT_RAIL_UNAVAILABLE` without creating a claim or disbursement. Provider integration remains an optional future feature. |
+| Repayment accounting | Implemented for the baseline | Versioned centavo math, optimistic schedule updates, exact payoff terms, and atomic penalty/waiver handling exist. Collected waiver credit is carried forward; a waiver requiring an external refund is rejected. Reserved reversal/write-off workflows remain unavailable. |
 | Retrieval/search/export | Partial | Role-scoped pagination and streaming audited exports exist; export totals and some supporting queries are unbounded, and encrypted-reference search is ineffective. |
 | Security and privacy | Stage 1 complete; later gaps remain | JWT, role/permission/assignment scope, explicit blockchain response contracts, stable public errors, encryption, idempotency, and audit exist. Lifecycle and data-governance work remains in later stages. |
 | MongoDB schema/indexes | Partial | Index declarations exist; validators, safe backfill tooling, and real-Mongo proof do not. |
@@ -131,10 +132,10 @@ All routes are mounted under `/api/loans/` and require authenticated JWTs.
 | `GET applications/` | Owner-scoped filtered pagination | Implemented |
 | `GET/PUT applications/<application_id>/` | Owner detail/draft update | Implemented |
 | `GET applications/<application_id>/schedule/` | Owner repayment schedule | Implemented |
-| `GET/POST applications/<application_id>/payments/` | History / external payment claim | Partial; POST only creates GCash/bank pending claims |
+| `GET/POST applications/<application_id>/payments/` | History / external payment claim | GET implemented; GCash/bank POST returns stable 503 without mutation because provider rails are disabled |
 | `POST applications/<application_id>/resubmit/` | Rejected application back to draft | Implemented with expected-state conflict protection |
 | `GET applications/<application_id>/feedback/` | Owner rejection feedback | Implemented |
-| `POST applications/<application_id>/set-disbursement-method/` | Borrower preference | Implemented; external rails remain incomplete |
+| `POST applications/<application_id>/set-disbursement-method/` | Borrower preference | Cash/check, plus wallet only when blockchain is enabled; unavailable rails return stable 503 |
 | `GET applications/<application_id>/blockchain/` | Owner chain status | Implemented with a customer-safe field allowlist; deployment-gated |
 | `POST applications/<application_id>/wallet-payment/` | Verify confirmed ETH transfer and post | Implemented with stable public failures; real-chain proof remains |
 | `GET system-wallet/` | Public payment wallet metadata for customer | Implemented when blockchain is configured |
@@ -163,7 +164,7 @@ assignment-limited.
 | `POST .../notes/` | Append bounded encrypted internal note history | Implemented with retrying compare-and-set; real-Mongo proof pending |
 | `POST .../request-missing-documents/` | Atomically record request/history and notify customer | State transition implemented; email remains best effort pending Stage 5 |
 | `PUT .../review/` | Approve or reject | Implemented as a one-winner expected-state transition |
-| `POST .../disburse/` | Cash/check/wallet/external disbursement initiation | Partial by rail |
+| `POST .../disburse/` | Cash/check or feature-gated wallet disbursement | Implemented by enabled rail; GCash/bank fail without mutation |
 | `GET/POST .../wallet-disbursement/` | Inspect/reconcile/retry/safely cancel | Implemented; deployment-gated |
 | `POST officer/payments/` | Post cash/check payment | Implemented with idempotency and centavo allocation |
 | `GET officer/payments/recent/` | Recent accessible payments | Partial; assigned application IDs are materialized without a bound |
@@ -171,9 +172,9 @@ assignment-limited.
 | `GET officer/active-loans/` | Scoped active-loan lookup | Implemented; requires search or customer ID |
 | `GET .../schedule/` | Scoped schedule detail | Implemented |
 | `GET .../payments/` | Scoped payment history | Implemented |
-| `POST .../penalties/apply/` | Apply late penalty | Implemented with policy assumptions |
-| `POST .../penalties/waive/` | Waive penalty | Partial; previously paid penalty becomes recorded credit with no disposition workflow |
-| `GET/POST .../payoff/` | Quote / settle early payoff | Implemented |
+| `POST .../penalties/apply/` | Apply explicit officer-entered late penalty | Implemented with versioned policy metadata and optimistic concurrency |
+| `POST .../penalties/waive/` | Waive penalty | Implemented; collected credit carries to later installments atomically, while unsupported external refunds are rejected |
+| `GET/POST .../payoff/` | Quote / settle exact early payoff | Implemented with explicit quote basis, centavo rounding, timestamp, and policy version |
 | `GET .../blockchain/` | Scoped chain transaction/audit status | Implemented with assignment concealment and an officer-safe field allowlist; deployment-gated |
 | `GET officer/exchange-rate/` | Current ETH/PHP rate | Deployment-gated |
 | `GET officer/schedules/export/` | Streaming audited CSV/JSON export | Partial; no total-row cap and results are scanned once to count and again to stream |
@@ -220,8 +221,9 @@ The exact request/response examples and test sequence are maintained in
   reconciliation, retry limits, and operator recovery actions.
 - Prepared raw transactions are encrypted and are not returned by the recovery
   endpoint.
-- GCash/bank-transfer initiation is deliberately pending rather than falsely
-  marked executed.
+- GCash/bank-transfer initiation is disabled at serializer, model, and API
+  boundaries until a verified provider lifecycle exists. It cannot create a
+  misleading pending financial record.
 
 ### Repayment and accounting
 
@@ -233,7 +235,14 @@ The exact request/response examples and test sequence are maintained in
 - Payment tokens make schedule application repeatable after partial failures.
 - Overpayment above the selected installment balance is rejected.
 - Paid schedules close the application as `completed`/`paid_off`.
-- Penalty apply/waive actions and payoff quotation/settlement are implemented.
+- Penalty apply/waive actions use the same accounting-version guard as payments
+  and payoff. A collected waived amount is atomically carried to later unpaid
+  installments; if value would remain and require a refund, the waiver is
+  rejected without mutation.
+- Product responses publish a client-safe settlement policy. Payoff quotes
+  identify their balance basis, exact-amount rule, timestamp, rounding, and
+  accounting-policy version. Wallet metadata identifies verification-time rate
+  valuation and its maximum cache age.
 - Customer wallet payments verify receipt success, recipient, sender, value,
   minimum confirmations, and transaction uniqueness before posting.
 
@@ -341,24 +350,33 @@ at every mutation boundary.
 
 ### 3. Settlement rails and business-policy decisions
 
-**Status: Partial — required unless release scope is explicitly cash/check only**
+**Status: Complete in application code for the approved non-provider baseline**
 
-- Either disable GCash/bank choices in server responses and clients, or
-  implement provider-bound initiation, signed callbacks/webhooks, reference
-  verification, expiry, retries, reconciliation, manual review, and executed/
-  failed/cancelled state transitions.
-- Define reversal, refund, correction, chargeback, cancellation, restructuring,
-  write-off, and recovery workflows before activating the reserved statuses.
-- Decide how `waiver_credit_centavos` is refunded, carried forward, or applied;
-  do not leave value as an informational field only.
-- Approve penalty rates/grace rules, payoff interest policy, rounding, timezone,
-  non-business-day behavior, and accounting/audit evidence with the institution.
-- Define ETH quote lifetime and whether payment value uses a locked quote or the
-  verification-time rate. Current disbursement stores its conversion before
-  sending, while customer payment uses the verification-time rate.
+- The versioned `cash-check-wallet-v1` settlement policy exposes cash/check and
+  adds wallet only when `BLOCKCHAIN_ENABLED=True`. GCash and bank transfer are
+  syntactically recognized but rejected with `SETTLEMENT_RAIL_UNAVAILABLE`
+  before any financial mutation.
+- Product list/detail responses publish the client-safe available methods and
+  policy metadata. Clients must use that contract instead of hard-coded rail
+  lists.
+- The versioned `scheduled-balance-v1` policy uses PHP centavos, half-up
+  rounding, UTC timestamps, scheduled principal/interest/penalties as the exact
+  payoff basis, explicit officer-entered penalties, and no automatic calendar
+  adjustment.
+- Waiving a collected penalty carries the resulting credit into later unpaid
+  installments atomically. A waiver is rejected without mutation when it would
+  require an unsupported external refund.
+- Reversal, refund, correction, chargeback, restructuring, and write-off remain
+  reserved/unexposed workflows. They must not be enabled until a separately
+  approved policy and complete accounting lifecycle are implemented.
+- Customer wallet payments are valued at verification time. The API publishes
+  a 300-second maximum cached-rate age; deployed provider/chain proof remains a
+  Stage 6 condition whenever wallet support is enabled.
 
-Release evidence: approved policy matrix, provider sandbox certification,
-callback replay/signature tests, reconciliation, and ledger balancing.
+Release evidence still required outside Stage 3: institutional/legal approval
+of the documented lending policy and deployed wallet proof if that optional rail
+is enabled. A future GCash/bank release requires provider sandbox certification,
+signed callback replay tests, reconciliation, and ledger balancing.
 
 ### 4. MongoDB schema, inventory, and query correctness
 
@@ -477,18 +495,25 @@ close the remaining Stage 2 release-evidence condition.
 
 ### Stage 3 — Settlement scope and approved lending policies
 
-**Status: Not started; product and policy decisions required**
+**Status: Complete in application code — 2026-08-15**
 
-- Choose the initial production rail scope. Either complete GCash/bank provider
-  settlement or disable those choices across API responses and clients.
-- Implement any approved callback, verification, expiry, retry, reconciliation,
-  and operator-review workflow.
-- Approve and implement the treatment of waiver credits, reversals, refunds,
-  corrections, chargebacks, cancellation, restructuring, and write-off.
-- Approve penalty, payoff, rounding, calendar, and ETH quote policies.
+- Selected the safe initial cash/check baseline with optional feature-gated
+  wallet support.
+- Disabled unfinished GCash/bank provider initiation at API, serializer, and
+  model boundaries and exposed a versioned client settlement policy.
+- Added optimistic concurrency and explicit policy metadata to penalty apply and
+  waive operations.
+- Implemented atomic carry-forward of collected waiver credit and rejection of
+  waivers that would need an unsupported external refund.
+- Made payoff basis, exact amount, timestamp, rounding, and policy version
+  explicit; documented wallet verification-time valuation and quote age.
+- Kept reversal/refund/chargeback/restructure/write-off states unavailable until
+  their own approved workflow exists.
 
-**Exit condition:** every exposed payment/disbursement/status choice has a
-complete settlement lifecycle and an owner-approved accounting policy.
+**Exit condition:** met for the exposed application-code baseline. Every
+available rail has a complete implementation path; unavailable rails cannot
+mutate financial state. Institutional policy approval and optional deployed
+wallet evidence remain release conditions, not missing Stage 3 code.
 
 ### Stage 4 — MongoDB schema and bounded execution
 
@@ -544,16 +569,18 @@ deployment topology and contains no unresolved production blocker.
 
 ## API and Client Impact Notes
 
-- Clients must send `Idempotency-Key` for disbursement, officer payment, customer
-  external-payment claim, and payoff settlement operations.
+- Clients must send `Idempotency-Key` for disbursement, officer payment, and
+  payoff settlement operations. Preserve an idempotency key for any future
+  provider-payment implementation.
 - Treat HTTP 409 as an idempotency/state conflict; never silently generate a new
   key after an uncertain financial response without first retrieving state.
-- Application status and disbursement status are separate. A wallet or external
+- Application status and disbursement status are separate. A wallet
   disbursement may remain `approved` + `pending` until execution is proven.
 - The `pending` application filter is a derived alias for `submitted` and
   `under_review`; it is not a stored application status.
-- Clients must not present GCash/bank transfer as settled merely because the API
-  accepted a claim.
+- Read `settlement_policy` from product responses. Do not present GCash or bank
+  transfer: the baseline returns `503 SETTLEMENT_RAIL_UNAVAILABLE` and creates no
+  claim or disbursement.
 - Wallet clients must wait for the configured confirmation threshold and should
   display the server response rather than independently valuing ETH.
 - `written_off` and `restructured` are reserved states, not available workflows.

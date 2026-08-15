@@ -9,7 +9,6 @@ from django.conf import settings
 
 from config.field_encryption import decrypt_fields, encrypt_fields, encrypt_value
 from loans.utils.money import from_centavos, rate_amount_centavos, to_centavos
-
 from loans.utils.time import utcnow
 
 
@@ -551,66 +550,187 @@ class RepaymentSchedule:
         return updated
 
     def apply_penalty(self, installment_number, amount, reason, actor_id):
-        installment = self.get_installment(installment_number)
-        if not installment:
-            raise ValueError(f"Installment #{installment_number} not found")
-        if installment.get("status") == "paid":
-            raise ValueError(f"Installment #{installment_number} is already paid")
-        if installment.get("penalty_status") == "applied":
-            raise ValueError(
-                f"Penalty already applied for installment #{installment_number}"
-            )
+        """Apply an explicit officer-entered penalty with version protection."""
+        from loans.services.settlement_policy import LOAN_ACCOUNTING_POLICY_VERSION
+
         penalty_centavos = to_centavos(amount, "penalty_amount")
         if penalty_centavos <= 0:
             raise ValueError("penalty_amount must be greater than 0")
-        now = utcnow()
-        installment.update(
-            {
-                "penalty_status": "applied",
-                "penalty_amount_centavos": penalty_centavos,
-                "penalty_amount": from_centavos(penalty_centavos),
-                "penalty_reason": reason,
-                "penalty_applied_at": now,
-                "penalty_applied_by": str(actor_id),
-                "penalty_waived_at": None,
-                "penalty_waived_by": None,
-                "penalty_waived_reason": "",
-            }
-        )
-        self._normalize_installment(installment)
-        self._mark_paid_off_if_complete()
-        self.save()
-        return installment
+        collection = get_db()[self.collection_name]
+        for _attempt in range(3):
+            current = self.find_one({"_id": self._id})
+            if not current:
+                raise ValueError("Repayment schedule not found")
+            installments = deepcopy(current.installments)
+            installment = next(
+                (
+                    item
+                    for item in installments
+                    if item.get("number") == installment_number
+                ),
+                None,
+            )
+            if not installment:
+                raise ValueError(f"Installment #{installment_number} not found")
+            if installment.get("status") == "paid":
+                raise ValueError(f"Installment #{installment_number} is already paid")
+            if installment.get("penalty_status") == "applied":
+                raise ValueError(
+                    f"Penalty already applied for installment #{installment_number}"
+                )
+
+            now = utcnow()
+            installment.update(
+                {
+                    "penalty_status": "applied",
+                    "penalty_amount_centavos": penalty_centavos,
+                    "penalty_amount": from_centavos(penalty_centavos),
+                    "penalty_reason": reason,
+                    "penalty_applied_at": now,
+                    "penalty_applied_by": str(actor_id),
+                    "penalty_waived_at": None,
+                    "penalty_waived_by": None,
+                    "penalty_waived_reason": "",
+                    "penalty_policy_version": LOAN_ACCOUNTING_POLICY_VERSION,
+                }
+            )
+            current._normalize_installment(installment)
+            version_filter = {"accounting_version": current.accounting_version}
+            if current.accounting_version == 0:
+                version_filter = {
+                    "$or": [
+                        {"accounting_version": 0},
+                        {"accounting_version": {"$exists": False}},
+                    ]
+                }
+            result = collection.update_one(
+                {"_id": self._id, **version_filter},
+                {
+                    "$set": {"installments": encrypt_value(installments)},
+                    "$inc": {"accounting_version": 1},
+                },
+            )
+            if result.modified_count:
+                refreshed = self.find_one({"_id": self._id})
+                self.__dict__.update(refreshed.__dict__)
+                return self.get_installment(installment_number)
+
+        raise RuntimeError("Penalty application conflicted with another update")
 
     def waive_penalty(self, installment_number, reason, actor_id):
-        installment = self.get_installment(installment_number)
-        if not installment:
-            raise ValueError(f"Installment #{installment_number} not found")
-        if installment.get("penalty_status") != "applied":
-            raise ValueError(
-                f"No applied penalty found for installment #{installment_number}"
+        """Waive a penalty and atomically carry collected credit forward.
+
+        A waiver that would require an external cash refund is rejected because
+        the current release scope has no verified refund rail. This prevents a
+        collected overpayment from becoming an informational-only balance.
+        """
+        from loans.services.settlement_policy import LOAN_ACCOUNTING_POLICY_VERSION
+
+        collection = get_db()[self.collection_name]
+        for _attempt in range(3):
+            current = self.find_one({"_id": self._id})
+            if not current:
+                raise ValueError("Repayment schedule not found")
+            installments = deepcopy(current.installments)
+            installment = next(
+                (
+                    item
+                    for item in installments
+                    if item.get("number") == installment_number
+                ),
+                None,
             )
-        now = utcnow()
-        base_required = self._centavos(installment, "total_amount")
-        paid = self._centavos(installment, "paid_amount")
-        credit = max(paid - base_required, 0)
-        if credit:
-            installment["paid_amount_centavos"] = base_required
-            installment["paid_amount"] = from_centavos(base_required)
-            installment["waiver_credit_centavos"] = credit
-            installment["waiver_credit_amount"] = from_centavos(credit)
-        installment.update(
-            {
-                "penalty_status": "waived",
-                "penalty_waived_at": now,
-                "penalty_waived_by": str(actor_id),
-                "penalty_waived_reason": reason,
-            }
-        )
-        self._normalize_installment(installment)
-        self._mark_paid_off_if_complete()
-        self.save()
-        return installment
+            if not installment:
+                raise ValueError(f"Installment #{installment_number} not found")
+            if installment.get("penalty_status") != "applied":
+                raise ValueError(
+                    f"No applied penalty found for installment #{installment_number}"
+                )
+
+            base_required = current._centavos(installment, "total_amount")
+            paid = current._centavos(installment, "paid_amount")
+            credit = max(paid - base_required, 0)
+            remaining_credit = credit
+            allocations = []
+            for future in sorted(installments, key=lambda item: item.get("number", 0)):
+                if future.get("number", 0) <= installment_number:
+                    continue
+                capacity = max(
+                    current._required_centavos(future)
+                    - current._centavos(future, "paid_amount"),
+                    0,
+                )
+                applied = min(remaining_credit, capacity)
+                if not applied:
+                    continue
+                new_paid = current._centavos(future, "paid_amount") + applied
+                future["paid_amount_centavos"] = new_paid
+                future["paid_amount"] = from_centavos(new_paid)
+                current._normalize_installment(future)
+                allocations.append(
+                    {
+                        "installment_number": future["number"],
+                        "amount_centavos": applied,
+                        "amount": from_centavos(applied),
+                    }
+                )
+                remaining_credit -= applied
+                if not remaining_credit:
+                    break
+
+            if remaining_credit:
+                raise ValueError(
+                    "Penalty waiver would require an unsupported external refund. "
+                    "Resolve the refund before waiving the collected penalty."
+                )
+
+            now = utcnow()
+            if credit:
+                installment["paid_amount_centavos"] = base_required
+                installment["paid_amount"] = from_centavos(base_required)
+                installment["waiver_credit_centavos"] = credit
+                installment["waiver_credit_amount"] = from_centavos(credit)
+                installment["waiver_credit_applied_centavos"] = credit
+                installment["waiver_credit_remaining_centavos"] = 0
+                installment["waiver_credit_allocations"] = allocations
+            installment.update(
+                {
+                    "penalty_status": "waived",
+                    "penalty_waived_at": now,
+                    "penalty_waived_by": str(actor_id),
+                    "penalty_waived_reason": reason,
+                    "penalty_policy_version": LOAN_ACCOUNTING_POLICY_VERSION,
+                }
+            )
+            current._normalize_installment(installment)
+            current.installments = installments
+            current._mark_paid_off_if_complete()
+
+            version_filter = {"accounting_version": current.accounting_version}
+            if current.accounting_version == 0:
+                version_filter = {
+                    "$or": [
+                        {"accounting_version": 0},
+                        {"accounting_version": {"$exists": False}},
+                    ]
+                }
+            result = collection.update_one(
+                {"_id": self._id, **version_filter},
+                {
+                    "$set": {
+                        "installments": encrypt_value(installments),
+                        "status": current.status,
+                        "paid_off_at": current.paid_off_at,
+                    },
+                    "$inc": {"accounting_version": 1},
+                },
+            )
+            if result.modified_count:
+                refreshed = self.find_one({"_id": self._id})
+                self.__dict__.update(refreshed.__dict__)
+                return self.get_installment(installment_number)
+
+        raise RuntimeError("Penalty waiver conflicted with another accounting update")
 
     def apply_early_payoff_atomic(self, amount, payment_token):
         """Apply one exact payoff across every open installment atomically."""

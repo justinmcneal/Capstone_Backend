@@ -93,12 +93,12 @@ class LoanApplication:
         # Disbursement tracking
         self.preferred_disbursement_method = kwargs.get(
             "preferred_disbursement_method"
-        )  # Borrower-selected: gcash, bank_transfer
+        )  # Borrower-selected from the enabled settlement policy
         self.disbursed_amount = kwargs.get("disbursed_amount")
         self.disbursed_at = kwargs.get("disbursed_at")
         self.disbursement_method = kwargs.get(
             "disbursement_method"
-        )  # bank_transfer, cash, etc.
+        )  # cash/check, or wallet when explicitly enabled
         self.disbursement_reference = kwargs.get("disbursement_reference", "")
         self.disbursed_by = kwargs.get("disbursed_by")  # Officer/Admin who processed
         self.disbursed_by_type = kwargs.get("disbursed_by_type", "system")
@@ -598,8 +598,6 @@ class LoanApplication:
             raise ValueError(
                 f"Disbursement amount must equal approved amount of PHP{float(self.approved_amount):.2f}"
             )
-        if method not in {"cash", "gcash", "bank_transfer", "check", "wallet"}:
-            raise ValueError("Invalid disbursement method")
         if not idempotency_key:
             raise ValueError("Idempotency-Key is required")
 
@@ -620,6 +618,10 @@ class LoanApplication:
             raise ValueError("Disbursement requires a persisted loan application")
         if self.disbursement_status in {"pending", "executed"}:
             raise ValueError("A disbursement is already pending or executed")
+
+        from loans.services.settlement_policy import require_disbursement_method
+
+        method = require_disbursement_method(method)
 
         now = utcnow()
         collection = get_db()[self.collection_name]
@@ -764,16 +766,14 @@ class LoanApplication:
 
     def set_preferred_disbursement_method(self, method):
         """Set the borrower's preferred disbursement method."""
-        allowed = {"cash", "gcash", "bank_transfer", "check", "wallet"}
-        if method not in allowed:
-            raise ValueError(
-                f"Disbursement method must be one of: {', '.join(sorted(allowed))}"
-            )
         allowed_statuses = {"pending", "submitted", "under_review", "approved"}
         if self.status not in allowed_statuses:
             raise ValueError(
                 "Cannot change disbursement method for this application status"
             )
+        from loans.services.settlement_policy import require_disbursement_method
+
+        method = require_disbursement_method(method)
         self.preferred_disbursement_method = method
         self.updated_at = utcnow()
         return self.save()

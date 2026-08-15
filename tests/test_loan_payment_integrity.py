@@ -276,7 +276,9 @@ def test_atomic_update_retries_stale_schedule_write(schedule, monkeypatch):
     assert spy.call_count >= 2
 
 
-def test_customer_payment_endpoint_creates_pending_submission(schedule, monkeypatch):
+def test_incomplete_customer_provider_payment_endpoint_is_disabled(
+    schedule, monkeypatch
+):
     app = SimpleNamespace(customer_id=schedule.customer_id, status="disbursed")
     monkeypatch.setattr(
         "loans.views.customer.repayment.LoanApplication.find_by_id", lambda _id: app
@@ -285,9 +287,6 @@ def test_customer_payment_endpoint_creates_pending_submission(schedule, monkeypa
         PaymentHistoryView,
         "check_customer_permission",
         lambda self, request: (True, None),
-    )
-    monkeypatch.setattr(
-        "loans.views.customer.repayment.AuditLog.log_action", lambda **kwargs: None
     )
     request = MagicMock(
         data={
@@ -303,11 +302,11 @@ def test_customer_payment_endpoint_creates_pending_submission(schedule, monkeypa
 
     response = PaymentHistoryView().post(request, schedule.loan_id)
 
-    assert response.status_code == 202
-    assert response.data["data"]["payment_status"] == "pending_verification"
-    assert response.data["data"]["balance_applied"] is False
+    assert response.status_code == 503
+    assert response.data["code"] == "SETTLEMENT_RAIL_UNAVAILABLE"
     reloaded = RepaymentSchedule.find_by_loan(schedule.loan_id)
     assert reloaded.get_installment(1)["paid_amount"] == 0
+    assert LoanPayment.count({}) == 0
 
 
 def test_customer_payment_endpoint_rejects_wallet_bypass(schedule, monkeypatch):

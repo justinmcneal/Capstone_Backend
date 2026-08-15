@@ -8,7 +8,7 @@ Coverage:
 - disbursement sub-state transitions are audited at the model boundary
 """
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 from bson import ObjectId
 
@@ -202,7 +202,7 @@ class TestStatusTransitionAuditLogs:
         with patch("analytics.models.audit_log.AuditLog.log_action") as mock_log:
             app.disburse(
                 amount=20000,
-                method="bank_transfer",
+                method="cash",
                 reference="DSB-001",
                 processed_by="officer_001",
             )

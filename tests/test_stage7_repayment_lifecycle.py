@@ -12,10 +12,10 @@ from rest_framework.test import APIRequestFactory, force_authenticate
 from accounts.authentication import AuthenticatedUser
 from loans.models import LoanApplication, LoanPayment, RepaymentSchedule
 from loans.services.payment import post_verified_early_payoff, post_verified_payment
+from loans.tasks import reconcile_repayment_lifecycle_task
 from loans.utils.money import from_centavos, to_centavos
 from loans.utils.time import utcnow
 from loans.views.officer.payoff import EarlyPayoffView
-from loans.tasks import reconcile_repayment_lifecycle_task
 
 
 @pytest.fixture
@@ -117,7 +117,7 @@ def test_partial_overdue_state_is_preserved_and_is_next_payment(stage7_db):
 
 
 def test_penalty_waiver_normalizes_partial_payment_and_records_credit(stage7_db):
-    _, schedule = _persisted_loan_and_schedule(stage7_db, amounts=(100,))
+    _, schedule = _persisted_loan_and_schedule(stage7_db, amounts=(100, 100))
     schedule.apply_penalty(1, 20, "Late", "officer-1")
     schedule.record_payment(1, 110)
 
@@ -127,7 +127,9 @@ def test_penalty_waiver_normalizes_partial_payment_and_records_credit(stage7_db)
     assert waived["paid_amount_centavos"] == 10_000
     assert waived["waiver_credit_centavos"] == 1_000
     assert waived["waiver_credit_amount"] == 10
-    assert schedule.get_remaining_balance() == 0
+    assert waived["waiver_credit_applied_centavos"] == 1_000
+    assert schedule.get_installment(2)["paid_amount"] == 10
+    assert schedule.get_remaining_balance() == 90
 
 
 def test_final_installment_payment_marks_schedule_and_application_paid_off(stage7_db):
@@ -329,6 +331,9 @@ def test_officer_early_payoff_endpoint_quotes_and_posts(stage7_db, monkeypatch):
 
     assert quote.status_code == 200
     assert quote.data["data"]["payoff_amount_centavos"] == 30_000
+    assert quote.data["data"]["requires_exact_amount"] is True
+    assert quote.data["data"]["rounding"] == "half_up_centavo"
+    assert quote.data["data"]["policy_version"] == "scheduled-balance-v1"
     assert posted.status_code == 200
     assert posted.data["data"]["status"] == "completed"
     assert posted.data["data"]["remaining_balance"] == 0
