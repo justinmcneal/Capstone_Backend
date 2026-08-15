@@ -297,6 +297,8 @@ def finalize_scheduled_customer_deletions_task():
                         {"document_cleanup_status": {"$exists": False}},
                         {"analytics_cleanup_status": "pending"},
                         {"analytics_cleanup_status": {"$exists": False}},
+                        {"loan_cleanup_status": "pending"},
+                        {"loan_cleanup_status": {"$exists": False}},
                     ],
                 },
             ]

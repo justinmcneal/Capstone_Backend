@@ -214,7 +214,7 @@ class RecordPaymentView(LoanOfficerRequiredMixin, APIView):
         # Send notification email
         try:
             from accounts.models import Customer
-            from notifications.services import get_email_sender
+            from loans.services.notifications import queue_customer_loan_notification
 
             customer = None
             if schedule.customer_id:
@@ -225,15 +225,12 @@ class RecordPaymentView(LoanOfficerRequiredMixin, APIView):
                 except Exception:
                     pass
             if customer and customer.email:
-                sender = get_email_sender()
-                sender.send_payment_received(
-                    customer_email=customer.email,
-                    customer_name=f"{customer.first_name} {customer.last_name}",
+                queue_customer_loan_notification(
                     loan_id=loan_id,
-                    amount=amount,
-                    installment=installment_number,
-                    remaining=schedule.get_remaining_balance(),
-                    customer_id=schedule.customer_id,
+                    event_type="payment_received",
+                    event_key=payment.idempotency_key or payment.id,
+                    customer=customer,
+                    payload={"amount": amount, "installment": installment_number, "remaining": schedule.get_remaining_balance()},
                 )
         except Exception as e:
             logger.warning(f"Failed to send payment email: {e}")

@@ -3,12 +3,13 @@ LoanApplication Model - Customer loan applications.
 """
 
 import uuid
+from datetime import timedelta
 
 from bson import ObjectId
 from django.conf import settings
 from pymongo import ReturnDocument
 
-from config.field_encryption import decrypt_fields, encrypt_fields, encrypt_value
+from config.field_encryption import decrypt_fields, decrypt_value, encrypt_fields, encrypt_value
 from loans.utils.time import utcnow
 
 
@@ -44,11 +45,15 @@ class LoanApplication:
 
     collection_name = "loan_applications"
     encrypted_fields = (
+        "purpose",
+        "ai_recommendation",
         "internal_notes",
         "officer_notes",
         "rejection_reason",
         "missing_documents_reason",
+        "legal_hold_reason",
         "disbursement_reference",
+        "disbursement_error",
         "eth_disbursement_raw_transaction",
     )
 
@@ -148,9 +153,12 @@ class LoanApplication:
         self.eth_disbursement_rebroadcast_count = kwargs.get(
             "eth_disbursement_rebroadcast_count", 0
         )
-        self.eth_disbursement_recovery_history = kwargs.get(
-            "eth_disbursement_recovery_history", []
-        )
+        self.eth_disbursement_recovery_history = []
+        for entry in kwargs.get("eth_disbursement_recovery_history", []) or []:
+            item = dict(entry)
+            if "reason" in item:
+                item["reason"] = decrypt_value(item["reason"])
+            self.eth_disbursement_recovery_history.append(item)
         self.disbursement_worker_owner = kwargs.get("disbursement_worker_owner", "")
         self.disbursement_worker_lease_expires_at = kwargs.get(
             "disbursement_worker_lease_expires_at"
@@ -167,6 +175,19 @@ class LoanApplication:
         # Immutable correlation records for lifecycle side effects.
         self.last_transition_id = kwargs.get("last_transition_id", "")
         self.lifecycle_transitions = kwargs.get("lifecycle_transitions", [])
+
+        # Privacy lifecycle metadata. Loan records use a long, versioned
+        # retention window and may be preserved beyond account deletion under
+        # a non-identifying customer pseudonym.
+        self.retention_policy_version = kwargs.get("retention_policy_version")
+        self.retention_expires_at = kwargs.get("retention_expires_at")
+        self.legal_hold = bool(kwargs.get("legal_hold", False))
+        self.legal_hold_reason = kwargs.get("legal_hold_reason", "")
+        self.legal_hold_set_at = kwargs.get("legal_hold_set_at")
+        self.legal_hold_set_by = kwargs.get("legal_hold_set_by")
+        self.legal_hold_released_at = kwargs.get("legal_hold_released_at")
+        self.legal_hold_released_by = kwargs.get("legal_hold_released_by")
+        self.pseudonymized_at = kwargs.get("pseudonymized_at")
 
     @property
     def id(self):
@@ -233,6 +254,15 @@ class LoanApplication:
             "blockchain_tx_hashes": self.blockchain_tx_hashes,
             "last_transition_id": self.last_transition_id,
             "lifecycle_transitions": self.lifecycle_transitions,
+            "retention_policy_version": self.retention_policy_version,
+            "retention_expires_at": self.retention_expires_at,
+            "legal_hold": self.legal_hold,
+            "legal_hold_reason": self.legal_hold_reason,
+            "legal_hold_set_at": self.legal_hold_set_at,
+            "legal_hold_set_by": self.legal_hold_set_by,
+            "legal_hold_released_at": self.legal_hold_released_at,
+            "legal_hold_released_by": self.legal_hold_released_by,
+            "pseudonymized_at": self.pseudonymized_at,
         }
         if self._id:
             data["_id"] = self._id
@@ -248,6 +278,13 @@ class LoanApplication:
         db = get_db()
         collection = db[self.collection_name]
         self.updated_at = utcnow()
+        if self.retention_expires_at is None:
+            self.retention_policy_version = getattr(
+                settings, "LOAN_RETENTION_POLICY_VERSION", "2026-08-15-v1"
+            )
+            self.retention_expires_at = self.created_at + timedelta(
+                days=int(getattr(settings, "LOAN_RETENTION_DAYS", 2555))
+            )
         data = self.to_dict()
 
         if self._id:
@@ -740,7 +777,7 @@ class LoanApplication:
                 "$set": {
                     "disbursement_status": "failed",
                     "disbursement_failed_at": now,
-                    "disbursement_error": str(error)[:500],
+                    "disbursement_error": encrypt_value(str(error)[:500]),
                     "updated_at": now,
                 }
             },
@@ -1166,6 +1203,10 @@ class LoanApplication:
                 "disbursement_idempotency_key": {"$type": "string", "$gt": ""}
             },
         )
+        collection.create_index(
+            [("legal_hold", 1), ("retention_expires_at", 1), ("status", 1), ("_id", 1)],
+            name="loan_retention_cleanup",
+        )
 
     @classmethod
     def update_blockchain_tx_hash(cls, application_id, action, tx_hash):
@@ -1274,7 +1315,7 @@ class LoanApplication:
             {
                 "$set": {
                     "disbursement_status": "cancelled",
-                    "disbursement_error": str(reason or "Cancelled by operator")[:500],
+                    "disbursement_error": encrypt_value(str(reason or "Cancelled by operator")[:500]),
                     "disbursement_failed_at": now,
                     "updated_at": now,
                 },
@@ -1282,7 +1323,7 @@ class LoanApplication:
                     "eth_disbursement_recovery_history": {
                         "action": "cancel",
                         "actor_id": str(actor_id),
-                        "reason": str(reason)[:500],
+                        "reason": encrypt_value(str(reason)[:500]),
                         "at": now,
                     }
                 },

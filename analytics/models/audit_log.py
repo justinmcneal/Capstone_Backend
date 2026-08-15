@@ -102,6 +102,8 @@ AUDIT_ACTION_REGISTRY = {
     "loan_paid_off": "update",
     "loan_internal_note_added": "update",
     "loan_missing_documents_requested": "update",
+    "loan_legal_hold_set": "update",
+    "loan_legal_hold_release": "update",
     "disbursement_method_set": "update",
     "wallet_disbursement_reconcile": "update",
     "wallet_disbursement_retry": "update",
@@ -412,6 +414,8 @@ AUDIT_ACTION_DETAIL_KEYS.update(
         "loan_missing_documents_requested": frozenset(
             {"customer_id", "missing_documents", "reason", "transition_id"}
         ),
+        "loan_legal_hold_set": frozenset({"legal_hold_action"}),
+        "loan_legal_hold_release": frozenset({"legal_hold_action"}),
         "disbursement_method_set": frozenset({"disbursement_method"}),
         "wallet_disbursement_reconcile": frozenset({"tx_hash", "tx_status"}),
         "wallet_disbursement_retry": frozenset({"tx_hash", "tx_status"}),

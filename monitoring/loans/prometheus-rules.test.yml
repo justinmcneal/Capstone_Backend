@@ -1,0 +1,22 @@
+rule_files:
+  - prometheus-rules.yml
+
+evaluation_interval: 1m
+
+tests:
+  - name: old loan notification backlog fires and resolves
+    interval: 1m
+    input_series:
+      - series: 'loans_oldest_backlog_age_seconds{queue="notification"}'
+        values: 0 901x6 0
+    alert_rule_test:
+      - eval_time: 6m
+        alertname: LoansNotificationBacklogOld
+        exp_alerts:
+          - exp_labels: {queue: notification, severity: critical, service: loans}
+            exp_annotations:
+              summary: Loan notification delivery backlog is older than 15 minutes
+              runbook: docs/LOANS_TESTING_GUIDE.md#loans-operations-runbook
+      - eval_time: 8m
+        alertname: LoansNotificationBacklogOld
+        exp_alerts: []

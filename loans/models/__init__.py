@@ -6,6 +6,7 @@ from .payment import LoanPayment as LoanPayment
 from .product import LoanProduct as LoanProduct
 from .repayment import INSTALLMENT_STATUSES as INSTALLMENT_STATUSES
 from .repayment import RepaymentSchedule as RepaymentSchedule
+from .notification_delivery import LoanNotificationDelivery as LoanNotificationDelivery
 
 __all__ = [
 	"LoanProduct",
@@ -16,4 +17,5 @@ __all__ = [
 	"INSTALLMENT_STATUSES",
 	"LoanPayment",
 	"PAYMENT_METHODS",
+	"LoanNotificationDelivery",
 ]

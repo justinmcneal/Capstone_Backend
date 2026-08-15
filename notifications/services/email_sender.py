@@ -372,6 +372,7 @@ class EmailSender:
         method,
         reference,
         customer_id=None,
+        delivery_key=None,
     ):
         """Send loan disbursement notification"""
         notification = create_and_broadcast_notification(
@@ -385,6 +386,7 @@ class EmailSender:
             related_type="loan",
             related_id=loan_id,
             channel="in_app",
+            idempotency_key=delivery_key,
         )
 
         return self.send(
@@ -410,6 +412,7 @@ class EmailSender:
         installment,
         remaining,
         customer_id=None,
+        delivery_key=None,
     ):
         """Send payment received notification"""
         notification = create_and_broadcast_notification(
@@ -423,6 +426,7 @@ class EmailSender:
             related_type="loan",
             related_id=loan_id,
             channel="in_app",
+            idempotency_key=delivery_key,
         )
 
         return self.send(

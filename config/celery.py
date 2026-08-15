@@ -99,6 +99,18 @@ app.conf.beat_schedule = {
         "task": "loans.reconcile_wallet_disbursements_task",
         "schedule": crontab(minute="*/5"),
     },
+    "reconcile-loan-notifications-every-minute": {
+        "task": "loans.reconcile_notification_deliveries",
+        "schedule": crontab(minute="*"),
+    },
+    "enforce-loan-retention-daily": {
+        "task": "loans.enforce_retention",
+        "schedule": crontab(hour=4, minute=0),
+    },
+    "collect-loan-operational-metrics-every-5-minutes": {
+        "task": "loans.collect_operational_metrics",
+        "schedule": crontab(minute="*/5"),
+    },
     "poll-blockchain-audit-events-every-minute": {
         "task": "blockchain.poll_audit_events",
         "schedule": crontab(minute="*"),

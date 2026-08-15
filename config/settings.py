@@ -86,6 +86,7 @@ MIDDLEWARE = [
     'config.middleware.SecurityHeadersMiddleware',
     'django.middleware.common.CommonMiddleware',
     'config.middleware.NoSQLInjectionGuardMiddleware',
+    'loans.middleware.LoanRequestMetricsMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
     'config.middleware.CSRFSameSiteTokenMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
@@ -821,6 +822,10 @@ CELERY_TASK_ROUTES = {
     'loans.tasks.check_overdue_installments_task': {'queue': 'loans'},
     'loans.reconcile_repayment_lifecycle': {'queue': 'loans'},
     'loans.reconcile_wallet_disbursements_task': {'queue': 'loans'},
+    'loans.reconcile_notification_deliveries': {'queue': 'loans'},
+    'loans.deliver_notification': {'queue': 'loans'},
+    'loans.enforce_retention': {'queue': 'loans'},
+    'loans.collect_operational_metrics': {'queue': 'loans'},
 }
 
 # MongoDB-backed leases coordinate the single configured blockchain sender.
@@ -830,11 +835,38 @@ BLOCKCHAIN_RECONCILIATION_BATCH_SIZE = 250
 
 # Loans persistence and bounded synchronous/background execution.
 LOAN_EXPORT_MAX_ROWS = int(os.getenv("LOAN_EXPORT_MAX_ROWS", "10000"))
+LOAN_ACCOUNT_EXPORT_MAX_ROWS = int(os.getenv("LOAN_ACCOUNT_EXPORT_MAX_ROWS", "5000"))
+LOAN_OPERATIONAL_INTEGRITY_SCAN_LIMIT = int(
+    os.getenv("LOAN_OPERATIONAL_INTEGRITY_SCAN_LIMIT", "1000")
+)
+LOAN_RETENTION_DAYS = int(os.getenv("LOAN_RETENTION_DAYS", "2555"))
+LOAN_RETENTION_POLICY_VERSION = os.getenv(
+    "LOAN_RETENTION_POLICY_VERSION", "2026-08-15-v1"
+)
+LOAN_NOTIFICATION_MAX_ATTEMPTS = int(os.getenv("LOAN_NOTIFICATION_MAX_ATTEMPTS", "5"))
+LOAN_NOTIFICATION_RETRY_BACKOFF_SECONDS = int(
+    os.getenv("LOAN_NOTIFICATION_RETRY_BACKOFF_SECONDS", "60")
+)
+LOAN_NOTIFICATION_LEASE_SECONDS = int(os.getenv("LOAN_NOTIFICATION_LEASE_SECONDS", "300"))
 LOAN_JOB_BATCH_SIZE = int(os.getenv("LOAN_JOB_BATCH_SIZE", "200"))
 LOAN_JOB_MAX_BATCHES = int(os.getenv("LOAN_JOB_MAX_BATCHES", "10"))
 LOAN_JOB_LEASE_SECONDS = int(os.getenv("LOAN_JOB_LEASE_SECONDS", "900"))
 LOAN_TASK_SOFT_TIME_LIMIT = int(os.getenv("LOAN_TASK_SOFT_TIME_LIMIT", "840"))
 LOAN_TASK_TIME_LIMIT = int(os.getenv("LOAN_TASK_TIME_LIMIT", "900"))
+if not 1 <= LOAN_ACCOUNT_EXPORT_MAX_ROWS <= 10_000:
+    raise ImproperlyConfigured("LOAN_ACCOUNT_EXPORT_MAX_ROWS must be between 1 and 10000")
+if not 1 <= LOAN_OPERATIONAL_INTEGRITY_SCAN_LIMIT <= 10_000:
+    raise ImproperlyConfigured(
+        "LOAN_OPERATIONAL_INTEGRITY_SCAN_LIMIT must be between 1 and 10000"
+    )
+if not 1 <= LOAN_RETENTION_DAYS <= 36500:
+    raise ImproperlyConfigured("LOAN_RETENTION_DAYS must be between 1 and 36500")
+if not 1 <= LOAN_NOTIFICATION_MAX_ATTEMPTS <= 10:
+    raise ImproperlyConfigured("LOAN_NOTIFICATION_MAX_ATTEMPTS must be between 1 and 10")
+if not 1 <= LOAN_NOTIFICATION_RETRY_BACKOFF_SECONDS <= 3600:
+    raise ImproperlyConfigured("LOAN_NOTIFICATION_RETRY_BACKOFF_SECONDS must be between 1 and 3600")
+if not 30 <= LOAN_NOTIFICATION_LEASE_SECONDS <= 3600:
+    raise ImproperlyConfigured("LOAN_NOTIFICATION_LEASE_SECONDS must be between 30 and 3600")
 CELERY_TASK_ANNOTATIONS = {
     task_name: {
         "acks_late": True,
@@ -846,6 +878,10 @@ CELERY_TASK_ANNOTATIONS = {
         "loans.tasks.check_overdue_installments_task",
         "loans.reconcile_repayment_lifecycle",
         "loans.reconcile_wallet_disbursements_task",
+        "loans.reconcile_notification_deliveries",
+        "loans.deliver_notification",
+        "loans.enforce_retention",
+        "loans.collect_operational_metrics",
     )
 }
 

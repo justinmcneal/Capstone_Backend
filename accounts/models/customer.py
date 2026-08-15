@@ -82,6 +82,12 @@ class Customer:
         self.ai_cleanup_last_error = kwargs.get("ai_cleanup_last_error", "")
         self.ai_cleanup_last_attempt_at = kwargs.get("ai_cleanup_last_attempt_at")
         self.ai_cleanup_completed_at = kwargs.get("ai_cleanup_completed_at")
+        self.loan_cleanup_status = kwargs.get("loan_cleanup_status")
+        self.loan_cleanup_counts = kwargs.get("loan_cleanup_counts", {})
+        self.loan_cleanup_attempts = kwargs.get("loan_cleanup_attempts", 0)
+        self.loan_cleanup_last_error = kwargs.get("loan_cleanup_last_error", "")
+        self.loan_cleanup_last_attempt_at = kwargs.get("loan_cleanup_last_attempt_at")
+        self.loan_cleanup_completed_at = kwargs.get("loan_cleanup_completed_at")
         self.security_version = kwargs.get("security_version", 1)
         self.created_at = kwargs.get("created_at", datetime.now(timezone.utc))
         self.updated_at = kwargs.get("updated_at", datetime.now(timezone.utc))
@@ -246,6 +252,12 @@ class Customer:
             "ai_cleanup_last_error": self.ai_cleanup_last_error,
             "ai_cleanup_last_attempt_at": self.ai_cleanup_last_attempt_at,
             "ai_cleanup_completed_at": self.ai_cleanup_completed_at,
+            "loan_cleanup_status": self.loan_cleanup_status,
+            "loan_cleanup_counts": self.loan_cleanup_counts,
+            "loan_cleanup_attempts": self.loan_cleanup_attempts,
+            "loan_cleanup_last_error": self.loan_cleanup_last_error,
+            "loan_cleanup_last_attempt_at": self.loan_cleanup_last_attempt_at,
+            "loan_cleanup_completed_at": self.loan_cleanup_completed_at,
             "security_version": self.security_version,
             "created_at": self.created_at,
             "updated_at": self.updated_at,

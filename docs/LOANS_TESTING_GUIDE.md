@@ -33,9 +33,9 @@ The following repository selection passed on 2026-08-15:
   -k 'loan or blockchain or qualification or wallet_disbursement or repayment'
 ```
 
-Result after Stage 3: **492 passed, 12 skipped, 713 deselected**. Nine skips
-require Ganache/RPC and three are the explicitly opt-in Stage 2 real-Mongo
-suite.
+Result after Stage 5: **510 passed, 13 skipped, 713 deselected**. Nine skips
+require Ganache/RPC, three are the explicitly opt-in Stage 2 real-Mongo suite,
+and one is the opt-in Stage 4 real-Mongo suite.
 
 Stage 1 focused validation also passed:
 
@@ -47,7 +47,7 @@ Result: **17 passed**. These cases cover cross-officer concealment, role-safe
 blockchain payloads, strict administrator queries, stable public failures, and
 disbursement/recovery response minimization.
 
-The full repository regression result after Stage 3 is **1,258 passed and 38
+The full repository regression result after Stage 5 is **1,276 passed and 39
 skipped**. The skips remain explicitly opt-in external-service suites; they are
 not counted as deployment evidence.
 
@@ -508,7 +508,7 @@ mapping between each stage and its required test evidence.
 | Stage 2 — Atomic lifecycle and financial correctness | Concurrent review/assignment/notes, idempotent disbursement/payment/payoff, crash/replay | Application code and eight focused local regressions complete; three isolated real-Mongo tests added but execution is pending approval |
 | Stage 3 — Settlement scope and approved policies | Cash/check, feature-gated wallet, public policy contract, concurrent penalty/waiver credit, explicit payoff/rate terms | **Complete in application code:** seven focused regressions and the broader Loans selection pass; institutional policy approval and optional deployed-wallet evidence remain release gates |
 | Stage 4 — MongoDB schema and bounded execution | Validators, inventory/backfill, unique indexes, query plans, large fixtures, overlapping jobs | **Implemented locally:** 11 focused regressions pass; the isolated real-Mongo proof is present but not yet executed |
-| Stage 5 — Privacy, notifications, and observability | Export/retention/hold/pseudonymization, encryption rotation, outbox recovery, metrics/rules/dashboard | Partial shared infrastructure only; loan-specific implementation and evidence are missing |
+| Stage 5 — Privacy, notifications, and observability | Export/retention/hold/pseudonymization, encryption rotation, outbox recovery, metrics/rules/dashboard | **Complete locally:** eight focused regressions and Prometheus rule/config validation pass; policy and deployed alert evidence remain release gates |
 | Stage 6 — Real-environment release validation | Deployment MongoDB, Redis/Celery, optional chain, HTTPS, load, backup/restore, rollback, dashboards/alerts | Pending deployment topology |
 
 When implementing a stage, add its focused tests in the same change and update
@@ -589,6 +589,84 @@ worker termination, retry-from-checkpoint, and backlog alerting. Overdue,
 paid-off, and wallet reconciliation are now locally bounded, leased, and
 checkpointed; failed records deliberately remain before the checkpoint rather
 than being skipped into a lossy dead-letter path.
+
+## Stage 5 Privacy and Delivery Validation
+
+Run the focused local suite:
+
+```bash
+.venv/bin/pytest -q \
+  tests/test_loans_stage5_privacy_notifications_observability.py
+```
+
+It verifies encrypted sensitive fields, bounded customer export, idempotent
+account pseudonymization, retention/legal hold, encrypted outbox retry/replay,
+broker outage recovery, bounded operational gauges, and monitoring assets.
+
+Legal-hold changes are dry-run-first:
+
+```bash
+.venv/bin/python manage.py manage_loan_legal_hold \
+  '<application-id>' set --reason 'Approved case reference' --actor '<admin-id>'
+```
+
+Repeat with `--apply` only after authorization. Release uses `release` and still
+requires `--apply`. Do not put customer details in the reason.
+
+Validate monitoring configuration locally:
+
+```bash
+promtool check rules monitoring/loans/prometheus-rules.yml
+promtool test rules monitoring/loans/prometheus-rules.test.yml
+promtool check config monitoring/loans/prometheus-smoke.yml
+```
+
+## Loans Operations Runbook
+
+Enable the existing metrics endpoint and start Prometheus with the Loans smoke
+configuration:
+
+```bash
+.venv/bin/python manage.py toggle_prometheus enable --url
+prometheus \
+  --config.file="$PWD/monitoring/loans/prometheus-smoke.yml" \
+  --storage.tsdb.path=/tmp/capstone-loans-prometheus
+```
+
+Provision Grafana with the Loans dashboard path before starting the server:
+
+```bash
+export LOANS_DASHBOARD_PATH="$PWD/monitoring/loans"
+```
+
+Use the same Grafana startup command documented in the root `README.md`, then
+open the **Capstone Loans Operations** dashboard. Authenticated Loans API
+requests populate request rate/latency. Celery Beat refreshes backlog gauges
+every five minutes; for a local check, run the task directly without changing
+loan records:
+
+```bash
+.venv/bin/python manage.py shell -c \
+  "from loans.tasks import collect_loan_operational_metrics_task as t; print(t.run())"
+```
+
+Respond to alerts as follows:
+
+1. notification backlog: confirm the Loans worker/queue and SMTP health, then
+   let the idempotent reconciler retry; do not resend by repeating a financial
+   API mutation;
+2. stuck disbursement: inspect the stable status, lease, and reconciliation
+   record before retry/cancel authorization;
+3. audit backlog: restore MongoDB/audit availability and run the existing audit
+   reconciler;
+4. blockchain failures: stop new wallet work if needed, preserve signer/RPC
+   evidence, and reconcile before issuing another transaction; and
+5. high error ratio/latency: correlate by low-cardinality scope and method,
+   inspect application logs by request correlation ID, and check MongoDB/Redis
+   query and queue health.
+
+Never place customer IDs, loan IDs, payment references, wallet addresses, or
+exception text in Prometheus labels.
 
 ## Blockchain Testing
 
@@ -780,9 +858,10 @@ database URIs, raw signed transactions, or internal exception detail.
       validators/indexes, bounded exports/jobs, and overlap regressions pass;
       execute the isolated real-Mongo suite and representative multi-worker/load
       tests against an approved target.
-- [ ] **Stage 5:** customer export, retention/legal hold/anonymization,
+- [x] **Stage 5 application code:** customer export, retention/legal hold/anonymization,
       encryption rotation, notification outbox recovery, metrics, dashboards,
-      and Prometheus rule tests pass.
+      and Prometheus rule tests pass. Authorized policy approval and deployed
+      dashboard/alert evidence remain Stage 6 release conditions.
 - [ ] **Stage 6:** multi-worker Redis/Celery recovery, optional blockchain,
       HTTPS proxy, load, backup/restore, key rotation, rollback, dashboards, and
       delivered alerts are proven in the selected topology.
@@ -808,6 +887,7 @@ database URIs, raw signed transactions, or internal exception detail.
 - `tests/test_loans_stage2_real_mongo.py`
 - `tests/test_loans_stage4_persistence_scalability.py`
 - `tests/test_loans_stage4_real_mongo.py`
+- `tests/test_loans_stage5_privacy_notifications_observability.py`
 - `tests/test_loans_stage3_settlement_policy.py`
 - `tests/test_qualification_enforcement.py`
 - `tests/test_wallet_disbursement_tasks.py`

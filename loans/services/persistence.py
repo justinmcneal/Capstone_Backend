@@ -1,6 +1,7 @@
 """Loans MongoDB inventory, dry-run backfill, and validator definitions."""
 
 from copy import deepcopy
+from datetime import timedelta
 
 from django.conf import settings
 from django.core.exceptions import ImproperlyConfigured
@@ -70,6 +71,9 @@ LOAN_VALIDATORS = {
                 "term_months",
                 "status",
                 "disbursement_status",
+                "retention_policy_version",
+                "retention_expires_at",
+                "legal_hold",
                 "created_at",
                 "updated_at",
             ],
@@ -89,6 +93,10 @@ LOAN_VALIDATORS = {
                     "oneOf": [{"enum": [None]}, {"enum": SETTLEMENT_METHODS}]
                 },
                 "internal_notes": {"oneOf": [{"enum": ["", None]}, ENCRYPTED_BSON]},
+                "purpose": {"oneOf": [{"enum": ["", None]}, ENCRYPTED_STRING]},
+                "ai_recommendation": {
+                    "oneOf": [{"enum": ["", None]}, ENCRYPTED_BSON]
+                },
                 "officer_notes": {"oneOf": [{"enum": ["", None]}, ENCRYPTED_STRING]},
                 "rejection_reason": {"oneOf": [{"enum": ["", None]}, ENCRYPTED_STRING]},
                 "missing_documents_reason": {
@@ -100,6 +108,18 @@ LOAN_VALIDATORS = {
                 "eth_disbursement_raw_transaction": {
                     "oneOf": [{"enum": ["", None]}, ENCRYPTED_STRING]
                 },
+                "disbursement_error": {
+                    "oneOf": [{"enum": ["", None]}, ENCRYPTED_STRING]
+                },
+                "eth_disbursement_recovery_history": {
+                    "bsonType": "array"
+                },
+                "legal_hold_reason": {
+                    "oneOf": [{"enum": ["", None]}, ENCRYPTED_STRING]
+                },
+                "retention_policy_version": {"bsonType": "string", "minLength": 1},
+                "retention_expires_at": {"bsonType": "date"},
+                "legal_hold": {"bsonType": "bool"},
                 "created_at": {"bsonType": "date"},
                 "updated_at": {"bsonType": "date"},
             },
@@ -155,6 +175,12 @@ LOAN_VALIDATORS = {
                 "payment_status": {"enum": PAYMENT_STATUSES},
                 "reference": {"oneOf": [{"enum": [""]}, ENCRYPTED_STRING]},
                 "notes": {"oneOf": [{"enum": [""]}, ENCRYPTED_STRING]},
+                "failure_reason": {
+                    "oneOf": [{"enum": [""]}, ENCRYPTED_STRING]
+                },
+                "blockchain_sync_error": {
+                    "oneOf": [{"enum": [""]}, ENCRYPTED_STRING]
+                },
                 "reference_search_index": {
                     "bsonType": "string",
                     "pattern": "^$|^[0-9a-f]{64}$",
@@ -185,6 +211,8 @@ LOAN_VALIDATORS = {
                 "action": {"bsonType": "string"},
                 "status": {"enum": ["pending", "confirmed", "failed"]},
                 "idempotency_key": {"bsonType": "string", "minLength": 1},
+                "error": {"oneOf": [{"enum": [""]}, ENCRYPTED_STRING]},
+                "details": {"bsonType": "object"},
                 "created_at": {"bsonType": "date"},
             },
         }
@@ -202,6 +230,7 @@ INVENTORY_CONFIG = {
         "sensitive": LoanApplication.encrypted_fields,
         "unique": ["disbursement_idempotency_key"],
         "statuses": ("status", set(APPLICATION_STATUSES)),
+        "metadata": ["retention_policy_version", "retention_expires_at", "legal_hold"],
         "enums": (
             ("preferred_disbursement_method", set(SETTLEMENT_METHODS), True),
             ("disbursement_method", set(SETTLEMENT_METHODS), True),
@@ -230,7 +259,7 @@ INVENTORY_CONFIG = {
     },
     BlockchainTransaction.collection_name: {
         "required": ["loan_id", "action", "status", "idempotency_key", "created_at"],
-        "sensitive": (),
+        "sensitive": BlockchainTransaction.encrypted_fields,
         "unique": ["idempotency_key"],
         "statuses": ("status", {"pending", "confirmed", "failed"}),
     },
@@ -355,6 +384,25 @@ def prepare_loan_backfill(collection_name, raw):
                 "accounting_version": schedule.accounting_version,
             }
         )
+    elif collection_name == LoanApplication.collection_name:
+        created_at = raw.get("created_at")
+        protected.update(
+            {
+                "retention_policy_version": raw.get("retention_policy_version")
+                or getattr(settings, "LOAN_RETENTION_POLICY_VERSION", "2026-08-15-v1"),
+                "retention_expires_at": raw.get("retention_expires_at")
+                or created_at + timedelta(days=int(getattr(settings, "LOAN_RETENTION_DAYS", 2555))),
+                "legal_hold": bool(raw.get("legal_hold", False)),
+            }
+        )
+        history = []
+        for entry in raw.get("eth_disbursement_recovery_history", []) or []:
+            item = deepcopy(entry)
+            if item.get("reason") not in (None, ""):
+                item["reason"] = reencrypt_value(item["reason"])
+            history.append(item)
+        if history:
+            protected["eth_disbursement_recovery_history"] = history
     elif collection_name == LoanPayment.collection_name:
         payment = LoanPayment.from_dict(deepcopy(raw))
         schedule = RepaymentSchedule.find_by_loan(payment.loan_id)

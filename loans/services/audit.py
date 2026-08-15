@@ -7,6 +7,7 @@ from django.conf import settings
 
 from analytics.models import AuditLog
 from analytics.services.audit_writer import record_audit
+from loans.metrics import LOAN_DOMAIN_EVENTS, increment
 
 logger = logging.getLogger("loans.audit")
 
@@ -70,13 +71,22 @@ def record_loan_audit(*, required=False, **kwargs):
             "scope_policy_version": OFFICER_EVENT_SCOPE_POLICY_VERSION,
         }
     try:
-        return record_audit(
+        result = record_audit(
             domain="loans",
             required=required,
             unavailable_error=LoanAuditUnavailable,
             writer=AuditLog.log_action,
             **kwargs,
         )
+        action = str(kwargs.get("action") or "")
+        operation = (
+            "payment" if "payment" in action or "payoff" in action
+            else "disbursement" if "disbursement" in action
+            else "transition" if action.startswith("loan_")
+            else "other"
+        )
+        increment(LOAN_DOMAIN_EVENTS, operation=operation, outcome="recorded")
+        return result
     except LoanAuditUnavailable:
         action = str(kwargs.get("action") or "unknown")
         if LOAN_AUDIT_WRITE_FAILURES is not None:

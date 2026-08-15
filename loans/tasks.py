@@ -18,6 +18,34 @@ class WalletReceiptPending(Exception):
     """The transfer was broadcast but does not have a receipt yet."""
 
 
+@shared_task(name="loans.deliver_notification")
+def deliver_loan_notification_task(delivery_id):
+    from loans.services.notifications import deliver_loan_notification
+
+    return deliver_loan_notification(delivery_id)
+
+
+@shared_task(name="loans.reconcile_notification_deliveries")
+def reconcile_loan_notifications_task(limit=100):
+    from loans.services.notifications import reconcile_loan_notifications
+
+    return reconcile_loan_notifications(limit=max(1, min(int(limit), 1000)))
+
+
+@shared_task(name="loans.enforce_retention")
+def enforce_loan_retention_task(limit=100):
+    from loans.services.lifecycle import enforce_loan_retention
+
+    return enforce_loan_retention(limit=max(1, min(int(limit), 1000)))
+
+
+@shared_task(name="loans.collect_operational_metrics")
+def collect_loan_operational_metrics_task():
+    from loans.services.operations import collect_loan_operational_metrics
+
+    return collect_loan_operational_metrics()
+
+
 @shared_task
 def check_overdue_installments_task():
     """Mark overdue installments and sync them to the blockchain."""

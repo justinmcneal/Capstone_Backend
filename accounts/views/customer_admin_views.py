@@ -186,6 +186,10 @@ class CustomerDetailView(ManageUsersRequiredMixin, APIView):
                     if getattr(customer, "ai_cleanup_completed_at", None)
                     else None
                 ),
+                "loan_cleanup_status": getattr(customer, "loan_cleanup_status", None),
+                "loan_cleanup_counts": getattr(customer, "loan_cleanup_counts", {}),
+                "loan_cleanup_attempts": getattr(customer, "loan_cleanup_attempts", 0),
+                "loan_cleanup_last_error": getattr(customer, "loan_cleanup_last_error", ""),
             },
             message="Customer retrieved successfully",
         )

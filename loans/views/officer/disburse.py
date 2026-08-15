@@ -198,7 +198,7 @@ class DisburseView(LoanOfficerRequiredMixin, APIView):
             )
 
         if not replayed:
-            self._send_disbursement_email(application, amount, method, reference)
+            self._queue_disbursement_notification(application, amount, method, reference)
             try:
                 from loans.blockchain.sync import sync_disbursement
 
@@ -216,23 +216,21 @@ class DisburseView(LoanOfficerRequiredMixin, APIView):
         )
 
     @staticmethod
-    def _send_disbursement_email(application, amount, method, reference):
+    def _queue_disbursement_notification(application, amount, method, reference):
         try:
             from accounts.models import Customer
-            from notifications.services import get_email_sender
+            from loans.services.notifications import queue_customer_loan_notification
 
             customer = None
             if application.customer_id and ObjectId.is_valid(application.customer_id):
                 customer = Customer.find_one({"_id": ObjectId(application.customer_id)})
             if customer and customer.email:
-                get_email_sender().send_loan_disbursed(
-                    customer_email=customer.email,
-                    customer_name=f"{customer.first_name} {customer.last_name}",
+                queue_customer_loan_notification(
                     loan_id=application.id,
-                    amount=amount,
-                    method=method,
-                    reference=reference,
-                    customer_id=application.customer_id,
+                    event_type="disbursed",
+                    event_key=application.last_transition_id or application.disbursement_idempotency_key,
+                    customer=customer,
+                    payload={"amount": amount, "method": method, "reference": reference},
                 )
-        except Exception as exc:  # noqa: BLE001 - notification is best effort
-            logger.warning("Failed to send disbursement email: %s", exc)
+        except Exception as exc:  # noqa: BLE001 - durable record/reconciler handles recovery
+            logger.warning("Failed to queue disbursement notification: %s", exc)

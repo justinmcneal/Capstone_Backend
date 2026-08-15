@@ -45,6 +45,7 @@ from documents.models import (  # noqa: E402
 from loans.blockchain.models import BlockchainTransaction  # noqa: E402
 from loans.models import (  # noqa: E402
     LoanApplication,
+    LoanNotificationDelivery,
     LoanPayment,
     LoanProduct,
     RepaymentSchedule,
@@ -287,6 +288,17 @@ def create_indexes():
         raise
     except Exception as e:
         print(f"✗ BlockchainTransaction error: {e}")
+        raise
+
+    try:
+        print("Creating indexes for LoanNotificationDelivery collection...")
+        LoanNotificationDelivery.create_indexes()
+        print("✓ LoanNotificationDelivery indexes created")
+    except (DuplicateKeyError, OperationFailure) as e:
+        print(f"✗ LoanNotificationDelivery index error; review duplicates: {e}")
+        raise
+    except Exception as e:
+        print(f"✗ LoanNotificationDelivery error: {e}")
         raise
 
     try:

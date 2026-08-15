@@ -7,7 +7,7 @@ import hmac
 
 from django.conf import settings
 
-from config.field_encryption import decrypt_fields, encrypt_fields
+from config.field_encryption import decrypt_fields, encrypt_fields, encrypt_value
 from loans.utils.money import from_centavos, to_centavos
 from loans.utils.time import utcnow
 
@@ -33,7 +33,12 @@ class LoanPayment:
     """
 
     collection_name = "loan_payments"
-    encrypted_fields = ("notes", "reference")
+    encrypted_fields = (
+        "notes",
+        "reference",
+        "failure_reason",
+        "blockchain_sync_error",
+    )
 
     def __init__(self, **kwargs):
         self._id = kwargs.get("_id")
@@ -389,7 +394,7 @@ class LoanPayment:
             {
                 "$set": {
                     "blockchain_sync_status": "failed",
-                    "blockchain_sync_error": str(error)[:500],
+                    "blockchain_sync_error": encrypt_value(str(error)[:500]),
                 }
             },
         )

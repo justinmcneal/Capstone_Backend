@@ -137,19 +137,17 @@ class LoanApplyView(CustomerRoleRequiredMixin, APIView):
                 f"Loan application submitted: {application.id} by {customer_id}"
             )
 
-            # Send confirmation email to customer
+            # Persist notification before broker publication. A broker/email
+            # failure is retried without changing the accepted application.
             try:
-                from notifications.services import get_email_sender
+                from loans.services.notifications import queue_customer_loan_notification
 
-                sender = get_email_sender()
-                sender.send_loan_submitted(
-                    customer_email=user.email if hasattr(user, "email") else "",
-                    customer_name=_safe_customer_display_name(user),
+                queue_customer_loan_notification(
                     loan_id=application.id,
-                    product_name=product.name,
-                    amount=data["requested_amount"],
-                    customer_id=customer_id,
-                    delivery_key=application.last_transition_id,
+                    event_type="submitted",
+                    event_key=application.last_transition_id,
+                    customer=user,
+                    payload={"product_name": product.name, "amount": data["requested_amount"]},
                 )
             except Exception as e:
                 logger.warning(f"Failed to send loan submitted email: {e}")
@@ -481,17 +479,14 @@ class ApplicationDetailView(CustomerRoleRequiredMixin, APIView):
             )
 
             try:
-                from notifications.services import get_email_sender
+                from loans.services.notifications import queue_customer_loan_notification
 
-                sender = get_email_sender()
-                sender.send_loan_submitted(
-                    customer_email=user.email if hasattr(user, "email") else "",
-                    customer_name=_safe_customer_display_name(user),
+                queue_customer_loan_notification(
                     loan_id=app.id,
-                    product_name=product.name,
-                    amount=requested_amount,
-                    customer_id=customer_id,
-                    delivery_key=app.last_transition_id,
+                    event_type="submitted",
+                    event_key=app.last_transition_id,
+                    customer=user,
+                    payload={"product_name": product.name, "amount": requested_amount},
                 )
             except Exception as e:
                 logger.warning(f"Failed to send loan submitted email: {e}")

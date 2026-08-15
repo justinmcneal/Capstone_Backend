@@ -855,18 +855,14 @@ class OfficerRequestMissingDocumentsView(LoanOfficerRequiredMixin, APIView):
 
         if customer and customer.email:
             try:
-                from notifications.services import get_email_sender
+                from loans.services.notifications import queue_customer_loan_notification
 
-                sender = get_email_sender()
-                sender.send_missing_documents_requested(
-                    customer_email=customer.email,
-                    customer_name=f"{customer.first_name} {customer.last_name}".strip()
-                    or "Customer",
+                queue_customer_loan_notification(
                     loan_id=app.id,
-                    missing_documents=app.missing_documents_requested,
-                    reason=app.missing_documents_reason,
-                    customer_id=app.customer_id,
-                    delivery_key=app.last_transition_id,
+                    event_type="missing_documents",
+                    event_key=app.last_transition_id,
+                    customer=customer,
+                    payload={"missing_documents": app.missing_documents_requested, "reason": app.missing_documents_reason},
                 )
             except Exception as e:
                 logger.warning(f"Failed to send missing documents email: {e}")
@@ -992,16 +988,14 @@ class OfficerReviewView(LoanOfficerRequiredMixin, APIView):
             # Send approval email
             if customer_email:
                 try:
-                    from notifications.services import get_email_sender
+                    from loans.services.notifications import queue_customer_loan_notification
 
-                    sender = get_email_sender()
-                    sender.send_loan_approved(
-                        customer_email=customer_email,
-                        customer_name=customer_name,
+                    queue_customer_loan_notification(
                         loan_id=app.id,
-                        approved_amount=data["approved_amount"],
-                        customer_id=app.customer_id,
-                        delivery_key=app.last_transition_id,
+                        event_type="approved",
+                        event_key=app.last_transition_id,
+                        customer=customer,
+                        payload={"approved_amount": data["approved_amount"]},
                     )
                 except Exception as e:
                     logger.warning(f"Failed to send approval email: {e}")
@@ -1049,16 +1043,14 @@ class OfficerReviewView(LoanOfficerRequiredMixin, APIView):
             # Send rejection email
             if customer_email:
                 try:
-                    from notifications.services import get_email_sender
+                    from loans.services.notifications import queue_customer_loan_notification
 
-                    sender = get_email_sender()
-                    sender.send_loan_rejected(
-                        customer_email=customer_email,
-                        customer_name=customer_name,
+                    queue_customer_loan_notification(
                         loan_id=app.id,
-                        reason=data["rejection_reason"],
-                        customer_id=app.customer_id,
-                        delivery_key=app.last_transition_id,
+                        event_type="rejected",
+                        event_key=app.last_transition_id,
+                        customer=customer,
+                        payload={"reason": data["rejection_reason"]},
                     )
                 except Exception as e:
                     logger.warning(f"Failed to send rejection email: {e}")

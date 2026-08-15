@@ -1,0 +1,20 @@
+{
+  "annotations": {"list": []},
+  "editable": false,
+  "graphTooltip": 1,
+  "panels": [
+    {"datasource": {"type": "prometheus", "uid": "capstone-prometheus"}, "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0}, "id": 1, "targets": [{"expr": "sum by (scope, method, outcome) (rate(loans_requests_total[5m]))", "legendFormat": "{{scope}} {{method}} {{outcome}}", "refId": "A"}], "title": "Request outcomes", "type": "timeseries"},
+    {"datasource": {"type": "prometheus", "uid": "capstone-prometheus"}, "fieldConfig": {"defaults": {"unit": "s"}}, "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0}, "id": 2, "targets": [{"expr": "histogram_quantile(0.95, sum by (le, scope, method) (rate(loans_request_duration_seconds_bucket[5m])))", "legendFormat": "{{scope}} {{method}}", "refId": "A"}], "title": "Request latency p95", "type": "timeseries"},
+    {"datasource": {"type": "prometheus", "uid": "capstone-prometheus"}, "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8}, "id": 3, "targets": [{"expr": "loans_backlog", "legendFormat": "{{queue}} {{status}}", "refId": "A"}, {"expr": "loans_reconciliation_integrity_gaps", "legendFormat": "integrity {{kind}}", "refId": "B"}], "title": "Operational backlogs and integrity", "type": "timeseries"},
+    {"datasource": {"type": "prometheus", "uid": "capstone-prometheus"}, "fieldConfig": {"defaults": {"unit": "s"}}, "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8}, "id": 4, "targets": [{"expr": "loans_oldest_backlog_age_seconds", "legendFormat": "{{queue}}", "refId": "A"}], "title": "Oldest backlog age", "type": "timeseries"},
+    {"datasource": {"type": "prometheus", "uid": "capstone-prometheus"}, "gridPos": {"h": 8, "w": 12, "x": 0, "y": 16}, "id": 5, "targets": [{"expr": "sum by (operation, outcome) (rate(loans_domain_events_total[5m]))", "legendFormat": "{{operation}} {{outcome}}", "refId": "A"}], "title": "Lifecycle and settlement events", "type": "timeseries"},
+    {"datasource": {"type": "prometheus", "uid": "capstone-prometheus"}, "gridPos": {"h": 8, "w": 12, "x": 12, "y": 16}, "id": 6, "targets": [{"expr": "sum by (event, outcome) (rate(loans_notification_delivery_total[5m]))", "legendFormat": "{{event}} {{outcome}}", "refId": "A"}, {"expr": "time() - loans_job_last_success_timestamp_seconds", "legendFormat": "job age {{job}}", "refId": "B"}], "title": "Notification delivery and job freshness", "type": "timeseries"}
+  ],
+  "schemaVersion": 39,
+  "tags": ["loans", "capstone"],
+  "templating": {"list": []},
+  "time": {"from": "now-6h", "to": "now"},
+  "title": "Capstone Loans Operations",
+  "uid": "capstone-loans",
+  "version": 1
+}

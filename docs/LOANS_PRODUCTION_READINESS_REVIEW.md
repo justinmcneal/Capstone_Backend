@@ -37,14 +37,15 @@ durable wallet-disbursement design are implemented. Thirty-nine registered paths
 expose 45 HTTP method/path operations across customer, officer, and
 administrator roles.
 
-Stages 1 through 4 have closed the application-code authorization, response,
-concurrent lifecycle, exposed-settlement-scope, persistence-tooling, and bounded
-execution defects identified by this review. Stages 2 and 4 still require their
+Stages 1 through 5 have closed the application-code authorization, response,
+concurrent lifecycle, exposed-settlement-scope, persistence-tooling, bounded
+execution, privacy-lifecycle, delivery-durability, and observability defects
+identified by this review. Stages 2 and 4 still require their
 opt-in suites to run against an approved isolated real MongoDB target.
 The settlement baseline exposes cash/check, with wallet-to-wallet available only
 when blockchain is explicitly enabled. No other settlement rail is represented
 in the API, persistence validator, AI guidance, or smart-contract enums. The
-remaining blockers are release evidence, privacy, and operational concerns:
+remaining blockers are deployment and release evidence:
 
 1. The isolated real-Mongo Stage 2 suite exists but has not been executed
    against an approved target; local `mongomock` concurrency is not deployment
@@ -55,19 +56,18 @@ remaining blockers are release evidence, privacy, and operational concerns:
 3. Local query and job bounds are implemented; representative target-volume
    query plans, multi-worker contention, and load/latency evidence remain
    deployment validation.
-4. Loan data is not included in customer account export and has no documented
-   retention, legal-hold, anonymization, or deletion policy integration.
-5. Encryption covers selected free-text fields, but application purpose/AI
-   recommendation and several provider/blockchain failure-detail fields remain
-   plaintext in their domain collections.
-6. Loans has one audit-failure counter but no complete loan/payment/disbursement
-   metrics, dashboards, alerts, or bounded backlog gauges.
+4. The versioned seven-year retention baseline and financial-record
+   pseudonymization behavior require authorized legal/privacy approval for the
+   release jurisdiction; configuration does not replace that approval.
+5. Prometheus rules, the Grafana dashboard, notification reconciliation, and
+   operational gauges pass locally but still require deployed traffic, worker
+   loss, dashboard, and alert-delivery evidence.
 
 Current automated baseline:
 
-- Loan/blockchain-related selection: **502 passed, 13 skipped, 713 deselected**
+- Loan/blockchain-related selection: **510 passed, 13 skipped, 713 deselected**
   on 2026-08-15.
-- Full repository regression: **1,268 passed, 39 skipped** on 2026-08-15.
+- Full repository regression: **1,276 passed, 39 skipped** on 2026-08-15.
 - The 13 loan-selection skips are nine real-Ganache cases, three opt-in Stage 2
   real-Mongo cases, and one opt-in Stage 4 real-Mongo case; skips are not
   deployment evidence.
@@ -86,15 +86,15 @@ Current automated baseline:
 | Qualification | Implemented | Rules enforce profile/document/product readiness; AI is advisory with deterministic fallback. |
 | Applications | Implemented; real-Mongo proof pending | Owner-scoped create/list/detail/update/resubmit flows use guarded submit/resubmit transitions and stable conflicts. |
 | Assignment | Implemented; real-Mongo proof pending | Admin assign/reassign transitions compare the expected status and assignee; competing stale requests cannot overwrite the winner. Auto-assignment remains unused. |
-| Officer review | Implemented; delivery hardening remains | Review decisions are one-winner transitions, encrypted note appends use retrying compare-and-set, and document-request history is atomically preserved. Durable notifications remain Stage 5 work. |
+| Officer review | Implemented; deployment proof pending | Review decisions are one-winner transitions, encrypted note appends use retrying compare-and-set, and document-request history is atomically preserved. Customer outcomes use the durable loan outbox. |
 | Cash/check disbursement | Implemented with remaining hardening | Idempotency, atomic disbursement claims, safe public failures, and a cash default exist; deployment concurrency proof remains. |
 | Wallet disbursement/payment | Partial; deployment-gated | Confirmation, durable retries, leases, exact rebroadcast, and recovery exist; real-chain and multi-worker evidence remain. |
 | Repayment accounting | Implemented for the baseline | Versioned centavo math, optimistic schedule updates, exact payoff terms, and atomic penalty/waiver handling exist. Collected waiver credit is carried forward; a waiver requiring an external refund is rejected. Reserved reversal/write-off workflows remain unavailable. |
 | Retrieval/search/export | Implemented locally; load proof pending | Role-scoped pagination, keyed exact payment-reference search, explicit supporting-search truncation, and a configurable 10,000-row synchronous export ceiling are implemented. |
-| Security and privacy | Stage 1 complete; later gaps remain | JWT, role/permission/assignment scope, explicit blockchain response contracts, stable public errors, encryption, idempotency, and audit exist. Lifecycle and data-governance work remains in later stages. |
+| Security and privacy | Implemented locally; policy approval pending | Account export, versioned retention, dry-run legal hold, customer-link pseudonymization, expanded field encryption, backfill, rotation, idempotency, and audit integration exist. Release-jurisdiction policy approval remains external. |
 | MongoDB schema/indexes | Implemented locally; real-Mongo proof pending | Count-only inventory, dry-run-first backfill, strict validator manifests, compound indexes, and an isolated real-Mongo suite exist. Target execution remains pending. |
-| Background processing | Implemented locally; deployment proof pending | Overdue, lifecycle, and wallet reconciliation scans are batched, leased, checkpointed, routed to a dedicated queue, and time-bounded. Multi-worker/load proof remains. |
-| Monitoring | Partial | Audit write failures are counted; end-to-end operational metrics, dashboards, and alerts are missing. |
+| Background processing | Implemented locally; deployment proof pending | Overdue, lifecycle, wallet, retention, notification, and metric jobs are bounded and routed to a dedicated queue; mutation scans use leases/checkpoints and notification delivery uses per-record leases. Multi-worker/load proof remains. |
+| Monitoring | Implemented locally; deployment proof pending | Low-cardinality request, lifecycle/settlement, notification, backlog, and oldest-age metrics plus tested Prometheus rules and a provisioned Grafana dashboard exist. Live alert delivery remains Stage 6 evidence. |
 | Production deployment | Not approved | Real MongoDB, Redis/Celery, chain/RPC, proxy, secrets, backup/restore, monitoring, and incident evidence remain. |
 
 ## Module Responsibilities
@@ -162,7 +162,7 @@ assignment-limited.
 | `GET officer/applications/` | Filtered, paginated assigned queue | Implemented with bounded supporting search and explicit truncation metadata |
 | `GET officer/applications/<application_id>/` | Scoped detail | Implemented |
 | `POST .../notes/` | Append bounded encrypted internal note history | Implemented with retrying compare-and-set; real-Mongo proof pending |
-| `POST .../request-missing-documents/` | Atomically record request/history and notify customer | State transition implemented; email remains best effort pending Stage 5 |
+| `POST .../request-missing-documents/` | Atomically record request/history and notify customer | State transition and encrypted durable notification outbox are implemented |
 | `PUT .../review/` | Approve or reject | Implemented as a one-winner expected-state transition |
 | `POST .../disburse/` | Cash/check or feature-gated wallet disbursement | Implemented by enabled rail; all other values are invalid input |
 | `GET/POST .../wallet-disbursement/` | Inspect/reconcile/retry/safely cancel | Implemented; deployment-gated |
@@ -177,7 +177,7 @@ assignment-limited.
 | `GET/POST .../payoff/` | Quote / settle exact early payoff | Implemented with explicit quote basis, centavo rounding, timestamp, and policy version |
 | `GET .../blockchain/` | Scoped chain transaction/audit status | Implemented with assignment concealment and an officer-safe field allowlist; deployment-gated |
 | `GET officer/exchange-rate/` | Current ETH/PHP rate | Deployment-gated |
-| `GET officer/schedules/export/` | Streaming audited CSV/JSON export | Partial; no total-row cap and results are scanned once to count and again to stream |
+| `GET officer/schedules/export/` | Bounded, audited CSV/JSON export | Implemented with a configurable 10,000-row preflight ceiling and spreadsheet-formula protection |
 
 The exact request/response examples and test sequence are maintained in
 `docs/LOANS_TESTING_GUIDE.md`.
@@ -426,30 +426,33 @@ tests, and representative load/latency measurements.
 
 ### 6. Privacy, notification durability, and observability
 
-**Status: Partial — production blocker for regulated financial data**
+**Status: Complete in application code — deployment evidence pending**
 
-- Add loan applications, schedules, and payments to customer account export
-  with explicit bounds/truncation and safe decryption.
-- Classify every loan field and extend versioned encryption to sensitive fields
-  currently stored in plaintext, including application purpose/AI
-  recommendation and provider/blockchain failure detail where retention is
-  justified. Add dry-run inventory, rotation, and strict verification tooling.
-- Approve retention/legal-hold/anonymization rules. Financial records may need
-  retention instead of deletion, but that exception must be explicit and must
-  pseudonymize customer linkage where legally appropriate.
-- Add resumable account-lifecycle cleanup/pseudonymization status and tests.
-- Move loan email/in-app deliveries to a leased, retryable outbox. Current email
-  delivery is synchronous best effort after the state mutation, so failure can
-  leave the customer uninformed.
-- Add low-cardinality request, transition, payment, disbursement, overdue,
-  reconciliation, queue/backlog, oldest-age, audit-failure, and blockchain/RPC
-  metrics.
-- Add Grafana dashboards and Prometheus alerts for failure ratio, latency,
-  pending age, stuck disbursement, reconciliation drift, overdue-job silence,
-  and audit/notification backlog.
+- Customer account export includes bounded, allowlisted applications,
+  repayment schedules, and payments with totals and explicit truncation.
+- Loan applications receive versioned retention metadata. A dry-run-first legal
+  hold command encrypts hold reasons, due terminal records are removed in
+  bounded batches, and account deletion pseudonymizes retained customer links
+  through a resumable `loan_cleanup_status` marker.
+- Purpose, AI recommendation, legal-hold reason, disbursement/provider errors,
+  payment failure/sync detail, raw wallet transaction data, and blockchain
+  failure text use the shared versioned encryption/key-rotation lifecycle.
+  Recovery-history reasons are individually encrypted so atomic array appends
+  remain safe.
+- Submission, review outcome, document request, disbursement, and payment
+  deliveries enter an encrypted, unique, leased outbox before Celery
+  publication. Broker and email failures remain retryable without repeating the
+  financial mutation or in-app notification.
+- Request outcomes/latency, lifecycle/settlement events, delivery outcomes,
+  critical backlog counts, oldest ages, job freshness, and bounded
+  application/schedule integrity findings use bounded labels. Prometheus rules,
+  rule tests, smoke configuration, Grafana provisioning, and a six-panel Loans
+  dashboard are present under `monitoring/loans/`.
 
-Release evidence: export/deletion/hold tests, notification crash/replay tests,
-Prometheus rule tests, a healthy dashboard, and delivered test alerts.
+Local evidence: eight focused Stage 5 regressions pass, `promtool` validates all
+eleven recording/alert rules and the smoke configuration, and the rule unit test
+passes. Authorized retention-policy approval, multi-worker crash proof, live
+dashboard traffic, and delivered alerts remain Stage 6 release evidence.
 
 ## Remediation Plan
 
@@ -542,20 +545,24 @@ part of this stage.
 
 ### Stage 5 — Privacy lifecycle, notification durability, and observability
 
-**Status: Not started**
+**Status: Complete in application code — 2026-08-15**
 
-- Add bounded loan data to customer export and implement the approved
+- Added bounded loan data to customer export and implemented the versioned
   retention, legal-hold, pseudonymization, and account-lifecycle behavior.
-- Complete sensitive-field classification, encryption, inventory, backfill,
+- Completed sensitive-field classification, encryption, inventory, backfill,
   key rotation, and verification.
-- Replace best-effort loan delivery with a leased, retryable notification
+- Replaced best-effort loan delivery with a leased, retryable notification
   outbox.
-- Add loan request, transition, settlement, reconciliation, queue, failure, and
+- Added loan request, transition, settlement, reconciliation, queue, failure, and
   age metrics plus Prometheus alerts and a Grafana dashboard.
 
 **Exit condition:** privacy operations are resumable and tested, failed
 notifications recover without duplicating state changes, and operators can
 detect and diagnose every critical loan backlog/failure mode.
+
+The local exit condition is met by eight focused regressions and successful
+`promtool` rule/config validation. Deployment-topology proof and policy approval
+remain Stage 6 conditions rather than missing Stage 5 code.
 
 ### Stage 6 — Real-environment release validation
 
