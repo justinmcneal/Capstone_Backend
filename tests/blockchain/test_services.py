@@ -192,24 +192,22 @@ class TestDisbursementService:
         from loans.blockchain.services.disbursement_service import set_method_onchain, DISBURSEMENT_METHOD_MAP
 
         mock_gc.return_value = MagicMock()
-        result = set_method_onchain(loan_id="loan1", method="gcash")
+        result = set_method_onchain(loan_id="loan1", method="check")
 
         assert result["tx_hash"] == TX_RESULT["tx_hash"]
         call_args = mock_tx.call_args[0]
         assert call_args[1] == "setPreferredMethod"
-        # gcash = 1 in the enum
-        assert call_args[3] == DISBURSEMENT_METHOD_MAP["gcash"]
+        assert call_args[3] == DISBURSEMENT_METHOD_MAP["check"]
 
     @patch("loans.blockchain.services.disbursement_service.send_transaction", return_value=TX_RESULT)
     @patch("loans.blockchain.services.disbursement_service.get_contract")
-    def test_set_method_defaults_to_other(self, mock_gc, mock_tx, blockchain_settings):
+    def test_set_method_rejects_unknown_value(self, mock_gc, mock_tx, blockchain_settings):
         from loans.blockchain.services.disbursement_service import set_method_onchain
 
         mock_gc.return_value = MagicMock()
-        set_method_onchain(loan_id="loan1", method="unknown_method")
-
-        call_args = mock_tx.call_args[0]
-        assert call_args[3] == 4  # Other
+        with pytest.raises(ValueError, match="cash, check, wallet"):
+            set_method_onchain(loan_id="loan1", method="unknown_method")
+        mock_tx.assert_not_called()
 
     @patch("loans.blockchain.services.disbursement_service.send_transaction", return_value=TX_RESULT)
     @patch("loans.blockchain.services.disbursement_service.get_contract")
@@ -258,10 +256,9 @@ class TestDisbursementService:
     def test_disbursement_method_map_completeness(self):
         from loans.blockchain.services.disbursement_service import DISBURSEMENT_METHOD_MAP
 
-        expected = {"cash", "gcash", "bank_transfer", "check", "wallet"}
+        expected = {"cash", "check", "wallet"}
         assert set(DISBURSEMENT_METHOD_MAP.keys()) == expected
-        # Values should be 0-4
-        assert set(DISBURSEMENT_METHOD_MAP.values()) == {0, 1, 2, 3, 4}
+        assert set(DISBURSEMENT_METHOD_MAP.values()) == {0, 1, 2}
 
 
 # ============================================================================
@@ -317,14 +314,13 @@ class TestRepaymentService:
             loan_id="loan_pay",
             installment_number=3,
             amount=5000,
-            payment_method="gcash",
+            payment_method="wallet",
             reference_hash="PAY_REF_001",
         )
 
         assert result["gas_used"] == 100000
         call_args = mock_tx.call_args[0]
         assert call_args[1] == "recordPayment"
-        # gcash = 2 in PaymentMethod enum
         assert call_args[5] == 2
 
     @patch("loans.blockchain.services.repayment_service.send_transaction", return_value=TX_RESULT)
@@ -385,9 +381,9 @@ class TestRepaymentService:
     def test_payment_method_map_completeness(self):
         from loans.blockchain.services.repayment_service import PAYMENT_METHOD_MAP
 
-        expected = {"cash", "gcash", "bank_transfer", "check", "wallet"}
+        expected = {"cash", "check", "wallet"}
         assert set(PAYMENT_METHOD_MAP.keys()) == expected
-        assert set(PAYMENT_METHOD_MAP.values()) == {0, 1, 2, 3, 4}
+        assert set(PAYMENT_METHOD_MAP.values()) == {0, 1, 2}
 
 
 # ============================================================================

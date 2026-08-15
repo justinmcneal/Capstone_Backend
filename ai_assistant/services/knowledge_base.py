@@ -251,7 +251,7 @@ LOAN_PROCESS_STEPS = [
     {
         "step": 7,
         "title": "Disbursement",
-        "description": "Approved loans currently use cash, check, or ETH wallet when blockchain is enabled. GCash and bank transfer are planned but unavailable pending provider API and financial-institution approval.",
+        "description": "Approved loans use cash, check, or ETH wallet when blockchain is enabled.",
         "app_location": "Track → select loan"
     },
     {
@@ -294,13 +294,6 @@ PAYMENT_METHODS = {
             {"name": "Cash", "description": "Pay at a partner location"},
             {"name": "Check", "description": "Pay by check; recorded after clearance"},
         ]
-    },
-    "planned": {
-        "description": "Not currently available; awaiting provider API access and financial-institution approval",
-        "methods": [
-            {"name": "GCash", "description": "Planned GCash provider integration"},
-            {"name": "Bank Transfer", "description": "Planned bank provider integration"},
-        ],
     },
 }
 
@@ -457,9 +450,6 @@ def build_system_prompt(include_version=False):
     # Build payment methods string
     auto_methods = ", ".join([m["name"] for m in PAYMENT_METHODS["automatic"]["methods"]])
     manual_methods = ", ".join([m["name"] for m in PAYMENT_METHODS["manual"]["methods"]])
-    planned_methods = ", ".join(
-        [m["name"] for m in PAYMENT_METHODS["planned"]["methods"]]
-    )
     
     prompt = f"""You are a helpful financial assistant for MSME Pathways, a blockchain-backed microfinance app for Filipino small business owners.{version_line}
 
@@ -514,7 +504,6 @@ Mobile app for microloans. When blockchain is enabled, loan events (application,
 === PAYMENT METHODS ===
 WALLET-TO-WALLET (when blockchain is enabled): {auto_methods}
 MANUAL (officer records): {manual_methods}
-PLANNED, NOT CURRENTLY AVAILABLE: {planned_methods} — awaiting provider API access and financial-institution approval
 
 === REPAYMENT ===
  - Equal monthly installments with due dates

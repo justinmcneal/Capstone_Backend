@@ -1,9 +1,7 @@
 # ETH Wallet Transfer — Implementation & Testing Guide
 
-> **Settlement availability:** Cash, check, and wallet-to-wallet are the current
-> working rails. GCash and bank-transfer identifiers are retained for a planned
-> provider integration, but are not currently selectable because provider API
-> access and financial-institution approval are still pending.
+> **Settlement availability:** Cash, check, and wallet-to-wallet are the complete
+> settlement set. Wallet is selectable only when blockchain is enabled.
 
 Implement real ETH transfers for the "Wallet (ETH)" disbursement and repayment method using MetaMask + WalletConnect.
 
@@ -54,8 +52,8 @@ Loan amounts are in PHP. ETH transfers need a conversion rate.
 ### What Does NOT Change
 
 - **Smart contracts** — remain audit/record-keeping only, no redeployment
-- **Existing flows** — cash and check continue unchanged; planned GCash and bank
-  transfer remain disabled; wallet-to-wallet is the feature covered here
+- **Existing flows** — cash and check continue unchanged; wallet-to-wallet is
+  the feature covered here and is enabled only by blockchain configuration
 - **On-chain audit trail** — still recorded for all methods including wallet
 
 ---
@@ -847,7 +845,7 @@ After completing all steps:
 | `insufficient funds for gas * price + value` | System wallet doesn't have enough ETH | Check Ganache account balance. Each new workspace starts with 100 ETH |
 | MetaMask not connecting | Wrong network in MetaMask | Ensure MetaMask is on Ganache network (Chain ID 1337, RPC 127.0.0.1:7545) |
 | WalletConnect QR not working | Invalid Project ID | Get a valid Project ID from cloud.walletconnect.com |
-| CoinGecko returns error | Rate limit or no internet | Wallet transactions are blocked until rate is available. Cash/check remain available; planned GCash/bank rails remain disabled. |
+| CoinGecko returns error | Rate limit or no internet | Wallet transactions are blocked until rate is available; cash/check remain available. |
 | `Transaction recipient does not match` | Customer sent ETH to wrong address | Ensure mobile app fetches system wallet from `/api/loans/system-wallet/` |
 | `Transaction amount too low` | Rate changed between preview and send | Backend uses a tolerance (±2%) when verifying amounts |
 | Wallet address not showing for officer | Profile not updated | Customer must save wallet address in Profile before applying |

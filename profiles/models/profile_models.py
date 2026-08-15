@@ -756,7 +756,7 @@ class AlternativeData:
         self.bank_account_duration = kwargs.get("bank_account_duration")  # Years
         self.has_ewallet = kwargs.get(
             "has_ewallet"
-        )  # Capability signal; GCash is a planned rail, ETH wallet is active when enabled.
+        )  # Capability signal for ETH wallet settlement when enabled.
         self.ewallet_usage = kwargs.get(
             "ewallet_usage"
         )  # daily, weekly, monthly, rarely

@@ -31,7 +31,7 @@ describe("DisbursementExecution", function () {
     const reasonHash = ethers.keccak256(ethers.toUtf8Bytes("REASON001"));
 
     // Enums
-    const Method = { BankTransfer: 0, GCash: 1, Cash: 2, Check: 3, Wallet: 4 };
+    const Method = { Cash: 0, Check: 1, Wallet: 2 };
     const Status = { Pending: 0, Processing: 1, Completed: 2, Cancelled: 3 };
     const LoanStatus = { Draft: 0, Submitted: 1, UnderReview: 2, Approved: 3, Rejected: 4, Disbursed: 5, Cancelled: 6 };
     const RiskCategory = { Low: 0, Medium: 1, High: 2 };
@@ -152,7 +152,7 @@ describe("DisbursementExecution", function () {
     describe("initiateDisbursement", function () {
         beforeEach(async function () {
             await createAndApproveLoan(loanId, borrower);
-            await disbursementMethod.connect(borrower).setPreferredMethod(loanId, Method.BankTransfer);
+            await disbursementMethod.connect(borrower).setPreferredMethod(loanId, Method.Check);
         });
 
         it("Should initiate disbursement successfully", async function () {
@@ -226,7 +226,7 @@ describe("DisbursementExecution", function () {
 
         beforeEach(async function () {
             await createAndApproveLoan(loanId, borrower);
-            await disbursementMethod.connect(borrower).setPreferredMethod(loanId, Method.GCash);
+            await disbursementMethod.connect(borrower).setPreferredMethod(loanId, Method.Wallet);
             const tx = await disbursementExecution.connect(officer).initiateDisbursement(loanId, disbursementAmount);
             await tx.wait();
             // Get disbursement ID from mapping
@@ -370,7 +370,7 @@ describe("DisbursementExecution", function () {
 
         beforeEach(async function () {
             await createAndApproveLoan(loanId, borrower);
-            await disbursementMethod.connect(borrower).setPreferredMethod(loanId, Method.BankTransfer);
+            await disbursementMethod.connect(borrower).setPreferredMethod(loanId, Method.Check);
             const tx = await disbursementExecution.connect(officer).initiateDisbursement(loanId, disbursementAmount);
             await tx.wait();
             // Get disbursement ID from mapping
@@ -384,7 +384,7 @@ describe("DisbursementExecution", function () {
             expect(record.loanId).to.equal(loanId);
             expect(record.borrower).to.equal(borrower.address);
             expect(record.amount).to.equal(disbursementAmount);
-            expect(record.method).to.equal(Method.BankTransfer);
+            expect(record.method).to.equal(Method.Check);
             expect(record.status).to.equal(Status.Processing);
         });
 

@@ -74,6 +74,15 @@ def test_validator_manifest_covers_every_primary_collection_and_encrypted_shapes
     payment = LOAN_VALIDATORS["loan_payments"]["$jsonSchema"]
     assert "reference_search_index" in payment["required"]
     assert "scope_officer_id" in payment["required"]
+    assert payment["properties"]["payment_method"]["enum"] == [
+        "cash",
+        "check",
+        "wallet",
+    ]
+    application = LOAN_VALIDATORS["loan_applications"]["$jsonSchema"]
+    assert application["properties"]["disbursement_method"]["oneOf"][1][
+        "enum"
+    ] == ["cash", "check", "wallet"]
 
 
 def test_inventory_is_count_only_and_detects_legacy_and_duplicate_rows(settings):
@@ -91,6 +100,22 @@ def test_inventory_is_count_only_and_detects_legacy_and_duplicate_rows(settings)
     assert "DUP" not in repr(result)
     assert "secret-one" not in repr(result)
     assert "secret-two" not in repr(result)
+
+
+def test_inventory_flags_unsupported_settlement_values(settings):
+    settings.MONGODB["loan_payments"].insert_one(
+        {
+            "loan_id": str(ObjectId()),
+            "customer_id": str(ObjectId()),
+            "payment_method": "card",
+            "payment_status": "posted",
+            "recorded_at": utcnow(),
+        }
+    )
+
+    payment = loan_data_inventory(limit=10)["collections"]["loan_payments"]
+
+    assert payment["invalid_enum"] == 1
 
 
 def test_payment_backfill_builds_search_scope_timing_and_centavos(settings):

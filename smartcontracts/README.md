@@ -1,9 +1,7 @@
 # MSME Pathways Smart Contract System
 
-> GCash and bank-transfer enum values are retained for planned provider
-> integrations and contract compatibility. They are not currently enabled by
-> the backend; operational rails are cash, check, and feature-gated
-> wallet-to-wallet settlement.
+> Settlement enums match the backend: cash, check, and feature-gated
+> wallet-to-wallet settlement only.
 
 ## Overview
 
@@ -206,7 +204,7 @@ Django Status      →    Smart Contract Status
 ### Payment Methods
 
 ```solidity
-enum PaymentMethod { BankTransfer, Cash, GCash, Other }
+enum PaymentMethod { Cash, Check, Wallet }
 ```
 
 ---

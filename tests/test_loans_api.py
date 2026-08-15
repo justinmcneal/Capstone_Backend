@@ -208,9 +208,9 @@ class TestLoanProductDetailView:
         response = LoanProductDetailView.as_view()(request, product_id=product.id)
         assert response.status_code == 200
         assert response.data["data"]["name"] == "Micro Loan"
-        assert response.data["data"]["settlement_policy"][
-            "provider_payment_submission_enabled"
-        ] is False
+        policy = response.data["data"]["settlement_policy"]
+        assert policy["available_disbursement_methods"] == ["cash", "check"]
+        assert "planned_provider_methods" not in policy
 
 
 class TestPreQualifyView:

@@ -65,15 +65,13 @@ Stage 3 focused policy validation:
 .venv/bin/pytest -q tests/test_loans_stage3_settlement_policy.py
 ```
 
-Result: **7 passed**. These cases prove the published rail scope, disabled
-provider guards, stable no-mutation failures, penalty concurrency, waiver-credit
+Result: **7 passed**. These cases prove the published rail scope, unsupported
+method rejection, penalty concurrency, waiver-credit
 carry-forward, and rejection when a waiver would require an external refund.
 
-The current working rails are cash, check, and wallet-to-wallet when blockchain
-is enabled. GCash and bank transfer are planned integrations. Their stored enum
-values, reporting filters, provider-reference service tests, and smart-contract
-mappings are retained deliberately, but initiation must remain disabled until
-the provider APIs and financial-institution approval are available.
+The complete settlement set is cash, check, and wallet-to-wallet when
+blockchain is enabled. No additional method is retained as a planned API,
+persistence, AI-knowledge, or smart-contract value.
 
 Run the complete repository suite before merging or releasing:
 
@@ -181,7 +179,7 @@ The latter two are reserved until corresponding policy and API workflows exist.
 | `GET` | `applications/` | Customer role; owner rows only |
 | `GET/PUT` | `applications/<application_id>/` | Owner; PUT only for draft |
 | `GET` | `applications/<application_id>/schedule/` | Owner; disbursed/closed lifecycle |
-| `GET/POST` | `applications/<application_id>/payments/` | Owner; GET history, while disabled GCash/bank POST returns stable 503 without mutation |
+| `GET` | `applications/<application_id>/payments/` | Owner-scoped payment history; POST is not supported |
 | `POST` | `applications/<application_id>/resubmit/` | Owner; rejected only |
 | `GET` | `applications/<application_id>/feedback/` | Owner; rejected only |
 | `POST` | `applications/<application_id>/set-disbursement-method/` | Owner; allowed lifecycle |
@@ -334,8 +332,8 @@ Idempotency-Key: disburse-<uuid>
 - Cash/check should return an executed disbursement and one schedule.
 - Wallet should return HTTP 202 pending, then complete only after the worker
   confirms the transfer and creates/reuses the schedule.
-- GCash/bank transfer return `503 SETTLEMENT_RAIL_UNAVAILABLE` without creating
-  a disbursement. Wallet is accepted only when blockchain is enabled.
+- Unsupported values return HTTP 400 without creating a disbursement. Wallet is
+  accepted only when blockchain is enabled.
 - Replaying an identical key/payload must not create another schedule or send
   another transfer.
 - Reusing a key for an incompatible request must fail.
@@ -361,27 +359,6 @@ Idempotency-Key: payment-<uuid>
 Only cash and check are accepted here. Assert exact centavo allocation, partial
 payment state, full installment state, remaining balance, repeated-key replay,
 incompatible reuse conflict, and overpayment rejection.
-
-### Customer external-payment claim
-
-```http
-POST /api/loans/applications/<application-id>/payments/
-Idempotency-Key: claim-<uuid>
-```
-
-```json
-{
-  "installment_number": 1,
-  "amount": 2000,
-  "payment_method": "gcash",
-  "reference": "PROVIDER-REFERENCE"
-}
-```
-
-Expected result is HTTP `503` with code `SETTLEMENT_RAIL_UNAVAILABLE`. No
-`LoanPayment` or schedule mutation may occur. A future provider implementation
-must add signed callback/operator verification, expiry, retry, reconciliation,
-and pending-to-posted/failed tests before this rail is enabled.
 
 ### Wallet payment
 
@@ -529,8 +506,8 @@ mapping between each stage and its required test evidence.
 | --- | --- | --- |
 | Stage 1 — Authorization and public response contract | Authenticated routes, role/permission/owner/assignment isolation, blockchain field allowlists, stable errors | **Complete:** 17 focused regressions pass; broader Loans selection passes |
 | Stage 2 — Atomic lifecycle and financial correctness | Concurrent review/assignment/notes, idempotent disbursement/payment/payoff, crash/replay | Application code and eight focused local regressions complete; three isolated real-Mongo tests added but execution is pending approval |
-| Stage 3 — Settlement scope and approved policies | Disabled GCash/bank rails, feature-gated wallet, public policy contract, concurrent penalty/waiver credit, explicit payoff/rate terms | **Complete in application code:** seven focused regressions and the broader Loans selection pass; institutional policy approval and optional deployed-wallet evidence remain release gates |
-| Stage 4 — MongoDB schema and bounded execution | Validators, inventory/backfill, unique indexes, query plans, large fixtures, overlapping jobs | **Implemented locally:** 10 focused regressions pass; the isolated real-Mongo proof is present but not yet executed |
+| Stage 3 — Settlement scope and approved policies | Cash/check, feature-gated wallet, public policy contract, concurrent penalty/waiver credit, explicit payoff/rate terms | **Complete in application code:** seven focused regressions and the broader Loans selection pass; institutional policy approval and optional deployed-wallet evidence remain release gates |
+| Stage 4 — MongoDB schema and bounded execution | Validators, inventory/backfill, unique indexes, query plans, large fixtures, overlapping jobs | **Implemented locally:** 11 focused regressions pass; the isolated real-Mongo proof is present but not yet executed |
 | Stage 5 — Privacy, notifications, and observability | Export/retention/hold/pseudonymization, encryption rotation, outbox recovery, metrics/rules/dashboard | Partial shared infrastructure only; loan-specific implementation and evidence are missing |
 | Stage 6 — Real-environment release validation | Deployment MongoDB, Redis/Celery, optional chain, HTTPS, load, backup/restore, rollback, dashboards/alerts | Pending deployment topology |
 
@@ -653,6 +630,11 @@ approved network topology and prove:
 - off-chain/on-chain reconciliation; and
 - transaction/gas/backlog metrics and delivered alerts.
 
+The current contract settlement enum is `Cash=0`, `Check=1`, `Wallet=2`.
+Validate a fresh deployment of this contract version. Existing local deployment
+manifests may still contain historical compiler input and must not be treated as
+an upgrade-safe migration plan.
+
 Never run a value-transfer test against a real funded wallet without explicit
 approval of the wallet, network, amount, and recipient.
 
@@ -744,14 +726,11 @@ inventory and dry-run backfill have been reviewed and backed up.
 6. Backend verifies chain facts and posts it once.
 7. Reconciliation reports no off-chain/on-chain drift.
 
-### Disabled external-provider branch
+### Unsupported-method branch
 
-Submit GCash and bank-transfer payment/disbursement requests and assert stable
-`503 SETTLEMENT_RAIL_UNAVAILABLE` responses. Verify no payment, claim,
-disbursement attempt, schedule balance, or application state changes. There is
-no provider happy path in the approved baseline; clients must hide these choices
-or label them “coming soon” using the published settlement policy. They must not
-be selectable while provider submission is disabled.
+Submit an unrecognized payment/disbursement method and assert HTTP 400 without
+creating a payment, disbursement attempt, schedule balance, or application state
+change. Product responses must advertise only cash/check and optional wallet.
 
 ## Expected HTTP Outcomes
 
@@ -792,8 +771,9 @@ database URIs, raw signed transactions, or internal exception detail.
       regressions pass.
 - [ ] **Stage 2:** application code and local regressions pass; execute and
       record the isolated real-Mongo atomic lifecycle/idempotency suite.
-- [x] **Stage 3 application code:** GCash/bank rails are disabled, wallet is
-      feature-gated, waiver credits are carried forward or rejected safely, and
+- [x] **Stage 3 application code:** cash/check are active, wallet is
+      feature-gated, unsupported methods are rejected, waiver credits are
+      carried forward or rejected safely, and
       payoff/rate/accounting contracts are explicit. Institutional/legal policy
       approval and optional deployed-wallet proof remain release conditions.
 - [ ] **Stage 4 deployment evidence:** local inventory/backfill,

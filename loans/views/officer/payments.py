@@ -419,7 +419,7 @@ class PaymentSearchView(LoanOfficerRequiredMixin, APIView):
         - customer_id: Filter by customer ID
         - disbursed_only: If true (default), only include payments from disbursed loans
         - payment_status: Filter by payment timing status ('on_time', 'late')
-        - payment_method: Filter by payment method ('cash', 'gcash', 'bank_transfer', 'check', 'wallet')
+        - payment_method: Filter by payment method ('cash', 'check', 'wallet')
         - min_amount: Minimum payment amount
         - max_amount: Maximum payment amount
         - start_date: Filter payments recorded on or after this date (YYYY-MM-DD)
@@ -559,7 +559,7 @@ class PaymentSearchView(LoanOfficerRequiredMixin, APIView):
             query["customer_id"] = customer_id
 
         # Payment method filter
-        valid_methods = ["cash", "gcash", "bank_transfer", "check", "wallet"]
+        valid_methods = ["cash", "check", "wallet"]
         if payment_method:
             if payment_method not in valid_methods:
                 return error_response(

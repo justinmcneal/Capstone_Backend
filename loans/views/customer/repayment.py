@@ -6,10 +6,6 @@ from accounts.authentication import CustomJWTAuthentication
 from accounts.utils.response_helpers import error_response, success_response
 from loans.models import LoanApplication
 from loans.services.payment_queries import payment_history_page
-from loans.services.settlement_policy import (
-    SettlementRailUnavailable,
-    require_customer_provider_payment,
-)
 from loans.views.customer.base import CustomerRoleRequiredMixin
 
 
@@ -123,10 +119,9 @@ class RepaymentScheduleView(CustomerRoleRequiredMixin, APIView):
 
 class PaymentHistoryView(CustomerRoleRequiredMixin, APIView):
     """
-    Get or record payments for a loan application.
+    Get payments for a loan application.
 
     GET /api/loans/applications/<id>/payments/
-    POST /api/loans/applications/<id>/payments/
     """
 
     authentication_classes = [CustomJWTAuthentication]
@@ -188,51 +183,3 @@ class PaymentHistoryView(CustomerRoleRequiredMixin, APIView):
             },
             message="Payment history retrieved",
         )
-
-    def post(self, request, application_id):
-        has_permission, result = self.check_customer_permission(request)
-        if not has_permission:
-            return result
-
-        user = request.user
-        customer_id = user.customer_id
-
-        app = LoanApplication.find_by_id(application_id)
-        if not app or app.customer_id != customer_id:
-            return error_response(
-                message="Application not found", status_code=status.HTTP_404_NOT_FOUND
-            )
-
-        if app.status != "disbursed":
-            return error_response(
-                message="Payments can only be recorded for disbursed loans",
-                status_code=status.HTTP_400_BAD_REQUEST,
-            )
-
-        payment_method = request.data.get("payment_method", "")
-
-        if payment_method in {"cash", "check"}:
-            return error_response(
-                message="Cash and check payments must be paid at the office and recorded by a loan officer",
-                status_code=status.HTTP_400_BAD_REQUEST,
-            )
-
-        if payment_method == "wallet":
-            return error_response(
-                message="Wallet payments must use the verified wallet-payment endpoint",
-                status_code=status.HTTP_400_BAD_REQUEST,
-            )
-
-        try:
-            require_customer_provider_payment(payment_method)
-        except SettlementRailUnavailable as exc:
-            return error_response(
-                message=str(exc),
-                code=exc.code,
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            )
-        except ValueError as exc:
-            return error_response(
-                message=str(exc),
-                status_code=status.HTTP_400_BAD_REQUEST,
-            )

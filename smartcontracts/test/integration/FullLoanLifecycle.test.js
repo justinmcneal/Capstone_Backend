@@ -40,9 +40,9 @@ describe("Full Loan Lifecycle — Integration", function () {
     Rejected: 4, Disbursed: 5, Cancelled: 6,
   };
   const RiskCategory = { Low: 0, Medium: 1, High: 2 };
-  const DisbursementMethodEnum = { BankTransfer: 0, GCash: 1, Cash: 2, Check: 3, Wallet: 4 };
+  const DisbursementMethodEnum = { Cash: 0, Check: 1, Wallet: 2 };
   const DisbursementStatus = { Pending: 0, Processing: 1, Completed: 2, Cancelled: 3 };
-  const PaymentMethod = { Cash: 0, BankTransfer: 1, GCash: 2, Check: 3, Wallet: 4 };
+  const PaymentMethod = { Cash: 0, Check: 1, Wallet: 2 };
   const InstallmentStatus = { Pending: 0, Paid: 1, Partial: 2, Overdue: 3 };
 
   // ================================================================
@@ -316,7 +316,7 @@ describe("Full Loan Lifecycle — Integration", function () {
       await loanApproval.connect(officer).approveLoan(loanId, requestedAmount, approvalNotesHash);
 
       await expect(
-        disbursementMethod.connect(borrower).setPreferredMethod(loanId, DisbursementMethodEnum.GCash)
+        disbursementMethod.connect(borrower).setPreferredMethod(loanId, DisbursementMethodEnum.Wallet)
       ).to.emit(disbursementMethod, "DisbursementMethodSelected");
 
       expect(await disbursementMethod.hasPreferredMethod(loanId)).to.be.true;
@@ -331,7 +331,7 @@ describe("Full Loan Lifecycle — Integration", function () {
       );
       await loanReview.connect(admin).assignOfficer(loanId, officer.address);
       await loanApproval.connect(officer).approveLoan(loanId, requestedAmount, approvalNotesHash);
-      await disbursementMethod.connect(borrower).setPreferredMethod(loanId, DisbursementMethodEnum.GCash);
+      await disbursementMethod.connect(borrower).setPreferredMethod(loanId, DisbursementMethodEnum.Wallet);
 
       await expect(
         disbursementExecution.connect(officer).initiateDisbursement(loanId, requestedAmount)
@@ -350,12 +350,12 @@ describe("Full Loan Lifecycle — Integration", function () {
       );
       await loanReview.connect(admin).assignOfficer(loanId, officer.address);
       await loanApproval.connect(officer).approveLoan(loanId, requestedAmount, approvalNotesHash);
-      await disbursementMethod.connect(borrower).setPreferredMethod(loanId, DisbursementMethodEnum.GCash);
+      await disbursementMethod.connect(borrower).setPreferredMethod(loanId, DisbursementMethodEnum.Wallet);
       const tx = await disbursementExecution.connect(officer).initiateDisbursement(loanId, requestedAmount);
       await tx.wait();
 
       const record = await disbursementExecution.getDisbursementByLoan(loanId);
-      const referenceHash = ethers.keccak256(ethers.toUtf8Bytes("GCASH_REF_12345"));
+      const referenceHash = ethers.keccak256(ethers.toUtf8Bytes("WALLET_REF_12345"));
 
       await expect(
         disbursementExecution.connect(officer).completeDisbursement(record.disbursementId, referenceHash)
@@ -393,7 +393,7 @@ describe("Full Loan Lifecycle — Integration", function () {
         const inst = await repaymentSchedule.getInstallment(loanId, i);
         await expect(
           paymentRecording.connect(officer).recordPayment(
-            loanId, i, inst.totalAmount, PaymentMethod.GCash,
+            loanId, i, inst.totalAmount, PaymentMethod.Wallet,
             ethers.keccak256(ethers.toUtf8Bytes(`INTEG_PAY_${i}`))
           )
         ).to.emit(paymentRecording, "PaymentRecorded");
@@ -446,13 +446,13 @@ describe("Full Loan Lifecycle — Integration", function () {
       );
       await loanReview.connect(admin).assignOfficer(loanId, officer.address);
       await loanApproval.connect(officer).approveLoan(loanId, requestedAmount, approvalNotesHash);
-      await disbursementMethod.connect(borrower).setPreferredMethod(loanId, DisbursementMethodEnum.GCash);
+      await disbursementMethod.connect(borrower).setPreferredMethod(loanId, DisbursementMethodEnum.Wallet);
       const tx = await disbursementExecution.connect(officer).initiateDisbursement(loanId, requestedAmount);
       await tx.wait();
       const record = await disbursementExecution.getDisbursementByLoan(loanId);
       await disbursementExecution.connect(officer).completeDisbursement(
         record.disbursementId,
-        ethers.keccak256(ethers.toUtf8Bytes("GCASH_REF_AUDIT"))
+        ethers.keccak256(ethers.toUtf8Bytes("WALLET_REF_AUDIT"))
       );
 
       // Check audit trail for the loan
@@ -501,7 +501,7 @@ describe("Full Loan Lifecycle — Integration", function () {
       expect(app.status).to.equal(LoanStatus.Approved);
 
       // ── Step 6: Set disbursement method ──
-      await disbursementMethod.connect(borrower).setPreferredMethod(loanId, DisbursementMethodEnum.GCash);
+      await disbursementMethod.connect(borrower).setPreferredMethod(loanId, DisbursementMethodEnum.Wallet);
       expect(await disbursementMethod.hasPreferredMethod(loanId)).to.be.true;
 
       // ── Step 7: Initiate disbursement ──
@@ -511,7 +511,7 @@ describe("Full Loan Lifecycle — Integration", function () {
       expect(disbRecord.status).to.equal(DisbursementStatus.Processing);
 
       // ── Step 8: Complete disbursement ──
-      const disbRefHash = ethers.keccak256(ethers.toUtf8Bytes("GCASH_REF_E2E"));
+      const disbRefHash = ethers.keccak256(ethers.toUtf8Bytes("WALLET_REF_E2E"));
       await disbursementExecution.connect(officer).completeDisbursement(
         disbRecord.disbursementId, disbRefHash
       );
@@ -539,7 +539,7 @@ describe("Full Loan Lifecycle — Integration", function () {
       for (let i = 1; i <= termMonths; i++) {
         const inst = await repaymentSchedule.getInstallment(loanId, i);
         await paymentRecording.connect(officer).recordPayment(
-          loanId, i, inst.totalAmount, PaymentMethod.GCash,
+          loanId, i, inst.totalAmount, PaymentMethod.Wallet,
           ethers.keccak256(ethers.toUtf8Bytes(`E2E_PAY_${i}`))
         );
       }

@@ -1,8 +1,7 @@
 # Blockchain Implementation Plan
 
-> **Current settlement note (2026-08-15):** This historical plan retains GCash
-> and bank-transfer contract values for planned integrations. The running backend
-> currently supports cash, check, and feature-gated wallet-to-wallet only.
+> **Current settlement note (2026-08-15):** The backend and contracts support
+> cash, check, and feature-gated wallet-to-wallet only.
 **Project:** MSME Loan Platform  
 **Date:** 2026-03-14  
 **Phase:** 1 — Smart Contract Design & Implementation
@@ -252,11 +251,11 @@ Add missing disbursement method selection and refactor existing disbursement exe
 **Responsibility:** Borrower's preferred disbursement method selection
 **Backend gap:** [`loans/models/application.py:252`](../loans/models/application.py:252) — `set_preferred_disbursement_method()`
 
-**Status:** ✅ Completed (2026-03-14) — 46 tests passing
+**Status:** ✅ Completed — 44 focused tests passing in the current suite
 
 **Implementation:**
 ```solidity
-enum Method { BankTransfer, GCash, Cash, Other }
+enum Method { Cash, Check, Wallet }
 
 function setPreferredMethod(bytes32 loanId, Method method) external returns (bool)
 function getPreferredMethod(bytes32 loanId) external view returns (Method)
@@ -283,14 +282,14 @@ function isMethodLocked(bytes32 loanId) external view returns (bool)
 - [x] Reverts if loan not in Approved status
 - [x] Reverts if disbursement already initiated (method locked)
 - [x] AuditRegistry logs method selection, updates, and locks
-- [x] Unit tests pass (46/46 tests, 100% pass rate)
+- [x] Unit tests pass (44/44 tests, 100% pass rate)
 - [x] UUPS upgradeable pattern
 - [x] Pausable for emergencies
 - [x] Reentrancy protection
 - [x] Access control enforced
 
 **Test Coverage:**
-- ✅ All 4 disbursement methods (BankTransfer, GCash, Cash, Other)
+- ✅ All 3 disbursement methods (Cash, Check, Wallet)
 - ✅ Method selection and updates
 - ✅ Method locking by SYSTEM_ROLE
 - ✅ Access control (borrower-only, SYSTEM_ROLE for locking)
@@ -302,8 +301,7 @@ function isMethodLocked(bytes32 loanId) external view returns (bool)
 
 **Test Results:**
 ```
-46 passing (3s)
-Total tests: 304 (258 Sprint 1 + 46 DisbursementMethod)
+44 passing
 ✓ All contracts compile successfully
 ✓ 100% test pass rate
 ✓ No regressions in existing tests
@@ -404,7 +402,7 @@ Total tests: 353 (258 Sprint 1 + 46 DisbursementMethod + 49 DisbursementExecutio
 ### Task 2.3 — Write Sprint 2 Tests ✅ COMPLETED
 
 **Files:**
-- [`smartcontracts/test/DisbursementMethod.test.js`](../smartcontracts/test/DisbursementMethod.test.js) — 46 tests
+- [`smartcontracts/test/DisbursementMethod.test.js`](../smartcontracts/test/DisbursementMethod.test.js) — 44 tests
 - [`smartcontracts/test/DisbursementExecution.test.js`](../smartcontracts/test/DisbursementExecution.test.js) — 49 tests
 - [`smartcontracts/docs/SPRINT_2_TEST_VERIFICATION.md`](../smartcontracts/docs/SPRINT_2_TEST_VERIFICATION.md) — Verification report
 
@@ -416,7 +414,7 @@ Total tests: 353 (258 Sprint 1 + 46 DisbursementMethod + 49 DisbursementExecutio
 - **DisbursementMethod.test.js Lines 294-305:** Revert if loan in Draft status
 - **DisbursementMethod.test.js Lines 307-318:** Revert if loan in Submitted status
 - **DisbursementMethod.test.js Lines 155-166:** Success if loan in Approved status
-- **Coverage:** All 4 method types tested (BankTransfer, GCash, Cash, Other)
+- **Coverage:** All 3 method types tested (Cash, Check, Wallet)
 
 #### ✅ Scenario 2: Method Lock After Disbursement Initiation
 - **DisbursementMethod.test.js Lines 425-432:** Lock method successfully (SYSTEM_ROLE)

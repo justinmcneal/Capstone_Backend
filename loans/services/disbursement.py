@@ -5,12 +5,7 @@ from loans.services.payment import scoped_idempotency_key
 
 MANUAL_DISBURSEMENT_METHODS = {"cash", "check"}
 WALLET_DISBURSEMENT_METHODS = {"wallet"}
-PLANNED_PROVIDER_DISBURSEMENT_METHODS = {"gcash", "bank_transfer"}
-# Compatibility set for persisted records and dispatch validation. The canonical
-# settlement policy still blocks planned provider methods before mutation.
-EXTERNAL_DISBURSEMENT_METHODS = (
-    WALLET_DISBURSEMENT_METHODS | PLANNED_PROVIDER_DISBURSEMENT_METHODS
-)
+EXTERNAL_DISBURSEMENT_METHODS = WALLET_DISBURSEMENT_METHODS
 
 
 def disbursement_idempotency_key(actor_id, client_key):

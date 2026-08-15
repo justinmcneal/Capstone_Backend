@@ -18,6 +18,7 @@ from loans.models.repayment import SCHEDULE_STATUSES
 from loans.utils.money import to_centavos
 
 NUMBER_TYPES = ["int", "long", "double", "decimal"]
+SETTLEMENT_METHODS = ["cash", "check", "wallet"]
 ENCRYPTED_STRING = {
     "bsonType": "string",
     "pattern": "^enc::v2::[0-9a-f]{12}::",
@@ -80,6 +81,12 @@ LOAN_VALIDATORS = {
                 "status": {"enum": APPLICATION_STATUSES},
                 "disbursement_status": {
                     "enum": ["not_started", "pending", "executed", "failed", "cancelled"]
+                },
+                "preferred_disbursement_method": {
+                    "oneOf": [{"enum": [None]}, {"enum": SETTLEMENT_METHODS}]
+                },
+                "disbursement_method": {
+                    "oneOf": [{"enum": [None]}, {"enum": SETTLEMENT_METHODS}]
                 },
                 "internal_notes": {"oneOf": [{"enum": ["", None]}, ENCRYPTED_BSON]},
                 "officer_notes": {"oneOf": [{"enum": ["", None]}, ENCRYPTED_STRING]},
@@ -195,6 +202,10 @@ INVENTORY_CONFIG = {
         "sensitive": LoanApplication.encrypted_fields,
         "unique": ["disbursement_idempotency_key"],
         "statuses": ("status", set(APPLICATION_STATUSES)),
+        "enums": (
+            ("preferred_disbursement_method", set(SETTLEMENT_METHODS), True),
+            ("disbursement_method", set(SETTLEMENT_METHODS), True),
+        ),
     },
     RepaymentSchedule.collection_name: {
         "required": ["loan_id", "customer_id", "installments", "created_at"],
@@ -208,6 +219,7 @@ INVENTORY_CONFIG = {
         "sensitive": LoanPayment.encrypted_fields,
         "unique": ["idempotency_key", "reference_fingerprint", "eth_tx_hash"],
         "statuses": ("payment_status", set(PAYMENT_STATUSES)),
+        "enums": (("payment_method", set(PAYMENT_METHODS), False),),
         "metadata": [
             "amount_centavos",
             "reference_search_index",
@@ -256,6 +268,7 @@ def loan_data_inventory(limit=10_000):
             "missing_required": 0,
             "missing_metadata": 0,
             "invalid_status": 0,
+            "invalid_enum": 0,
             "plaintext_sensitive": 0,
             "non_primary_ciphertext": 0,
             "duplicate_unique_values": 0,
@@ -270,6 +283,12 @@ def loan_data_inventory(limit=10_000):
             status_config = config.get("statuses")
             if status_config and raw.get(status_config[0]) not in status_config[1]:
                 counts["invalid_status"] += 1
+            for field, allowed, nullable in config.get("enums", ()):
+                value = raw.get(field)
+                if value in (None, "") and nullable:
+                    continue
+                if value not in allowed:
+                    counts["invalid_enum"] += 1
             for field in config.get("sensitive", ()):
                 value = raw.get(field)
                 if value in (None, ""):
@@ -295,6 +314,7 @@ def loan_data_inventory(limit=10_000):
                 "missing_required",
                 "missing_metadata",
                 "invalid_status",
+                "invalid_enum",
                 "plaintext_sensitive",
                 "non_primary_ciphertext",
                 "duplicate_unique_values",

@@ -12,7 +12,6 @@ from loans.serializers import LoanApplicationSerializer
 from loans.services.settlement_policy import (
     LOAN_ACCOUNTING_POLICY_VERSION,
     LOAN_SETTLEMENT_POLICY_VERSION,
-    SettlementRailUnavailable,
     public_settlement_policy,
     require_disbursement_method,
 )
@@ -64,11 +63,8 @@ def test_public_policy_exposes_only_completed_rails(settings):
         "office_cash",
         "office_check",
     ]
-    assert baseline["provider_payment_submission_enabled"] is False
-    assert baseline["planned_provider_methods"] == ["bank_transfer", "gcash"]
-    assert baseline["planned_provider_status"] == (
-        "awaiting_api_and_financial_institution_approval"
-    )
+    assert "provider_payment_submission_enabled" not in baseline
+    assert "planned_provider_methods" not in baseline
 
     settings.BLOCKCHAIN_ENABLED = True
     blockchain = public_settlement_policy()
@@ -80,9 +76,9 @@ def test_public_policy_exposes_only_completed_rails(settings):
     assert blockchain["available_customer_payment_methods"][-1] == "wallet"
 
 
-@pytest.mark.parametrize("method", ["gcash", "bank_transfer"])
-def test_planned_provider_rails_are_rejected_at_service_and_serializer(method):
-    with pytest.raises(SettlementRailUnavailable):
+@pytest.mark.parametrize("method", ["card", "crypto"])
+def test_unsupported_rails_are_rejected_at_service_and_serializer(method):
+    with pytest.raises(ValueError, match="cash, check, wallet"):
         require_disbursement_method(method)
 
     serializer = LoanApplicationSerializer(
@@ -97,7 +93,7 @@ def test_planned_provider_rails_are_rejected_at_service_and_serializer(method):
     assert "preferred_disbursement_method" in serializer.errors
 
 
-def test_unavailable_customer_preference_returns_stable_503(monkeypatch):
+def test_unsupported_customer_preference_returns_validation_error(monkeypatch):
     application = _application()
     user = SimpleNamespace(
         customer_id=application.customer_id,
@@ -111,7 +107,7 @@ def test_unavailable_customer_preference_returns_stable_503(monkeypatch):
     )
     request = APIRequestFactory().post(
         "/api/loans/applications/id/set-disbursement-method/",
-        {"disbursement_method": "gcash"},
+        {"disbursement_method": "card"},
         format="json",
     )
     force_authenticate(request, user=user)
@@ -120,8 +116,7 @@ def test_unavailable_customer_preference_returns_stable_503(monkeypatch):
         request, application_id=application.id
     )
 
-    assert response.status_code == 503
-    assert response.data["code"] == "SETTLEMENT_RAIL_UNAVAILABLE"
+    assert response.status_code == 400
     assert (
         LoanApplication.find_by_id(application.id).preferred_disbursement_method is None
     )

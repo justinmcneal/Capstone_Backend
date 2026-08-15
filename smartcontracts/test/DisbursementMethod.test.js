@@ -29,11 +29,9 @@ describe("DisbursementMethod", function () {
 
     // Disbursement methods
     const Method = {
-        BankTransfer: 0,
-        GCash: 1,
-        Cash: 2,
-        Check: 3,
-        Wallet: 4
+        Cash: 0,
+        Check: 1,
+        Wallet: 2
     };
 
     beforeEach(async function () {
@@ -191,41 +189,14 @@ describe("DisbursementMethod", function () {
             await createAndApproveLoan(loanId1, borrower1);
         });
 
-        it("Should set preferred method successfully (BankTransfer)", async function () {
+        it("Should set preferred method successfully (Check)", async function () {
             const tx = await disbursementMethod.connect(borrower1).setPreferredMethod(
-                loanId1, Method.BankTransfer
+                loanId1, Method.Check
             );
 
             await expect(tx)
                 .to.emit(disbursementMethod, "DisbursementMethodSelected")
-                .withArgs(loanId1, borrower1.address, Method.BankTransfer, await getBlockTimestamp(tx));
-        });
-
-        it("Should set preferred method successfully (GCash)", async function () {
-            await disbursementMethod.connect(borrower1).setPreferredMethod(
-                loanId1, Method.GCash
-            );
-
-            const method = await disbursementMethod.getPreferredMethod(loanId1);
-            expect(method).to.equal(Method.GCash);
-        });
-
-        it("Should set preferred method successfully (Cash)", async function () {
-            await disbursementMethod.connect(borrower1).setPreferredMethod(
-                loanId1, Method.Cash
-            );
-
-            const method = await disbursementMethod.getPreferredMethod(loanId1);
-            expect(method).to.equal(Method.Cash);
-        });
-
-        it("Should set preferred method successfully (Check)", async function () {
-            await disbursementMethod.connect(borrower1).setPreferredMethod(
-                loanId1, Method.Check
-            );
-
-            const method = await disbursementMethod.getPreferredMethod(loanId1);
-            expect(method).to.equal(Method.Check);
+                .withArgs(loanId1, borrower1.address, Method.Check, await getBlockTimestamp(tx));
         });
 
         it("Should set preferred method successfully (Wallet)", async function () {
@@ -237,9 +208,18 @@ describe("DisbursementMethod", function () {
             expect(method).to.equal(Method.Wallet);
         });
 
+        it("Should set preferred method successfully (Cash)", async function () {
+            await disbursementMethod.connect(borrower1).setPreferredMethod(
+                loanId1, Method.Cash
+            );
+
+            const method = await disbursementMethod.getPreferredMethod(loanId1);
+            expect(method).to.equal(Method.Cash);
+        });
+
         it("Should increment totalMethodsSet counter", async function () {
             await disbursementMethod.connect(borrower1).setPreferredMethod(
-                loanId1, Method.BankTransfer
+                loanId1, Method.Check
             );
 
             const stats = await disbursementMethod.getStats();
@@ -248,7 +228,7 @@ describe("DisbursementMethod", function () {
 
         it("Should mark hasPreferredMethod as true", async function () {
             await disbursementMethod.connect(borrower1).setPreferredMethod(
-                loanId1, Method.GCash
+                loanId1, Method.Wallet
             );
 
             expect(await disbursementMethod.hasPreferredMethod(loanId1)).to.be.true;
@@ -270,7 +250,7 @@ describe("DisbursementMethod", function () {
 
         it("Should log to audit registry", async function () {
             const tx = await disbursementMethod.connect(borrower1).setPreferredMethod(
-                loanId1, Method.BankTransfer
+                loanId1, Method.Check
             );
             await expect(tx).to.emit(auditRegistry, "AuditLogged");
         });
@@ -278,7 +258,7 @@ describe("DisbursementMethod", function () {
         it("Should revert if loan does not exist", async function () {
             await expect(
                 disbursementMethod.connect(borrower1).setPreferredMethod(
-                    loanIdNonExistent, Method.BankTransfer
+                    loanIdNonExistent, Method.Check
                 )
             ).to.be.revertedWithCustomError(disbursementMethod, "LoanNotFound");
         });
@@ -286,7 +266,7 @@ describe("DisbursementMethod", function () {
         it("Should revert if caller is not the borrower", async function () {
             await expect(
                 disbursementMethod.connect(borrower2).setPreferredMethod(
-                    loanId1, Method.BankTransfer
+                    loanId1, Method.Check
                 )
             ).to.be.revertedWithCustomError(disbursementMethod, "NotBorrower");
         });
@@ -299,7 +279,7 @@ describe("DisbursementMethod", function () {
 
             await expect(
                 disbursementMethod.connect(borrower1).setPreferredMethod(
-                    draftLoanId, Method.BankTransfer
+                    draftLoanId, Method.Check
                 )
             ).to.be.revertedWithCustomError(disbursementMethod, "InvalidLoanStatus");
         });
@@ -315,7 +295,7 @@ describe("DisbursementMethod", function () {
 
             await expect(
                 disbursementMethod.connect(borrower1).setPreferredMethod(
-                    submittedLoanId, Method.BankTransfer
+                    submittedLoanId, Method.Check
                 )
             ).to.be.revertedWithCustomError(disbursementMethod, "InvalidLoanStatus");
         });
@@ -334,7 +314,7 @@ describe("DisbursementMethod", function () {
 
             await expect(
                 disbursementMethod.connect(borrower1).setPreferredMethod(
-                    loanId1, Method.BankTransfer
+                    loanId1, Method.Check
                 )
             ).to.be.revertedWithCustomError(disbursementMethod, "EnforcedPause");
         });
@@ -344,18 +324,18 @@ describe("DisbursementMethod", function () {
         beforeEach(async function () {
             await createAndApproveLoan(loanId1, borrower1);
             await disbursementMethod.connect(borrower1).setPreferredMethod(
-                loanId1, Method.BankTransfer
+                loanId1, Method.Check
             );
         });
 
         it("Should update method successfully", async function () {
             const tx = await disbursementMethod.connect(borrower1).setPreferredMethod(
-                loanId1, Method.GCash
+                loanId1, Method.Wallet
             );
 
             await expect(tx)
                 .to.emit(disbursementMethod, "DisbursementMethodUpdated")
-                .withArgs(loanId1, borrower1.address, Method.BankTransfer, Method.GCash, await getBlockTimestamp(tx));
+                .withArgs(loanId1, borrower1.address, Method.Check, Method.Wallet, await getBlockTimestamp(tx));
         });
 
         it("Should update method value correctly", async function () {
@@ -394,7 +374,7 @@ describe("DisbursementMethod", function () {
             const selectionBefore = await disbursementMethod.getMethodSelection(loanId1);
             
             await disbursementMethod.connect(borrower1).setPreferredMethod(
-                loanId1, Method.GCash
+                loanId1, Method.Wallet
             );
 
             const selectionAfter = await disbursementMethod.getMethodSelection(loanId1);
@@ -402,7 +382,7 @@ describe("DisbursementMethod", function () {
         });
 
         it("Should allow multiple updates", async function () {
-            await disbursementMethod.connect(borrower1).setPreferredMethod(loanId1, Method.GCash);
+            await disbursementMethod.connect(borrower1).setPreferredMethod(loanId1, Method.Wallet);
             await disbursementMethod.connect(borrower1).setPreferredMethod(loanId1, Method.Cash);
             await disbursementMethod.connect(borrower1).setPreferredMethod(loanId1, Method.Check);
 
@@ -418,7 +398,7 @@ describe("DisbursementMethod", function () {
         beforeEach(async function () {
             await createAndApproveLoan(loanId1, borrower1);
             await disbursementMethod.connect(borrower1).setPreferredMethod(
-                loanId1, Method.BankTransfer
+                loanId1, Method.Check
             );
         });
 
@@ -427,7 +407,7 @@ describe("DisbursementMethod", function () {
 
             await expect(tx)
                 .to.emit(disbursementMethod, "DisbursementMethodLocked")
-                .withArgs(loanId1, Method.BankTransfer, await getBlockTimestamp(tx));
+                .withArgs(loanId1, Method.Check, await getBlockTimestamp(tx));
         });
 
         it("Should mark method as locked", async function () {
@@ -475,7 +455,7 @@ describe("DisbursementMethod", function () {
             await disbursementMethod.connect(systemContract).lockMethod(loanId1);
 
             await expect(
-                disbursementMethod.connect(borrower1).setPreferredMethod(loanId1, Method.GCash)
+                disbursementMethod.connect(borrower1).setPreferredMethod(loanId1, Method.Wallet)
             ).to.be.revertedWithCustomError(disbursementMethod, "MethodAlreadyLocked");
         });
     });
@@ -544,15 +524,15 @@ describe("DisbursementMethod", function () {
 
             // Set initial method
             await disbursementMethod.connect(borrower1).setPreferredMethod(
-                loanId1, Method.BankTransfer
+                loanId1, Method.Check
             );
-            expect(await disbursementMethod.getPreferredMethod(loanId1)).to.equal(Method.BankTransfer);
+            expect(await disbursementMethod.getPreferredMethod(loanId1)).to.equal(Method.Check);
 
             // Update method
             await disbursementMethod.connect(borrower1).setPreferredMethod(
-                loanId1, Method.GCash
+                loanId1, Method.Wallet
             );
-            expect(await disbursementMethod.getPreferredMethod(loanId1)).to.equal(Method.GCash);
+            expect(await disbursementMethod.getPreferredMethod(loanId1)).to.equal(Method.Wallet);
 
             // Lock method
             await disbursementMethod.connect(systemContract).lockMethod(loanId1);
@@ -574,11 +554,11 @@ describe("DisbursementMethod", function () {
             await createAndApproveLoan(loanId2, borrower1);
 
             // Set different methods
-            await disbursementMethod.connect(borrower1).setPreferredMethod(loanId1, Method.BankTransfer);
-            await disbursementMethod.connect(borrower1).setPreferredMethod(loanId2, Method.GCash);
+            await disbursementMethod.connect(borrower1).setPreferredMethod(loanId1, Method.Check);
+            await disbursementMethod.connect(borrower1).setPreferredMethod(loanId2, Method.Wallet);
 
-            expect(await disbursementMethod.getPreferredMethod(loanId1)).to.equal(Method.BankTransfer);
-            expect(await disbursementMethod.getPreferredMethod(loanId2)).to.equal(Method.GCash);
+            expect(await disbursementMethod.getPreferredMethod(loanId1)).to.equal(Method.Check);
+            expect(await disbursementMethod.getPreferredMethod(loanId2)).to.equal(Method.Wallet);
 
             // Lock one loan
             await disbursementMethod.connect(systemContract).lockMethod(loanId1);

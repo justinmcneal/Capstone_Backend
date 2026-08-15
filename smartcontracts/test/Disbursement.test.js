@@ -19,11 +19,9 @@ describe("Disbursement", function () {
 
   // DisbursementMethod enum
   const DisbursementMethod = {
-    BankTransfer: 0,
-    Cash: 1,
-    GCash: 2,
-    Check: 3,
-    Wallet: 4
+    Cash: 0,
+    Check: 1,
+    Wallet: 2
   };
 
   // DisbursementStatus enum - matches backend (no Failed/Reversed)
@@ -144,7 +142,7 @@ describe("Disbursement", function () {
         disbursement.connect(officer).initiateDisbursement(
           loanId,
           approvedAmount,
-          DisbursementMethod.BankTransfer
+          DisbursementMethod.Check
         )
       ).to.emit(disbursement, "DisbursementInitiated");
     });
@@ -153,7 +151,7 @@ describe("Disbursement", function () {
       const tx = await disbursement.connect(officer).initiateDisbursement(
         loanId,
         approvedAmount,
-        DisbursementMethod.BankTransfer
+        DisbursementMethod.Check
       );
       
       const receipt = await tx.wait();
@@ -171,7 +169,7 @@ describe("Disbursement", function () {
         disbursement.connect(officer).initiateDisbursement(
           loanId,
           tooMuch,
-          DisbursementMethod.BankTransfer
+          DisbursementMethod.Check
         )
       ).to.be.revertedWith("Disbursement: invalid amount");
     });
@@ -181,7 +179,7 @@ describe("Disbursement", function () {
         disbursement.connect(other).initiateDisbursement(
           loanId,
           approvedAmount,
-          DisbursementMethod.BankTransfer
+          DisbursementMethod.Check
         )
       ).to.be.reverted;
     });
@@ -192,7 +190,7 @@ describe("Disbursement", function () {
       await disbursement.connect(officer).initiateDisbursement(
         loanId,
         approvedAmount,
-        DisbursementMethod.GCash
+        DisbursementMethod.Wallet
       );
 
       const afterCount = await disbursement.totalDisbursements();
@@ -208,7 +206,7 @@ describe("Disbursement", function () {
       const tx = await disbursement.connect(officer).initiateDisbursement(
         loanId,
         approvedAmount,
-        DisbursementMethod.BankTransfer
+        DisbursementMethod.Check
       );
       
       const receipt = await tx.wait();
@@ -277,7 +275,7 @@ describe("Disbursement", function () {
       await disbursement.connect(officer).initiateDisbursement(
         loanId2,
         approvedAmount,
-        DisbursementMethod.BankTransfer
+        DisbursementMethod.Check
       );
 
       const disbId2 = await disbursement.loanToDisbursement(loanId2);

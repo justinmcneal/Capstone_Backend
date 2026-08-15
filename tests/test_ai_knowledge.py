@@ -42,18 +42,14 @@ class TestKnowledgeBaseStructure:
         assert 'interest' in LOAN_PRODUCTS_INFO
     
     def test_payment_methods_complete(self):
-        """Active and planned payment methods must be distinguished."""
+        """Only supported payment methods should be advertised."""
         assert 'automatic' in PAYMENT_METHODS
         assert 'manual' in PAYMENT_METHODS
-        assert 'planned' in PAYMENT_METHODS
+        assert 'planned' not in PAYMENT_METHODS
         assert [method['name'] for method in PAYMENT_METHODS['automatic']['methods']] == [
             'Wallet (ETH)'
         ]
         assert len(PAYMENT_METHODS['manual']['methods']) >= 2
-        assert {method['name'] for method in PAYMENT_METHODS['planned']['methods']} == {
-            'GCash',
-            'Bank Transfer',
-        }
     
     def test_knowledge_base_dict_complete(self):
         """KNOWLEDGE_BASE dict should have all sections."""
@@ -82,10 +78,9 @@ class TestSystemPrompt:
     def test_system_prompt_contains_payment_methods(self):
         """System prompt should list payment methods."""
         prompt = build_system_prompt()
-        assert 'GCash' in prompt
-        assert 'Bank Transfer' in prompt
         assert 'Cash' in prompt
-        assert 'NOT CURRENTLY AVAILABLE' in prompt
+        assert 'Check' in prompt
+        assert 'Wallet (ETH)' in prompt
     
     def test_system_prompt_contains_loan_amounts(self):
         """System prompt should include loan amount range."""

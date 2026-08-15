@@ -177,8 +177,8 @@ class TestDisbursementOrdering:
 
         mock_btx_create.return_value = MagicMock()
         app = MagicMock()
-        app.disbursement_method = "bank_transfer"
-        app.preferred_disbursement_method = "bank_transfer"
+        app.disbursement_method = "check"
+        app.preferred_disbursement_method = "check"
         app.disbursed_amount = 50000
         app.approved_amount = 50000
         app.requested_amount = 50000

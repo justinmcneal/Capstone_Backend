@@ -30,11 +30,9 @@ contract Disbursement is
     }
 
     enum DisbursementMethod {
-        BankTransfer,    // 0
-        Cash,            // 1
-        GCash,           // 2
-        Check,           // 3
-        Wallet           // 4
+        Cash,            // 0
+        Check,           // 1
+        Wallet           // 2
     }
 
     struct DisbursementRecord {

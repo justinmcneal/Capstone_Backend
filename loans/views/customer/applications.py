@@ -656,8 +656,7 @@ class SetDisbursementMethodView(CustomerRoleRequiredMixin, APIView):
     POST /api/loans/applications/<id>/set-disbursement-method/
     Body: { "disbursement_method": "cash" | "check" | "wallet" }
 
-    Wallet is available only when blockchain support is enabled. Provider rails
-    return a stable unavailable response until their settlement lifecycle exists.
+    Wallet is available only when blockchain support is enabled.
     """
 
     authentication_classes = [CustomJWTAuthentication]

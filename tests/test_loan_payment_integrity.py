@@ -6,6 +6,7 @@ from unittest.mock import MagicMock
 import mongomock
 import pytest
 from bson import ObjectId
+from rest_framework.test import APIRequestFactory, force_authenticate
 
 from loans.models import LoanPayment, RepaymentSchedule
 from loans.services.payment import (
@@ -54,8 +55,8 @@ def test_customer_submission_is_pending_and_does_not_change_balance(schedule):
         schedule=schedule,
         installment_number=1,
         amount=400,
-        payment_method="gcash",
-        reference="GCASH-123",
+        payment_method="wallet",
+        reference="WALLET-123",
         notes="customer evidence",
         customer_id=schedule.customer_id,
         idempotency_key="customer-request-123",
@@ -73,8 +74,8 @@ def test_pending_submission_replay_returns_same_record(schedule):
         "schedule": schedule,
         "installment_number": 1,
         "amount": 400,
-        "payment_method": "bank_transfer",
-        "reference": "BANK-123",
+        "payment_method": "wallet",
+        "reference": "WALLET-REPLAY-123",
         "notes": "",
         "customer_id": schedule.customer_id,
         "idempotency_key": "customer-request-456",
@@ -93,8 +94,8 @@ def test_idempotency_key_cannot_be_reused_for_different_amount(schedule):
         "schedule": schedule,
         "installment_number": 1,
         "amount": 400,
-        "payment_method": "gcash",
-        "reference": "GCASH-456",
+        "payment_method": "wallet",
+        "reference": "WALLET-456",
         "notes": "",
         "customer_id": schedule.customer_id,
         "idempotency_key": "customer-request-789",
@@ -110,8 +111,8 @@ def test_external_reference_cannot_be_submitted_twice(schedule):
         "schedule": schedule,
         "installment_number": 1,
         "amount": 400,
-        "payment_method": "gcash",
-        "reference": "GCASH-DUPLICATE",
+        "payment_method": "wallet",
+        "reference": "WALLET-DUPLICATE",
         "notes": "",
         "customer_id": schedule.customer_id,
     }
@@ -276,64 +277,26 @@ def test_atomic_update_retries_stale_schedule_write(schedule, monkeypatch):
     assert spy.call_count >= 2
 
 
-def test_incomplete_customer_provider_payment_endpoint_is_disabled(
-    schedule, monkeypatch
-):
-    app = SimpleNamespace(customer_id=schedule.customer_id, status="disbursed")
-    monkeypatch.setattr(
-        "loans.views.customer.repayment.LoanApplication.find_by_id", lambda _id: app
-    )
+def test_customer_payment_history_route_is_read_only(schedule, monkeypatch):
     monkeypatch.setattr(
         PaymentHistoryView,
         "check_customer_permission",
-        lambda self, request: (True, None),
+        lambda self, request: (True, request.user),
     )
-    request = MagicMock(
-        data={
-            "installment_number": 1,
-            "amount": 250,
-            "payment_method": "gcash",
-            "reference": "GCASH-ENDPOINT-1",
-        },
-        headers={"Idempotency-Key": "customer-endpoint-1"},
-        user=SimpleNamespace(customer_id=schedule.customer_id),
-        META={"REMOTE_ADDR": "127.0.0.1"},
+    user = SimpleNamespace(
+        customer_id=schedule.customer_id,
+        is_authenticated=True,
     )
-
-    response = PaymentHistoryView().post(request, schedule.loan_id)
-
-    assert response.status_code == 503
-    assert response.data["code"] == "SETTLEMENT_RAIL_UNAVAILABLE"
-    reloaded = RepaymentSchedule.find_by_loan(schedule.loan_id)
-    assert reloaded.get_installment(1)["paid_amount"] == 0
-    assert LoanPayment.count({}) == 0
-
-
-def test_customer_payment_endpoint_rejects_wallet_bypass(schedule, monkeypatch):
-    app = SimpleNamespace(customer_id=schedule.customer_id, status="disbursed")
-    monkeypatch.setattr(
-        "loans.views.customer.repayment.LoanApplication.find_by_id", lambda _id: app
+    request = APIRequestFactory().post(
+        f"/api/loans/applications/{schedule.loan_id}/payments/",
+        {"payment_method": "card"},
+        format="json",
     )
-    monkeypatch.setattr(
-        PaymentHistoryView,
-        "check_customer_permission",
-        lambda self, request: (True, None),
-    )
-    request = MagicMock(
-        data={
-            "installment_number": 1,
-            "amount": 250,
-            "payment_method": "wallet",
-            "reference": "UNVERIFIED-WALLET",
-        },
-        headers={"Idempotency-Key": "wallet-bypass-1"},
-        user=SimpleNamespace(customer_id=schedule.customer_id),
-        META={},
-    )
+    force_authenticate(request, user=user)
 
-    response = PaymentHistoryView().post(request, schedule.loan_id)
+    response = PaymentHistoryView.as_view()(request, application_id=schedule.loan_id)
 
-    assert response.status_code == 400
+    assert response.status_code == 405
     assert LoanPayment.count({}) == 0
 
 

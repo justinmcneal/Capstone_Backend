@@ -351,14 +351,14 @@ class TestLoanPayment:
                 customer_id=str(ObjectId()),
                 installment_number=1,
                 amount=5000,
-                payment_method="gcash",
+                payment_method="cash",
             ),
             LoanPayment(
                 loan_id=loan_id,
                 customer_id=str(ObjectId()),
                 installment_number=2,
                 amount=5000,
-                payment_method="bank_transfer",
+                payment_method="check",
             ),
         ]
         for p in payments:
@@ -381,7 +381,7 @@ class TestLoanPayment:
             customer_id=customer_id,
             installment_number=1,
             amount=5000,
-            payment_method="gcash",
+            payment_method="wallet",
         )
         payment.save()
 

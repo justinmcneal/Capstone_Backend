@@ -5,7 +5,7 @@ Documents that show income or financial transactions.
 
 ## Philippine Income Proof Examples
 - Bank statements (BDO, BPI, Metrobank, Landbank, etc.)
-- GCash transaction history/screenshot
+- E-wallet transaction history/screenshot
 - Official receipts from business
 - Sales logbook/record book
 - ITR (Income Tax Return) - Form 1701
@@ -25,15 +25,15 @@ Documents that show income or financial transactions.
 
 ## Where to Find
 1. **Google Images:** Search "bank statement sample Philippines"
-2. **Google Images:** Search "GCash transaction history screenshot"
+2. **Google Images:** Search "e-wallet transaction history screenshot"
 3. **Google Images:** Search "BDO bank statement sample"
 4. **Google Images:** Search "official receipt Philippines sample"
 5. **Stock Sites:** Financial document templates
-6. **Screenshots:** Create fake GCash screens (for demo only)
+6. **Screenshots:** Create fake e-wallet screens (for demo only)
 
 ## Variations to Include
 - Different banks (BDO, BPI, Metrobank, Landbank)
-- E-wallet screenshots (GCash)
+- E-wallet screenshots
 - Handwritten sales logbooks
 - Official receipts
 - Different date formats
@@ -41,7 +41,7 @@ Documents that show income or financial transactions.
 
 ## Sample Search Terms
 - "BDO bank statement sample"
-- "GCash transaction history"
+- "e-wallet transaction history"
 - "Philippine bank statement template"
 - "Official receipt sample Philippines"
 - "ITR form 1701 sample"
@@ -51,7 +51,7 @@ Many microentrepreneurs don't have formal bank statements.
 Include informal income proof like:
 - Handwritten sales records
 - Simple receipt books
-- GCash as primary "bank"
+- E-wallet as a primary account
 
 ## ⚠️ Privacy Note
 - Use sample/template documents

@@ -219,15 +219,14 @@ class EducationView(AccessControlMixin, APIView):
         },
         'payment_methods': {
             'title': 'Payment Methods',
-            'content': 'MSME Pathways currently supports cash, check, and ETH wallet-to-wallet settlement. GCash and bank transfer are planned but not yet available.',
+            'content': 'MSME Pathways supports cash, check, and ETH wallet-to-wallet settlement.',
             'key_points': [
                 'WALLET-TO-WALLET — available when blockchain is enabled:',
                 '  • Wallet (ETH) — pay using your Ethereum cryptocurrency wallet',
                 'MANUAL — your loan officer records the payment for you:',
                 '  • Cash — pay at a partner location',
                 '  • Check — pay by check; recorded after clearance',
-                'For cash and check, visit a partner location and your loan officer will record it in the system',
-                'PLANNED — GCash and bank transfer require provider API access and financial-institution approval before they can be enabled'
+                'For cash and check, visit a partner location and your loan officer will record it in the system'
             ]
         },
         'repayment_schedule': {
@@ -258,7 +257,6 @@ class EducationView(AccessControlMixin, APIView):
             'key_points': [
                 'You\'ll receive a notification with your approved loan amount',
                 'Set an available preferred disbursement method (cash, check, or wallet when blockchain is enabled)',
-                'GCash and bank transfer are planned but cannot be selected yet',
                 'The loan officer processes the disbursement',
                 'A repayment schedule is automatically created after disbursement',
                 'Make monthly payments on time to maintain good standing',
@@ -350,7 +348,7 @@ class FAQsView(AccessControlMixin, APIView):
         {
             'category': 'Loan Payments',
             'question': 'How do I make payments?',
-            'answer': 'You can use Wallet (ETH) when blockchain is enabled. Cash and check payments are recorded by a loan officer at the office or partner location. GCash and bank transfer are planned but unavailable until their provider integrations and required approvals are complete.'
+            'answer': 'You can use Wallet (ETH) when blockchain is enabled. Cash and check payments are recorded by a loan officer at the office or partner location.'
         },
         {
             'category': 'Loan Payments',

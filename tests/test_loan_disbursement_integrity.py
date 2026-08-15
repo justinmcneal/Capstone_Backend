@@ -124,15 +124,15 @@ def test_schedule_failure_keeps_application_approved(approved_application, monke
     assert reloaded.disbursed_at is None
 
 
-def test_incomplete_provider_disbursement_is_disabled(approved_application):
-    with pytest.raises(ValueError, match="provider integration"):
+def test_unsupported_disbursement_method_is_rejected(approved_application):
+    with pytest.raises(ValueError, match="cash, check, wallet"):
         begin_disbursement(
             application=approved_application,
             amount=18000,
-            method="bank_transfer",
-            reference="BANK-PENDING-1",
+            method="card",
+            reference="CARD-PENDING-1",
             actor_id="officer-1",
-            idempotency_key="disbursement:bank-pending",
+            idempotency_key="disbursement:card-pending",
         )
 
     application = LoanApplication.find_by_id(approved_application.id)

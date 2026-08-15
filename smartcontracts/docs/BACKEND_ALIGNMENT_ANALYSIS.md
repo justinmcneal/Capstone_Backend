@@ -1,8 +1,7 @@
 # Backend & Smart Contract Alignment
 
-> GCash and bank-transfer mappings are intentionally retained for future
-> provider alignment. The backend currently exposes cash/check and, when
-> enabled, wallet-to-wallet settlement only.
+> Smart-contract mappings match the backend settlement set: cash/check and,
+> when enabled, wallet-to-wallet settlement.
 
 ## Contracts
 
@@ -55,9 +54,8 @@
 | Django | Smart Contract | Value |
 |--------|---------------|-------|
 | `cash` | `Cash` | 0 |
-| `bank_transfer` | `BankTransfer` | 1 |
-| `gcash` | `GCash` | 2 |
-| `other` | `Other` | 3 |
+| `check` | `Check` | 1 |
+| `wallet` | `Wallet` | 2 |
 
 ---
 
