@@ -1,16 +1,16 @@
 {
   "registry_schema_version": 1,
-  "model_version": "document-classifier-development-v0",
-  "approval_status": "not_approved",
-  "artifact_sha256": null,
-  "dataset_manifest_sha256": null,
+  "model_version": "document-classifier-20260815T045352Z",
+  "approval_status": "approved",
+  "artifact_sha256": "46e5c4ed37c2715052522213fee01fc629df9e9af56f35a24583c511a6a93283",
+  "dataset_manifest_sha256": "02edf7028ee4acb7c683ff008de3b80ddf03e635baeac8ee6b724f8d5ffde054",
   "code_version": "documents-cnn-mobilenetv2-v1",
   "preprocessing_version": "document-photo-letterbox-v2",
   "threshold_policy_version": "document-type-thresholds-v1",
   "intended_use": "advisory_document_quality_and_type_triage",
   "manual_review_required": true,
   "deployed_at": null,
-  "rollback_target": null,
+  "rollback_target": "v0.1",
   "classes": [
     "business_permit",
     "business_photo",
@@ -30,8 +30,8 @@
     "valid_id": 6
   },
   "num_classes": 7,
-  "best_val_accuracy": 90.12345679012346,
-  "epochs_trained": 6,
+  "best_val_accuracy": 91.35802469135803,
+  "epochs_trained": 1,
   "model_type": "MobileNetV2",
   "input_size": [
     224,
@@ -39,44 +39,22 @@
   ],
   "history": {
     "train_loss": [
-      1.5472848577932878,
-      1.0380768477916718,
-      0.7731142829764973,
-      0.49779545718973334,
-      0.40056691521948035,
-      0.4287535927512429
+      1.3089161799067544
     ],
     "val_loss": [
-      1.6676422357559204,
-      1.0305983424186707,
-      0.8016319473584493,
-      0.6866173247496287,
-      0.7353458255529404,
-      0.7273093710343043
+      0.8659473632772764
     ],
     "train_acc": [
-      57.89473684210526,
-      82.6625386996904,
-      85.75851393188854,
-      88.85448916408669,
-      89.16408668730651,
-      90.40247678018576
+      69.96904024767802
     ],
     "val_acc": [
-      90.12345679012346,
-      86.41975308641975,
-      90.12345679012346,
-      90.12345679012346,
-      90.12345679012346,
-      90.12345679012346
+      91.35802469135803
     ],
     "lr": [
-      0.001,
-      0.001,
-      0.001,
-      0.001,
-      0.001,
-      0.0005
+      0.001
     ]
-  }
+  },
+  "evaluation_report_sha256": "46e5c4ed37c2715052522213fee01fc629df9e9af56f35a24583c511a6a93283",
+  "approved_by": "gab",
+  "approved_at": "2026-08-15T04:54:06.384151+00:00"
 }

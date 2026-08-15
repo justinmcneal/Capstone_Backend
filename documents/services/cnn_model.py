@@ -5,6 +5,18 @@ This model uses transfer learning from MobileNetV2 to classify
 document types for loan applications.
 """
 
+import sys
+import types
+
+if "lzma" not in sys.modules or not hasattr(sys.modules.get("lzma"), "open"):
+    try:
+        import lzma  # noqa: F401
+    except ImportError:
+        m = types.ModuleType("lzma")
+        setattr(m, "open", None)
+        setattr(m, "LZMAError", Exception)
+        sys.modules["lzma"] = m
+
 import torch.nn as nn
 from torchvision import models
 

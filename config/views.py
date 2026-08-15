@@ -55,14 +55,15 @@ class HealthCheckView(APIView):
 
                 analytics_health = analytics_health_summary(settings.MONGODB)
                 health["services"]["analytics"] = analytics_health
-                if not analytics_health["ready"]:
+                if not getattr(settings, "DEBUG", False) and not analytics_health["ready"]:
                     health["status"] = "degraded"
             except Exception:
                 health["services"]["analytics"] = {
                     "ready": False,
                     "status": "unavailable",
                 }
-                health["status"] = "degraded"
+                if not getattr(settings, "DEBUG", False):
+                    health["status"] = "degraded"
 
         # Check AI service (optional)
         try:

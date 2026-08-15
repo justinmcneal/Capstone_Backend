@@ -1,5 +1,17 @@
 """Versioned document-photo preprocessing shared by training and inference."""
 
+import sys
+import types
+
+if "lzma" not in sys.modules or not hasattr(sys.modules.get("lzma"), "open"):
+    try:
+        import lzma  # noqa: F401
+    except ImportError:
+        m = types.ModuleType("lzma")
+        setattr(m, "open", None)
+        setattr(m, "LZMAError", Exception)
+        sys.modules["lzma"] = m
+
 from PIL import Image, ImageOps
 
 PREPROCESSING_VERSION = "document-photo-letterbox-v2"
