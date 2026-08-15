@@ -47,8 +47,8 @@ class LoanApplicationSerializer(InputSanitizationMixin, serializers.Serializer):
     requested_amount = serializers.FloatField(min_value=1000)
     term_months = serializers.IntegerField(min_value=1)
     purpose = serializers.CharField(max_length=500, required=False, allow_blank=True)
-    preferred_disbursement_method = serializers.ChoiceField(
-        choices=["cash", "gcash", "bank_transfer", "check", "wallet"],
+    preferred_disbursement_method = serializers.CharField(
+        max_length=32,
         required=False,
         allow_blank=True,
     )

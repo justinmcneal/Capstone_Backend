@@ -219,16 +219,15 @@ class EducationView(AccessControlMixin, APIView):
         },
         'payment_methods': {
             'title': 'Payment Methods',
-            'content': 'MSME Pathways supports 5 payment methods in two categories: automatic and manual.',
+            'content': 'MSME Pathways currently supports cash, check, and ETH wallet-to-wallet settlement. GCash and bank transfer are planned but not yet available.',
             'key_points': [
-                'AUTOMATIC — recorded instantly when you pay:',
-                '  • GCash — pay using your GCash mobile wallet',
-                '  • Bank Transfer — pay via electronic bank transfer',
+                'WALLET-TO-WALLET — available when blockchain is enabled:',
                 '  • Wallet (ETH) — pay using your Ethereum cryptocurrency wallet',
                 'MANUAL — your loan officer records the payment for you:',
                 '  • Cash — pay at a partner location',
                 '  • Check — pay by check; recorded after clearance',
-                'For cash and check, visit a partner location and your loan officer will record it in the system'
+                'For cash and check, visit a partner location and your loan officer will record it in the system',
+                'PLANNED — GCash and bank transfer require provider API access and financial-institution approval before they can be enabled'
             ]
         },
         'repayment_schedule': {
@@ -258,7 +257,8 @@ class EducationView(AccessControlMixin, APIView):
             'content': 'Once approved, here\'s what happens next and what you need to know about managing your loan.',
             'key_points': [
                 'You\'ll receive a notification with your approved loan amount',
-                'Set your preferred disbursement method (GCash, bank transfer, cash, check, or wallet)',
+                'Set an available preferred disbursement method (cash, check, or wallet when blockchain is enabled)',
+                'GCash and bank transfer are planned but cannot be selected yet',
                 'The loan officer processes the disbursement',
                 'A repayment schedule is automatically created after disbursement',
                 'Make monthly payments on time to maintain good standing',
@@ -269,7 +269,7 @@ class EducationView(AccessControlMixin, APIView):
             'title': 'Using the ETH Wallet',
             'content': 'MSME Pathways supports Ethereum (ETH) wallet payments for both disbursement and repayment. This is a cryptocurrency-based payment option.',
             'key_points': [
-                'Wallet (ETH) is one of the 5 accepted payment methods',
+                'Wallet (ETH) is the currently supported customer-initiated electronic payment method',
                 'Payments via ETH wallet are automatically recorded in the system',
                 'You can also choose to receive your loan disbursement via ETH wallet',
                 'All wallet transactions are verified on the Ethereum blockchain'
@@ -350,7 +350,7 @@ class FAQsView(AccessControlMixin, APIView):
         {
             'category': 'Loan Payments',
             'question': 'How do I make payments?',
-            'answer': 'If you are paying yourself, use GCash, bank transfer, or Wallet (ETH). Cash and check payments are recorded by a loan officer at the office or partner location.'
+            'answer': 'You can use Wallet (ETH) when blockchain is enabled. Cash and check payments are recorded by a loan officer at the office or partner location. GCash and bank transfer are planned but unavailable until their provider integrations and required approvals are complete.'
         },
         {
             'category': 'Loan Payments',

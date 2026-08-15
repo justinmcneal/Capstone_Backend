@@ -1,5 +1,9 @@
 # Blockchain Smart Contracts Guide
 
+> **Rail status:** GCash and bank-transfer enum members are reserved for future
+> provider integrations. The current backend enables cash/check and optionally
+> wallet-to-wallet; reserved contract values must not be exposed as usable rails.
+
 ## Scope
 This guide covers the on-chain subsystem in `smartcontracts/` and how it maps to backend loan workflows.
 

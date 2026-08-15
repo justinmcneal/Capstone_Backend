@@ -209,7 +209,7 @@ class PaymentHistoryView(CustomerRoleRequiredMixin, APIView):
                 status_code=status.HTTP_400_BAD_REQUEST,
             )
 
-        payment_method = request.data.get("payment_method", "bank_transfer")
+        payment_method = request.data.get("payment_method", "")
 
         if payment_method in {"cash", "check"}:
             return error_response(

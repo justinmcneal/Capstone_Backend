@@ -5,7 +5,7 @@ from django.conf import settings
 LOAN_SETTLEMENT_POLICY_VERSION = "cash-check-wallet-v1"
 LOAN_ACCOUNTING_POLICY_VERSION = "scheduled-balance-v1"
 MANUAL_SETTLEMENT_METHODS = frozenset({"cash", "check"})
-INCOMPLETE_PROVIDER_METHODS = frozenset({"gcash", "bank_transfer"})
+PLANNED_PROVIDER_METHODS = frozenset({"gcash", "bank_transfer"})
 WALLET_METHOD = "wallet"
 
 
@@ -31,7 +31,7 @@ def available_customer_payment_methods():
 
 def require_disbursement_method(method):
     normalized = str(method or "").strip().lower()
-    if normalized in INCOMPLETE_PROVIDER_METHODS:
+    if normalized in PLANNED_PROVIDER_METHODS:
         raise SettlementRailUnavailable(
             f"{normalized} settlement is unavailable until its verified provider "
             "integration is enabled"
@@ -49,7 +49,7 @@ def require_disbursement_method(method):
 
 def require_customer_provider_payment(method):
     normalized = str(method or "").strip().lower()
-    if normalized in INCOMPLETE_PROVIDER_METHODS:
+    if normalized in PLANNED_PROVIDER_METHODS:
         raise SettlementRailUnavailable(
             f"{normalized} payment submission is unavailable until verified "
             "provider settlement is implemented"
@@ -71,6 +71,8 @@ def public_settlement_policy():
             available_customer_payment_methods()
         ),
         "provider_payment_submission_enabled": False,
+        "planned_provider_methods": sorted(PLANNED_PROVIDER_METHODS),
+        "planned_provider_status": "awaiting_api_and_financial_institution_approval",
         "payoff_basis": "all_remaining_scheduled_principal_interest_and_penalties",
         "penalty_mode": "manual_officer_explicit_amount",
         "due_date_adjustment": "none_calendar_date",

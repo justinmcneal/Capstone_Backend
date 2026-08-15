@@ -1,5 +1,9 @@
 # Backend & Smart Contract Alignment
 
+> GCash and bank-transfer mappings are intentionally retained for future
+> provider alignment. The backend currently exposes cash/check and, when
+> enabled, wallet-to-wallet settlement only.
+
 ## Contracts
 
 | Contract | Backend Model | Purpose |

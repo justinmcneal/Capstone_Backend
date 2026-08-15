@@ -1,5 +1,9 @@
 # Blockchain Integration Analysis & Architecture Plan
 
+> **Current settlement note (2026-08-15):** References to GCash and bank
+> transfer describe reserved/future integration paths, not enabled API rails.
+> Provider API access and financial-institution approval are still required.
+
 **Date:** 2026-03-14  
 **Prepared by:** Senior Blockchain Architect  
 **Project:** MSME Loan Platform - Blockchain Integration
@@ -104,7 +108,7 @@ This document provides a comprehensive analysis of the current backend transacti
   - Update loan status
 - **Critical Data:**
   - `disbursed_amount`
-  - `disbursement_method` (bank_transfer, gcash, cash, etc.)
+  - `disbursement_method` (cash/check and enabled wallet; bank/GCash reserved)
   - `disbursement_reference` (encrypted transaction reference)
   - `disbursed_at` timestamp
   - `disbursed_by` (officer/admin ID)
@@ -116,7 +120,8 @@ This document provides a comprehensive analysis of the current backend transacti
 - **Status Flow:** No status change (approved remains approved)
 - **Key Operations:**
   - Borrower selects preferred disbursement method
-  - Validates method (bank_transfer or gcash)
+  - Historical design validated bank transfer or GCash; current initiating APIs
+    block both until their provider integrations are approved
 - **Critical Data:**
   - `preferred_disbursement_method`
 
@@ -165,7 +170,7 @@ This document provides a comprehensive analysis of the current backend transacti
   - `loan_id`, `schedule_id`, `customer_id`
   - `installment_number`
   - `amount`
-  - `payment_method` (cash, bank_transfer, gcash, other)
+  - `payment_method` (cash/check/wallet active; bank/GCash reserved)
   - `reference` (transaction reference)
   - `recorded_by` (officer ID)
   - `recorded_at` timestamp

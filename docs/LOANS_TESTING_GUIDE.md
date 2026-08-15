@@ -69,6 +69,12 @@ Result: **7 passed**. These cases prove the published rail scope, disabled
 provider guards, stable no-mutation failures, penalty concurrency, waiver-credit
 carry-forward, and rejection when a waiver would require an external refund.
 
+The current working rails are cash, check, and wallet-to-wallet when blockchain
+is enabled. GCash and bank transfer are planned integrations. Their stored enum
+values, reporting filters, provider-reference service tests, and smart-contract
+mappings are retained deliberately, but initiation must remain disabled until
+the provider APIs and financial-institution approval are available.
+
 Run the complete repository suite before merging or releasing:
 
 ```bash
@@ -708,7 +714,8 @@ Submit GCash and bank-transfer payment/disbursement requests and assert stable
 `503 SETTLEMENT_RAIL_UNAVAILABLE` responses. Verify no payment, claim,
 disbursement attempt, schedule balance, or application state changes. There is
 no provider happy path in the approved baseline; clients must hide these choices
-using the published settlement policy.
+or label them “coming soon” using the published settlement policy. They must not
+be selectable while provider submission is disabled.
 
 ## Expected HTTP Outcomes
 

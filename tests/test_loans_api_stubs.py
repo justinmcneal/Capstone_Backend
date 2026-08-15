@@ -1,5 +1,5 @@
-from rest_framework.test import APIRequestFactory, force_authenticate
 import pytest
+from rest_framework.test import APIRequestFactory, force_authenticate
 
 from accounts.authentication import AuthenticatedUser
 from accounts.utils.access_control import AccessControlMixin
@@ -85,7 +85,7 @@ def test_officer_review_and_disburse_stubs():
     assert_dispatch_ok(resp)
 
     # Disburse (POST)
-    disburse_payload = {"amount": 8000, "method": "bank_transfer", "reference": "tx-1"}
+    disburse_payload = {"amount": 8000, "method": "cash", "reference": "tx-1"}
     request2 = factory.post(f"/api/loans/officer/applications/{application_id}/disburse/", disburse_payload, format="json")
     force_authenticate(request2, user=_auth_officer())
     _prepare_view(loan_views.DisburseView, _auth_officer())

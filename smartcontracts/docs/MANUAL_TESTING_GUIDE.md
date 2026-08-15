@@ -1,5 +1,9 @@
 # Manual Testing Guide
 
+> Contract tests may exercise reserved GCash and bank-transfer enum values. This
+> does not enable those rails in the backend; they remain planned integrations
+> pending provider API access and financial-institution approval.
+
 Step-by-step guide to manually test the smart contracts using Hardhat Console.
 
 ---

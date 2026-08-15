@@ -1,5 +1,9 @@
 # Smart Contract Function Reference
 
+> GCash and bank-transfer enum members are reserved for planned integrations.
+> This contract reference describes representable values, not current backend
+> settlement availability.
+
 Complete reference for all functions in the MSME Pathways smart contracts.
 
 ---

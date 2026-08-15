@@ -1,5 +1,10 @@
 # MSME Pathways Smart Contract System
 
+> GCash and bank-transfer enum values are retained for planned provider
+> integrations and contract compatibility. They are not currently enabled by
+> the backend; operational rails are cash, check, and feature-gated
+> wallet-to-wallet settlement.
+
 ## Overview
 
 This smart contract system provides **immutable, auditable** record-keeping for the MSME Pathways Loan Management System. It complements the Django backend by adding blockchain-based verification and tamper-proof records.

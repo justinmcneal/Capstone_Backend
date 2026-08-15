@@ -65,6 +65,10 @@ def test_public_policy_exposes_only_completed_rails(settings):
         "office_check",
     ]
     assert baseline["provider_payment_submission_enabled"] is False
+    assert baseline["planned_provider_methods"] == ["bank_transfer", "gcash"]
+    assert baseline["planned_provider_status"] == (
+        "awaiting_api_and_financial_institution_approval"
+    )
 
     settings.BLOCKCHAIN_ENABLED = True
     blockchain = public_settlement_policy()
@@ -77,7 +81,7 @@ def test_public_policy_exposes_only_completed_rails(settings):
 
 
 @pytest.mark.parametrize("method", ["gcash", "bank_transfer"])
-def test_incomplete_provider_rails_are_rejected_at_service_and_serializer(method):
+def test_planned_provider_rails_are_rejected_at_service_and_serializer(method):
     with pytest.raises(SettlementRailUnavailable):
         require_disbursement_method(method)
 

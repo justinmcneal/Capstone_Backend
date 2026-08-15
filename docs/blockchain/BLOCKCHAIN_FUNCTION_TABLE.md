@@ -1,4 +1,8 @@
 # Blockchain Function Table
+
+> GCash and bank-transfer values in this reference are reserved compatibility
+> mappings for planned integrations, not currently enabled settlement choices.
+> Cash/check and feature-gated wallet-to-wallet are the working backend rails.
 ## MSME Pathways — Smart Contract Integration Reference
 
 This document maps every backend module to its corresponding smart contract transactions.

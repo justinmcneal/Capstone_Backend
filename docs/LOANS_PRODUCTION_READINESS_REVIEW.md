@@ -41,9 +41,12 @@ Stages 1 through 3 have closed the application-code authorization, response,
 concurrent lifecycle, and exposed-settlement-scope defects identified by this
 review. Stage 2 still requires
 execution of its opt-in suite against an approved isolated real MongoDB target.
-The approved initial settlement baseline exposes cash/check, with wallet
+The current settlement baseline exposes cash/check, with wallet-to-wallet
 available only when blockchain is explicitly enabled. GCash and bank-transfer
-provider rails are disabled until a verified integration is implemented. The
+are planned integrations, but remain disabled until provider API access and the
+required financial-institution approval are obtained and verified. Their
+reserved persistence/contract values are intentionally retained for forward and
+historical compatibility. The
 remaining blockers are release evidence, persistence, privacy, and operational
 concerns:
 
@@ -88,7 +91,7 @@ Current automated baseline:
 | Officer review | Implemented; delivery hardening remains | Review decisions are one-winner transitions, encrypted note appends use retrying compare-and-set, and document-request history is atomically preserved. Durable notifications remain Stage 5 work. |
 | Cash/check disbursement | Implemented with remaining hardening | Idempotency, atomic disbursement claims, safe public failures, and a cash default exist; deployment concurrency proof remains. |
 | Wallet disbursement/payment | Partial; deployment-gated | Confirmation, durable retries, leases, exact rebroadcast, and recovery exist; real-chain and multi-worker evidence remain. |
-| GCash/bank rails | Safely disabled | API and model guards return `SETTLEMENT_RAIL_UNAVAILABLE` without creating a claim or disbursement. Provider integration remains an optional future feature. |
+| GCash/bank rails | Planned; safely disabled | Public API and disbursement-model guards return `SETTLEMENT_RAIL_UNAVAILABLE` without creating a claim or disbursement. Reserved model, service, query, and contract values remain for the upcoming provider integrations. |
 | Repayment accounting | Implemented for the baseline | Versioned centavo math, optimistic schedule updates, exact payoff terms, and atomic penalty/waiver handling exist. Collected waiver credit is carried forward; a waiver requiring an external refund is rejected. Reserved reversal/write-off workflows remain unavailable. |
 | Retrieval/search/export | Partial | Role-scoped pagination and streaming audited exports exist; export totals and some supporting queries are unbounded, and encrypted-reference search is ineffective. |
 | Security and privacy | Stage 1 complete; later gaps remain | JWT, role/permission/assignment scope, explicit blockchain response contracts, stable public errors, encryption, idempotency, and audit exist. Lifecycle and data-governance work remains in later stages. |
@@ -224,6 +227,10 @@ The exact request/response examples and test sequence are maintained in
 - GCash/bank-transfer initiation is disabled at serializer, model, and API
   boundaries until a verified provider lifecycle exists. It cannot create a
   misleading pending financial record.
+- GCash/bank persistence values, reference-fingerprint services, reporting
+  filters, and smart-contract enum mappings remain intentionally available as
+  dormant integration scaffolding. Their presence does not make the rails
+  customer- or officer-selectable.
 
 ### Repayment and accounting
 
@@ -356,6 +363,10 @@ at every mutation boundary.
   adds wallet only when `BLOCKCHAIN_ENABLED=True`. GCash and bank transfer are
   syntactically recognized but rejected with `SETTLEMENT_RAIL_UNAVAILABLE`
   before any financial mutation.
+- The public policy identifies GCash and bank transfer as planned and records
+  their status as awaiting API and financial-institution approval. This lets
+  clients distinguish a future option from an unknown or permanently removed
+  method without presenting it as usable.
 - Product list/detail responses publish the client-safe available methods and
   policy metadata. Clients must use that contract instead of hard-coded rail
   lists.
@@ -507,6 +518,8 @@ close the remaining Stage 2 release-evidence condition.
   waivers that would need an unsupported external refund.
 - Made payoff basis, exact amount, timestamp, rounding, and policy version
   explicit; documented wallet verification-time valuation and quote age.
+- Retained GCash/bank storage, reporting, and on-chain enum compatibility for
+  their planned integration while keeping all initiating boundaries disabled.
 - Kept reversal/refund/chargeback/restructure/write-off states unavailable until
   their own approved workflow exists.
 
@@ -578,9 +591,10 @@ deployment topology and contains no unresolved production blocker.
   disbursement may remain `approved` + `pending` until execution is proven.
 - The `pending` application filter is a derived alias for `submitted` and
   `under_review`; it is not a stored application status.
-- Read `settlement_policy` from product responses. Do not present GCash or bank
-  transfer: the baseline returns `503 SETTLEMENT_RAIL_UNAVAILABLE` and creates no
-  claim or disbursement.
+- Read `settlement_policy` from product responses. GCash and bank transfer may
+  be labeled “coming soon” using `planned_provider_methods`, but must not be
+  selectable while `provider_payment_submission_enabled` is false. Attempts
+  return `503 SETTLEMENT_RAIL_UNAVAILABLE` and create no claim or disbursement.
 - Wallet clients must wait for the configured confirmation threshold and should
   display the server response rather than independently valuing ETH.
 - `written_off` and `restructured` are reserved states, not available workflows.

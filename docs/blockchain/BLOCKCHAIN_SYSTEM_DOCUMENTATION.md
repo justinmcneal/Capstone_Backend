@@ -1,5 +1,10 @@
 # Blockchain System Documentation
 
+> **Rail status:** Contract/backend enum tables include GCash and bank transfer
+> for compatibility with planned integrations. They do not indicate runtime
+> availability. Current working settlement is cash, check, and wallet-to-wallet
+> when blockchain is enabled.
+
 Complete documentation of how smart contracts integrate with the backend, web app, and mobile app.
 
 ---

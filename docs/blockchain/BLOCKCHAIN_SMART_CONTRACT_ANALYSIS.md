@@ -1,11 +1,16 @@
 # Blockchain Smart Contract Analysis — MSME Lending Platform
 
+> **Current settlement note (2026-08-15):** GCash and bank-transfer discussion
+> below is architectural planning. Current operational rails are cash, check,
+> and feature-gated wallet-to-wallet transactions.
+
 ## Platform Architecture Summary
 
 The system is a **Philippine MSME lending platform** built on Django REST + MongoDB with:
 - AI-driven loan pre-qualification (Groq LLM)
 - Manual loan officer review/approval
-- Payment recording via officer input (cash, bank transfer, GCash)
+- Payment recording via officer input (cash/check); bank transfer and GCash are
+  planned provider integrations
 - Field encryption, 2FA, role-based access
 - No existing escrow, collateral, or on-chain component
 
@@ -103,7 +108,9 @@ contract LoanAgreement {
 - Automates penalty accrual without cron jobs or manual override.
 
 **Risks / Limitations**
-- Most payments today are **cash or GCash** (not crypto). You need an oracle or bridge: a trusted officer/gateway posts a signed payment confirmation to the contract. This re-introduces a trust assumption but narrows it to the payment gateway layer, not the internal officer layer.
+- Current non-crypto payments are **cash/check**. A future GCash/bank integration
+  needs a trusted signed provider/oracle bridge. This re-introduces a trust
+  assumption but narrows it to the payment gateway layer, not an officer claim.
 - Over-payments must be handled (partial credit mapping).
 
 **Recommended Contract Logic**
@@ -224,7 +231,11 @@ contract ConsentRegistry {
 
 **Current Traditional Flow**
 
- In `loans/models/application.py`, disbursement fields (`disbursed_amount`, `disbursed_at`, `disbursement_method`, `disbursement_reference`, `disbursed_by`) are set manually by the officer who processed the transfer. The actual money movement (bank transfer, GCash) is recorded after the fact as a reference number — there is no cryptographic proof the transfer happened before the record was written.
+ In `loans/models/application.py`, cash/check disbursement fields
+ (`disbursed_amount`, `disbursed_at`, `disbursement_method`,
+ `disbursement_reference`, `disbursed_by`) are set after officer confirmation.
+ Future bank/GCash integrations must use provider verification rather than an
+ officer-supplied reference as proof of movement.
 
 **Suitable for Smart Contract?** ⚡ Medium Value
 
@@ -233,7 +244,9 @@ contract ConsentRegistry {
 - If ever migrated to stablecoin disbursement, the contract directly controls fund release, making fraud impossible.
 
 **Risks / Limitations**
-- Today's disbursement is via bank/GCash (fiat). Smart contract adds an additional step without controlling the actual fiat movement. The benefit is audit, not enforcement.
+- Current fiat disbursement is cash/check. For planned bank/GCash rails, the
+  smart contract would add audit evidence but would not itself control fiat
+  movement; provider verification remains mandatory.
 - Cost/complexity may not justify the gain unless the platform migrates to stablecoin lending.
 
 **Recommended Approach:** A lightweight **multi-sig authorization log** — require both the system (backend key) and loan officer key to sign a disbursement event before it is accepted by the contract. This is auditable without being fiat-blocking.

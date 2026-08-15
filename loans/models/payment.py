@@ -15,7 +15,11 @@ def get_db():
     return settings.MONGODB
 
 
-PAYMENT_METHODS = ["cash", "gcash", "bank_transfer", "check", "wallet"]
+ACTIVE_PAYMENT_METHODS = ("cash", "check", "wallet")
+PLANNED_PROVIDER_PAYMENT_METHODS = ("gcash", "bank_transfer")
+# Includes reserved values so historical/future records and contract enum
+# mappings remain readable. API availability comes from settlement_policy.py.
+PAYMENT_METHODS = [*ACTIVE_PAYMENT_METHODS, *PLANNED_PROVIDER_PAYMENT_METHODS]
 PAYMENT_STATUSES = [
     "pending_verification",
     "posting",

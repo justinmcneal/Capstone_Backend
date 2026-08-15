@@ -1,4 +1,8 @@
 # Blockchain Implementation Plan
+
+> **Current settlement note (2026-08-15):** This historical plan retains GCash
+> and bank-transfer contract values for planned integrations. The running backend
+> currently supports cash, check, and feature-gated wallet-to-wallet only.
 **Project:** MSME Loan Platform  
 **Date:** 2026-03-14  
 **Phase:** 1 — Smart Contract Design & Implementation

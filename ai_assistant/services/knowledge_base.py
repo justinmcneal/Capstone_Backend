@@ -26,7 +26,7 @@ USAGE:
 import re
 
 # Knowledge base version - increment when making significant changes
-KNOWLEDGE_VERSION = "1.9"
+KNOWLEDGE_VERSION = "2.0"
 
 # =============================================================================
 # REVIEW LOCK - Checklist for knowledge-base changes
@@ -251,7 +251,7 @@ LOAN_PROCESS_STEPS = [
     {
         "step": 7,
         "title": "Disbursement",
-        "description": "Approved loans are disbursed via your chosen method (GCash, bank, cash, check, or ETH wallet)",
+        "description": "Approved loans currently use cash, check, or ETH wallet when blockchain is enabled. GCash and bank transfer are planned but unavailable pending provider API and financial-institution approval.",
         "app_location": "Track → select loan"
     },
     {
@@ -283,10 +283,8 @@ REPAYMENT_INFO = {
 
 PAYMENT_METHODS = {
     "automatic": {
-        "description": "Recorded instantly when you pay",
+        "description": "Verified wallet-to-wallet payment, available only when blockchain is enabled",
         "methods": [
-            {"name": "GCash", "description": "Pay via GCash mobile wallet"},
-            {"name": "Bank Transfer", "description": "Pay via electronic bank transfer"},
             {"name": "Wallet (ETH)", "description": "Pay using Ethereum cryptocurrency wallet"},
         ]
     },
@@ -296,7 +294,14 @@ PAYMENT_METHODS = {
             {"name": "Cash", "description": "Pay at a partner location"},
             {"name": "Check", "description": "Pay by check; recorded after clearance"},
         ]
-    }
+    },
+    "planned": {
+        "description": "Not currently available; awaiting provider API access and financial-institution approval",
+        "methods": [
+            {"name": "GCash", "description": "Planned GCash provider integration"},
+            {"name": "Bank Transfer", "description": "Planned bank provider integration"},
+        ],
+    },
 }
 
 # =============================================================================
@@ -452,6 +457,9 @@ def build_system_prompt(include_version=False):
     # Build payment methods string
     auto_methods = ", ".join([m["name"] for m in PAYMENT_METHODS["automatic"]["methods"]])
     manual_methods = ", ".join([m["name"] for m in PAYMENT_METHODS["manual"]["methods"]])
+    planned_methods = ", ".join(
+        [m["name"] for m in PAYMENT_METHODS["planned"]["methods"]]
+    )
     
     prompt = f"""You are a helpful financial assistant for MSME Pathways, a blockchain-backed microfinance app for Filipino small business owners.{version_line}
 
@@ -504,8 +512,9 @@ Mobile app for microloans. When blockchain is enabled, loan events (application,
 - When explaining business_age_months: mention it's the canonical business age unit in months; older years_in_operation data is normalized into this field
 
 === PAYMENT METHODS ===
-AUTOMATIC (recorded instantly): {auto_methods}
+WALLET-TO-WALLET (when blockchain is enabled): {auto_methods}
 MANUAL (officer records): {manual_methods}
+PLANNED, NOT CURRENTLY AVAILABLE: {planned_methods} — awaiting provider API access and financial-institution approval
 
 === REPAYMENT ===
  - Equal monthly installments with due dates
