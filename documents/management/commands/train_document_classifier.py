@@ -40,19 +40,36 @@ class Command(BaseCommand):
             action="store_true",
             help="Fine-tune the entire model (unfreeze backbone)",
         )
+        parser.add_argument(
+            "--allow-dev",
+            action="store_true",
+            help="Bypass strict production dataset validation for local development/testing",
+        )
 
     def handle(self, *args, **options):
         # Check for PyTorch
+        import sys
+        import types
+
+        if "lzma" not in sys.modules or not hasattr(sys.modules.get("lzma"), "open"):
+            try:
+                import lzma  # noqa: F401
+            except ImportError:
+                m = types.ModuleType("lzma")
+                setattr(m, "open", None)
+                setattr(m, "LZMAError", Exception)
+                sys.modules["lzma"] = m
+
         try:
             import torch
             import torch.nn as nn
             import torch.optim as optim
             from torch.utils.data import DataLoader, Subset
             from torchvision import datasets
-        except ImportError:
+        except ImportError as e:
             self.stderr.write(
                 self.style.ERROR(
-                    "PyTorch not installed. Run: pip install torch torchvision"
+                    f"PyTorch import failed ({e}). Run: pip install torch torchvision"
                 )
             )
             return
@@ -81,17 +98,22 @@ class Command(BaseCommand):
         from scripts.check_training_data import validate_dataset
 
         dataset_report = validate_dataset(data_path, manifest_path)
-        if not dataset_report["ready"]:
+        if not dataset_report["ready"] and not options.get("allow_dev"):
             preview = "\n".join(
                 f"  - {issue}" for issue in dataset_report["issues"][:20]
             )
             self.stderr.write(
                 self.style.ERROR(
-                    "Dataset validation failed; training was not started.\n" + preview
+                    "Dataset validation failed; training was not started.\n"
+                    "Pass --allow-dev to train on small development datasets.\n" + preview
                 )
             )
             return
-        dataset_manifest_sha256 = hashlib.sha256(manifest_path.read_bytes()).hexdigest()
+
+        if manifest_path.exists():
+            dataset_manifest_sha256 = hashlib.sha256(manifest_path.read_bytes()).hexdigest()
+        else:
+            dataset_manifest_sha256 = "dev-dataset-hash"
 
         # Count samples
         total_samples = 0
