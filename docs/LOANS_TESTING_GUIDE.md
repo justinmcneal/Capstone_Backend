@@ -1,1749 +1,748 @@
-# Loans API Testing Guide
+# Loans Testing Guide
 
-## Scope
+Last updated: 2026-08-15
 
-This guide documents the **Loans service API** under `/api/loans/` for API testing. It covers:
+Scope: local automated tests, authenticated API checks, MongoDB persistence,
+Redis/Celery work, and optional blockchain validation for the Loans module.
 
-- All customer, admin, and loan officer endpoints
-- Every request body field, query parameter, and key response field
-- Smart contract / blockchain integration triggered by loan lifecycle actions
+This is the canonical Loans test guide. The former separate lifecycle guide has
+been merged into this document.
 
-**Yes — the loans API is integrated with on-chain smart contracts.** When
-`BLOCKCHAIN_ENABLED=true`, key lifecycle events (submit, approve, reject,
-disburse, schedule, payment, penalty) are dispatched to durable Celery jobs via
-`loans/blockchain/sync.py`. Blockchain status can be queried through dedicated
-endpoints.
+## What This Guide Proves
 
-## Base URL and Auth
+The test layers have different purposes:
 
-- **Base URL:** `http://localhost:8000/api/loans`
-- **Required headers:**
+| Layer | Proves | Does not prove |
+| --- | --- | --- |
+| Unit/service tests | Validation, calculations, state helpers, error mapping | Real MongoDB/Redis/RPC behavior |
+| `mongomock` API tests | Routing, response shape, role/owner/scope behavior | MongoDB validators, transactions, query plans |
+| Isolated real-Mongo tests | Unique indexes, validators, atomic competition, plans | Production volume or privileges unless using that topology |
+| Redis/Celery tests | Shared leases, retries, worker-loss recovery | Correct production supervision unless deployed similarly |
+| Local Ganache tests | ABI/client/contract behavior on a development chain | Production network, wallet, RPC, reorg, or gas behavior |
+| Deployed smoke/load tests | Proxy, process, network, monitoring, and recovery behavior | Business/legal approval |
+
+Passing local tests is necessary but is not production approval. Known gaps and
+release conditions are tracked in `LOANS_PRODUCTION_READINESS_REVIEW.md`.
+
+## Current Automated Baseline
+
+The following repository selection passed on 2026-08-15:
+
+```bash
+.venv/bin/pytest -q tests \
+  -k 'loan or blockchain or qualification or wallet_disbursement or repayment'
+```
+
+Result: **460 passed, 9 skipped, 713 deselected**. The nine skipped tests require
+a configured Ganache/RPC and deployed contracts.
+
+Run the complete repository suite before merging or releasing:
+
+```bash
+.venv/bin/pytest -q
+```
+
+Do not convert an integration skip into a pass. Record why it skipped and run it
+against the intended isolated service when that evidence is required.
+
+## Safety and Test Data
+
+- Use `config.settings_test` (the default in `pytest.ini`) for ordinary tests.
+- Never point destructive fixtures at a production database or chain.
+- Use a unique isolated MongoDB database and a disposable funded development
+  wallet for integration testing.
+- Never paste JWTs, private keys, database URIs, customer data, or provider
+  credentials into committed test files or reports.
+- `python init_db.py`, database backfills, contract deployment, blockchain
+  transactions, and Celery production operations are state-changing. Run them
+  only against an approved target after backup and inventory review.
+- Keep `BLOCKCHAIN_ENABLED=False` for the cash/check baseline unless the chain
+  test environment is intentionally configured.
+
+## API Base and Authentication
+
+Default local base:
+
+```text
+http://127.0.0.1:8000/api/loans/
+```
+
+Authenticated requests require the project JWT transport. When using an access
+token header:
+
 ```http
-Authorization: Bearer <access_token>
+Authorization: Bearer <access-token>
 Content-Type: application/json
 ```
-- **Roles:**
-  - Customer endpoints → `customer` role JWT
-  - Admin endpoints → `admin` role JWT (with specific permissions noted per endpoint)
-  - Loan officer endpoints → `loan_officer` or `admin` role JWT
 
-## Related Documentation
+Financial POST requests also require a stable client-generated key:
+
+```http
+Idempotency-Key: <8-to-128-character-value>
+```
+
+Use separate customer, assigned-officer, other-officer, limited-admin, and
+fully authorized admin identities. A single superuser test cannot prove role or
+assignment isolation.
+
+## Canonical Statuses
+
+Application statuses:
+
+- `draft`
+- `submitted`
+- `under_review`
+- `approved`
+- `rejected`
+- `disbursed`
+- `completed`
+- `written_off` (reserved; no approved write-off workflow exists)
+- `cancelled`
+
+`pending` is a list-filter alias for `submitted` and `under_review`; it is not a
+stored application status.
+
+Disbursement statuses:
+
+- `not_started`
+- `pending`
+- `executed`
+- `failed`
+- `cancelled`
+
+Payment statuses:
+
+- `pending_verification`
+- `posting`
+- `posted`
+- `failed`
+- `reversed` (reserved; no reversal workflow exists)
+
+Installment statuses:
+
+- `pending`
+- `partial`
+- `overdue`
+- `partial_overdue`
+- `paid`
+
+Schedule statuses are `active`, `paid_off`, `restructured`, and `written_off`.
+The latter two are reserved until corresponding policy and API workflows exist.
+
+## Access and Endpoint Matrix
+
+### Customer
+
+| Method | Route | Expected boundary |
+| --- | --- | --- |
+| `GET` | `products/` | Customer role |
+| `GET` | `products/<product_id>/` | Customer role; active product |
+| `POST` | `pre-qualify/` | Customer role; own readiness context |
+| `POST` | `apply/` | Customer role; own completed prerequisites |
+| `GET` | `applications/` | Customer role; owner rows only |
+| `GET/PUT` | `applications/<application_id>/` | Owner; PUT only for draft |
+| `GET` | `applications/<application_id>/schedule/` | Owner; disbursed/closed lifecycle |
+| `GET/POST` | `applications/<application_id>/payments/` | Owner; POST only GCash/bank pending claim |
+| `POST` | `applications/<application_id>/resubmit/` | Owner; rejected only |
+| `GET` | `applications/<application_id>/feedback/` | Owner; rejected only |
+| `POST` | `applications/<application_id>/set-disbursement-method/` | Owner; allowed lifecycle |
+| `GET` | `applications/<application_id>/blockchain/` | Owner |
+| `POST` | `applications/<application_id>/wallet-payment/` | Owner; disbursed loan; verified chain tx |
+| `GET` | `system-wallet/` | Customer role; blockchain configured |
+
+### Administrator
+
+| Method | Route | Expected boundary |
+| --- | --- | --- |
+| `GET/POST` | `admin/products/` | Admin + `manage_system` |
+| `GET/PUT/DELETE` | `admin/products/<product_id>/` | Admin + `manage_system` |
+| `POST` | `admin/applications/<application_id>/assign/` | Admin + `manage_loan_officers` |
+| `POST` | `admin/applications/<application_id>/reassign/` | Admin + `manage_loan_officers` |
+| `GET` | `admin/officers/workload/` | Admin + `manage_loan_officers` |
+| `GET` | `admin/blockchain/transactions/` | Admin + `view_logs` |
+
+### Officer or administrator
+
+Loan officers must be assigned to the application unless the endpoint is a
+queue/list operation with its own scoped query. Administrators use the shared
+officer-or-admin boundary without assignment restriction.
+
+| Method | Route | Expected behavior |
+| --- | --- | --- |
+| `GET` | `officer/applications/` | Assigned rows for officer; admin broader view |
+| `GET` | `officer/applications/<application_id>/` | Scoped detail |
+| `POST` | `officer/applications/<application_id>/notes/` | Scoped note append |
+| `POST` | `officer/applications/<application_id>/request-missing-documents/` | Scoped submitted/review state |
+| `PUT` | `officer/applications/<application_id>/review/` | Scoped submitted/review state |
+| `POST` | `officer/applications/<application_id>/disburse/` | Scoped approved state + idempotency key |
+| `GET/POST` | `officer/applications/<application_id>/wallet-disbursement/` | Scoped wallet recovery |
+| `POST` | `officer/payments/` | Scoped cash/check posting + idempotency key |
+| `GET` | `officer/payments/recent/` | Accessible loans only |
+| `GET` | `officer/payments/search/` | Accessible loans only |
+| `GET` | `officer/active-loans/` | Scoped search/customer lookup |
+| `GET` | `officer/applications/<application_id>/schedule/` | Scoped schedule |
+| `GET` | `officer/applications/<application_id>/payments/` | Scoped history |
+| `POST` | `officer/applications/<application_id>/penalties/apply/` | Scoped eligible installment |
+| `POST` | `officer/applications/<application_id>/penalties/waive/` | Scoped penalized installment |
+| `GET/POST` | `officer/applications/<application_id>/payoff/` | Quote / exact cash-check payoff |
+| `GET` | `officer/applications/<application_id>/blockchain/` | Must be scoped; current code has a known defect |
+| `GET` | `officer/exchange-rate/` | Blockchain enabled and provider available |
+| `GET` | `officer/schedules/export/` | Scoped, streaming, audited CSV/JSON; total currently unbounded |
+
+## Core Request Examples
+
+### Pre-qualify
+
+```http
+POST /api/loans/pre-qualify/
+```
 
-| Document | Purpose |
-|----------|---------|
-| `docs/BLOCKCHAIN_TESTING_GUIDE.md` | Blockchain integration testing |
-| `docs/BLOCKCHAIN_SMART_CONTRACTS_GUIDE.md` | Smart contract overview |
-| `smartcontracts/docs/TESTING_GUIDE.md` | On-chain contract unit tests |
-| `smartcontracts/docs/TESTNET_DEPLOYMENT_GUIDE.md` | Local testnet setup |
-| `docs/LOAN_LIFECYCLE_TESTING_GUIDE.md` | End-to-end loan lifecycle |
-| `docs/profiles/PROFILES_TESTING_GUIDE.md` | Profile prerequisites for loan eligibility |
-
-## Reference Values
-
-### Application Statuses
-
-`draft`, `submitted`, `under_review`, `approved`, `rejected`, `disbursed`, `cancelled`
-
-Customer list filter alias: `pending` → matches `submitted` + `under_review`
-
-### Disbursement / Payment Methods
-
-`cash`, `gcash`, `bank_transfer`, `check`, `wallet`
-
-### Document Types (for `required_documents` / `missing_documents`)
-
-`valid_id`, `selfie_with_id`, `proof_of_address`, `business_permit`, `business_photo`, `income_proof`, `other`
-
-### Risk Categories
-
-`low`, `medium`, `high`
-
-### Blockchain Transaction Actions (admin filter)
-
-`submit`, `approve`, `reject`, `disburse`, `schedule`, `payment`
-
-### Blockchain Transaction Statuses (admin filter)
-
-`confirmed`, `pending`, `failed`
-
----
-
-## Smart Contract Integration Map
-
-When blockchain is enabled, these API actions enqueue non-blocking Celery sync
-jobs:
-
-| API Action | On-chain Action | Contract Area |
-|------------|-----------------|---------------|
-| `POST /apply/` | `submit` | LoanApplication |
-| `PUT /officer/.../review/` (approve) | `approve` | LoanApproval |
-| `PUT /officer/.../review/` (reject) | `reject` | LoanReview |
-| `POST /officer/.../disburse/` | `disburse` + `schedule` | DisbursementExecution, Repayment |
-| `POST .../payments/` (customer or officer) | `payment` | PaymentRecording |
-| `POST /officer/.../penalties/apply/` | penalty apply | AuditRegistry |
-| `POST /officer/.../penalties/waive/` | penalty waive | AuditRegistry |
-| `POST .../wallet-payment/` | `payment` (after on-chain ETH verification) | PaymentRecording |
-
-ABIs live in `loans/blockchain/abis/`. Solidity sources in `smartcontracts/contracts/`.
-
----
-
-# Customer Endpoints
-
-Auth: **customer only** for all endpoints below.
-
----
-
-### 1. `GET /products/`
-
-List active loan products.
-
-**Query params (all optional):**
-
-| Field | Type | Notes |
-|-------|------|-------|
-| `search` | string | Not implemented in view (reserved) |
-| `page` | int | Not paginated in view — returns all active products |
-| `page_size` | int | Not paginated in view |
-
-**Response fields (`data`):**
-
-| Field | Type |
-|-------|------|
-| `products` | array |
-| `products[].id` | string |
-| `products[].name` | string |
-| `products[].code` | string |
-| `products[].description` | string |
-| `products[].min_amount` | number |
-| `products[].max_amount` | number |
-| `products[].interest_rate` | number (decimal, monthly) |
-| `products[].interest_rate_unit` | string (`decimal`) |
-| `products[].interest_rate_period` | string (`monthly`) |
-| `products[].interest_rate_display` | string |
-| `products[].min_term_months` | int |
-| `products[].max_term_months` | int |
-| `products[].required_documents` | array[string] |
-| `products[].target_description` | string |
-| `total` | int |
-
----
-
-### 2. `GET /products/<product_id>/`
-
-Product detail.
-
-**Path params:**
-
-| Field | Type | Required |
-|-------|------|----------|
-| `product_id` | string | yes |
-
-**Response fields (`data`):**
-
-| Field | Type |
-|-------|------|
-| `id` | string |
-| `name` | string |
-| `code` | string |
-| `description` | string |
-| `min_amount` | number |
-| `max_amount` | number |
-| `interest_rate` | number |
-| `interest_rate_unit` | string |
-| `interest_rate_period` | string |
-| `interest_rate_display` | string |
-| `min_term_months` | int |
-| `max_term_months` | int |
-| `required_documents` | array[string] |
-| `min_business_months` | int |
-| `min_monthly_income` | number |
-| `target_description` | string |
-
----
-
-### 3. `POST /pre-qualify/`
-
-AI-assisted eligibility check (rate-limited).
-
-**Request body:**
-
-| Field | Type | Required | Validation |
-|-------|------|----------|------------|
-| `product_id` | string | **yes** | Must exist and be active |
-| `amount` | number | **yes** | min 1000; within product min/max |
-| `term_months` | int | no | default 12; min 1; within product min/max term |
-| `purpose` | string | no | max 500 chars |
-| `requirements_scope` | string | no | `baseline` or `product` (default `product`) |
-
-**Response fields (`data`):**
-
-| Field | Type |
-|-------|------|
-| `product.id` | string |
-| `product.name` | string |
-| `requested_amount` | number |
-| `term_months` | int |
-| `eligible` | boolean |
-| `eligibility_score` | number |
-| `risk_category` | string |
-| `recommended_amount` | number |
-| `interest_rate` | number |
-| `interest_rate_unit` | string |
-| `interest_rate_period` | string |
-| `interest_rate_display` | string |
-| `monthly_payment` | number |
-| `total_interest` | number |
-| `total_repayment` | number |
-| `reasoning` | string |
-| `strengths` | array |
-| `concerns` | array |
-| `missing_requirements` | array |
-| `can_apply` | boolean |
-| `requirements_scope` | string |
-| `required_documents_resolved` | array |
-
----
-
-### 4. `POST /apply/`
-
-Submit a new loan application. Triggers blockchain `submit` sync when enabled.
-
-**Request body:**
-
-| Field | Type | Required | Validation |
-|-------|------|----------|------------|
-| `product_id` | string | **yes** | Active product |
-| `requested_amount` | number | **yes** | min 1000; within product min/max |
-| `term_months` | int | **yes** | min 1; within product min/max |
-| `purpose` | string | no | max 500 chars |
-| `preferred_disbursement_method` | string | no | `cash`, `gcash`, `bank_transfer`, `check`, `wallet` |
-
-**Response fields (`data`):**
-
-| Field | Type |
-|-------|------|
-| `application_id` | string |
-| `status` | string |
-| `eligibility_score` | number |
-| `recommended_amount` | number |
-| `message` | string |
-
----
-
-### 5. `GET /applications/`
-
-List customer's own applications.
-
-**Query params (all optional):**
-
-| Field | Type | Validation |
-|-------|------|------------|
-| `status` | string | One of: `draft`, `submitted`, `under_review`, `approved`, `rejected`, `disbursed`, `cancelled`, `pending` |
-| `search` | string | Case-insensitive product name search |
-| `page` | int | min 1 (default 1) |
-| `page_size` | int | min 1, max 100 (default 20) |
-
-**Response fields (`data`):**
-
-| Field | Type |
-|-------|------|
-| `applications` | array |
-| `applications[].id` | string |
-| `applications[].product_name` | string |
-| `applications[].requested_amount` | number |
-| `applications[].recommended_amount` | number |
-| `applications[].approved_amount` | number |
-| `applications[].term_months` | int |
-| `applications[].status` | string |
-| `applications[].eligibility_score` | number |
-| `applications[].submitted_at` | ISO datetime |
-| `applications[].created_at` | ISO datetime |
-| `total` | int |
-| `page` | int |
-| `page_size` | int |
-| `total_pages` | int |
-| `has_next` | boolean |
-| `has_previous` | boolean |
-
----
-
-### 6. `GET /applications/<application_id>/`
-
-Application detail (owner only).
-
-**Path params:**
-
-| Field | Type | Required |
-|-------|------|----------|
-| `application_id` | string | yes |
-
-**Response fields (`data`):**
-
-| Field | Type |
-|-------|------|
-| `id` | string |
-| `product.id` | string |
-| `product.name` | string |
-| `requested_amount` | number |
-| `recommended_amount` | number |
-| `approved_amount` | number |
-| `term_months` | int |
-| `interest_rate` | number (monthly %) |
-| `purpose` | string |
-| `status` | string |
-| `eligibility_score` | number |
-| `risk_category` | string |
-| `rejection_reason` | string |
-| `submitted_at` | ISO datetime |
-| `decision_date` | ISO datetime |
-| `preferred_disbursement_method` | string |
-| `disbursed_at` | ISO datetime |
-| `created_at` | ISO datetime |
-
----
-
-### 7. `PUT /applications/<application_id>/`
-
-Edit and re-submit a **draft** application.
-
-**Path params:**
-
-| Field | Type | Required |
-|-------|------|----------|
-| `application_id` | string | yes |
-
-**Request body:** Same fields as `POST /apply/` (full body required by serializer)
-
-| Field | Type | Required | Notes |
-|-------|------|----------|-------|
-| `product_id` | string | **yes** | Must match original draft product (cannot change) |
-| `requested_amount` | number | **yes** | min 1000 |
-| `term_months` | int | **yes** | min 1 |
-| `purpose` | string | no | max 500 |
-| `preferred_disbursement_method` | string | no | `cash`, `gcash`, `bank_transfer`, `check`, `wallet`; when supplied, the updated preference is persisted |
-
-**Response fields:** Same as endpoint 6 (full application detail).
-
-**Precondition:** `status` must be `draft`.
-
----
-
-### 8. `GET /applications/<application_id>/schedule/`
-
-Repayment schedule for a disbursed, completed, or written-off loan.
-
-**Path params:**
-
-| Field | Type | Required |
-|-------|------|----------|
-| `application_id` | string | yes |
-
-**Precondition:** application `status` must be `disbursed`, `completed`, or
-`written_off`.
-
-**Response fields (`data`):**
-
-| Field | Type |
-|-------|------|
-| `loan_id` | string |
-| `principal` | number |
-| `interest_rate` | number |
-| `term_months` | int |
-| `monthly_payment` | number |
-| `total_amount` | number |
-| `total_interest` | number |
-| `schedule_status` | string (`active`, `paid_off`, `restructured`, `written_off`) |
-| `paid_off_at` | ISO datetime or null |
-| `paid_count` | int |
-| `remaining_balance` | number |
-| `next_payment` | object |
-| `installments` | array |
-| `installments[].number` | int |
-| `installments[].due_date` | ISO datetime |
-| `installments[].principal` | number |
-| `installments[].interest` | number |
-| `installments[].total_amount` | number |
-| `installments[].status` | string (`pending`, `partial`, `overdue`, `partial_overdue`, `paid`) |
-| `installments[].paid_amount` | number |
-| `installments[].penalty_status` | string |
-| `installments[].penalty_amount` | number |
-| `installments[].penalty_reason` | string |
-| `installments[].penalty_applied_at` | ISO datetime |
-| `installments[].penalty_applied_by` | string |
-| `installments[].penalty_waived_at` | ISO datetime |
-| `installments[].penalty_waived_by` | string |
-| `installments[].penalty_waived_reason` | string |
-
----
-
-### 9. `GET /applications/<application_id>/payments/`
-
-Payment history.
-
-**Path params:**
-
-| Field | Type | Required |
-|-------|------|----------|
-| `application_id` | string | yes |
-
-**Response fields (`data`):**
-
-| Field | Type |
-|-------|------|
-| `payments` | array |
-| `payments[].id` | string |
-| `payments[].amount` | number |
-| `payments[].installment_number` | int |
-| `payments[].payment_method` | string |
-| `payments[].payment_status` | string (`pending_verification`, `posting`, `posted`, `failed`, or `reversed`) |
-| `payments[].reference` | string |
-| `payments[].recorded_at` | ISO datetime |
-| `total_paid` | number (posted payments only) |
-| `count` | int |
-
----
-
-### 10. `POST /applications/<application_id>/payments/`
-
-Submit GCash or bank-transfer evidence for verification. The submission is stored
-as `pending_verification`; it does not reduce the repayment balance or trigger
-blockchain payment sync until an authoritative verification workflow posts it.
-
-**Path params:**
-
-| Field | Type | Required |
-|-------|------|----------|
-| `application_id` | string | yes |
-
-**Required header:** `Idempotency-Key` containing 8–128 characters. Replaying the
-same key and payload returns the original submission. Reusing it with different
-payment data returns `409`.
-
-**Request body:**
-
-| Field | Type | Required | Validation |
-|-------|------|----------|------------|
-| `installment_number` | int | **yes** | >= 1 |
-| `amount` | number | **yes** | > 0; must not exceed remaining installment balance |
-| `payment_method` | string | **yes** | `gcash` or `bank_transfer`; wallet must use endpoint 15 |
-| `reference` | string | **yes** | Provider/bank reference; duplicate references are rejected |
-| `notes` | string | no | |
-
-**Precondition:** `status` must be `disbursed`.
-
-**Success status:** `202 Accepted`
-
-**Response fields (`data`):**
-
-| Field | Type |
-|-------|------|
-| `payment_id` | string |
-| `loan_id` | string |
-| `installment_number` | int |
-| `amount` | number |
-| `payment_method` | string |
-| `payment_status` | string (`pending_verification`) |
-| `reference` | string |
-| `recorded_at` | ISO datetime |
-| `installment_status` | string |
-| `remaining_balance` | number |
-| `balance_applied` | boolean (`false`) |
-| `replayed` | boolean |
-
----
-
-### 11. `POST /applications/<application_id>/resubmit/`
-
-Reset a rejected application to draft.
-
-**Path params:**
-
-| Field | Type | Required |
-|-------|------|----------|
-| `application_id` | string | yes |
-
-**Request body:** none
-
-**Precondition:** `status` must be `rejected`.
-
-**Response fields (`data`):**
-
-| Field | Type |
-|-------|------|
-| `id` | string |
-| `status` | string (`draft`) |
-| `message` | string |
-
----
-
-### 12. `GET /applications/<application_id>/feedback/`
-
-AI-generated rejection feedback.
-
-**Path params:**
-
-| Field | Type | Required |
-|-------|------|----------|
-| `application_id` | string | yes |
-
-**Precondition:** `status` must be `rejected`.
-
-**Response fields (`data`):**
-
-| Field | Type |
-|-------|------|
-| `rejection_reason` | string |
-| `feedback` | string |
-| `can_resubmit` | boolean |
-
----
-
-### 13. `POST /applications/<application_id>/set-disbursement-method/`
-
-Set preferred disbursement method after approval.
-
-**Path params:**
-
-| Field | Type | Required |
-|-------|------|----------|
-| `application_id` | string | yes |
-
-**Request body:**
-
-| Field | Type | Required | Validation |
-|-------|------|----------|------------|
-| `disbursement_method` | string | **yes** | `cash`, `gcash`, `bank_transfer`, `check`, `wallet` |
-
-**Allowed application statuses:** `submitted`, `under_review`, `approved` (and legacy `pending` if present)
-
-**Response fields (`data`):**
-
-| Field | Type |
-|-------|------|
-| `id` | string |
-| `status` | string |
-| `preferred_disbursement_method` | string |
-
----
-
-### 14. `GET /applications/<application_id>/blockchain/`
-
-Blockchain transaction status for own application.
-
-**Path params:**
-
-| Field | Type | Required |
-|-------|------|----------|
-| `application_id` | string | yes (valid ObjectId) |
-
-**Response fields (`data`):**
-
-| Field | Type |
-|-------|------|
-| `application_id` | string |
-| `blockchain_enabled` | boolean |
-| `explorer_url` | string |
-| `tx_hashes` | object (action → tx_hash map) |
-| `transactions` | array (when blockchain enabled) |
-| `transactions[].tx_hash` | string |
-| `transactions[].contract_name` | string |
-| `transactions[].method` | string |
-| `transactions[].loan_id` | string |
-| `transactions[].action` | string |
-| `transactions[].status` | string |
-| `transactions[].gas_used` | int |
-| `transactions[].gas_price` | int |
-| `transactions[].block_number` | int |
-| `transactions[].error` | string |
-| `transactions[].details` | object |
-| `transactions[].created_at` | ISO datetime |
-| `transactions[].completed_at` | ISO datetime |
-| `audit_trail` | array (when blockchain enabled) |
-
----
-
-### 15. `POST /applications/<application_id>/wallet-payment/`
-
-Verify on-chain ETH payment and record installment. Triggers blockchain `payment` sync.
-
-**Path params:**
-
-| Field | Type | Required |
-|-------|------|----------|
-| `application_id` | string | yes |
-
-**Request body:**
-
-| Field | Type | Required | Validation |
-|-------|------|----------|------------|
-| `tx_hash` | string | **yes** | `0x` prefix, exactly 66 chars |
-| `installment_number` | int | **yes** | >= 1 |
-
-**Preconditions:**
-- `status` must be `disbursed`
-- Customer profile must have `wallet_address` set
-- ETH tx must be confirmed, sent from customer wallet to system wallet
-- ETH tx must have at least `LOANS_WALLET_MIN_CONFIRMATIONS` confirmations (default 3)
-- PHP equivalent must be within ±2% of installment amount (min ₱100)
-- The full transaction hash is idempotent and protected by a unique index
-
-**Response fields (`data`):**
-
-| Field | Type |
-|-------|------|
-| `status` | string (`verified`) |
-| `payment_id` | string |
-| `installment_number` | int |
-| `installment_status` | string |
-| `amount_php` | number |
-| `amount_eth` | string |
-| `eth_rate` | number |
-| `tx_hash` | string |
-| `block_number` | int |
-| `remaining_balance` | number |
-| `blockchain_sync_status` | string |
-| `blockchain_sync_message` | string |
-| `replayed` | boolean |
-
----
-
-### 16. `GET /system-wallet/`
-
-System wallet address and ETH/PHP rate for WalletConnect payments.
-
-**Request body:** none
-
-**Precondition:** `BLOCKCHAIN_ENABLED=true` and exchange rate available.
-
-**Response fields (`data`):**
-
-| Field | Type |
-|-------|------|
-| `wallet_address` | string |
-| `chain_id` | int |
-| `rpc_url` | string |
-| `eth_php_rate` | number |
-| `rate_source` | string |
-| `rate_cached_at` | ISO datetime |
-| `rate_updated_at` | ISO datetime |
-
----
-
-# Admin Endpoints
-
-Auth: **admin** role with specific permissions.
-
----
-
-### 17. `GET /admin/products/`
-
-List all loan products (including inactive).
-
-**Permission:** `manage_system`
-
-**Query params (all optional):**
-
-| Field | Type | Validation |
-|-------|------|------------|
-| `active` | string | `true`, `false`, or `all` (default shows all) |
-| `search` | string | Filter by name or code |
-
-**Response fields (`data`):**
-
-| Field | Type |
-|-------|------|
-| `products` | array |
-| `products[].id` | string |
-| `products[].name` | string |
-| `products[].code` | string |
-| `products[].description` | string |
-| `products[].min_amount` | number |
-| `products[].max_amount` | number |
-| `products[].interest_rate` | number |
-| `products[].min_term_months` | int |
-| `products[].max_term_months` | int |
-| `products[].required_documents` | array[string] |
-| `products[].min_business_months` | int |
-| `products[].min_monthly_income` | number |
-| `products[].business_types` | array[string] |
-| `products[].target_description` | string |
-| `products[].active` | boolean |
-| `products[].created_at` | ISO datetime |
-| `total` | int |
-
----
-
-### 18. `POST /admin/products/`
-
-Create a loan product.
-
-**Permission:** `manage_system`
-
-**Request body:**
-
-| Field | Type | Required | Validation |
-|-------|------|----------|------------|
-| `name` | string | **yes** | max 100; unique among active products |
-| `code` | string | **yes** | max 20; unique |
-| `description` | string | no | max 1000 |
-| `min_amount` | number | **yes** | >= 0 |
-| `max_amount` | number | **yes** | >= min_amount |
-| `interest_rate` | number | **yes** | 0.0–100.0 (decimal monthly rate, e.g. 0.02 = 2%) |
-| `min_term_months` | int | **yes** | >= 1 |
-| `max_term_months` | int | **yes** | >= min_term_months |
-| `required_documents` | array[string] | no | Document type keys |
-| `min_business_months` | int | no | >= 0 |
-| `min_monthly_income` | number | no | >= 0 |
-| `business_types` | array[string] | no | |
-| `target_description` | string | no | |
-| `active` | boolean | no | |
-
-**Response fields (`data`):**
-
-| Field | Type |
-|-------|------|
-| `id` | string |
-| `code` | string |
-| `name` | string |
-
----
-
-### 19. `GET /admin/products/<product_id>/`
-
-Get product by ID.
-
-**Permission:** `manage_system`
-
-**Path params:**
-
-| Field | Type | Required |
-|-------|------|----------|
-| `product_id` | string | yes |
-
-**Response fields:** Same as single item in endpoint 17.
-
----
-
-### 20. `PUT /admin/products/<product_id>/`
-
-Update product (partial update supported).
-
-**Permission:** `manage_system`
-
-**Path params:**
-
-| Field | Type | Required |
-|-------|------|----------|
-| `product_id` | string | yes |
-
-**Request body (all optional, at least one field):**
-
-| Field | Type | Validation |
-|-------|------|------------|
-| `name` | string | max 100 |
-| `description` | string | max 1000 |
-| `min_amount` | number | >= 0 |
-| `max_amount` | number | >= min_amount |
-| `interest_rate` | number | 0.0–100.0 |
-| `min_term_months` | int | >= 1 |
-| `max_term_months` | int | >= min_term_months |
-| `required_documents` | array[string] | |
-| `min_business_months` | int | >= 0 |
-| `min_monthly_income` | number | >= 0 |
-| `business_types` | array[string] | |
-| `target_description` | string | |
-| `active` | boolean | |
-
-**Note:** Cannot edit if product has active loan applications. `code` is not updatable.
-
-**Response fields (`data`):**
-
-| Field | Type |
-|-------|------|
-| `id` | string |
-
----
-
-### 21. `DELETE /admin/products/<product_id>/`
-
-Soft-delete (deactivate) product.
-
-**Permission:** `manage_system`
-
-**Path params:**
-
-| Field | Type | Required |
-|-------|------|----------|
-| `product_id` | string | yes |
-
-**Precondition:** No active loans on product.
-
-**Response fields (`data`):**
-
-| Field | Type |
-|-------|------|
-| `id` | string |
-| `code` | string |
-| `active` | boolean |
-
----
-
-### 22. `POST /admin/applications/<application_id>/assign/`
-
-Manually assign application to a loan officer.
-
-**Permission:** `manage_loan_officers`
-
-**Path params:**
-
-| Field | Type | Required |
-|-------|------|----------|
-| `application_id` | string | yes |
-
-**Request body:**
-
-| Field | Type | Required | Validation |
-|-------|------|----------|------------|
-| `officer_id` | string | **yes** | Valid MongoDB ObjectId |
-
-**Response fields (`data`):**
-
-| Field | Type |
-|-------|------|
-| `application_id` | string |
-| `assigned_officer` | string |
-| `officer_name` | string |
-| `status` | string |
-
----
-
-### 23. `POST /admin/applications/<application_id>/reassign/`
-
-Reassign application to a different officer.
-
-**Permission:** `manage_loan_officers`
-
-**Path params:**
-
-| Field | Type | Required |
-|-------|------|----------|
-| `application_id` | string | yes |
-
-**Request body:**
-
-| Field | Type | Required | Validation |
-|-------|------|----------|------------|
-| `officer_id` | string | **yes** | Valid MongoDB ObjectId |
-
-**Response fields:** Same as endpoint 22.
-
----
-
-### 24. `GET /admin/officers/workload/`
-
-Officer workload, pending applications, and assigned applications.
-
-**Permission:** `manage_loan_officers`
-
-**Query params (all optional):**
-
-| Field | Type | Default | Validation |
-|-------|------|---------|------------|
-| `search` | string | | Officer name/email filter |
-| `page` | int | 1 | >= 1 |
-| `page_size` | int | 20 | 1–100 |
-| `pending_search` | string | | Pending apps search |
-| `pending_page` | int | 1 | >= 1 |
-| `pending_page_size` | int | 20 | 1–100 |
-| `assigned_search` | string | | Assigned apps search |
-| `assigned_page` | int | 1 | >= 1 |
-| `assigned_page_size` | int | 20 | 1–100 |
-
-**Response fields (`data`):**
-
-| Field | Type |
-|-------|------|
-| `officers` | array |
-| `officers[].id` | string |
-| `officers[].employee_id` | string |
-| `officers[].name` | string |
-| `officers[].email` | string |
-| `officers[].assigned_count` | int |
-| `officers[].pending_count` | int |
-| `officers[].active` | boolean |
-| `total` | int |
-| `page` | int |
-| `page_size` | int |
-| `total_pages` | int |
-| `pending_applications` | array |
-| `pending_applications[].id` | string |
-| `pending_applications[].customer_id` | string |
-| `pending_applications[].customer_name` | string |
-| `pending_applications[].requested_amount` | number |
-| `pending_applications[].term_months` | int |
-| `pending_applications[].status` | string |
-| `pending_applications[].eligibility_score` | number |
-| `pending_applications[].risk_category` | string |
-| `pending_applications[].assigned_officer` | string |
-| `pending_applications[].assigned_officer_name` | string |
-| `pending_applications[].submitted_at` | ISO datetime |
-| `pending_applications[].internal_notes_count` | int |
-| `pending_applications[].latest_internal_note` | object |
-| `pending_count` | int |
-| `pending_page` | int |
-| `pending_page_size` | int |
-| `pending_total_pages` | int |
-| `assigned_applications` | array (same shape as pending) |
-| `assigned_count` | int |
-| `assigned_page` | int |
-| `assigned_page_size` | int |
-| `assigned_total_pages` | int |
-
----
-
-### 25. `GET /admin/blockchain/transactions/`
-
-Admin view of all blockchain transactions.
-
-**Permission:** `view_logs`
-
-**Query params (all optional):**
-
-| Field | Type | Validation |
-|-------|------|------------|
-| `action` | string | `submit`, `approve`, `reject`, `disburse`, `schedule`, `payment` |
-| `status` | string | `confirmed`, `pending`, `failed` |
-| `search` | string | Search `tx_hash` or `loan_id` |
-| `start_date` | string | `YYYY-MM-DD` |
-| `end_date` | string | `YYYY-MM-DD` |
-| `page` | int | default 1 |
-| `page_size` | int | 1–100, default 20 |
-
-**Response fields (`data`):**
-
-| Field | Type |
-|-------|------|
-| `transactions` | array |
-| `transactions[].id` | string |
-| `transactions[].tx_hash` | string |
-| `transactions[].contract_name` | string |
-| `transactions[].method` | string |
-| `transactions[].loan_id` | string |
-| `transactions[].action` | string |
-| `transactions[].status` | string |
-| `transactions[].gas_used` | int |
-| `transactions[].gas_price` | int |
-| `transactions[].block_number` | int |
-| `transactions[].error` | string |
-| `transactions[].created_at` | ISO datetime |
-| `transactions[].completed_at` | ISO datetime |
-| `total` | int |
-| `page` | int |
-| `page_size` | int |
-| `total_pages` | int |
-
----
-
-# Loan Officer Endpoints
-
-Auth: **loan_officer** or **admin**. Loan officers are ABAC-scoped to their assigned applications only.
-
----
-
-### 26. `GET /officer/applications/`
-
-List/search applications with advanced filters.
-
-**Query params:**
-
-| Field | Type | Default | Validation |
-|-------|------|---------|------------|
-| `status` | string | `pending` | `pending`, `mine`, `submitted`, `under_review`, `approved`, `rejected`, `disbursed`, `all` |
-| `search` | string | | Customer name/phone/email, product name, or app ID |
-| `min_amount` | number | | |
-| `max_amount` | number | | must be >= min_amount |
-| `start_date` | string | | `YYYY-MM-DD` |
-| `end_date` | string | | `YYYY-MM-DD` |
-| `risk_category` | string | | `low`, `medium`, `high` |
-| `page` | int | 1 | >= 1 |
-| `page_size` | int | 20 | 1–100 |
-| `sort_by` | string | `submitted_at` | `submitted_at`, `requested_amount`, `eligibility_score`, `created_at` |
-| `sort_order` | string | `desc` | `asc`, `desc` |
-
-**Response fields (`data`):**
-
-| Field | Type |
-|-------|------|
-| `applications` | array |
-| `applications[].id` | string |
-| `applications[].customer_id` | string |
-| `applications[].customer_name` | string |
-| `applications[].product_name` | string |
-| `applications[].requested_amount` | number |
-| `applications[].recommended_amount` | number |
-| `applications[].approved_amount` | number |
-| `applications[].term_months` | int |
-| `applications[].status` | string |
-| `applications[].eligibility_score` | number |
-| `applications[].risk_category` | string |
-| `applications[].assigned_officer` | string |
-| `applications[].assigned_officer_name` | string |
-| `applications[].submitted_at` | ISO datetime |
-| `applications[].decision_date` | ISO datetime |
-| `applications[].internal_notes_count` | int |
-| `applications[].latest_internal_note` | object |
-| `total` | int |
-| `page` | int |
-| `page_size` | int |
-| `total_pages` | int |
-
----
-
-### 27. `GET /officer/applications/<application_id>/`
-
-Full application detail with customer profiles and documents.
-
-**Path params:**
-
-| Field | Type | Required |
-|-------|------|----------|
-| `application_id` | string | yes |
-
-**Response fields (`data`):**
-
-| Field | Type |
-|-------|------|
-| `id` | string |
-| `customer_id` | string |
-| `customer_name` | string |
-| `product.id` | string |
-| `product.name` | string |
-| `product.code` | string |
-| `product.required_documents` | array |
-| `requested_amount` | number |
-| `recommended_amount` | number |
-| `approved_amount` | number |
-| `term_months` | int |
-| `purpose` | string |
-| `status` | string |
-| `eligibility_score` | number |
-| `risk_category` | string |
-| `ai_recommendation` | object |
-| `assigned_officer` | string |
-| `assigned_officer_name` | string |
-| `officer_notes` | string |
-| `rejection_reason` | string |
-| `submitted_at` | ISO datetime |
-| `decision_date` | ISO datetime |
-| `disbursed_amount` | number |
-| `preferred_disbursement_method` | string |
-| `disbursement_status` | string |
-| `disbursement_method` | string |
-| `disbursement_reference` | string |
-| `disbursement_requested_at` | ISO datetime |
-| `disbursement_error` | string |
-| `disbursed_at` | ISO datetime |
-| `eth_disbursement_tx_hash` | string |
-| `eth_disbursement_amount` | string |
-| `eth_disbursement_rate` | number |
-| `eth_disbursement_recipient` | string |
-| `internal_notes` | array |
-| `internal_notes_count` | int |
-| `latest_internal_note` | object |
-| `missing_documents_requested` | array |
-| `missing_documents_reason` | string |
-| `missing_documents_requested_at` | ISO datetime |
-| `customer.personal_profile` | object |
-| `customer.business_profile` | object |
-| `customer.alternative_data` | object |
-| `documents` | array |
-| `documents[].id` | string |
-| `documents[].document_type` | string |
-| `documents[].filename` | string |
-| `documents[].file_url` | string |
-| `documents[].file_size` | int |
-| `documents[].status` | string |
-| `documents[].verified` | boolean |
-| `documents[].verified_at` | ISO datetime |
-| `documents[].reupload_requested` | boolean |
-| `documents[].reupload_reason` | string |
-| `documents[].ai_analysis` | object |
-| `documents[].uploaded_at` | ISO datetime |
-
----
-
-### 28. `POST /officer/applications/<application_id>/notes/`
-
-Add internal note.
-
-**Path params:**
-
-| Field | Type | Required |
-|-------|------|----------|
-| `application_id` | string | yes |
-
-**Request body:**
-
-| Field | Type | Required | Validation |
-|-------|------|----------|------------|
-| `note` | string | **yes** | max 1000; non-empty after trim |
-
-**Precondition:** Status not `draft` or `cancelled`.
-
-**Response fields (`data`):**
-
-| Field | Type |
-|-------|------|
-| `id` | string |
-| `status` | string |
-| `internal_notes_count` | int |
-| `latest_internal_note.content` | string |
-| `latest_internal_note.author_id` | string |
-| `latest_internal_note.author_role` | string |
-| `latest_internal_note.created_at` | ISO datetime |
-
----
-
-### 29. `POST /officer/applications/<application_id>/request-missing-documents/`
-
-Request documents not yet uploaded.
-
-**Path params:**
-
-| Field | Type | Required |
-|-------|------|----------|
-| `application_id` | string | yes |
-
-**Request body:**
-
-| Field | Type | Required | Validation |
-|-------|------|----------|------------|
-| `missing_documents` | array[string] | **yes** | min 1 item; valid document type keys; must not already be uploaded |
-| `reason` | string | no | max 1000 |
-
-**Precondition:** Status `submitted` or `under_review`.
-
-**Response fields (`data`):**
-
-| Field | Type |
-|-------|------|
-| `id` | string |
-| `status` | string |
-| `missing_documents_requested` | array |
-| `missing_documents_reason` | string |
-| `missing_documents_requested_at` | ISO datetime |
-
----
-
-### 30. `PUT /officer/applications/<application_id>/review/`
-
-Approve or reject application. Triggers blockchain `approve` or `reject` sync.
-
-**Path params:**
-
-| Field | Type | Required |
-|-------|------|----------|
-| `application_id` | string | yes |
-
-**Request body:**
-
-| Field | Type | Required | Validation |
-|-------|------|----------|------------|
-| `action` | string | **yes** | `approve` or `reject` |
-| `approved_amount` | number | **yes if approve** | >= 0; must be <= requested_amount |
-| `rejection_reason` | string | **yes if reject** | max 500 |
-| `notes` | string | no | max 1000 |
-
-**Precondition:** Status `submitted` or `under_review`.
-
-**Response fields (`data`):**
-
-| Field | Type |
-|-------|------|
-| `id` | string |
-| `status` | string |
-| `approved_amount` | number |
-
----
-
-### 31. `POST /officer/applications/<application_id>/disburse/`
-
-Reserve or execute an approved-loan disbursement. Cash/check methods create the
-repayment schedule and complete synchronously. Wallet returns `202 pending` and
-is then executed by a durable Celery wallet worker. GCash and bank-transfer stay
-pending because provider confirmation is intentionally deferred.
-
-**Path params:**
-
-| Field | Type | Required |
-|-------|------|----------|
-| `application_id` | string | yes |
-
-**Required header:** `Idempotency-Key` containing 8–128 characters. Identical
-replays reuse the existing attempt and schedule. Reusing a key for different
-disbursement data is rejected.
-
-**Request body:**
-
-| Field | Type | Required | Validation |
-|-------|------|----------|------------|
-| `amount` | number | no | Defaults to and must equal `approved_amount` |
-| `method` | string | no | `cash`, `gcash`, `bank_transfer`, `check`, `wallet` — **ignored if borrower already set `preferred_disbursement_method`** |
-| `reference` | string | no | Auto-generated if omitted |
-| `external_reference` | string | no | Bank/check number; used as reference if `reference` empty |
-
-**Precondition:** Status must be `approved`, except an identical replay of an
-already completed request.
-
-**Status behavior:**
-
-- `cash`, `check`: `200`, `status=disbursed`, `disbursement_status=executed`, and
-  schedule returned.
-- `wallet`: initial `202`, `status=approved`, `disbursement_status=pending`; after
-  the worker confirms the ETH receipt, status becomes `disbursed`/`executed` and
-  the schedule becomes available.
-- `gcash`, `bank_transfer`: `202`/`pending`; no automatic completion is currently
-  supported.
-
-**Wallet worker prerequisites:** Redis broker, a worker consuming the
-`blockchain` queue, Celery Beat, enabled/configured Web3, funded system wallet,
-and a valid customer wallet address. Beat reconciles pending wallet attempts
-every five minutes. Replays with a stored transaction hash resume receipt lookup
-instead of sending another transfer. A signed transaction is encrypted and saved
-before broadcast; a missing/dropped broadcast is retried with that exact payload.
-
-**Response fields (`data`):**
-
-| Field | Type |
-|-------|------|
-| `id` | string |
-| `status` | string |
-| `disbursement_status` | string (`pending`, `executed`, `failed`, or `cancelled`) |
-| `disbursed_amount` | number |
-| `disbursement_method` | string |
-| `disbursement_reference` | string |
-| `disbursed_at` | ISO datetime |
-| `disbursement_requested_at` | ISO datetime |
-| `disbursement_error` | string |
-| `replayed` | boolean |
-| `eth_disbursement_tx_hash` | string |
-| `eth_disbursement_amount` | string |
-| `eth_disbursement_rate` | number |
-| `eth_disbursement_recipient` | string |
-| `schedule.monthly_payment` | number |
-| `schedule.total_amount` | number |
-| `schedule.term_months` | int |
-
----
-
-### 31b. `GET|POST /officer/applications/<application_id>/wallet-disbursement/`
-
-Inspect and recover a wallet disbursement. The same officer assignment scope as
-the application endpoint is enforced; the signed raw transaction is never
-returned.
-
-`POST` actions:
-
-- `reconcile`: enqueue receipt/state reconciliation for a pending transfer.
-- `retry`: reopen a reviewed failed/reverted/dropped attempt and enqueue it.
-- `cancel`: allowed only before a transaction is prepared or a worker holds the
-  execution lease. Once a hash/signed payload exists, cancellation returns `409`.
-
-The response exposes `tx_status`, hash, nonce, timestamps, block number,
-rebroadcast count, recipient, amount in Wei, and recovery history.
-
----
-
-### 32. `POST /officer/payments/`
-
-Record cash/check payment on behalf of customer. Triggers blockchain `payment` sync.
-
-**Required header:** `Idempotency-Key` containing 8–128 characters. Identical
-replays return the original payment without applying the installment twice.
-Reusing a key for different data returns `409`.
-
-**Request body:**
-
-| Field | Type | Required | Validation |
-|-------|------|----------|------------|
-| `loan_id` | string | **yes** | Application ID |
-| `installment_number` | int | **yes** | >= 1 |
-| `amount` | number | **yes** | > 0; must not exceed remaining balance |
-| `payment_method` | string | **yes** | `cash` or `check` only |
-| `reference` | string | no | Auto-generated if omitted |
-| `external_reference` | string | no | Used as reference if `reference` empty |
-| `notes` | string | no | |
-
-**Response fields (`data`):**
-
-| Field | Type |
-|-------|------|
-| `payment_id` | string |
-| `loan_id` | string |
-| `installment_number` | int |
-| `amount` | number |
-| `installment_status` | string |
-| `remaining_balance` | number |
-| `reference` | string |
-| `skipped_installments` | int |
-| `replayed` | boolean |
-
----
-
-### 33. `GET /officer/payments/search/`
-
-Search and filter all payments.
-
-**Query params (all optional unless noted):**
-
-| Field | Type | Default | Validation |
-|-------|------|---------|------------|
-| `search` | string | | Customer name or reference |
-| `loan_id` | string | | |
-| `customer_id` | string | | |
-| `disbursed_only` | boolean | `true` | `true`/`false` |
-| `payment_status` | string | | `on_time`, `late` |
-| `payment_method` | string | | `cash`, `gcash`, `bank_transfer`, `check`, `wallet` |
-| `min_amount` | number | | |
-| `max_amount` | number | | |
-| `start_date` | string | | `YYYY-MM-DD` |
-| `end_date` | string | | `YYYY-MM-DD` |
-| `page` | int | 1 | >= 1 |
-| `page_size` | int | 20 | 1–100 |
-| `sort_by` | string | `recorded_at` | `recorded_at`, `amount`, `installment_number` |
-| `sort_order` | string | `desc` | `asc`, `desc` |
-
-**Response fields (`data`):**
-
-| Field | Type |
-|-------|------|
-| `payments` | array |
-| `payments[].id` | string |
-| `payments[].loan_id` | string |
-| `payments[].customer_id` | string |
-| `payments[].customer_name` | string |
-| `payments[].product_name` | string |
-| `payments[].installment_number` | int |
-| `payments[].due_date` | ISO datetime |
-| `payments[].payment_status` | string |
-| `payments[].amount` | number |
-| `payments[].payment_method` | string |
-| `payments[].reference` | string |
-| `payments[].notes` | string |
-| `payments[].recorded_by` | string |
-| `payments[].recorded_at` | ISO datetime |
-| `total` | int |
-| `page` | int |
-| `page_size` | int |
-| `total_pages` | int |
-| `summary.total_amount` | number |
-| `summary.count` | int |
-
-`summary` describes the complete filtered result set, not only the current page.
-
----
-
-### 34. `GET /officer/active-loans/`
-
-Active (disbursed) loans for payment recording.
-
-**Query params:**
-
-| Field | Type | Required | Notes |
-|-------|------|----------|-------|
-| `search` | string | one of search/customer_id | Customer name, phone, email, customer ID, or loan ID |
-| `customer_id` | string | one of search/customer_id | Valid ObjectId |
-
-**Response fields (`data`):**
-
-| Field | Type |
-|-------|------|
-| `loans` | array |
-| `loans[].loan_id` | string |
-| `loans[].schedule_id` | string |
-| `loans[].customer_id` | string |
-| `loans[].customer_name` | string |
-| `loans[].customer_phone` | string |
-| `loans[].product_name` | string |
-| `loans[].disbursed_amount` | number |
-| `loans[].monthly_payment` | number |
-| `loans[].remaining_balance` | number |
-| `loans[].paid_installments` | int |
-| `loans[].total_installments` | int |
-| `loans[].next_due_installment` | int |
-| `loans[].next_due_date` | ISO datetime |
-| `loans[].next_due_amount` | number |
-| `total` | int |
-
----
-
-### 35. `GET /officer/applications/<application_id>/schedule/`
-
-Officer view of repayment schedule (same shape as customer schedule, with dynamic overdue status).
-
-**Path params:**
-
-| Field | Type | Required |
-|-------|------|----------|
-| `application_id` | string | yes |
-
-**Precondition:** application `status` must be `disbursed`, `completed`, or
-`written_off`.
-
-**Response fields:** Same as endpoint 8.
-
----
-
-### 36. `GET /officer/applications/<application_id>/payments/`
-
-Officer payment history for an application.
-
-**Path params:**
-
-| Field | Type | Required |
-|-------|------|----------|
-| `application_id` | string | yes |
-
-**Response fields (`data`):**
-
-| Field | Type |
-|-------|------|
-| `payments` | array |
-| `payments[].id` | string |
-| `payments[].amount` | number |
-| `payments[].payment_method` | string |
-| `payments[].payment_status` | string |
-| `payments[].reference` | string |
-| `payments[].installment_number` | int |
-| `payments[].notes` | string |
-| `payments[].recorded_at` | ISO datetime |
-| `total_paid` | number |
-| `count` | int |
-
-`total_paid` includes only records whose `payment_status` is `posted`; pending,
-failed, reversed, or in-progress records remain visible but do not increase the
-financial total.
-
----
-
-### 36A. `GET|POST /officer/applications/<application_id>/payoff/`
-
-Quote or post an exact early payoff for an assigned loan. `GET` returns the
-current centavo-exact quote. `POST` accepts only officer-verified cash/check and
-atomically allocates the payment across all open installments.
-
-**Required POST header:** `Idempotency-Key` containing 8–128 characters.
-
-**POST body:**
-
-| Field | Type | Required | Validation |
-|-------|------|----------|------------|
-| `amount` | number | **yes** | Must exactly equal the current payoff quote |
-| `payment_method` | string | no | `cash` or `check`; default `cash` |
-| `reference` | string | no | Generated if omitted |
-| `notes` | string | no | |
-
-Successful posting returns application `status: completed`,
-`repayment_status: paid_off`, allocation details, and zero remaining balance.
-Wallet installment payments remain available through the verified wallet-payment
-endpoint; multi-installment wallet payoff is not yet defined.
-
----
-
-### 37. `POST /officer/applications/<application_id>/penalties/apply/`
-
-Apply penalty to an installment. Triggers blockchain penalty sync.
-
-**Path params:**
-
-| Field | Type | Required |
-|-------|------|----------|
-| `application_id` | string | yes |
-
-**Request body:**
-
-| Field | Type | Required | Validation |
-|-------|------|----------|------------|
-| `installment_number` | int | **yes** | >= 1 |
-| `penalty_amount` | number | **yes** | > 0 |
-| `reason` | string | no | |
-
-**Precondition:** `status` must be `disbursed`; installment not paid; no existing applied penalty.
-
-**Response fields (`data`):**
-
-| Field | Type |
-|-------|------|
-| `loan_id` | string |
-| `installment_number` | int |
-| `penalty_status` | string (`applied`) |
-| `penalty_amount` | number |
-| `penalty_reason` | string |
-| `penalty_applied_at` | ISO datetime |
-| `penalty_applied_by` | string |
-
----
-
-### 38. `POST /officer/applications/<application_id>/penalties/waive/`
-
-Waive applied penalty. Triggers blockchain penalty sync.
-
-**Path params:**
-
-| Field | Type | Required |
-|-------|------|----------|
-| `application_id` | string | yes |
-
-**Request body:**
-
-| Field | Type | Required | Validation |
-|-------|------|----------|------------|
-| `installment_number` | int | **yes** | >= 1 |
-| `reason` | string | no | |
-
-**Precondition:** Penalty must be in `applied` status.
-
-**Response fields (`data`):**
-
-| Field | Type |
-|-------|------|
-| `loan_id` | string |
-| `installment_number` | int |
-| `penalty_status` | string (`waived`) |
-| `penalty_amount` | number |
-| `penalty_waived_at` | ISO datetime |
-| `penalty_waived_by` | string |
-| `penalty_waived_reason` | string |
-
----
-
-### 39. `GET /officer/applications/<application_id>/blockchain/`
-
-Officer blockchain status for application (same response as customer endpoint 14).
-
-**Path params:**
-
-| Field | Type | Required |
-|-------|------|----------|
-| `application_id` | string | yes |
-
----
-
-### 40. `GET /officer/exchange-rate/`
-
-Current ETH/PHP exchange rate.
-
-**Request body:** none
-
-**Precondition:** `BLOCKCHAIN_ENABLED=true`
-
-**Response fields (`data`):**
-
-| Field | Type |
-|-------|------|
-| `eth_php_rate` | number |
-| `rate_source` | string |
-| `rate_cached_at` | ISO datetime |
-
----
-
-### 41. `GET /officer/payments/recent/`
-
-Returns the officer-scoped recent posted-payment feed. Administrators can see
-all records; loan officers see only payments for assigned applications.
-
-**Query params:** `limit` (default 10, maximum 50).
-
----
-
-### 42–43. `GET|POST /officer/applications/<application_id>/wallet-disbursement/`
-
-`GET` returns wallet execution/recovery state without exposing the encrypted
-signed transaction. `POST` accepts an `action` of `reconcile`, `retry`, or
-`cancel`. Cancellation is accepted only before transaction preparation; never
-retry a transaction blindly after broadcast uncertainty.
-
----
-
-### 44–45. `GET|POST /officer/applications/<application_id>/payoff/`
-
-`GET` returns the exact current PHP payoff quote. `POST` requires an
-`Idempotency-Key`, the exact quoted amount, and a verified `cash` or `check`
-method. A successful payoff atomically allocates across open installments and
-closes the application as `completed`/`paid_off`.
-
----
-
-### 46. `GET /officer/schedules/export/`
-
-Streams flattened installment rows as CSV (default) or JSON. Filters are
-`customer_id`, `status`, `start_date`, and `end_date`; dates use strict
-`YYYY-MM-DD`, and status accepts `pending`, `partial`, `overdue`,
-`partial_overdue`, or `paid`. JSON rows are under `data.installments`.
-
-The endpoint exports every matching loan, processes related data in bounded
-batches, protects CSV cells from formula injection, and requires a sensitive
-access audit before returning data. Unsupported formats/reversed ranges return
-`400`, empty results return `404`, and audit unavailability returns `503`.
-
----
-
-## Complete URL Index (46 method/endpoint combinations)
-
-| # | Method | URL | Role |
-|---|--------|-----|------|
-| 1 | GET | `/api/loans/products/` | Customer |
-| 2 | GET | `/api/loans/products/<product_id>/` | Customer |
-| 3 | POST | `/api/loans/pre-qualify/` | Customer |
-| 4 | POST | `/api/loans/apply/` | Customer |
-| 5 | GET | `/api/loans/applications/` | Customer |
-| 6 | GET | `/api/loans/applications/<application_id>/` | Customer |
-| 7 | PUT | `/api/loans/applications/<application_id>/` | Customer |
-| 8 | GET | `/api/loans/applications/<application_id>/schedule/` | Customer |
-| 9 | GET | `/api/loans/applications/<application_id>/payments/` | Customer |
-| 10 | POST | `/api/loans/applications/<application_id>/payments/` | Customer |
-| 11 | POST | `/api/loans/applications/<application_id>/resubmit/` | Customer |
-| 12 | GET | `/api/loans/applications/<application_id>/feedback/` | Customer |
-| 13 | POST | `/api/loans/applications/<application_id>/set-disbursement-method/` | Customer |
-| 14 | GET | `/api/loans/applications/<application_id>/blockchain/` | Customer |
-| 15 | POST | `/api/loans/applications/<application_id>/wallet-payment/` | Customer |
-| 16 | GET | `/api/loans/system-wallet/` | Customer |
-| 17 | GET | `/api/loans/admin/products/` | Admin |
-| 18 | POST | `/api/loans/admin/products/` | Admin |
-| 19 | GET | `/api/loans/admin/products/<product_id>/` | Admin |
-| 20 | PUT | `/api/loans/admin/products/<product_id>/` | Admin |
-| 21 | DELETE | `/api/loans/admin/products/<product_id>/` | Admin |
-| 22 | POST | `/api/loans/admin/applications/<application_id>/assign/` | Admin |
-| 23 | POST | `/api/loans/admin/applications/<application_id>/reassign/` | Admin |
-| 24 | GET | `/api/loans/admin/officers/workload/` | Admin |
-| 25 | GET | `/api/loans/admin/blockchain/transactions/` | Admin |
-| 26 | GET | `/api/loans/officer/applications/` | Officer |
-| 27 | GET | `/api/loans/officer/applications/<application_id>/` | Officer |
-| 28 | POST | `/api/loans/officer/applications/<application_id>/notes/` | Officer |
-| 29 | POST | `/api/loans/officer/applications/<application_id>/request-missing-documents/` | Officer |
-| 30 | PUT | `/api/loans/officer/applications/<application_id>/review/` | Officer |
-| 31 | POST | `/api/loans/officer/applications/<application_id>/disburse/` | Officer |
-| 32 | POST | `/api/loans/officer/payments/` | Officer |
-| 33 | GET | `/api/loans/officer/payments/search/` | Officer |
-| 34 | GET | `/api/loans/officer/active-loans/` | Officer |
-| 35 | GET | `/api/loans/officer/applications/<application_id>/schedule/` | Officer |
-| 36 | GET | `/api/loans/officer/applications/<application_id>/payments/` | Officer |
-| 37 | POST | `/api/loans/officer/applications/<application_id>/penalties/apply/` | Officer |
-| 38 | POST | `/api/loans/officer/applications/<application_id>/penalties/waive/` | Officer |
-| 39 | GET | `/api/loans/officer/applications/<application_id>/blockchain/` | Officer |
-| 40 | GET | `/api/loans/officer/exchange-rate/` | Officer |
-| 41 | GET | `/api/loans/officer/payments/recent/` | Officer |
-| 42 | GET | `/api/loans/officer/applications/<application_id>/wallet-disbursement/` | Officer |
-| 43 | POST | `/api/loans/officer/applications/<application_id>/wallet-disbursement/` | Officer |
-| 44 | GET | `/api/loans/officer/applications/<application_id>/payoff/` | Officer |
-| 45 | POST | `/api/loans/officer/applications/<application_id>/payoff/` | Officer |
-
----
-
-## Smoke Test Sequence (Full Lifecycle)
-
-### Prerequisites
-1. Seed or create accounts: **admin**, **loan_officer**, **customer** (with JWTs).
-2. Complete customer profile (`/api/profile/`) and upload/approve required documents (`/api/documents/`).
-3. If testing wallet flows: set `wallet_address` on profile and ensure `BLOCKCHAIN_ENABLED=true`.
-
-### Steps
-
-| Step | Actor | Endpoint | Expected |
-|------|-------|----------|----------|
-| 1 | Admin | `POST /admin/products/` | 201, product `id` returned |
-| 2 | Customer | `GET /products/` | Active product listed |
-| 3 | Customer | `POST /pre-qualify/` | `eligible: true` or `missing_requirements` listed |
-| 4 | Customer | `POST /apply/` | 201, `status: submitted` |
-| 5 | Admin | `POST /admin/applications/<id>/assign/` | Officer assigned |
-| 6 | Officer | `GET /officer/applications/?status=pending` | Application visible |
-| 7 | Officer | `GET /officer/applications/<id>/` | Full customer + docs returned |
-| 8 | Officer | `PUT /officer/applications/<id>/review/` `{action: approve}` | `status: approved` |
-| 9 | Customer | `POST /applications/<id>/set-disbursement-method/` | Method saved |
-| 10 | Officer | `POST /officer/applications/<id>/disburse/` | Cash/check: `disbursed`; wallet: initial `202 pending` |
-| 11 | Customer | `GET /applications/<id>/schedule/` | Installments returned |
-| 12 | Officer | `POST /officer/payments/` | Payment recorded |
-| 13 | Customer | `GET /applications/<id>/payments/` | Payment in history |
-| 14 | Admin | `GET /admin/blockchain/transactions/` | submit/approve/disburse/payment txs (if enabled) |
-| 15 | Customer | `GET /applications/<id>/blockchain/` | On-chain audit trail |
-
-For wallet smoke tests, wait until the application detail reports
-`disbursement_status=executed` before step 11. A permanently failed wallet task
-reports `failed`/`disbursement_error` and requires operator review; do not submit
-a second transfer blindly.
-
-### Rejection Path
-1. Officer: `PUT /officer/applications/<id>/review/` with `{action: reject, rejection_reason: "..."}`
-2. Customer: `GET /applications/<id>/feedback/`
-3. Customer: `POST /applications/<id>/resubmit/`
-4. Customer: `PUT /applications/<id>/` to update and re-submit
-
----
-
-## Common Error Cases
-
-| Code | When |
-|------|------|
-| `400 Bad Request` | Invalid payload, wrong status transition, amount out of range, invalid filters |
-| `401 Unauthorized` | Missing or expired JWT |
-| `403 Forbidden` | Wrong role, missing admin permission, ABAC scope violation (officer accessing unassigned app) |
-| `404 Not Found` | Application/product/payment not found or not owned |
-| `409 Conflict` | Duplicate operations (e.g., double disburse, duplicate tx_hash) |
-| `503 Service Unavailable` | Blockchain/rate dependency unavailable, or a sensitive schedule export cannot record its required access audit |
-
-Standard error shape:
 ```json
 {
-  "status": "error",
-  "message": "...",
-  "errors": { }
+  "product_id": "<product-id>",
+  "amount": 25000,
+  "term_months": 12,
+  "purpose": "Expand inventory",
+  "requirements_scope": "product"
 }
 ```
 
----
+Test both `baseline` and `product` requirements scope. Assert the response
+contains `eligible`, `can_apply`, missing requirements, score/risk information,
+and a recommendation that remains inside product bounds.
 
-## Where to Look in Code
+### Submit application
 
-| Area | Path |
-|------|------|
-| URL routing | `loans/urls.py` |
-| Customer views | `loans/views/customer/` (`customer_views.py` remains a compatibility module) |
-| Admin views | `loans/views/admin/` |
-| Officer views | `loans/views/officer/` |
-| Serializers | `loans/serializers/loan_serializers.py` |
-| Models | `loans/models/` |
-| Blockchain sync | `loans/blockchain/sync.py` |
-| Smart contract ABIs | `loans/blockchain/abis/` |
-| Solidity contracts | `smartcontracts/contracts/` |
-| Existing API stub tests | `tests/test_loans_api_stubs.py` |
-| Blockchain smoke tests | `tests/test_loans_smoke.py`, `tests/blockchain/` |
-| Reproducible production dependency pins | `requirements.lock` |
+```http
+POST /api/loans/apply/
+```
 
----
+```json
+{
+  "product_id": "<product-id>",
+  "requested_amount": 25000,
+  "term_months": 12,
+  "purpose": "Business expansion",
+  "preferred_disbursement_method": "cash"
+}
+```
 
-## Notes for API Test Automation
+Assert incomplete profiles, missing/unapproved documents, inactive products,
+out-of-range amounts, and invalid terms fail without creating an application.
 
-1. Use role-specific JWTs; officer tests require the application to be assigned to that officer.
-2. Customer `POST /payments/` rejects `cash` and `check` — use officer endpoint for those.
-3. Officer `POST /payments/` accepts only `cash` and `check`.
-4. `approved_amount` on approve must be <= `requested_amount` (smart contract enforces this on-chain).
-5. Disbursement `method` is locked to customer's `preferred_disbursement_method` when set.
-6. For blockchain tests: run local testnet per `smartcontracts/docs/TESTNET_DEPLOYMENT_GUIDE.md` or mock `loans/blockchain/client.py`.
-7. Pre-qualify endpoint is rate-limited (`PreQualifyRateThrottle`).
-8. Every successful schedule export creates a `repayment_schedule_exported` audit
-   record with actor role, filters, format, and row count. The export returns `503`
-   and no file/data if this audit cannot be written.
-9. With `FIELD_ENCRYPTION_KEY` configured, raw MongoDB application
-   `internal_notes` and repayment `installments` values are `encbson::` ciphertext;
-   model reads return their original nested values. Payment tests should exercise
-   the model/service API rather than direct Mongo nested-field updates.
-10. Schedule CSV and JSON responses are streamed. API tests and clients must consume
-    the response body as a stream; JSON flattened rows are under
-    `data.installments`, with `data.total` and `X-Export-Row-Count` reporting the
-    row count.
-11. Schedule export accepts only `format=csv|json`, strict `YYYY-MM-DD` dates, and
-    the statuses `pending`, `partial`, `overdue`, `partial_overdue`, and `paid`.
-    Reversed ranges return `400`, and empty results return `404` for both formats.
-12. CSV string cells beginning with spreadsheet formula characters are prefixed
-    with an apostrophe. Preserve this protection when adding or renaming columns.
+### Review
+
+Approve:
+
+```http
+PUT /api/loans/officer/applications/<application-id>/review/
+```
+
+```json
+{
+  "action": "approve",
+  "approved_amount": 20000,
+  "notes": "Verified supporting information"
+}
+```
+
+Reject:
+
+```json
+{
+  "action": "reject",
+  "rejection_reason": "Required documents could not be verified",
+  "notes": "Internal review note"
+}
+```
+
+The approved amount must not exceed the requested amount. Test invalid states,
+wrong assignee, and concurrent approve/reject attempts. The current code does
+not yet guarantee one winner under real concurrency; retain that as a failing or
+expected-gap integration case until remediated.
+
+### Assign and reassign
+
+```http
+POST /api/loans/admin/applications/<application-id>/assign/
+```
+
+```json
+{
+  "officer_id": "<active-officer-id>"
+}
+```
+
+Use the same body for `reassign/`. Test inactive/nonexistent officers, missing
+permission, same-officer replay, invalid application state, and concurrent
+admins.
+
+### Disburse
+
+```http
+POST /api/loans/officer/applications/<application-id>/disburse/
+Idempotency-Key: disburse-<uuid>
+```
+
+```json
+{
+  "amount": 20000,
+  "method": "cash",
+  "reference": "CASH-RECEIPT-001"
+}
+```
+
+- Cash/check should return an executed disbursement and one schedule.
+- Wallet should return HTTP 202 pending, then complete only after the worker
+  confirms the transfer and creates/reuses the schedule.
+- GCash/bank transfer currently return HTTP 202 pending and have no completion
+  workflow. Do not assert that acceptance means settlement.
+- Replaying an identical key/payload must not create another schedule or send
+  another transfer.
+- Reusing a key for an incompatible request must fail.
+
+### Officer payment
+
+```http
+POST /api/loans/officer/payments/
+Idempotency-Key: payment-<uuid>
+```
+
+```json
+{
+  "loan_id": "<application-id>",
+  "installment_number": 1,
+  "amount": 2000,
+  "payment_method": "cash",
+  "reference": "OR-0001",
+  "notes": "Counter payment"
+}
+```
+
+Only cash and check are accepted here. Assert exact centavo allocation, partial
+payment state, full installment state, remaining balance, repeated-key replay,
+incompatible reuse conflict, and overpayment rejection.
+
+### Customer external-payment claim
+
+```http
+POST /api/loans/applications/<application-id>/payments/
+Idempotency-Key: claim-<uuid>
+```
+
+```json
+{
+  "installment_number": 1,
+  "amount": 2000,
+  "payment_method": "gcash",
+  "reference": "PROVIDER-REFERENCE"
+}
+```
+
+Expected current result is `pending_verification`; the schedule must not be
+credited. A future provider callback/operator verification suite must prove the
+pending-to-posted/failed lifecycle before this rail is released.
+
+### Wallet payment
+
+```http
+POST /api/loans/applications/<application-id>/wallet-payment/
+```
+
+```json
+{
+  "tx_hash": "0x<64-hex-characters>",
+  "installment_number": 1
+}
+```
+
+Test failed receipt, insufficient confirmations, wrong recipient, customer
+sender mismatch, insufficient ETH/PHP value, duplicate transaction hash,
+transaction used for another loan/installment, rate-provider failure, and exact
+replay. Public failures must not expose RPC/provider exception text.
+
+### Penalties
+
+```http
+POST /api/loans/officer/applications/<application-id>/penalties/apply/
+```
+
+```json
+{
+  "installment_number": 1,
+  "penalty_rate": 0.05,
+  "reason": "Past due"
+}
+```
+
+```http
+POST /api/loans/officer/applications/<application-id>/penalties/waive/
+```
+
+```json
+{
+  "installment_number": 1,
+  "reason": "Approved hardship exception"
+}
+```
+
+Assert repeatability, eligibility, audit fields, balance recalculation, and the
+current `waiver_credit_centavos` behavior when a paid penalty is waived. The
+financial disposition of that credit remains a policy gap.
+
+### Early payoff
+
+Quote:
+
+```http
+GET /api/loans/officer/applications/<application-id>/payoff/
+```
+
+Post the exact quoted amount:
+
+```http
+POST /api/loans/officer/applications/<application-id>/payoff/
+Idempotency-Key: payoff-<uuid>
+```
+
+```json
+{
+  "amount": 18450.25,
+  "payment_method": "cash",
+  "reference": "PAYOFF-001"
+}
+```
+
+Assert the schedule becomes `paid_off`, the application becomes `completed`,
+remaining balance is zero, and replay creates no second payment.
+
+### Wallet disbursement recovery
+
+```http
+GET /api/loans/officer/applications/<application-id>/wallet-disbursement/
+```
+
+```http
+POST /api/loans/officer/applications/<application-id>/wallet-disbursement/
+```
+
+```json
+{
+  "action": "reconcile"
+}
+```
+
+Actions are `reconcile`, `retry`, and safe pre-preparation `cancel`. Assert raw
+signed transaction bytes and wallet private keys are never returned. Cancel
+must fail once a transaction has been prepared, claimed, or broadcast.
+
+## Search, Pagination, and Export Tests
+
+### Customer applications
+
+Supported query parameters are `search`, `status`, `page`, and `page_size`.
+Test owner scope, invalid status, invalid/nonpositive pages, maximum size, empty
+results, and deterministic newest-first order.
+
+### Officer applications
+
+Test `status`, `search`, `min_amount`, `max_amount`, `start_date`, `end_date`,
+`risk_category`, `page`, `page_size`, `sort_by`, and `sort_order`. Include:
+
+- inverted and malformed ranges;
+- invalid enums/sort fields;
+- other-officer and unassigned applications;
+- identical timestamps requiring deterministic tie behavior; and
+- more than the current 500 supporting search candidates to expose truncation.
+
+### Payment search
+
+Test `search`, `loan_id`, `customer_id`, `disbursed_only`, `payment_status`,
+`payment_method`, amount/date ranges, pagination, and sorting. Specifically test:
+
+- officer scope when many applications are assigned;
+- `on_time`/`late` classification at large result counts;
+- posted versus pending/failed records;
+- summaries over the complete filtered result, not just the page; and
+- reference search after encryption. The current ciphertext regex search should
+  be treated as a known failing capability until a blind index is implemented.
+
+### Schedule export
+
+Test officer scope, admin scope, required audit failure, JSON output, CSV
+streaming, date/status filters, and values beginning with `=`, `+`, `-`, or `@`
+to prove spreadsheet formula protection. Add a large-result test that exposes
+the current full pre-count plus second scan and, after remediation, proves the
+approved maximum or asynchronous export contract.
+
+## Stage Validation Map
+
+The production review uses six remediation stages. This table is the canonical
+mapping between each stage and its required test evidence.
+
+| Stage | Primary test scope | Current evidence status |
+| --- | --- | --- |
+| Stage 1 — Authorization and public response contract | Authenticated routes, role/permission/owner/assignment isolation, blockchain field allowlists, stable errors | Partial; existing role/scope tests pass, but the known officer blockchain defect and disclosure cases remain |
+| Stage 2 — Atomic lifecycle and financial correctness | Concurrent review/assignment/notes, idempotent disbursement/payment/payoff, crash/replay | Partial under `mongomock`; loan-specific real-Mongo concurrency suite is missing |
+| Stage 3 — Settlement scope and approved policies | GCash/bank callbacks and reconciliation or disabled-rail tests; reversal/waiver/write-off policy cases | Not implemented; only pending claim/initiation behavior is testable |
+| Stage 4 — MongoDB schema and bounded execution | Validators, inventory/backfill, unique indexes, query plans, large fixtures, overlapping jobs | Not implemented for Loans; model index unit coverage exists |
+| Stage 5 — Privacy, notifications, and observability | Export/retention/hold/pseudonymization, encryption rotation, outbox recovery, metrics/rules/dashboard | Partial shared infrastructure only; loan-specific implementation and evidence are missing |
+| Stage 6 — Real-environment release validation | Deployment MongoDB, Redis/Celery, optional chain, HTTPS, load, backup/restore, rollback, dashboards/alerts | Pending deployment topology |
+
+When implementing a stage, add its focused tests in the same change and update
+both this guide and the production review with the exact result. Do not mark a
+stage complete because an unrelated full-suite run passed.
+
+## Required Security Regression Matrix
+
+For every application-specific endpoint, test:
+
+1. unauthenticated request;
+2. wrong role;
+3. customer A requesting customer B's ID;
+4. officer A requesting officer B's assigned ID;
+5. unassigned application where assignment is required;
+6. malformed ObjectId;
+7. nonexistent ObjectId; and
+8. admin with and without the named permission, where applicable.
+
+Out-of-scope customer/officer records should normally be concealed as 404 rather
+than confirming existence.
+
+The officer blockchain endpoint currently fails item 4 because it does not call
+the assignment-scope helper. Add a regression that fails before the fix and
+passes after it. Customer/officer blockchain payload tests must also reject
+`idempotency_key`, free-form `details`, internal `error`, raw signed transaction,
+and contract-only fields.
+
+## Atomicity and Idempotency Tests
+
+Run these against real MongoDB, using independent clients/threads rather than
+multiple references to one in-memory object:
+
+- concurrent approve versus reject: exactly one winner;
+- concurrent assign/reassign: one expected-state winner;
+- concurrent note appends: no accepted note lost and history remains bounded;
+- repeated disbursement key: one financial execution and one schedule;
+- repeated payment/payoff key: one payment and one balance mutation;
+- duplicate external reference: one accepted claim;
+- duplicate ETH transaction: one posted payment;
+- worker loss after wallet preparation, after broadcast, and before completion;
+- simultaneous schedule payments: accounting-version conflict and safe retry;
+- payment stored before schedule mutation: reconciliation completes once; and
+- schedule paid off before application closure: lifecycle reconciliation closes
+  once.
+
+The repository does not yet contain a loan-specific real-Mongo suite for these
+cases. Add it before production approval.
+
+## Background Task Tests
+
+Direct task/unit coverage should verify:
+
+- overdue dates become `overdue` or `partial_overdue` once;
+- paid installments remain paid;
+- paid-off reconciliation is idempotent;
+- wallet reconciliation re-enqueues eligible pending records only;
+- a live worker lease prevents a second worker claim;
+- an expired lease is recoverable;
+- prepared raw transaction rebroadcast uses exactly the same signed bytes;
+- reverted receipts fail safely;
+- uncertain/missing receipts are not treated as successful or immediately
+  replaced with a new transfer; and
+- audit/event reconciliation is repeatable.
+
+Deployment/load coverage must additionally verify bounded batches, checkpoints,
+overlapping Beat executions, queue separation, time limits, retry exhaustion,
+broker outage, worker termination, and backlog alerting. The current overdue,
+paid-off, and wallet reconciliation scans are not yet bounded.
+
+## Blockchain Testing
+
+### Mocked suite
+
+```bash
+.venv/bin/pytest -q tests/blockchain \
+  --ignore=tests/blockchain/test_integration.py
+```
+
+This covers client validation, transaction records, services, sync tasks,
+wallet phases, nonce behavior, saga recovery, event listening, and
+reconciliation without sending a real transaction.
+
+### Local Ganache integration
+
+The existing integration file runs only when blockchain is enabled, RPC is
+reachable, and contract addresses are configured:
+
+```bash
+.venv/bin/pytest -v tests/blockchain/test_integration.py
+```
+
+Use only a disposable development chain and wallet. A skip such as “contract
+preconditions not met” is not passing evidence. Ensure the configured account
+has the exact contract roles required by the test.
+
+Before enabling blockchain in production, repeat equivalent tests against the
+approved network topology and prove:
+
+- chain ID and deployed bytecode/ABI/address manifest;
+- signer identity, minimum balance, secret isolation, and access-control roles;
+- RPC timeout/failover and rate-limit behavior;
+- confirmation threshold and reorg recovery;
+- multiple-worker nonce contention;
+- process loss before preparation, after preparation, after broadcast, and
+  after confirmation;
+- duplicate event/replay and cursor recovery;
+- off-chain/on-chain reconciliation; and
+- transaction/gas/backlog metrics and delivered alerts.
+
+Never run a value-transfer test against a real funded wallet without explicit
+approval of the wallet, network, amount, and recipient.
+
+## MongoDB Deployment Tests to Add
+
+Use a dedicated opt-in marker and a unique temporary database. At minimum:
+
+1. install every loan validator and index;
+2. reject invalid status, money, ownership, encrypted-field, and date shapes;
+3. prove unique product code, schedule-per-loan, idempotency, reference
+   fingerprint, ETH hash, and blockchain transaction keys;
+4. run the atomicity matrix above;
+5. explain owner/status/date, officer/status/date, loan/payment/date, pending
+   disbursement, active schedule, and reconciliation queries; and
+6. clean up the temporary database even after failure.
+
+Do not run index installation against an existing target until duplicate
+inventory and dry-run backfill have been reviewed and backed up.
+
+## End-to-End Smoke Flows
+
+### Cash/check happy path
+
+1. Admin creates an active product.
+2. Customer reads the product and passes pre-qualification.
+3. Customer submits an application.
+4. Admin assigns it to an active officer.
+5. Other officer receives 404 for detail/review/disbursement/blockchain status.
+6. Assigned officer adds a note and requests any truly missing document.
+7. Assigned officer approves the application.
+8. Assigned officer disburses by cash/check with an idempotency key.
+9. Replaying disbursement returns the same execution and schedule.
+10. Customer reads the schedule.
+11. Assigned officer records partial then exact remaining payment(s).
+12. Customer sees only posted history and updated balances.
+13. Final payment or payoff closes schedule/application exactly once.
+14. Audit and notification records use the correct customer, officer, resource,
+    and event-time scope.
+
+### Rejection and resubmission branch
+
+1. Assigned officer rejects a submitted/under-review application.
+2. Customer reads feedback.
+3. Customer calls `resubmit/`, returning the same application to `draft`.
+4. Customer updates the draft with the original product ID.
+5. The same record is submitted again without retaining stale decision,
+   assignment, or missing-document state.
+
+### Wallet branch
+
+1. Customer has an approved valid wallet address.
+2. Officer initiates wallet disbursement with one idempotency key.
+3. Worker claims, prepares, persists, broadcasts, and confirms one transfer.
+4. Worker creates/reuses one schedule and completes disbursement.
+5. Customer submits a distinct sufficiently confirmed repayment transaction.
+6. Backend verifies chain facts and posts it once.
+7. Reconciliation reports no off-chain/on-chain drift.
+
+### External-provider branch
+
+GCash/bank transfer can currently be tested only through pending initiation.
+There is no complete happy path until provider settlement is implemented. The
+client must show “pending verification,” not “paid” or “disbursed.”
+
+## Expected HTTP Outcomes
+
+| Status | Typical meaning |
+| --- | --- |
+| `200` | Successful read/update or idempotent replay |
+| `201` | New product/application/payment resource created where applicable |
+| `202` | Wallet/external operation accepted but not yet confirmed |
+| `400` | Invalid body/filter/state/amount/term/key format |
+| `401` | Missing, invalid, expired, or revoked authentication |
+| `403` | Role or named-permission denial |
+| `404` | Missing resource or concealed owner/assignment scope |
+| `409` | Idempotency mismatch, duplicate claim, or concurrent-state conflict |
+| `429` | Pre-qualification or shared request throttle exceeded |
+| `500` | Unexpected internal failure; response must not include exception text |
+| `503` | Disabled/unavailable chain, rate provider, or required dependency |
+
+## Manual API Checklist
+
+When using Insomnia or another client, record:
+
+- request method/path and non-secret body;
+- actor role and whether the officer is assigned;
+- status code and stable response code/message;
+- application, disbursement, schedule, installment, and payment status before
+  and after;
+- idempotency key identifier (redacted if treated as sensitive);
+- audit/notification/transaction record IDs;
+- Celery task ID and terminal state for async operations; and
+- relevant metric/alert evidence.
+
+Never use screenshots containing access tokens, customer PII, private keys,
+database URIs, raw signed transactions, or internal exception detail.
+
+## Release Test Checklist
+
+- [ ] **Stage 1:** scope, permission, response-minimization, and stable-error
+      regressions pass.
+- [ ] **Stage 2:** real-Mongo atomic lifecycle/idempotency and crash/replay suite
+      passes.
+- [ ] **Stage 3:** GCash/bank rails are complete or disabled, and approved
+      penalty, waiver-credit, payoff, reversal, and write-off policies match
+      implemented behavior.
+- [ ] **Stage 4:** inventory/backfill, validators/indexes, representative query
+      plans, bounded exports/jobs, and overlap/load tests pass.
+- [ ] **Stage 5:** customer export, retention/legal hold/anonymization,
+      encryption rotation, notification outbox recovery, metrics, dashboards,
+      and Prometheus rule tests pass.
+- [ ] **Stage 6:** multi-worker Redis/Celery recovery, optional blockchain,
+      HTTPS proxy, load, backup/restore, key rotation, rollback, dashboards, and
+      delivered alerts are proven in the selected topology.
+- [ ] Full repository suite and every applicable end-to-end smoke branch pass.
+
+## Canonical Test Files
+
+- `tests/test_loan_audit_logging.py`
+- `tests/test_loan_disbursement_integrity.py`
+- `tests/test_loan_models.py`
+- `tests/test_loan_payment_integrity.py`
+- `tests/test_loan_qualification.py`
+- `tests/test_loan_repayment_disbursement_services.py`
+- `tests/test_loan_schedule_export.py`
+- `tests/test_loan_serializers.py`
+- `tests/test_loan_services.py`
+- `tests/test_loan_tasks.py`
+- `tests/test_loans_api.py`
+- `tests/test_loans_api_stubs.py`
+- `tests/test_loans_smoke.py`
+- `tests/test_qualification_enforcement.py`
+- `tests/test_wallet_disbursement_tasks.py`
+- `tests/test_stage4_blockchain_recovery.py`
+- `tests/test_stage7_repayment_lifecycle.py`
+- `tests/test_blockchain_event_listener.py`
+- `tests/blockchain/`
+
+## Implementation References
+
+- `loans/urls.py`
+- `loans/models/`
+- `loans/serializers/loan_serializers.py`
+- `loans/services/`
+- `loans/views/`
+- `loans/tasks.py`
+- `loans/blockchain/`
+- `config/celery.py`
+- `init_db.py`
