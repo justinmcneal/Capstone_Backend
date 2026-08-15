@@ -225,3 +225,5 @@ src/
 logs/security_events.jsonl
 
 frontend/
+
+dump.rdb
