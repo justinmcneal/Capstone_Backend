@@ -10,7 +10,7 @@
 - Do not enter `N/A` as zero.
 - Preserve raw responses before cleaning or coding.
 - Record any excluded response and the reason.
-- With three microentrepreneurs and one lending representative, emphasize descriptive results and individual context rather than broad generalization.
+- Interpret results according to the final approved sampling design. Purposive recruitment limits population-level generalization even when the numerical target is met.
 
 ## 2. Core Formulas
 
@@ -29,12 +29,6 @@ where \(f\) is the category frequency and \(N\) is the number of valid responses
 \]
 
 where \(x\) is the rating, \(f\) is its frequency, and \(N\) excludes `N/A` responses.
-
-### Descriptive pre/post change
-
-\[
-\text{Change}=\text{Post Score}-\text{Pre Score}
-\]
 
 Use verbal-interpretation ranges only after adviser approval. A commonly used draft range is shown below but is not final until approved:
 
@@ -108,12 +102,21 @@ Do not claim “requested by respondents” unless the coded interview data supp
 
 ## 6. Table 7 Working Tally: Microentrepreneur Usability
 
-| Item | ME-01 | ME-02 | ME-03 | Valid N | Mean | Interpretation | Rank |
-|---:|---:|---:|---:|---:|---:|---|---:|
-| 1 |  |  |  |  |  |  |  |
-| 2 |  |  |  |  |  |  |  |
-| 3 |  |  |  |  |  |  |  |
-| [Continue to 20] |  |  |  |  |  |  |  |
+Enter the raw ratings in long format so the sheet can accommodate the final sample size.
+
+| Respondent code | Item | Rating (1–5 or N/A) |
+|---|---:|---:|
+| ME-01 | 1 |  |
+| ME-01 | 2 |  |
+| [Continue for every respondent and item] |  |  |
+
+Then create the item summary.
+
+| Item | Valid N | Mean | Interpretation | Rank |
+|---:|---:|---:|---|---:|
+| 1 |  |  |  |  |
+| 2 |  |  |  |  |
+| [Continue to 20] |  |  |  |  |
 
 Calculate dimension means separately:
 
@@ -127,33 +130,22 @@ Calculate dimension means separately:
 
 ## 7. Table 8 Working Tally: Lending-Representative Evaluation
 
-| Item | LO-01 rating | Interpretation | Supporting comment |
-|---:|---:|---|---|
-| 1 |  |  |  |
-| 2 |  |  |  |
-| [Continue to 16] |  |  |  |
+| Respondent code | Item | Rating (1–5 or N/A) | Supporting comment |
+|---|---:|---:|---|
+| LO-01 | 1 |  |  |
+| LO-01 | 2 |  |  |
+| [Continue for every lending respondent and item] |  |  |  |
 
-With one lending representative, report the person's ratings descriptively. An “overall mean” may summarize that respondent's items, but it is not a population estimate.
+Summarize each item only when more than one lending representative completes it. If only one participates, report that person's ratings descriptively rather than as a population estimate.
 
-## 8. Table 9 Working Tally: Pre/Post Assessment
-
-| Respondent | Pre knowledge /8 | Post knowledge /8 | Knowledge change | Pre confidence mean /5 | Post confidence mean /5 | Confidence change |
-|---|---:|---:|---:|---:|---:|---:|
-| ME-01 |  |  |  |  |  |  |
-| ME-02 |  |  |  |  |  |  |
-| ME-03 |  |  |  |  |  |  |
-| **Group mean** |  |  |  |  |  |  |
-
-Do not interpret a positive change as caused solely by the system without acknowledging the one-session design, small sample, repeated questions, and lack of a control group.
-
-## 9. Table 10 Working Sheet: Feedback, Observations, and Revisions
+## 8. Table 9 Working Sheet: Feedback, Observations, and Revisions
 
 | Feedback or observed issue | Source code(s) | Frequency | Revision made or recommended | Status/evidence |
 |---|---|---:|---|---|
 |  |  |  |  |  |
 |  |  |  |  |  |
 
-## 10. Final Quality Checks
+## 9. Final Quality Checks
 
 - [ ] All table totals and valid denominators checked
 - [ ] Percentages use the correct participant subgroup
@@ -164,4 +156,3 @@ Do not interpret a positive change as caused solely by the system without acknow
 - [ ] Each table is introduced and interpreted in prose
 - [ ] Claims are limited to the actual sample and prototype conditions
 - [ ] Appendices contain blank approved instruments and de-identified summary evidence
-

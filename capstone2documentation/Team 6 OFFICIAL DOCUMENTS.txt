@@ -1,14 +1,12 @@
-﻿FULL MANUSCRIPT
+﻿TITLE SHEET
 MSME PATHWAYS: A SMART LOAN SUPPORT FOR UNDERSERVED 
 STARTING ENTREPRENEURS IN THE INFORMAL SECTOR  
-
 
 JUSTIN MC NEAL G. CARONONGAN
 FENIEL BARTE 
 JOSHUA S. CO 
 JOHN LLOYD PIMENTEL 
 ELI GABRIEL T. SORIANO 
-
 
 Submitted to the Faculty of the 
 College of Information Technology Education. 
@@ -18,21 +16,24 @@ In Partial Fulfillment of
 the Requirements
 for the Degree
 
-
 Bachelor of Science in Information Technology
 with Specialization in System Development 
 
-
-
-
-
-
 March 2026  
+
+
+
+
+
+
+
+
+
+
+APPROVAL SHEET
 APPROVAL SHEET
 
-
 This capstone project entitled MSME PATHWAYS: A SMART LOAN SUPPORT FOR UNDERSERVED STARTING ENTREPRENEURS IN THE INFORMAL SECTOR is prepared and submitted by JUSTIN MC NEAL G. CARONONGAN, FENIEL BARTE, JOSHUA S. CO, JOHN LLOYD PIMENTEL, and ELI GABRIEL T. SORIANO in partial fulfillment of the requirements for the degree, Bachelor of Science in Information with Specialization in System Development, has been examined and approved (MM/DD/YY IN TEXT FORMAT) by the Oral Examination Committee composed of:
-
 
 MA. GRACE Q. CARPIZO, Ph.D
 Adviser
@@ -43,441 +44,22 @@ Member
 	PANEL 2
 Member
 	
-
 Accepted and approved in partial fulfillment of the requirements for the degree of Bachelor of Science in Information Technology with Specialization in System Development 
-
-
-
 
 ARISTOTLE B. LIWANAG, MBA
 Dean
 CITE, PHINMA University of Pangasinan
 Dagupan City
-DATE: _______________
-ACKNOWLEDGEMENT
-        The researchers would like to express their deepest gratitude to everyone who provided guidance and assistance throughout this research study. This endeavor would not have been possible without the unwavering support of these individuals and institutions.
 
 
-First and foremost, the researchers would like to extend their heartfelt thanks to the school administration and faculty members for making this study achievable. Special gratitude is given to our research advisers, Ma’am Veronica Canlas and Ma. Grace Q. Carpizo and our panels, Sir Jeremie (SURNAME), (PANEL 2), whose insightful feedback and constructive critiques greatly enhanced the quality of this work.
 
 
-The researchers are also grateful to the respondents who gave their time and cooperation. Their participation provided valuable insights that served as the foundation of this study.
 
 
-Furthermore, the researchers would like to give thanks to the families and friends of each researcher for their continuous motivation during the research and manuscript writing.
 
 
-Above all, the researchers offer their highest praise and gratitude to the Almighty God for bestowing upon them the wisdom, strength, perseverance, health, and grace needed to successfully navigate and complete this study.
 
 
-
-
-This work is dedicated to the underserved starting entrepreneurs in the informal sector—the sari-sari store owners, market vendors, home-based entrepreneurs, and small-scale business owners—whose resilience, determination, and unwavering commitment to providing for their families continue to inspire us. Despite the challenges they face, they persevere with courage and hope, reminding us of the importance of creating more accessible and inclusive opportunities. 
-
-
-We also dedicate this work to our families, whose love, patience, encouragement, and unwavering support have been our greatest source of strength throughout this journey. To our mentors and educators, thank you for inspiring us to pursue knowledge with integrity and purpose.
-
-
-The MSME Pathways Research Team:
- Justin Mc Neal G. Caronongan 
-Feniel Barte
-Joshua S. Co 
-John Lloyd Pimentel 
-Eli Gabriel T. Soriano 
-
-
-
-
-
-
-
-
-
-
-ABSTRACT
-
-
-        LEAD LAST NAME, FIRST NAME MI., ALPHABETICAL MEMBER1 LAST NAME, FIRST NAME MI., ALPHABETICAL MEMBER2 LAST NAME, FIRST NAME MI., ALPHABETICAL MEMBER3 LAST NAME, FIRST NAME MI., ALPHABETICAL MEMBER4 LAST NAME, FIRST NAME MI., ALPHABETICAL MEMBER5 LAST NAME, FIRST NAME MI., and ALPHABETICAL MEMBER3 LAST NAME, FIRST NAME MI “Title of the Capstone Project in Full” Bachelor of Science in Information Technology with Specialization in Digital Arts. PHINMA University of Pangasinan, Dagupan City, 2400 Pangasinan,  , March 2025.
-
-
-        Adviser: MA. GRACE Q. CARPIZO, Ph.D
-        Keywords: keyword1, keyword2, keyword3 (this is for tagging your document)
-
-
-        Keep the abstract within 150 to 250 words. It should contain a sentence or two to identify or describe 1.) the general research problem, purpose, or objective of your study, 2) your target participants and respondents, 3.) the research method, 4.) the general summary based on your findings, 5) conclusion from general findings, and 6) recommendations based from the gathered findings and the conclusion.
-        If you need to create a second sentence, have it indented just like this. Make sure that all words of the paragraphs are within 150 to 250-word count. 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-TABLE OF CONTENTS
-
-
-TITLE PAGE        i
-APPROVAL SHEET        ii
-ACKNOWLEDGEMENT        iii
-DEDICATION        iv
-ABSTRACT        v
-LIST OF FIGURES        vi
-LIST OF TABLES        vii
-TABLE OF CONTENTS        viii
-1        INTRODUCTION
-Background of the Study        1
-Statement of the Problem        7
-Objectives of the Study        8
-Scope and Delimitation        8
-Significance of the Study        11
-Definition of Terms        13
-2        METHODOLOGY
-Software Development Methodology        16
-System Architecture Overview        20
-Tools and Technologies        23
-Population and Locale of the Study        29
-Data Gathering Techniques        31
-Sources of Data        33
-Treatment of Data        34
-Ethical Considerations        36
-REFERENCES        39
-APPENDICES
-A. Certificate of Approval from UREC        
-B. Interview Sheet for ___        
-C. Survey Questionnaire for ___        
-D. Survey Tally        
-E. Communication Letter        41
-F. Wireframes/Mockups        43
-G. Use Case Diagram        45
-H. Database Schema        46
-I. System Models        47
-J. System Evaluation Instrument / Form        
-K. System Evaluation Results & Summary Tally        
-L. Core Source Code Snippets        
-M. System Deployment / Installation Guide        
-N. User Manual / System Documentation        
-O. Curriculum Vitae / Resume of Researchers        
-
-
-
-
-
-
-
-
-LIST OF TABLES
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-LIST OF FIGURES
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-Chapter 1 
-INTRODUCTION 
-Background of the Study 
-Micro, Small, and Medium Enterprises (MSMEs) are universally acknowledged as a fundamental pillar of economic growth, employment generation, and poverty reduction in both developed and developing economies. On a global scale, MSMEs represent approximately 90% of all businesses and contribute to more than half of total employment worldwide (World Bank, 2023). Their role extends beyond economic contribution; MSMEs foster innovation, stimulate local markets, and serve as critical entry points for entrepreneurship, particularly among low- and middle-income populations. Despite their importance, MSMEs—especially those operating within the informal sector—continue to face systemic barriers that hinder their growth and sustainability, with limited access to formal financial services being among the most pressing challenges. While MSMEs generally face such barriers, those in the starting or early-stage phase face unique, heightened barriers because they lack the operational track record required by traditional lending institutions.
-Access to finance is widely recognized as a key enabler of enterprise development. Formal credit allows MSMEs to invest in inventory, adopt new technologies, expand operations, and manage cash flow volatility.
-However, many microentrepreneurs remain excluded from traditional banking systems due to rigid lending requirements such as collateral, formal income documentation, and established credit histories. This exclusion is especially acute for starting entrepreneurs, who face a "catch-22" situation: they lack the formal credit history necessary to secure initial capital, leaving them perpetually underserved. Informal-sector operators, who often rely on daily cash transactions and lack standardized financial records, are disproportionately affected by these constraints. As a result, they are frequently compelled to seek financing from informal lenders who impose excessive interest rates, short repayment periods, and exploitative terms, thereby increasing financial vulnerability and limiting long-term business growth.
-In the Philippine context, the importance of MSMEs mirrors global trends but is even more pronounced. Data from the Department of Trade and Industry (DTI) indicates that MSMEs account for 99.5% of all registered enterprises in the country and provide employment to approximately 63% of the national workforce (DTI, 2023). These enterprises are concentrated primarily in the microenterprise category, which includes small-scale vendors, sari-sari store owners, transport operators, and home-based entrepreneurs. Within this category, underserved starting entrepreneurs represent the most vulnerable segment, as they often remain informal in nature and operate outside regulatory and financial frameworks. 
-The issue of financial exclusion remains a significant national concern. According to the Bangko Sentral ng Pilipinas (BSP) Financial Inclusion Survey (2022), nearly 29% of Filipino adults do not possess formal financial accounts, and an even larger percentage lack access to formal credit facilities. Informal-sector workers are among the most affected due to factors such as insufficient financial literacy, a lack of trust in financial institutions, the perceived complexity of banking processes, and a fear of loan rejection. These challenges are further compounded by limited awareness of available financial products and inadequate support mechanisms to prepare borrowers for responsible loan participation. 
-At the regional and local levels, the informal economy is particularly prevalent in densely populated urban centers and commercial districts where microentrepreneurs engage in daily retail, food vending, and service provision. While these activities generate consistent cash flow, they are rarely documented, making it difficult for financial institutions to assess creditworthiness using conventional evaluation methods. Additionally, existing microfinance outreach programs often rely on labor-intensive, manual screening processes that increase operational costs and limit scalability. As a result, many potentially creditworthy microentrepreneurs remain underserved or excluded from formal financial systems entirely. 
-The rapid advancement and widespread adoption of mobile technology present a transformative opportunity to address these longstanding challenges. With near-universal smartphone ownership in the Philippines (Meltwater & We Are Social, 2025), mobile platforms have emerged as accessible and scalable tools for delivering financial services, education, and support to previously marginalized populations. Mobile-first solutions reduce geographic barriers, lower operational costs, and enable continuous user engagement. However, many existing digital financial applications are not tailored to the realities of informal-sector users, as they often assume stable income records, prior financial knowledge, and consistent internet connectivity. 
-Empirical literature highlights the effectiveness of technology‑enabled interventions in promoting financial inclusion, and research indicates that digital financial literacy and digital financial tools are key components of improving financial knowledge and behaviors in the digital environment (Koskelainen, Kalmi, Scornavacca, & Vartiainen, 2023). Furthermore, the expansion of digital financial services and FinTech innovations has enabled the use of alternative data sources—including mobile phone usage patterns, digital transaction histories, and online behavioral indicators—to assess creditworthiness among populations excluded from traditional credit bureaus. Recent evidence demonstrates that these technology-driven approaches can significantly improve financial inclusion by providing more accessible and inclusive credit assessment mechanisms for underserved microenterprises and informal-sector operators (World Bank, 2022). Additionally, blockchain technology has emerged as a promising tool for enhancing transparency, security, and trust in financial transactions. Its decentralized and immutable architecture provides a reliable mechanism for recording and verifying financial activities, with applications in financial services that improve efficiency, reduce fraud, and enhance transparency (Wang, Xie, & Zhang, 2021). 
-These findings emphasize the potential of intelligent, data-driven, and blockchain-integrated systems to bridge the gap between informal microentrepreneurs and formal financial institutions. 
-Given these conditions, there is a clear and urgent need for an integrated, user-centered solution that combines financial education, ethical loan pre-screening, alternative data profiling, and secure transaction recording in a manner that is accessible to informal-sector microentrepreneurs. Addressing financial inclusion requires not only access to credit but also the development of financial capability, preparedness, and trust among borrowers through transparent and verifiable systems.
-In response to this need, the project titled MSME Pathways: A Smart Loan Support for the Informal Sector is framed as a solution tailored specifically to underserved starting entrepreneurs. The AI-enabled, blockchain-integrated, mobile-first platform is designed to provide the initial guidance and readiness tools these entrepreneurs need to transition toward formal financial engagement. The system aims to enhance financial literacy, support responsible loan readiness, ensure transaction integrity through blockchain technology, and provide ethical, data-informed insights that can facilitate engagement with formal lending institutions. By leveraging mobile technology, intelligent analytics, and distributed ledger technology, the project seeks to contribute to inclusive economic growth and support the long-term sustainability of starting MSMEs in the informal sector of the Philippines.
-Statement of the Problem
-Underserved starting entrepreneurs in the informal sector in the Philippines face significant barriers to accessing formal financial services, resulting in persistent financial exclusion and a reliance on informal lending sources with unfavorable terms. These challenges are particularly acute for those in the initial stages of their business journey, stemming from limited financial literacy, the absence of a formal credit history, distrust of financial institutions, and the perceived complexity of loan application processes. 
-This study seeks to address the following research questions: 
-1. What are the demographic profile, financial behaviors, challenges, and technological needs of underserved starting entrepreneurs in the informal sector?
-2. What system features and functionalities should be incorporated into the proposed AI-enabled Smart Loan Support System to support financial literacy and loan readiness?
-3. How effective is the developed AI-enabled Smart Loan Support System in improving loan understanding, loan readiness, and user confidence among underserved starting entrepreneurs?
-Objectives of the Study 
-The objective of this study is to design, develop, and implement an AI-enabled Smart Loan Support System that provides accessible financial guidance, ethical loan pre-screening, and alternative data-driven profiling to support financial inclusion and improve access to formal lending opportunities for microentrepreneurs in the informal sector. 
-Specifically, this study aims: 
-1. To identify the demographic profile, financial behaviors, challenges, and technological needs of underserved starting entrepreneurs in the informal sector.
-2. To determine the system features and functionalities of the proposed AI-enabled Smart Loan Support System based on the identified user needs and challenges.
-3. To evaluate the effectiveness of the system in improving financial understanding, loan readiness, and user confidence among underserved starting entrepreneurs through usability testing, functionality testing, and user feedback analysis.
-Scope and Delimitation 
-This study focuses on the design, development, implementation, and evaluation of MSME Pathways: A Smart Loan Support for the Underserved Starting Entrepreneurs in the Informal Sector, an AI-enabled system that aims to promote loan inclusion among underserved starting entrepreneurs in the Philippines. The proposed system provides AI-driven financial guidance through a conversational chatbot that explains loan concepts using simple and culturally relevant language. It also includes loan education modules covering topics such as interest rates, repayment terms, responsible borrowing, and loan risks to improve users' loan literacy and loan readiness.
-The system incorporates alternative data profiling based on user-provided business information and self-reported financial activities to support loan readiness assessment and ethical loan pre-qualification using predefined criteria. Based on the profiling results, the system generates personalized feedback and recommendations to help users better prepare for formal loan applications. In addition, the system includes blockchain-based transaction recording using Ethereum-compatible smart contracts to promote transparency, integrity, and traceability of supported transactions within the system.
-The primary users of the system are underserved starting entrepreneurs in the informal sector, including sari-sari store owners, market vendors, home-based entrepreneurs, and other microentrepreneurs. The system also provides a web-based administrative interface for loan officers and system administrators to manage user profiles, review profiling results, monitor system activities, and generate basic reports. The mobile application is developed using Flutter for Android and iOS platforms, while the web-based administrative interface is built using Python, the Django framework, and a cloud-hosted MongoDB Atlas database.
-This study is delimited to the development of a prototype-level smart loan support system. The system does not process or disburse actual loans through regulated financial institutions, integrate with live banking systems, payment gateways, or credit bureaus, nor perform official credit scoring or loan approval decisions. The AI-generated recommendations and loan readiness assessments are intended solely for educational and decision-support purposes and should not be interpreted as official financial or lending advice.
-Furthermore, the performance of the AI components depends on the quality and representativeness of the available training and testing data. The system is evaluated within a controlled academic environment involving a limited number of participants over a defined evaluation period. Constraints related to time, resources, and available infrastructure limit large-scale deployment, extensive optimization, and enterprise-level scalability. The findings of this study are therefore limited to the implementation and evaluation of the proposed prototype and may not be generalized to all financial institutions or lending environments.
-
-
-Significance of the Study
-This study is significant because it contributes to the development of an AI-enabled smart loan support system that promotes loan inclusion among underserved starting entrepreneurs in the informal sector. By providing accessible loan guidance, loan readiness assessment, and ethical alternative data profiling, the study aims to support more informed borrowing decisions while serving as a foundation for future innovations in financial technology. The findings and the developed system are expected to benefit the following stakeholders:
-To the Underserved Starting Entrepreneurs. The primary beneficiaries of this study are underserved starting entrepreneurs in the informal sector, including sari-sari store owners, market vendors, home-based entrepreneurs, and other microentrepreneurs at the early stages of their business journey. The proposed system provides simplified explanations of loan concepts, loan guidance, and loan readiness assessments that may help users better understand formal lending processes, identify areas for improvement, and make more informed borrowing decisions. By increasing loan awareness and preparedness, the system may encourage greater confidence in accessing formal loan services.
-To the Microfinance Institutions and Loan Officers. The proposed system provides structured borrower information through alternative data profiling and loan readiness assessments, which may assist loan officers in conducting preliminary evaluations of prospective borrowers. Although the system does not replace institutional credit evaluation or lending decisions, it may serve as a complementary decision-support tool that promotes consistency, transparency, and efficiency during the initial assessment process.
-To the Policymakers and Development Organizations. Government agencies, non-governmental organizations, and development institutions that promote loan inclusion may use the findings of this study as a reference in developing programs and initiatives that support underserved entrepreneurs. The proposed system demonstrates how emerging technologies such as artificial intelligence and blockchain can be applied to address barriers to financial access in the informal sector.
-To the Researchers and Project Developers. This study provides the researchers with practical experience in the design, development, implementation, and evaluation of an AI-enabled financial technology system. It strengthens their knowledge and skills in software engineering, mobile application development, artificial intelligence, blockchain technology, cloud computing, database management, and ethical system design while addressing a real-world social and economic challenge.
-To the Academic Community and Future Researchers. This study contributes to the growing body of knowledge on the application of artificial intelligence, blockchain technology, alternative data profiling, and mobile technologies in financial inclusion. The documented methodology, system architecture, implementation, and evaluation results may serve as valuable references for future researchers and developers undertaking related studies or developing similar financial technology solutions.
-Definition of Terms 
-The following terms are defined operationally and conceptually to enhance understanding and precision within the context of this study:  
-Alternative Data. Non-traditional information used to assess an individual's financial behavior and creditworthiness, such as business activity indicators, utility payment patterns, and self-reported income, rather than formal credit bureau records.  
-Artificial Intelligence (AI). A branch of computer science focused on creating systems capable of performing tasks that typically require human intelligence, including learning, reasoning, and natural language understanding. In this study, AI powers the financial guidance of chatbot and profiling mechanisms.  
-Blockchain. A decentralized, distributed digital ledger technology that records transactions across multiple computers in a manner that ensures the records cannot be altered retroactively. In this study, blockchain is used to securely record and verify transaction references and user verification events.  
-Chatbot. A software application that simulates human conversation through text-based or voice-based interactions. In this study, the chatbot provides financial guidance and answers user queries about loan concepts.  
-Financial Inclusion. The availability and accessibility of useful and affordable financial products and services to individuals and businesses, particularly those traditionally excluded from formal financial systems. 
-Financial Literacy. The ability to understand and effectively use various financial skills, including personal financial management, budgeting, and understanding loan terms and conditions.  
-Loan Pre-qualification. A preliminary assessment process that evaluates an individual's basic eligibility for a loan based on self-reported information, without a formal credit check or commitment from a lender.  
-MSME (Micro, Small, and Medium Enterprise). A classification of business entities based on asset size and number of employees. In the Philippines, micro enterprises have assets of up to PHP 3 million, small enterprises have assets between PHP 3 million and PHP 15 million, and medium enterprises have assets between PHP 15 million and PHP 100 million.  
-Smart Contract. A self-executing program stored on a blockchain that automatically enforces the terms of an agreement when predetermined conditions are met. In this study, smart contracts developed using Solidity are used to record critical transaction references and verification events.  
-Solidity. A high-level, object-oriented programming language used to write smart contracts on Ethereum-compatible blockchain platforms. In this study, Solidity is used to develop blockchain components for secure transaction logic. 
- 
-
-
-
-
-
-
-
-
-TITLE SHEET
-MSME PATHWAYS: A SMART LOAN SUPPORT FOR UNDERSERVED 
-STARTING ENTREPRENEURS IN THE INFORMAL SECTOR  
-
-
-JUSTIN MC NEAL G. CARONONGAN
-FENIEL BARTE 
-JOSHUA S. CO 
-JOHN LLOYD PIMENTEL 
-ELI GABRIEL T. SORIANO 
-
-
-Submitted to the Faculty of the 
-College of Information Technology Education. 
-PHINMA University of Pangasinan, 
-Dagupan City, Pangasinan
-In Partial Fulfillment of 
-the Requirements
-for the Degree
-
-
-Bachelor of Science in Information Technology
-with Specialization in System Development 
-
-
-
-
-
-
-March 2026  
-APPROVAL SHEET
-APPROVAL SHEET
-
-
-This capstone project entitled MSME PATHWAYS: A SMART LOAN SUPPORT FOR UNDERSERVED STARTING ENTREPRENEURS IN THE INFORMAL SECTOR is prepared and submitted by JUSTIN MC NEAL G. CARONONGAN, FENIEL BARTE, JOSHUA S. CO, JOHN LLOYD PIMENTEL, and ELI GABRIEL T. SORIANO in partial fulfillment of the requirements for the degree, Bachelor of Science in Information with Specialization in System Development, has been examined and approved (MM/DD/YY IN TEXT FORMAT) by the Oral Examination Committee composed of:
-
-
-MA. GRACE Q. CARPIZO, Ph.D
-Adviser
-	ARISTOTLE B.LIWANAG, MBA
-Chairperson
-	JEREMIE
-Member
-	PANEL 2
-Member
-	
-
-Accepted and approved in partial fulfillment of the requirements for the degree of Bachelor of Science in Information Technology with Specialization in System Development 
-
-
-
-
-ARISTOTLE B. LIWANAG, MBA
-Dean
-CITE, PHINMA University of Pangasinan
-Dagupan City
 ACKNOWLEDGEMENT SHEET
 DATE: _______________
 ACKNOWLEDGEMENT
@@ -498,12 +80,16 @@ Above all, the researchers offer their highest praise and gratitude to the Almig
 
 
 
+
+
+
+
+
+
 DEDICATION SHEET
 This work is dedicated to the underserved starting entrepreneurs in the informal sector—the sari-sari store owners, market vendors, home-based entrepreneurs, and small-scale business owners—whose resilience, determination, and unwavering commitment to providing for their families continue to inspire us. Despite the challenges they face, they persevere with courage and hope, reminding us of the importance of creating more accessible and inclusive opportunities. 
 
-
 We also dedicate this work to our families, whose love, patience, encouragement, and unwavering support have been our greatest source of strength throughout this journey. To our mentors and educators, thank you for inspiring us to pursue knowledge with integrity and purpose.
-
 
 The MSME Pathways Research Team:
  Justin Mc Neal G. Caronongan 
@@ -514,16 +100,21 @@ Eli Gabriel T. Soriano
 ABSTRACT
 ABSTRACT
 
-
         LEAD LAST NAME, FIRST NAME MI., ALPHABETICAL MEMBER1 LAST NAME, FIRST NAME MI., ALPHABETICAL MEMBER2 LAST NAME, FIRST NAME MI., ALPHABETICAL MEMBER3 LAST NAME, FIRST NAME MI., ALPHABETICAL MEMBER4 LAST NAME, FIRST NAME MI., ALPHABETICAL MEMBER5 LAST NAME, FIRST NAME MI., and ALPHABETICAL MEMBER3 LAST NAME, FIRST NAME MI “Title of the Capstone Project in Full” Bachelor of Science in Information Technology with Specialization in Digital Arts. PHINMA University of Pangasinan, Dagupan City, 2400 Pangasinan,  , March 2025.
-
 
         Adviser: MA. GRACE Q. CARPIZO, Ph.D
         Keywords: keyword1, keyword2, keyword3 (this is for tagging your document)
 
-
         Keep the abstract within 150 to 250 words. It should contain a sentence or two to identify or describe 1.) the general research problem, purpose, or objective of your study, 2) your target participants and respondents, 3.) the research method, 4.) the general summary based on your findings, 5) conclusion from general findings, and 6) recommendations based from the gathered findings and the conclusion.
         If you need to create a second sentence, have it indented just like this. Make sure that all words of the paragraphs are within 150 to 250-word count. 
+
+
+
+
+
+
+
+
 
 
 TABLE OF CONTENTS
@@ -577,13 +168,38 @@ O. Curriculum Vitae / Resume of Researchers
 
 
 
+
+
+
+
 LIST OF TABLES
 LIST OF TABLES
+
+
+
+
+
+
+
+
+
+
 LIST OF FIGURES
 LIST OF FIGURES
+
+
+
+
+
+
+
+
+
+
 CHAPTER 1
 Chapter 1 
 INTRODUCTION 
+
 Background of the Study 
 Micro, Small, and Medium Enterprises (MSMEs) are universally acknowledged as a fundamental pillar of economic growth, employment generation, and poverty reduction in both developed and developing economies. On a global scale, MSMEs represent approximately 90% of all businesses and contribute to more than half of total employment worldwide (World Bank, 2023). Their role extends beyond economic contribution; MSMEs foster innovation, stimulate local markets, and serve as critical entry points for entrepreneurship, particularly among low- and middle-income populations. Despite their importance, MSMEs—especially those operating within the informal sector—continue to face systemic barriers that hinder their growth and sustainability, with limited access to formal financial services being among the most pressing challenges. While MSMEs generally face such barriers, those in the starting or early-stage phase face unique, heightened barriers because they lack the operational track record required by traditional lending institutions.
 Access to finance is widely recognized as a key enabler of enterprise development. Formal credit allows MSMEs to invest in inventory, adopt new technologies, expand operations, and manage cash flow volatility.
@@ -596,25 +212,27 @@ Empirical literature highlights the effectiveness of technology‑enabled interv
 These findings emphasize the potential of intelligent, data-driven, and blockchain-integrated systems to bridge the gap between informal microentrepreneurs and formal financial institutions. 
 Given these conditions, there is a clear and urgent need for an integrated, user-centered solution that combines financial education, ethical loan pre-screening, alternative data profiling, and secure transaction recording in a manner that is accessible to informal-sector microentrepreneurs. Addressing financial inclusion requires not only access to credit but also the development of financial capability, preparedness, and trust among borrowers through transparent and verifiable systems.
 In response to this need, the project titled MSME Pathways: A Smart Loan Support for the Informal Sector is framed as a solution tailored specifically to underserved starting entrepreneurs. The AI-enabled, blockchain-integrated, mobile-first platform is designed to provide the initial guidance and readiness tools these entrepreneurs need to transition toward formal financial engagement. The system aims to enhance financial literacy, support responsible loan readiness, ensure transaction integrity through blockchain technology, and provide ethical, data-informed insights that can facilitate engagement with formal lending institutions. By leveraging mobile technology, intelligent analytics, and distributed ledger technology, the project seeks to contribute to inclusive economic growth and support the long-term sustainability of starting MSMEs in the informal sector of the Philippines.
+
 Statement of the Problem
 Underserved starting entrepreneurs in the informal sector in the Philippines face significant barriers to accessing formal financial services, resulting in persistent financial exclusion and a reliance on informal lending sources with unfavorable terms. These challenges are particularly acute for those in the initial stages of their business journey, stemming from limited financial literacy, the absence of a formal credit history, distrust of financial institutions, and the perceived complexity of loan application processes. 
 This study seeks to address the following research questions: 
 1. What are the demographic profile, financial behaviors, challenges, and technological needs of underserved starting entrepreneurs in the informal sector?
 2. What system features and functionalities should be incorporated into the proposed AI-enabled Smart Loan Support System to support financial literacy and loan readiness?
-3. How effective is the developed AI-enabled Smart Loan Support System in improving loan understanding, loan readiness, and user confidence among underserved starting entrepreneurs?
+3. How may the developed AI-enabled Smart Loan Support System be evaluated in terms of functionality, usability, clarity of financial guidance, perceived usefulness, and user confidence among underserved starting entrepreneurs?
+
 Objectives of the Study 
 The objective of this study is to design, develop, and implement an AI-enabled Smart Loan Support System that provides accessible financial guidance, ethical loan pre-screening, and alternative data-driven profiling to support financial inclusion and improve access to formal lending opportunities for microentrepreneurs in the informal sector. 
 Specifically, this study aims: 
 1. To identify the demographic profile, financial behaviors, challenges, and technological needs of underserved starting entrepreneurs in the informal sector.
 2. To determine the system features and functionalities of the proposed AI-enabled Smart Loan Support System based on the identified user needs and challenges.
-3. To evaluate the effectiveness of the system in improving financial understanding, loan readiness, and user confidence among underserved starting entrepreneurs through usability testing, functionality testing, and user feedback analysis.
+3. To evaluate the developed AI-enabled Smart Loan Support System in terms of functionality, usability, clarity of financial guidance, perceived usefulness, and user confidence through system testing and user feedback analysis.
+
 Scope and Delimitation 
 This study focuses on the design, development, implementation, and evaluation of MSME Pathways: A Smart Loan Support for the Underserved Starting Entrepreneurs in the Informal Sector, an AI-enabled system that aims to promote loan inclusion among underserved starting entrepreneurs in the Philippines. The proposed system provides AI-driven financial guidance through a conversational chatbot that explains loan concepts using simple and culturally relevant language. It also includes loan education modules covering topics such as interest rates, repayment terms, responsible borrowing, and loan risks to improve users' loan literacy and loan readiness.
 The system incorporates alternative data profiling based on user-provided business information and self-reported financial activities to support loan readiness assessment and ethical loan pre-qualification using predefined criteria. Based on the profiling results, the system generates personalized feedback and recommendations to help users better prepare for formal loan applications. In addition, the system includes blockchain-based transaction recording using Ethereum-compatible smart contracts to promote transparency, integrity, and traceability of supported transactions within the system.
 The primary users of the system are underserved starting entrepreneurs in the informal sector, including sari-sari store owners, market vendors, home-based entrepreneurs, and other microentrepreneurs. The system also provides a web-based administrative interface for loan officers and system administrators to manage user profiles, review profiling results, monitor system activities, and generate basic reports. The mobile application is developed using Flutter for Android and iOS platforms, while the web-based administrative interface is built using Python, the Django framework, and a cloud-hosted MongoDB Atlas database.
 This study is delimited to the development of a prototype-level smart loan support system. The system does not process or disburse actual loans through regulated financial institutions, integrate with live banking systems, payment gateways, or credit bureaus, nor perform official credit scoring or loan approval decisions. The AI-generated recommendations and loan readiness assessments are intended solely for educational and decision-support purposes and should not be interpreted as official financial or lending advice.
 Furthermore, the performance of the AI components depends on the quality and representativeness of the available training and testing data. The system is evaluated within a controlled academic environment involving a limited number of participants over a defined evaluation period. Constraints related to time, resources, and available infrastructure limit large-scale deployment, extensive optimization, and enterprise-level scalability. The findings of this study are therefore limited to the implementation and evaluation of the proposed prototype and may not be generalized to all financial institutions or lending environments.
-
 
 Significance of the Study
 This study is significant because it contributes to the development of an AI-enabled smart loan support system that promotes loan inclusion among underserved starting entrepreneurs in the informal sector. By providing accessible loan guidance, loan readiness assessment, and ethical alternative data profiling, the study aims to support more informed borrowing decisions while serving as a foundation for future innovations in financial technology. The findings and the developed system are expected to benefit the following stakeholders:
@@ -623,6 +241,7 @@ To the Microfinance Institutions and Loan Officers. The proposed system provides
 To the Policymakers and Development Organizations. Government agencies, non-governmental organizations, and development institutions that promote loan inclusion may use the findings of this study as a reference in developing programs and initiatives that support underserved entrepreneurs. The proposed system demonstrates how emerging technologies such as artificial intelligence and blockchain can be applied to address barriers to financial access in the informal sector.
 To the Researchers and Project Developers. This study provides the researchers with practical experience in the design, development, implementation, and evaluation of an AI-enabled financial technology system. It strengthens their knowledge and skills in software engineering, mobile application development, artificial intelligence, blockchain technology, cloud computing, database management, and ethical system design while addressing a real-world social and economic challenge.
 To the Academic Community and Future Researchers. This study contributes to the growing body of knowledge on the application of artificial intelligence, blockchain technology, alternative data profiling, and mobile technologies in financial inclusion. The documented methodology, system architecture, implementation, and evaluation results may serve as valuable references for future researchers and developers undertaking related studies or developing similar financial technology solutions.
+
 Definition of Terms 
 The following terms are defined operationally and conceptually to enhance understanding and precision within the context of this study:  
 Alternative Data. Non-traditional information used to assess an individual's financial behavior and creditworthiness, such as business activity indicators, utility payment patterns, and self-reported income, rather than formal credit bureau records.  
@@ -642,29 +261,21 @@ Solidity. A high-level, object-oriented programming language used to write smart
 
 
 
+
+
+
 CHAPTER 2
 Chapter 2 
 
-
 METHODOLOGY 
-
-
 This chapter discusses the methodology employed in the development of the proposed system, MSME Pathways: Smart Loan Support for the Informal Sector. It presents the development methodology, system architecture overview, tools and technologies used, population and locale of the study, data gathering techniques, sources of data, treatment of data, and ethical considerations. 
 
-
 Development Methodology 
-
-
 This section explains the development methodology that will be used in the study, including the selected software development model and the phases involved in system development, together with their corresponding deliverables.  
-
-
 Software Development Model. The study will employ the Agile Software Development Model using the Scrum approach. Scrum is applied to support incremental delivery through short development cycles, enabling the research team to prioritize features, validate requirements, and continuously improve system components based on stakeholder feedback. This model is suitable for MSME Pathways because the proposed system includes complex and interdependent features such as AI-enabled guidance and profiling, as well as blockchain-based transaction integrity mechanisms, which require iterative refinement and staged integration.  
 The Scrum approach is appropriate for the scope of the project because it encourages frequent feedback and progressive enhancement of the system’s functionality and usability. In the context of informal sector microentrepreneurs, user needs and varying of digital literacy, and practical concerns during lending transactions are best addressed through repeated validation of interface design, content clarity, and guidance accuracy. Scrum also supports risk reduction by enabling early testing of high-impact modules such as the AI chatbot and profiling logic, and by allowing blockchain components to be integrated and verified gradually to ensure system stability and reliability. 
- 
- 
+  
 Figure 1 
-
-
 Phases of Scrum 
   
         Product Backlog and Backlog Refinement. The team will translate interview findings, survey inputs, and system requirements into user stories and will prioritize backlog items. Backlog refinement will be conducted regularly to clarify acceptance criteria, re-estimate effort, and re-order priorities based on technical feasibility and stakeholder feedback. Deliverables will include an updated Product Backlog, requirement mapping notes, and sprint-ready stories.  
@@ -674,28 +285,18 @@ Sprint Review. At the end of each sprint, completed increments will be demonstra
 Sprint Retrospective. After the review, the team will conduct a retrospective to evaluate what worked well, what problems occurred, and what process improvements are needed. Agreed improvement actions will be carried forward to the next sprint to improve workflow efficiency, quality control, and collaboration. Deliverables will include retrospective findings and actionable process improvement items.  
 Release and Deployment Preparation. After iterative sprint cycles, the team will consolidate validated increments and will prepare the prototype for controlled release and demonstration. Activities will include environment configuration, final integration and regression checks, documentation completion, and readiness verification for academic evaluation. Deliverables will include the prototype build, user manual, deployment notes, and demonstration checklist.  
 
-
 System Architecture Overview 
-
-
 The proposed system will follow a three-tier architecture consisting of the presentation layer, application layer, and data layer. This architecture enforces separation of concerns, allowing user interaction channels, business logic, and data services to evolve independently while remaining integrated through secure APIs.  
 
-
 Figure 2 
-
-
 Three-Tier Architecture 
   
         Presentation Layer. The presentation layer will include a Flutter-based mobile application for informal-sector microentrepreneurs and a web dashboard for loan officers and administrators. The mobile application supports onboarding, guidance access, profiling inputs, and loan-readiness interactions, while the web dashboard will support monitoring, application review, decision support, and reporting workflows.  
 Application Layer. The application layer will be implemented using Python Django and Django REST Framework as the central service orchestration layer. It will manage authentication and role-based access, profile and document handling, AI-enabled chatbot and profiling logic, loan pre-qualification and lifecycle workflows, notifications, analytics, and blockchain transaction coordination through backend service integration.  
 Data Layer. The data layer will consist of MongoDB Atlas for operational data storage, document storage services for uploaded files, and Ethereum smart contracts for tamper-resistant integrity records. MongoDB Atlas will store user, profile, loan, interaction, and audit data, while blockchain records will serve as immutable verification references. Sensitive personal data remains off-chain, and only transaction references are written to the blockchain. 
 
-
 Tools and Technologies Used 
-
-
 The development of the proposed system shall utilize the following tools and technologies: 
-
 
 Programming Languages. Python will be used for backend services, API processing, and business logic orchestration. TypeScript and JavaScript for frontend web development to improve maintainability and type-safe component integration. Dart is going to be used for the Flutter mobile application to support cross-platform development. Solidity shall be used for Ethereum-compatible smart contract development for integrity and audit-related transaction records.  
 Frontend Technologies and Libraries. The web interface will be developed using React, with routing through React Router DOM. State and asynchronous data handling will use TanStack React Query, TanStack React Table, Axios, and Zustand to support responsive dashboards and workflow-driven views. Form and validation components will use React Hook Form, @hookform/resolvers, and Zod to enforce structured user input. UI and interaction libraries will include Radix UI components, Tailwind CSS, @tailwindcss/vite, tailwind-merge, class-variance-authority, clsx, Framer Motion, Lucide React, Recharts, Sonner, React Error Boundary, and date-fns. These technologies collectively support usability, accessibility, and visual consistency required for role-based loan management interfaces. The mobile application shall be developed using Flutter with the Dart Software Development Kit (SDK) to support cross-platform deployment for Android and iOS devices. State management will be implemented using the Business Logic Component (BLoC) approach, while dependency injection will be handled using Get It and Injectable to enhance system modularity and maintainability. Navigation shall be managed using Go Router, and networking and application programming interface (API) communication will be implemented through Dio and Retrofit. Local data storage will be implemented using Hive, while sensitive information shall be secured using Flutter Secure Storage, and basic user preferences will be managed through Shared Preferences. Data serialization and code generation will be supported using Freezed and JSON Serializable. User interface enhancements and animation features shall be implemented through Material 3, Flutter ScreenUtil, Lottie, Flutter Animate, Shimmer, Google Fonts, Cached Network Image, and Smooth Page Indicator. Form input handling and validation will be supported using Flutter Form Builder, Formz, and Form Builder Validators, while additional utilities shall include File Picker, QR Flutter, PDF, Printing, and FL Chart. These technologies will collectively support responsive design, secure data handling, and reliable performance for mobile-based loan guidance and profiling functionalities.  
@@ -706,28 +307,20 @@ Database and Storage. MongoDB Atlas will be used as the primary cloud-based NoSQ
 Testing and Quality Assurance Tools. Frontend unit and component testing will use Vitest, @vitest/ui, @vitest/coverage-v8, jsdom, @testing-library/react, @testing-library/jest-dom, and @testing-library/user-event. End-to-end testing will use Playwright to validate cross-page behavior and role-based workflows. Code quality enforcement will use Biome, Husky, and lint-staged to maintain consistent coding standards and reduce integration defects. For the mobile application, unit and widget testing will use Flutter Test, while BLoC and logic testing use Bloc Test with Mocktail. Integration testing shall be conducted using the Integration Test framework to validate end-to-end mobile workflows. Static analysis and linting will use Dart Analyze with Flutter Lints to ensure code quality and consistency during development.  
 Build, Deployment, and Runtime Tools. Frontend build and development will use Vite (Rolldown-Vite) and @vitejs/plugin-react for fast iteration and optimized production builds. The mobile application will be built and compiled using the Flutter SDK, with platform-specific packaging through Android SDK and Xcode toolchains for Android and iOS deployment. Backend deployment will use Gunicorn with Procfile-based process definition and Python runtime configuration. Background scheduling will use Celery Beat with Redis broker/backend support, enabling periodic maintenance and operational automation. Development and Collaboration Tools. Visual Studio Code (VS Code) will be used as the primary development environment across frontend, backend, AI, and blockchain modules. Git and GitHub will be used for source control, collaboration, and revision traceability throughout Scrum iterations. Insomnia and Postman shall be used for API endpoint testing and integration verification during development and testing phases. 
 
-
 Population and Locale of the Study 
-
-
 The population of the study consists primarily of informal-sector microentrepreneurs, primarily in Dagupan City and nearby areas, particularly sari-sari store owners, market vendors, and similar small-scale operators who represent the intended end users of the MSME Pathways: Smart Loan Support for the Informal Sector. These respondents will be included because they directly experience the financial access barriers identified in Chapter 1 and can provide grounded feedback on usability, clarity of guidance content, and relevance of loan-readiness features. 
 As supporting respondents, selected loan officers and lending personnel will be included to evaluate the operational usefulness of the web dashboard, profiling outputs, and pre-screening support functions. Their participation provides practitioner insight on whether the system outputs are understandable and applicable to preliminary lending workflows within the prototype scope. 
 Respondents will be selected through purposive sampling based on role relevance, willingness to participate, and accessibility during the data-gathering period. This sampling approach will ensure that participants are directly connected to the functional objectives and evaluation criteria of the study. 
 The locale of the study shall be conducted within PHINMA-University of Pangasinan, Dagupan City, and nearby areas. System development, configuration, and controlled technical testing shall be conducted within the university environment, while requirement validation and usability feedback will be collected from selected community areas where target microentrepreneurs regularly operate. 
 
-
 Data Gathering Techniques 
-
-
-Data gathering techniques will be used to obtain requirement-level insights and evaluation of feedback from intended users and supporting stakeholders. The study will apply a mixed set of qualitative and quantitative techniques to ensure that both contextual realities and measurable usability outcomes are captured. 
+Data gathering techniques will be used to obtain requirement-level insights and evaluation feedback from intended users and supporting stakeholders. The study will apply a combination of qualitative, quantitative, observational, and technical methods to capture contextual needs, measurable changes, perceived usability, and system behavior. All respondent-facing instruments will be reviewed and approved by the research adviser and, where required, the appropriate university research-ethics body before administration. 
 Interviews. Semi-structured interviews will be conducted with informal-sector microentrepreneurs to collect direct insights on borrowing behavior, lending-related difficulties, information gaps, and preferred support mechanisms. An interview guide will be used to maintain consistency across respondents while allowing follow-up probing questions. Interview results shall be documented and reviewed to identify recurring themes that inform feature prioritization, content simplification, and workflow design. 
-Survey Questionnaires. Structured survey questionnaires will be administered using Google Forms to gather quantifiable feedback on usability, clarity, usefulness, and user satisfaction after prototype interaction. The questionnaire will be focused on indicators such as ease of navigation, understandability of financial guidance, perceived relevance of recommendations, and confidence in using the system. Results will be summarized using descriptive statistics to support refinement decisions. 
-Observation. Non-participant observation will be conducted to understand existing lending-related practices and informal borrowing workflows in the target context. Observation notes shall capture process patterns, communication behaviors, and environmental constraints that may affect real-world system adoption. The findings will be used to validate whether the proposed interfaces and process flow remain realistic and context appropriate. 
-Data Triangulation. Findings from interviews, survey responses, and observation records are cross-checked to improve the consistency and credibility of conclusions. Convergent findings will be used as priority inputs for system refinement, while conflicting findings will also be reviewed in follow-up discussions before implementation decisions are finalized. 
+Survey Questionnaires. Structured survey questionnaires will be administered using Google Forms to gather quantifiable feedback on usability, clarity, usefulness, user satisfaction, and confidence after prototype interaction. The questionnaires will focus on indicators such as ease of navigation, understandability of financial guidance, perceived relevance of recommendations, and confidence in using the system. Results will be summarized using descriptive statistics to support system-evaluation and refinement decisions. 
+Observation. Non-participant observation will be conducted to understand existing lending-related practices and informal borrowing workflows in the target context and to observe participant interaction with the prototype. Observation notes shall capture process patterns, communication behaviors, task difficulties, and environmental constraints that may affect real-world system adoption. The findings will be used to validate whether the proposed interfaces and process flow remain realistic and context-appropriate. 
+Data Triangulation. Findings from interviews, survey responses, and observation records shall be cross-checked to improve the consistency and credibility of conclusions. Convergent findings will be used as priority inputs for system refinement, while conflicting findings will be reviewed in follow-up discussions before implementation decisions are finalized. 
  
 Sources of Data 
-
-
 Data is one of the most important elements in every research study because the validity of findings depends on the quality and relevance of collected information. For this study, data will be gathered from primary and secondary sources to ensure that system design and evaluation are grounded in both real stakeholder context and established references. 
 Primary Sources. The primary sources of data will be the selected respondents who directly interact with, evaluate, or manage the proposed system. 
 Informal Sector Microentrepreneurs. This group will serve as the main respondent population because they are the intended beneficiaries of the MSME Pathways: Smart Loan Support for the Informal Sector. Their responses will provide requirement-level insights and usability feedback on financial guidance, profiling inputs, and loan-readiness support. 
@@ -735,45 +328,48 @@ Loan Officers/Lending Personnel. This group will serve as supporting respondents
 
 
 Table 1 
-
-
 Respondents of the Study 
-
-
 Respondent Group 
 	No. of Respondents 
 	Informal Sector Microentrepreneurs 
-	3
-	Loan Officers/Lending Personnels 
-	1 
+	[To be confirmed with the research adviser] 
+	Loan Officers/Lending Personnel 
+	[To be confirmed with the research adviser] 
 	Total 
-	4 
-
-
-	
+	[To be confirmed] 
 
 Secondary Sources. Secondary data shall be obtained from published studies, government and institutional reports, and technical references related to microfinance, financial inclusion, AI-assisted decision support, and blockchain-enabled auditability. These will include relevant World Bank resources, financial inclusion publications, and sample lending forms and workflow references. Secondary sources will be used to support requirement justification, contextualize respondent findings, and align the study with existing academic and industry practices. 
 
-
 Treatment of Data 
-
-
-The treatment of data describes how the information gathered in the study will be handled after collection to ensure accuracy, consistency, and data security throughout the project. 
-
-
-Data Collection. Data will be collected from user and respondent inputs within the system and study instruments, including registration details, profile entries, loan-related submissions, and feedback during prototype use. Additional data shall also be obtained from interview notes, survey responses, observation records, and relevant system/database records. Where applicable, API-based exchanges between client applications and backend services will be used to capture and transmit required data inputs. 
-Data Processing. The collected data will be reviewed, organized, and cleaned to ensure completeness and consistency. Data from different sources were standardized into uniform formats before further use. Validation rules shall be applied to minimize incomplete, duplicate, or inconsistent entries. 
-Data Analysis. Descriptive analysis techniques shall be applied to summarize user responses and system data for system refinement and evaluation. For AI-supported features, machine-learning-based processing will be used within the system to process documents, and a chatbot shall be used for guidance-oriented outputs, while interpretation of study findings remains and shall focus on usability, functionality, and requirement alignment. 
-Data Storage and Backup. All collected data will be stored securely in MongoDB Atlas and related system storage components with restricted access controls. Integrity related references will also be recorded in blockchain components to support auditability. 
-
+The treatment of data describes how the information gathered from the respondents will be prepared, analyzed, interpreted, and protected after collection. 
+Data Collection. Data will be collected from the respondents through semi-structured interviews, survey questionnaires administered using Google Forms, and non-participant observation during prototype evaluation. The gathered information will include respondent characteristics, experiences and challenges related to loans, desired system features, usability ratings, and feedback on the developed system. 
+Data Processing. Responses from the interviews, survey questionnaires, and observations will be checked, organized, coded, and tabulated according to the objectives of the study. Incomplete or duplicate responses will be reviewed, and only valid responses will be included in the presentation of results. Interview and survey records will use anonymous respondent codes to protect the identities of the participants. 
+Data Analysis. Frequency and percentage will be used to summarize the respondents' profile and other categorical responses, while mean scores will be used to summarize the five-point questionnaire ratings on usability, clarity, usefulness, satisfaction, and confidence. Interview responses and open-ended comments will be transcribed or summarized and grouped according to recurring themes. Observation notes will be organized according to the participants' experiences, difficulties, behaviors, and interactions with the prototype. Findings from the interviews, survey questionnaires, and observations will then be compared through data triangulation to support the interpretation of the results. 
+Data Storage and Backup. Digital responses collected through Google Forms and approved research files will be stored in access-restricted accounts or folders available only to the authorized researchers. Consent records will be kept separately from coded response data. Backup copies will be maintained in an approved secure location to reduce the risk of accidental data loss. The retention and disposal of research records will follow the approved consent form, university research requirements, and applicable privacy policies. 
 
 Ethical Considerations 
-
-
 Ethical consideration guides the development and implementation of the proposed system to ensure responsible use of technology, protection of user data, inclusivity of design, and transparent communication to end users. The study will adhere to ethical principles related to data security and privacy, fairness in system behavior, and responsible use of AI-enabled outputs. 
 Security and Privacy of Data. The study will apply security measures to safeguard sensitive information collected from respondents and system users. Access to data will be restricted through role-based access controls for multi-user functions, while authentication safeguards include password hashing, token-based session control, and two-factor verification for protected accounts. Data transmission and storage will be handled using secure configurations appropriate for the prototype environment. Interview and survey records will be treated confidentially, and reporting will use aggregated or non-identifying summaries to protect respondents' privacy. 
 Fair and Inclusive Design. The system will be designed to support users with diverse needs and varying levels of digital literacy. Interfaces will be structured with simple workflows, clear labels, and readable content to improve accessibility across mobile and web usage contexts. Guidance content is written in practical, understandable language, and AI-supported profiling outputs shall be treated as decision-support indicators rather than deterministic judgments. The study will also emphasize continuous review of prompts, rules, and outputs to reduce bias and improve fairness for underserved users. 
 Transparency of Information. Transparency shall be maintained by providing clear and accurate information about the system's purpose, scope, and limitations. Users will be informed that Smart Loan Support outputs are advisory and educational in nature, and do not guarantee loan approval, bank endorsement, or actual disbursement. Limitations of AI-generated recommendations and prototype-level functionality are communicated to manage expectations and support responsible user decision-making. 
+ 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 REFERENCES
 REFERENCES 
  
