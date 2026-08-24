@@ -98,7 +98,7 @@ def deliver_reviewer_notification_task(delivery_id: str):
 
 @shared_task
 def notify_reviewers_document_pending_task(document_id: str):
-    """Notify active officers/admins that a document needs review."""
+    """Notify the reviewers currently scoped to a pending document."""
     try:
         from documents.models import Document
 
