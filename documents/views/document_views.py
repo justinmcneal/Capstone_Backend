@@ -404,7 +404,6 @@ class DocumentListView(AccessControlMixin, APIView):
                 # they are allowed to handle via application assignment scope.
                 has_scope, scope_result = self.get_officer_scoped_customer_ids(
                     request,
-                    include_unassigned=True,
                 )
                 if not has_scope:
                     return scope_result
@@ -573,7 +572,6 @@ class DocumentDetailView(AccessControlMixin, APIView):
                 has_scope, scope_result = self.require_customer_scope_for_officer(
                     request,
                     document.customer_id,
-                    include_unassigned=True,
                     conceal_existence=True,
                 )
                 if not has_scope:
@@ -952,7 +950,6 @@ class DocumentVerifyView(AccessControlMixin, APIView):
                 has_scope, scope_result = self.require_customer_scope_for_officer(
                     request,
                     document.customer_id,
-                    include_unassigned=True,
                     conceal_existence=True,
                 )
                 if not has_scope:
@@ -1156,7 +1153,6 @@ class RequestReuploadView(AccessControlMixin, APIView):
             has_scope, scope_result = self.require_customer_scope_for_officer(
                 request,
                 doc.customer_id,
-                include_unassigned=True,
                 conceal_existence=True,
             )
             if not has_scope:

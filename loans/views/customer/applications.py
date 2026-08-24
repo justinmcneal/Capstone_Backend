@@ -17,6 +17,7 @@ from loans.models import (
 from loans.serializers import LoanApplicationSerializer
 from loans.services import (
     check_basic_eligibility,
+    check_required_documents,
     qualify_customer,
 )
 from loans.services.audit import record_loan_audit
@@ -92,12 +93,27 @@ class LoanApplyView(CustomerRoleRequiredMixin, APIView):
                 customer_id,
                 product,
                 requirements_scope="product",
-                require_approved_documents=True,
+                require_approved_documents=False,
             )
             if not basic["can_apply"]:
                 return error_response(
                     message="Cannot apply - requirements not met",
                     errors={"missing": basic["missing_requirements"]},
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                )
+
+            document_check = check_required_documents(
+                customer_id,
+                product,
+                requirements_scope="product",
+                require_approved_documents=False,
+            )
+            if not document_check["requirements_met"]:
+                return error_response(
+                    message="Cannot apply - requirements not met",
+                    errors={
+                        "missing": document_check["missing_requirements"]
+                    },
                     status_code=status.HTTP_400_BAD_REQUEST,
                 )
 
@@ -108,7 +124,7 @@ class LoanApplyView(CustomerRoleRequiredMixin, APIView):
                 requested_amount=requested_amount,
                 term_months=term_months,
                 purpose=data.get("purpose", ""),
-                require_approved_documents=True,
+                require_approved_documents=False,
             )
 
             # Final safety clamp before persisting recommendation.

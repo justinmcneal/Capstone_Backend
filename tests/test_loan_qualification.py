@@ -21,7 +21,10 @@ from types import SimpleNamespace
 
 import pytest
 
-from loans.services.qualification import rule_based_qualification
+from loans.services.qualification import (
+    check_required_documents,
+    rule_based_qualification,
+)
 
 
 def _make_product(**overrides):
@@ -88,6 +91,86 @@ def _make_document(document_type="valid_id", status="approved"):
         status=status,
         reupload_requested=False,
     )
+
+
+class TestRequiredDocumentGate:
+    def test_pending_required_document_is_accepted_for_application_submission(
+        self, monkeypatch
+    ):
+        product = _make_product(required_documents=["valid_id"])
+        pending_document = _make_document("valid_id", "pending")
+        monkeypatch.setattr(
+            "loans.services.qualification.get_customer_data",
+            lambda customer_id: _make_data(docs=[pending_document]),
+        )
+
+        result = check_required_documents(
+            "customer-1",
+            product,
+            require_approved_documents=False,
+        )
+
+        assert result["requirements_met"] is True
+        assert result["missing_requirements"] == []
+
+    def test_missing_required_document_blocks_application_submission(
+        self, monkeypatch
+    ):
+        product = _make_product(required_documents=["valid_id"])
+        monkeypatch.setattr(
+            "loans.services.qualification.get_customer_data",
+            lambda customer_id: _make_data(docs=[]),
+        )
+
+        result = check_required_documents(
+            "customer-1",
+            product,
+            require_approved_documents=False,
+        )
+
+        assert result["requirements_met"] is False
+        assert result["missing_requirements"] == [
+            "Document required: Valid Government ID"
+        ]
+
+    @pytest.mark.parametrize("document_status", ["rejected", "expired"])
+    def test_unusable_required_document_blocks_application_submission(
+        self, monkeypatch, document_status
+    ):
+        product = _make_product(required_documents=["valid_id"])
+        unusable_document = _make_document("valid_id", document_status)
+        monkeypatch.setattr(
+            "loans.services.qualification.get_customer_data",
+            lambda customer_id: _make_data(docs=[unusable_document]),
+        )
+
+        result = check_required_documents(
+            "customer-1",
+            product,
+            require_approved_documents=False,
+        )
+
+        assert result["requirements_met"] is False
+        assert result["missing_requirements"]
+
+    def test_pending_required_document_blocks_loan_approval(self, monkeypatch):
+        product = _make_product(required_documents=["valid_id"])
+        pending_document = _make_document("valid_id", "pending")
+        monkeypatch.setattr(
+            "loans.services.qualification.get_customer_data",
+            lambda customer_id: _make_data(docs=[pending_document]),
+        )
+
+        result = check_required_documents(
+            "customer-1",
+            product,
+            require_approved_documents=True,
+        )
+
+        assert result["requirements_met"] is False
+        assert result["missing_requirements"] == [
+            "Document pending verification: Valid Government ID"
+        ]
 
 
 class TestRuleBasedQualification:

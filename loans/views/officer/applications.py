@@ -15,6 +15,7 @@ from loans.serializers import (
     LoanReviewSerializer,
     MissingDocumentsRequestSerializer,
 )
+from loans.services import check_required_documents
 from loans.services.audit import record_loan_audit
 from loans.services.related_data import (
     application_related_maps,
@@ -944,6 +945,32 @@ class OfficerReviewView(LoanOfficerRequiredMixin, APIView):
         )
 
         if data["action"] == "approve":
+            product = LoanProduct.find_by_id(app.product_id)
+            if not product:
+                return error_response(
+                    message="Loan product not found",
+                    status_code=status.HTTP_404_NOT_FOUND,
+                )
+
+            document_check = check_required_documents(
+                app.customer_id,
+                product,
+                requirements_scope="product",
+                require_approved_documents=True,
+            )
+            if not document_check["requirements_met"]:
+                return error_response(
+                    message=(
+                        "Required documents must be approved before loan approval"
+                    ),
+                    errors={
+                        "missing_documents": document_check[
+                            "missing_requirements"
+                        ]
+                    },
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                )
+
             # Validate approved_amount does not exceed requested_amount
             if data["approved_amount"] > float(app.requested_amount):
                 return error_response(
