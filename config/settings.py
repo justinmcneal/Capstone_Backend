@@ -16,6 +16,7 @@ import re
 from pathlib import Path
 from urllib.parse import urlparse
 
+import certifi
 from corsheaders.defaults import default_headers
 from cryptography.fernet import Fernet
 from django.core.exceptions import ImproperlyConfigured
@@ -25,6 +26,15 @@ from dotenv import load_dotenv
 from config.mongodb import LazyMongoDatabase
 
 load_dotenv()
+
+# Python installations such as the macOS framework build may not expose a
+# usable OpenSSL CA path. Django's SMTP backend relies on that path for STARTTLS
+# certificate verification, so use the project dependency as a fallback while
+# preserving any deployment-provided SSL_CERT_FILE value.
+if not os.getenv("SSL_CERT_FILE"):
+    _certifi_ca_bundle = Path(certifi.where())
+    if _certifi_ca_bundle.is_file():
+        os.environ["SSL_CERT_FILE"] = str(_certifi_ca_bundle)
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
