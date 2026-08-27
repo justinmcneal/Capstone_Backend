@@ -1,8 +1,10 @@
 import json
 from datetime import datetime, timezone
 
+import mongomock.aggregate as mongomock_aggregate
 import pytest
 from bson import ObjectId
+from bson.decimal128 import Decimal128
 from cryptography.fernet import Fernet
 from django.conf import settings
 
@@ -139,6 +141,24 @@ def encryption_enabled(monkeypatch):
     yield
     field_encryption._build_keyring.cache_clear()
     field_encryption._get_fernet.cache_clear()
+
+
+@pytest.fixture
+def mongomock_decimal128_aggregation(monkeypatch):
+    """Let mongomock execute Decimal128 expressions as exact Decimal numbers."""
+    original_parse = mongomock_aggregate._Parser.parse
+
+    def parse_with_decimal128_numbers(parser, expression):
+        value = original_parse(parser, expression)
+        if isinstance(value, Decimal128):
+            return value.to_decimal()
+        return value
+
+    monkeypatch.setattr(
+        mongomock_aggregate._Parser,
+        "parse",
+        parse_with_decimal128_numbers,
+    )
 
 
 def _reassign(application_id, officer_id):
@@ -460,7 +480,10 @@ def test_repayment_summary_counts_statusless_legacy_payments_as_posted(officer_s
     assert summary["total_paid"] == 1250.5
 
 
-def test_repayment_summary_accurately_includes_amount_only_legacy_payments(officer_scope):
+def test_repayment_summary_accurately_includes_amount_only_legacy_payments(
+    officer_scope,
+    mongomock_decimal128_aggregation,
+):
     settings.MONGODB[LoanPayment.collection_name].insert_one(
         {
             "loan_id": officer_scope.application_id,
@@ -479,7 +502,10 @@ def test_repayment_summary_accurately_includes_amount_only_legacy_payments(offic
     assert summary["total_paid"] == 1250.55
 
 
-def test_repayment_summary_rounds_each_legacy_amount_before_aggregation(officer_scope):
+def test_repayment_summary_rounds_each_legacy_amount_before_aggregation(
+    officer_scope,
+    mongomock_decimal128_aggregation,
+):
     settings.MONGODB[LoanPayment.collection_name].insert_many(
         [
             {
@@ -503,6 +529,26 @@ def test_repayment_summary_rounds_each_legacy_amount_before_aggregation(officer_
     summary = json.loads(result["result"])
     assert summary["posted_payment_count"] == 2
     assert summary["total_paid"] == 0.02
+
+
+def test_repayment_aggregate_rounds_one_point_zero_zero_five_to_101_centavos(
+    officer_scope,
+    mongomock_decimal128_aggregation,
+):
+    settings.MONGODB[LoanPayment.collection_name].insert_one(
+        {
+            "loan_id": officer_scope.application_id,
+            "customer_id": officer_scope.customer_id,
+            "amount": 1.005,
+        }
+    )
+
+    summary = officer_tools._summarize_posted_payments(
+        officer_scope.application_id,
+        officer_scope.customer_id,
+    )
+
+    assert summary == {"count": 1, "total_centavos": 101}
 
 
 def test_repayment_summary_uses_centavos_for_exact_remaining_balance(officer_scope):

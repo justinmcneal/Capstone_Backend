@@ -3,6 +3,7 @@ import json
 import logging
 
 from bson import ObjectId
+from bson.decimal128 import Decimal128
 from django.conf import settings
 
 from ai_assistant.services.officer_scope import (
@@ -223,15 +224,24 @@ def _summarize_posted_payments(loan_id, customer_id):
                                 },
                                 {
                                     "$toLong": {
-                                        "$add": [
-                                            {
-                                                "$multiply": [
-                                                    {"$ifNull": ["$amount", 0]},
-                                                    100,
-                                                ]
-                                            },
-                                            0.5,
-                                        ]
+                                        "$floor": {
+                                            "$add": [
+                                                {
+                                                    "$multiply": [
+                                                        {
+                                                            "$toDecimal": {
+                                                                "$ifNull": [
+                                                                    "$amount",
+                                                                    0,
+                                                                ]
+                                                            }
+                                                        },
+                                                        Decimal128("100"),
+                                                    ]
+                                                },
+                                                Decimal128("0.5"),
+                                            ]
+                                        }
                                     }
                                 },
                                 {"$toLong": "$amount_centavos"},
