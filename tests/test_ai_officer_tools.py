@@ -275,6 +275,79 @@ def test_officer_tool_rejects_unknown_names_and_scope_shaped_arguments(officer_s
     assert invalid_args["code"] == "AI_OFFICER_TOOL_VALIDATION_FAILED"
 
 
+def test_officer_tool_revalidates_scope_before_rejecting_nonempty_arguments(
+    officer_scope,
+):
+    _reassign(officer_scope.application_id, "another-officer")
+
+    result = execute_officer_tool_result(
+        "get_application_summary",
+        {"unexpected": True},
+        officer_scope,
+        request_id="request-1",
+    )
+
+    assert result["code"] == "AI_OFFICER_SCOPE_CHANGED"
+
+
+def test_officer_tool_revalidates_consent_before_rejecting_nonempty_arguments(
+    officer_scope, monkeypatch
+):
+    monkeypatch.setattr(
+        "ai_assistant.services.officer_tools.has_current_ai_consent",
+        lambda scope: False,
+    )
+
+    result = execute_officer_tool_result(
+        "get_application_summary",
+        {"unexpected": True},
+        officer_scope,
+        request_id="request-1",
+    )
+
+    assert result["code"] == "AI_OFFICER_CONSENT_CHANGED"
+
+
+def test_profile_readiness_omits_unrecognized_or_identifier_missing_field_codes(
+    officer_scope,
+):
+    unsafe_codes = [
+        "personal.mobile_number",
+        "personal.address_line1",
+        "personal.city_municipality",
+        "business.business_name",
+        "legacy.field",
+        "Free text supplied by Ana Santos",
+        {"malformed": "missing code"},
+    ]
+    settings.MONGODB["customer_profiles"].update_one(
+        {"customer_id": officer_scope.customer_id},
+        {"$set": {"profile_missing_fields": unsafe_codes}},
+    )
+    settings.MONGODB["business_profiles"].update_one(
+        {"customer_id": officer_scope.customer_id},
+        {"$set": {"profile_missing_fields": unsafe_codes}},
+    )
+
+    result = execute_officer_tool_result(
+        "get_profile_readiness", {}, officer_scope, request_id="request-1"
+    )
+
+    assert result["success"] is True
+    readiness = json.loads(result["result"])
+    assert "missing_fields" not in readiness["personal"]
+    assert "missing_fields" not in readiness["business"]
+    serialized = result["result"].lower()
+    for unsafe_value in (
+        "mobile_number",
+        "address_line1",
+        "city_municipality",
+        "business_name",
+        "ana santos",
+    ):
+        assert unsafe_value not in serialized
+
+
 def test_application_summary_omits_encrypted_customer_entered_fields(
     monkeypatch, encryption_enabled
 ):
@@ -406,6 +479,68 @@ def test_repayment_summary_accurately_includes_amount_only_legacy_payments(offic
     assert summary["total_paid"] == 1250.55
 
 
+def test_repayment_summary_rounds_each_legacy_amount_before_aggregation(officer_scope):
+    settings.MONGODB[LoanPayment.collection_name].insert_many(
+        [
+            {
+                "loan_id": officer_scope.application_id,
+                "customer_id": officer_scope.customer_id,
+                "amount": 0.005,
+            },
+            {
+                "loan_id": officer_scope.application_id,
+                "customer_id": officer_scope.customer_id,
+                "amount": 0.005,
+            },
+        ]
+    )
+
+    result = execute_officer_tool_result(
+        "get_repayment_summary", {}, officer_scope, request_id="request-1"
+    )
+
+    assert result["success"] is True
+    summary = json.loads(result["result"])
+    assert summary["posted_payment_count"] == 2
+    assert summary["total_paid"] == 0.02
+
+
+def test_repayment_summary_uses_centavos_for_exact_remaining_balance(officer_scope):
+    settings.MONGODB["repayment_schedules"].delete_many(
+        {"loan_id": officer_scope.application_id}
+    )
+    settings.MONGODB["repayment_schedules"].insert_one(
+        {
+            "loan_id": officer_scope.application_id,
+            "customer_id": officer_scope.customer_id,
+            "status": "active",
+            "term_months": 1,
+            "monthly_payment": 30000.30,
+            "monthly_payment_centavos": 3000030,
+            "total_amount": 30000.30,
+            "total_amount_centavos": 3000030,
+        }
+    )
+    settings.MONGODB[LoanPayment.collection_name].insert_one(
+        {
+            "loan_id": officer_scope.application_id,
+            "customer_id": officer_scope.customer_id,
+            "amount_centavos": 3000020,
+            "payment_status": "posted",
+        }
+    )
+
+    result = execute_officer_tool_result(
+        "get_repayment_summary", {}, officer_scope, request_id="request-1"
+    )
+
+    assert result["success"] is True
+    summary = json.loads(result["result"])
+    assert summary["total_amount"] == 30000.3
+    assert summary["total_paid"] == 30000.2
+    assert summary["remaining_balance"] == 0.1
+
+
 def test_repayment_summary_excludes_non_posted_payment_statuses(officer_scope):
     settings.MONGODB[LoanPayment.collection_name].insert_many(
         [
@@ -443,8 +578,7 @@ def test_repayment_payment_aggregate_is_grouped_and_never_falls_back_to_find(
                 [
                     {
                         "count": 2,
-                        "amount_centavos": 10000,
-                        "legacy_amount": 20.5,
+                        "total_centavos": 12050,
                     }
                 ]
             )
@@ -462,7 +596,7 @@ def test_repayment_payment_aggregate_is_grouped_and_never_falls_back_to_find(
 
     summary = officer_tools._summarize_posted_payments("loan-1", "customer-1")
 
-    assert summary == {"count": 2, "total_amount": 120.5}
+    assert summary == {"count": 2, "total_centavos": 12050}
     assert collection.find_called is False
     assert collection.pipeline[0] == {
         "$match": {
@@ -476,6 +610,37 @@ def test_repayment_payment_aggregate_is_grouped_and_never_falls_back_to_find(
     }
     assert collection.pipeline[-1] == {"$limit": 1}
     assert any("$group" in stage for stage in collection.pipeline)
+
+
+@pytest.mark.parametrize("product_id", ["not-an-object-id", str(ObjectId())])
+def test_document_review_status_fails_closed_without_a_bound_product(
+    officer_scope, monkeypatch, product_id
+):
+    settings.MONGODB[LoanApplication.collection_name].update_one(
+        {"_id": ObjectId(officer_scope.application_id)},
+        {"$set": {"product_id": product_id}},
+    )
+
+    class TrackingDatabase:
+        def __init__(self, database):
+            self.database = database
+            self.document_collection_accesses = 0
+
+        def __getitem__(self, collection_name):
+            if collection_name == "documents":
+                self.document_collection_accesses += 1
+            return self.database[collection_name]
+
+    database = TrackingDatabase(settings.MONGODB)
+    monkeypatch.setattr(officer_tools.settings, "MONGODB", database)
+
+    result = execute_officer_tool_result(
+        "get_document_review_status", {}, officer_scope, request_id="request-1"
+    )
+
+    assert result["code"] == "AI_OFFICER_TOOL_READ_FAILED"
+    assert "result" not in result
+    assert database.document_collection_accesses == 0
 
 
 def test_document_review_status_excludes_unrequired_customer_documents(officer_scope):
