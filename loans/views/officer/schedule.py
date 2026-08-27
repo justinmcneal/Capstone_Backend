@@ -256,7 +256,7 @@ class ApplyPenaltyView(LoanOfficerRequiredMixin, APIView):
             ip_address=request.META.get("REMOTE_ADDR", ""),
         )
 
-        # Blockchain sync — penalty apply (background thread, no Celery needed)
+        # Durable, feature-gated penalty sync through Celery.
         try:
             from loans.blockchain.sync import sync_penalty
 
@@ -390,7 +390,7 @@ class WaivePenaltyView(LoanOfficerRequiredMixin, APIView):
             ip_address=request.META.get("REMOTE_ADDR", ""),
         )
 
-        # Blockchain sync — penalty waive (background thread, no Celery needed)
+        # Durable, feature-gated penalty sync through Celery.
         try:
             from loans.blockchain.sync import sync_penalty
 

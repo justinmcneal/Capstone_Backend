@@ -235,7 +235,7 @@ class RecordPaymentView(LoanOfficerRequiredMixin, APIView):
         except Exception as e:
             logger.warning(f"Failed to send payment email: {e}")
 
-        # Blockchain sync — payment (background thread, no Celery needed)
+        # Durable, feature-gated payment sync through Celery.
         try:
             from loans.blockchain.sync import sync_payment
 

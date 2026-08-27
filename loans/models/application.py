@@ -9,7 +9,12 @@ from bson import ObjectId
 from django.conf import settings
 from pymongo import ReturnDocument
 
-from config.field_encryption import decrypt_fields, decrypt_value, encrypt_fields, encrypt_value
+from config.field_encryption import (
+    decrypt_fields,
+    decrypt_value,
+    encrypt_fields,
+    encrypt_value,
+)
 from loans.utils.time import utcnow
 
 
@@ -124,9 +129,11 @@ class LoanApplication:
         self.disbursement_error = kwargs.get("disbursement_error", "")
         self.repayment_status = kwargs.get(
             "repayment_status",
-            "paid_off"
-            if self.status == "completed"
-            else ("active" if self.status == "disbursed" else "not_started"),
+            (
+                "paid_off"
+                if self.status == "completed"
+                else ("active" if self.status == "disbursed" else "not_started")
+            ),
         )
         self.paid_off_at = kwargs.get("paid_off_at")
 
@@ -438,9 +445,7 @@ class LoanApplication:
         self._log_status_transition(
             action="loan_assigned",
             actor_id=(
-                officer_id
-                if actor_id is None and actor_type != "system"
-                else actor_id
+                officer_id if actor_id is None and actor_type != "system" else actor_id
             ),
             actor_type=actor_type,
             description=f"Loan application assigned to officer {officer_id}",
@@ -448,11 +453,20 @@ class LoanApplication:
         )
         return self
 
-    def approve(self, officer_id, approved_amount, notes=""):
+    def approve(self, officer_id, approved_amount, notes="", actor_type="loan_officer"):
         """Approve once while the application is still assigned and reviewable."""
         if self.status not in {"submitted", "under_review"}:
             raise ValueError(f"Cannot review application with status: {self.status}")
         officer_id = str(officer_id)
+        actor_type = str(actor_type or "loan_officer")
+        if (
+            actor_type != "admin"
+            and self.assigned_officer
+            and str(self.assigned_officer) != officer_id
+        ):
+            raise LoanTransitionConflict(
+                "The application is assigned to another loan officer."
+            )
         assignee_selector = (
             str(self.assigned_officer)
             if self.assigned_officer
@@ -465,22 +479,35 @@ class LoanApplication:
             },
             action="loan_approved",
             actor_id=officer_id,
-            actor_type="loan_officer",
+            actor_type=actor_type,
             set_fields={
                 "status": "approved",
                 "approved_amount": approved_amount,
-                "assigned_officer": officer_id,
+                "assigned_officer": (
+                    str(self.assigned_officer)
+                    if self.assigned_officer
+                    else officer_id if actor_type == "loan_officer" else None
+                ),
                 "officer_notes": encrypt_value(notes),
                 "decision_date": utcnow(),
             },
         )
         return self
 
-    def reject(self, officer_id, reason, notes=""):
+    def reject(self, officer_id, reason, notes="", actor_type="loan_officer"):
         """Reject once while the application is still assigned and reviewable."""
         if self.status not in {"submitted", "under_review"}:
             raise ValueError(f"Cannot review application with status: {self.status}")
         officer_id = str(officer_id)
+        actor_type = str(actor_type or "loan_officer")
+        if (
+            actor_type != "admin"
+            and self.assigned_officer
+            and str(self.assigned_officer) != officer_id
+        ):
+            raise LoanTransitionConflict(
+                "The application is assigned to another loan officer."
+            )
         assignee_selector = (
             str(self.assigned_officer)
             if self.assigned_officer
@@ -493,10 +520,14 @@ class LoanApplication:
             },
             action="loan_rejected",
             actor_id=officer_id,
-            actor_type="loan_officer",
+            actor_type=actor_type,
             set_fields={
                 "status": "rejected",
-                "assigned_officer": officer_id,
+                "assigned_officer": (
+                    str(self.assigned_officer)
+                    if self.assigned_officer
+                    else officer_id if actor_type == "loan_officer" else None
+                ),
                 "rejection_reason": encrypt_value(reason),
                 "officer_notes": encrypt_value(notes),
                 "decision_date": utcnow(),
@@ -1315,7 +1346,9 @@ class LoanApplication:
             {
                 "$set": {
                     "disbursement_status": "cancelled",
-                    "disbursement_error": encrypt_value(str(reason or "Cancelled by operator")[:500]),
+                    "disbursement_error": encrypt_value(
+                        str(reason or "Cancelled by operator")[:500]
+                    ),
                     "disbursement_failed_at": now,
                     "updated_at": now,
                 },

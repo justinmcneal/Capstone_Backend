@@ -186,7 +186,7 @@ class LoanApplyView(CustomerRoleRequiredMixin, APIView):
                 ip_address=request.META.get("REMOTE_ADDR", ""),
             )
 
-            # Blockchain sync (background thread, no Celery needed)
+            # Durable, feature-gated blockchain sync through Celery.
             try:
                 from loans.blockchain.sync import sync_application
 
