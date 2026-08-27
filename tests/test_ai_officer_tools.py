@@ -3,10 +3,12 @@ from datetime import datetime, timezone
 
 import pytest
 from bson import ObjectId
+from cryptography.fernet import Fernet
 from django.conf import settings
 
 from ai_assistant.services.officer_scope import OfficerAssistantScope
 from loans.models import LoanApplication
+from loans.models.repayment import RepaymentSchedule
 
 from ai_assistant.services.officer_tools import (
     OFFICER_TOOL_SCHEMAS,
@@ -126,6 +128,18 @@ def officer_scope(monkeypatch):
     )
 
 
+@pytest.fixture
+def encryption_enabled(monkeypatch):
+    from config import field_encryption
+
+    monkeypatch.setattr(settings, "FIELD_ENCRYPTION_KEY", Fernet.generate_key().decode())
+    field_encryption._build_keyring.cache_clear()
+    field_encryption._get_fernet.cache_clear()
+    yield
+    field_encryption._build_keyring.cache_clear()
+    field_encryption._get_fernet.cache_clear()
+
+
 def _reassign(application_id, officer_id):
     settings.MONGODB[LoanApplication.collection_name].update_one(
         {"_id": ObjectId(application_id)}, {"$set": {"assigned_officer": officer_id}}
@@ -211,6 +225,23 @@ def test_officer_tool_rechecks_current_customer_consent(officer_scope, monkeypat
     }
 
 
+def test_officer_tool_fails_closed_when_consent_revalidation_cannot_complete(
+    officer_scope, monkeypatch
+):
+    def unavailable(scope):
+        raise RuntimeError("consent service unavailable")
+
+    monkeypatch.setattr(
+        "ai_assistant.services.officer_tools.has_current_ai_consent", unavailable
+    )
+
+    result = execute_officer_tool_result(
+        "get_application_summary", {}, officer_scope, request_id="request-1"
+    )
+
+    assert result["code"] == "AI_OFFICER_CONSENT_CHANGED"
+
+
 def test_officer_tool_fails_closed_when_scope_revalidation_cannot_complete(
     officer_scope, monkeypatch
 ):
@@ -241,3 +272,125 @@ def test_officer_tool_rejects_unknown_names_and_scope_shaped_arguments(officer_s
 
     assert unknown["code"] == "AI_OFFICER_TOOL_UNKNOWN"
     assert invalid_args["code"] == "AI_OFFICER_TOOL_VALIDATION_FAILED"
+
+
+def test_application_summary_omits_encrypted_customer_entered_fields(
+    monkeypatch, encryption_enabled
+):
+    application = LoanApplication(
+        customer_id="customer-99",
+        product_id=str(ObjectId()),
+        requested_amount=10000,
+        purpose="Ana Santos needs funds at 123 PII Street",
+        ai_recommendation={"reason_codes": ["manual-review"], "note": "Ana Santos"},
+        assigned_officer="officer-99",
+        status="under_review",
+    ).save()
+    raw = settings.MONGODB[LoanApplication.collection_name].find_one(
+        {"_id": ObjectId(application.id)}
+    )
+    assert raw["purpose"].startswith("enc::")
+    assert raw["ai_recommendation"].startswith("encbson::")
+    scope = OfficerAssistantScope(
+        officer_id="officer-99",
+        application_id=application.id,
+        customer_id="customer-99",
+        application=application,
+    )
+    monkeypatch.setattr(
+        "ai_assistant.services.officer_tools.has_current_ai_consent", lambda scope: True
+    )
+
+    result = execute_officer_tool_result(
+        "get_application_summary", {}, scope, request_id="request-1"
+    )
+
+    assert result["success"] is True
+    serialized = result["result"].lower()
+    assert "ana santos" not in serialized
+    assert "pii street" not in serialized
+    assert "enc::" not in serialized
+    assert "encbson::" not in serialized
+
+
+def test_repayment_summary_uses_safe_aggregates_for_encrypted_long_schedules(
+    officer_scope, monkeypatch, encryption_enabled
+):
+    installments = [
+        {
+            "number": number,
+            "status": "paid" if number <= 6 else "pending",
+            "total_amount": 1000,
+            "paid_amount": 1000 if number <= 6 else 0,
+            "reference": f"sensitive-reference-{number}",
+        }
+        for number in range(1, 31)
+    ]
+    settings.MONGODB["repayment_schedules"].delete_many(
+        {"loan_id": officer_scope.application_id}
+    )
+    RepaymentSchedule(
+        loan_id=officer_scope.application_id,
+        customer_id=officer_scope.customer_id,
+        term_months=30,
+        monthly_payment=1000,
+        total_amount=30000,
+        installments=installments,
+    ).save()
+    settings.MONGODB["loan_payments"].insert_many(
+        [
+            {
+                "loan_id": officer_scope.application_id,
+                "customer_id": officer_scope.customer_id,
+                "amount_centavos": 100000,
+                "payment_status": "posted",
+            }
+            for _ in range(6)
+        ]
+    )
+    raw = settings.MONGODB["repayment_schedules"].find_one(
+        {"loan_id": officer_scope.application_id}
+    )
+    assert raw["installments"].startswith("encbson::")
+
+    result = execute_officer_tool_result(
+        "get_repayment_summary", {}, officer_scope, request_id="request-1"
+    )
+
+    assert result["success"] is True
+    summary = json.loads(result["result"])
+    assert summary["term_months"] == 30
+    assert summary["total_amount"] == 30000
+    assert summary["total_paid"] == 6000
+    assert summary["remaining_balance"] == 24000
+    assert "installments" not in summary
+    assert "encbson::" not in result["result"]
+
+
+def test_document_review_status_excludes_unrequired_customer_documents(officer_scope):
+    settings.MONGODB["documents"].insert_many(
+        [
+            {
+                "customer_id": officer_scope.customer_id,
+                "document_type": "valid_id",
+                "status": "approved",
+                "verified": True,
+            },
+            {
+                "customer_id": officer_scope.customer_id,
+                "document_type": "business_photo",
+                "status": "rejected",
+                "verified": False,
+            },
+        ]
+    )
+
+    result = execute_officer_tool_result(
+        "get_document_review_status", {}, officer_scope, request_id="request-1"
+    )
+
+    assert result["success"] is True
+    document_types = {
+        document["type"] for document in json.loads(result["result"])["documents"]
+    }
+    assert document_types == {"Valid Government ID"}

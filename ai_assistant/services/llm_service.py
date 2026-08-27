@@ -57,6 +57,7 @@ GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
 
 _session = provider_session
 PUBLIC_PROVIDER_ERROR = "AI service is temporarily unavailable. Please try again later."
+INVALID_TOOL_ARGUMENTS = {"__invalid_tool_arguments__": True}
 
 
 def _policy_result(message, *, model, provider, request_id=None):
@@ -96,6 +97,16 @@ def _controlled_result(message, *, language, model, provider, request_id=None):
     if request_id:
         result['request_id'] = request_id
     return result
+
+
+def _parse_tool_arguments(arguments, *, injected_executor):
+    try:
+        return json.loads(arguments)
+    except json.JSONDecodeError:
+        if injected_executor:
+            return dict(INVALID_TOOL_ARGUMENTS)
+        return {}
+
 
 def _get_config():
     """Read LLM config from Django settings (which reads .env via load_dotenv)."""
@@ -537,23 +548,28 @@ class GroqService:
         """
         from ai_assistant.services.tools import execute_tool_result
 
-        executor = tool_executor or execute_tool_result
+        tool_executor_fn = tool_executor or execute_tool_result
         
         def run_tool(tool_call):
             func = tool_call.get('function', {})
             tool_name = func.get('name', '')
             tool_call_id = tool_call.get('id', '')
             try:
-                tool_args = json.loads(func.get('arguments', '{}'))
-            except json.JSONDecodeError:
-                tool_args = {}
+                tool_args = _parse_tool_arguments(
+                    func.get('arguments', '{}'),
+                    injected_executor=tool_executor is not None,
+                )
+            except TypeError:
+                tool_args = (
+                    dict(INVALID_TOOL_ARGUMENTS) if tool_executor is not None else {}
+                )
             
             logger.info(
                 "AI parallel tool call started",
                 extra={'request_id': request_id, 'tool': tool_name},
             )
             
-            result = executor(
+            result = tool_executor_fn(
                 tool_name,
                 tool_args,
                 customer_id,
@@ -579,9 +595,14 @@ class GroqService:
         
         results = []
         # Use ThreadPoolExecutor for I/O-bound MongoDB queries
-        with ThreadPoolExecutor(max_workers=min(max_workers, len(tool_calls))) as executor:
+        with ThreadPoolExecutor(
+            max_workers=min(max_workers, len(tool_calls))
+        ) as thread_pool:
             # Submit all tasks and maintain order
-            future_to_idx = {executor.submit(run_tool, tc): idx for idx, tc in enumerate(tool_calls)}
+            future_to_idx = {
+                thread_pool.submit(run_tool, tool_call): index
+                for index, tool_call in enumerate(tool_calls)
+            }
             results = [None] * len(tool_calls)
             
             for future in as_completed(future_to_idx):
@@ -764,7 +785,7 @@ class GroqService:
                             tool_calls,
                             customer_id,
                             request_id=request_id,
-                            tool_executor=executor,
+                            tool_executor=tool_executor,
                         )
                         for tool_call_id, tool_name, tool_result, _success in tool_results:
                             tools_called.append(tool_name)
@@ -779,9 +800,16 @@ class GroqService:
                         func = tool_call.get('function', {})
                         tool_name = func.get('name', '')
                         try:
-                            tool_args = json.loads(func.get('arguments', '{}'))
-                        except json.JSONDecodeError:
-                            tool_args = {}
+                            tool_args = _parse_tool_arguments(
+                                func.get('arguments', '{}'),
+                                injected_executor=tool_executor is not None,
+                            )
+                        except TypeError:
+                            tool_args = (
+                                dict(INVALID_TOOL_ARGUMENTS)
+                                if tool_executor is not None
+                                else {}
+                            )
 
                         logger.info(
                             "AI tool call started",
@@ -1108,7 +1136,7 @@ class GroqService:
                             tool_calls,
                             customer_id,
                             request_id=request_id,
-                            tool_executor=executor,
+                            tool_executor=tool_executor,
                         )
                         
                         # Yield results and add to messages
@@ -1130,9 +1158,16 @@ class GroqService:
                         func = tool_call.get('function', {})
                         tool_name = func.get('name', '')
                         try:
-                            tool_args = json.loads(func.get('arguments', '{}'))
-                        except json.JSONDecodeError:
-                            tool_args = {}
+                            tool_args = _parse_tool_arguments(
+                                func.get('arguments', '{}'),
+                                injected_executor=tool_executor is not None,
+                            )
+                        except TypeError:
+                            tool_args = (
+                                dict(INVALID_TOOL_ARGUMENTS)
+                                if tool_executor is not None
+                                else {}
+                            )
 
                         yield {'type': 'tool_call', 'name': tool_name}
                         

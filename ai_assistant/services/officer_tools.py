@@ -1,7 +1,6 @@
 """Read-only, application-bound tools for the loan-officer AI assistant."""
 import json
 import logging
-from datetime import datetime
 
 from bson import ObjectId
 from django.conf import settings
@@ -11,13 +10,15 @@ from ai_assistant.services.officer_scope import (
     has_current_ai_consent,
     revalidate_officer_scope,
 )
+from documents.models.document import Document
 from loans.models import LoanApplication
-from loans.services.qualification import document_type_label
+from loans.models.payment import LoanPayment
+from loans.models.product import LoanProduct
+from loans.services.qualification import document_type_label, resolve_required_document_types
 
 logger = logging.getLogger("ai_assistant")
 
 DOCUMENT_RESULT_LIMIT = 20
-INSTALLMENT_RESULT_LIMIT = 24
 
 OFFICER_TOOL_SCHEMAS = [
     {
@@ -93,12 +94,6 @@ def _safe_missing_fields(codes):
     return labels
 
 
-def _format_date(value):
-    if isinstance(value, datetime):
-        return value.date().isoformat()
-    return None
-
-
 def _get_application_summary(scope):
     projection = {
         "status": 1,
@@ -107,10 +102,8 @@ def _get_application_summary(scope):
         "recommended_amount": 1,
         "approved_amount": 1,
         "term_months": 1,
-        "purpose": 1,
         "eligibility_score": 1,
         "risk_category": 1,
-        "ai_recommendation.reason_codes": 1,
     }
     application = settings.MONGODB[LoanApplication.collection_name].find_one(
         _scope_application_query(scope), projection
@@ -118,26 +111,15 @@ def _get_application_summary(scope):
     if not application:
         raise LookupError("Bound application is unavailable")
 
-    product_name = None
-    product_id = application.get("product_id")
-    if ObjectId.is_valid(str(product_id)):
-        product = settings.MONGODB["loan_products"].find_one(
-            {"_id": ObjectId(str(product_id))}, {"name": 1}
-        )
-        product_name = product.get("name") if product else None
-
-    recommendation = application.get("ai_recommendation") or {}
     return {
         "status": application.get("status"),
-        "product": product_name,
+        "product_assigned": bool(application.get("product_id")),
         "requested_amount": application.get("requested_amount"),
         "recommended_amount": application.get("recommended_amount"),
         "approved_amount": application.get("approved_amount"),
         "term_months": application.get("term_months"),
-        "purpose": application.get("purpose"),
         "eligibility_score": application.get("eligibility_score"),
         "risk_category": application.get("risk_category"),
-        "risk_reason_codes": recommendation.get("reason_codes", []),
         "review_readiness": (
             "ready_for_review"
             if application.get("status") == "under_review"
@@ -196,10 +178,29 @@ def _get_profile_readiness(scope):
 
 def _get_document_review_status(scope):
     customer_id = str(scope.customer_id)
+    application = settings.MONGODB[LoanApplication.collection_name].find_one(
+        _scope_application_query(scope), {"product_id": 1}
+    )
+    if not application:
+        raise LookupError("Bound application is unavailable")
+    product_id = application.get("product_id")
+    product = None
+    if ObjectId.is_valid(str(product_id)):
+        product_data = settings.MONGODB[LoanProduct.collection_name].find_one(
+            {"_id": ObjectId(str(product_id))}, {"required_documents": 1}
+        )
+        product = LoanProduct.from_dict(product_data)
+    required_types = resolve_required_document_types(product)
     projection = {"document_type": 1, "status": 1, "verified": 1}
     documents = list(
         settings.MONGODB["documents"]
-        .find({"customer_id": customer_id}, projection)
+        .find(
+            {
+                **Document.available_query(Document._customer_query(customer_id)),
+                "document_type": {"$in": required_types},
+            },
+            projection,
+        )
         .sort("uploaded_at", -1)
         .limit(DOCUMENT_RESULT_LIMIT + 1)
     )
@@ -221,12 +222,9 @@ def _get_document_review_status(scope):
 def _get_repayment_summary(scope):
     projection = {
         "status": 1,
+        "term_months": 1,
         "monthly_payment": 1,
-        "installments.number": 1,
-        "installments.status": 1,
-        "installments.due_date": 1,
-        "installments.total_amount": 1,
-        "installments.paid_amount": 1,
+        "total_amount": 1,
     }
     schedule = settings.MONGODB["repayment_schedules"].find_one(
         {"loan_id": str(scope.application_id), "customer_id": str(scope.customer_id)},
@@ -235,22 +233,24 @@ def _get_repayment_summary(scope):
     if not schedule:
         return {"schedule_available": False}
 
-    installments = list(schedule.get("installments") or [])[:INSTALLMENT_RESULT_LIMIT]
-    paid = sum(item.get("status") == "paid" for item in installments)
-    remaining = sum(
-        max((item.get("total_amount") or 0) - (item.get("paid_amount") or 0), 0)
-        for item in installments
+    payment_summary = LoanPayment.summarize(
+        {
+            "loan_id": str(scope.application_id),
+            "customer_id": str(scope.customer_id),
+            "payment_status": "posted",
+        }
     )
-    next_due = next((item for item in installments if item.get("status") != "paid"), None)
+    total_amount = schedule.get("total_amount") or 0
+    total_paid = payment_summary["total_amount"]
     return {
         "schedule_available": True,
         "schedule_status": schedule.get("status"),
+        "term_months": schedule.get("term_months"),
         "monthly_amount": schedule.get("monthly_payment"),
-        "installments_shown": len(installments),
-        "installments_paid": paid,
-        "remaining_balance": remaining,
-        "next_due_date": _format_date(next_due.get("due_date")) if next_due else None,
-        "next_due_status": next_due.get("status") if next_due else None,
+        "total_amount": total_amount,
+        "total_paid": total_paid,
+        "posted_payment_count": payment_summary["count"],
+        "remaining_balance": max(total_amount - total_paid, 0),
     }
 
 

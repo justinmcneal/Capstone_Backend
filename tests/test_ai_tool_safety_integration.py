@@ -70,7 +70,16 @@ class MockCache:
         self._store.clear()
 
 
-def _tool_call_responses():
+def _tool_call_responses(tool_calls=None):
+    tool_calls = tool_calls or [
+        {
+            "id": "call-1",
+            "function": {
+                "name": "get_profile_status",
+                "arguments": "{}",
+            },
+        }
+    ]
     tool_call_response = MagicMock()
     tool_call_response.status_code = 200
     tool_call_response.json.return_value = {
@@ -78,15 +87,7 @@ def _tool_call_responses():
             {
                 "finish_reason": "tool_calls",
                 "message": {
-                    "tool_calls": [
-                        {
-                            "id": "call-1",
-                            "function": {
-                                "name": "get_profile_status",
-                                "arguments": "{}",
-                            },
-                        }
-                    ]
+                    "tool_calls": tool_calls
                 },
             }
         ]
@@ -108,6 +109,10 @@ def _service_with_one_tool_call(monkeypatch):
         "ai_assistant.services.llm_service._session.post", Mock(side_effect=responses)
     )
     return GroqService(api_key="synthetic-key", model="synthetic", provider="groq")
+
+
+def _tool_call(name, arguments, call_id):
+    return {"id": call_id, "function": {"name": name, "arguments": arguments}}
 
 
 def test_customer_chat_uses_existing_executor_when_no_executor_is_injected(monkeypatch):
@@ -161,6 +166,120 @@ def test_non_streaming_chat_uses_injected_executor_for_tool_calls(monkeypatch):
     injected.assert_called_once_with(
         "get_profile_status", {}, "customer-1", request_id=None
     )
+
+
+def test_streaming_injected_executor_receives_malformed_tool_arguments(monkeypatch):
+    injected = Mock(
+        return_value={
+            "success": False,
+            "error": "Officer tool arguments are invalid.",
+            "code": "AI_OFFICER_TOOL_VALIDATION_FAILED",
+        }
+    )
+    responses = _tool_call_responses(
+        [_tool_call("get_profile_status", "{malformed", "call-1")]
+    )
+    monkeypatch.setattr(
+        "ai_assistant.services.llm_service._session.post", Mock(side_effect=responses)
+    )
+
+    events = list(
+        GroqService(api_key="synthetic-key", model="synthetic", provider="groq")
+        .chat_with_tools_stream(
+            message="Review my profile status",
+            customer_id="customer-1",
+            tools=TOOL_SCHEMAS,
+            tool_executor=injected,
+        )
+    )
+
+    injected.assert_called_once_with(
+        "get_profile_status",
+        {"__invalid_tool_arguments__": True},
+        "customer-1",
+        request_id=None,
+    )
+    assert next(event for event in events if event["type"] == "tool_result")["success"] is False
+
+
+def test_default_customer_executor_keeps_malformed_argument_normalization(monkeypatch):
+    existing = Mock(return_value={"success": True, "result": "{}"})
+    monkeypatch.setattr("ai_assistant.services.tools.execute_tool_result", existing)
+    responses = _tool_call_responses(
+        [_tool_call("get_profile_status", "{malformed", "call-1")]
+    )
+    monkeypatch.setattr(
+        "ai_assistant.services.llm_service._session.post", Mock(side_effect=responses)
+    )
+
+    list(
+        GroqService(api_key="synthetic-key", model="synthetic", provider="groq")
+        .chat_with_tools_stream(
+            message="Review my profile status", customer_id="customer-1", tools=TOOL_SCHEMAS
+        )
+    )
+
+    existing.assert_called_once_with("get_profile_status", {}, "customer-1", request_id=None)
+
+
+def test_streaming_parallel_injected_executor_receives_two_tool_calls(monkeypatch):
+    calls = [
+        _tool_call("get_profile_status", "{malformed", "call-1"),
+        _tool_call("get_document_status", "{}", "call-2"),
+    ]
+    injected = Mock(return_value={"success": True, "result": "{}"})
+    monkeypatch.setattr(
+        "ai_assistant.services.llm_service._session.post",
+        Mock(side_effect=_tool_call_responses(calls)),
+    )
+
+    events = list(
+        GroqService(api_key="synthetic-key", model="synthetic", provider="groq")
+        .chat_with_tools_stream(
+            message="Review my profile and documents",
+            customer_id="customer-1",
+            tools=TOOL_SCHEMAS,
+            tool_executor=injected,
+        )
+    )
+
+    received = {call.args[0]: call.args[1] for call in injected.call_args_list}
+    assert received == {
+        "get_profile_status": {"__invalid_tool_arguments__": True},
+        "get_document_status": {},
+    }
+    assert {event["name"] for event in events if event["type"] == "tool_result"} == {
+        "get_profile_status",
+        "get_document_status",
+    }
+
+
+def test_non_streaming_parallel_injected_executor_receives_two_tool_calls(monkeypatch):
+    calls = [
+        _tool_call("get_profile_status", "{}", "call-1"),
+        _tool_call("get_document_status", "{}", "call-2"),
+    ]
+    injected = Mock(return_value={"success": True, "result": "{}"})
+    tool_call_response, completion_response, _ = _tool_call_responses(calls)
+    monkeypatch.setattr(
+        "ai_assistant.services.llm_service._session.post",
+        Mock(side_effect=[tool_call_response, completion_response]),
+    )
+
+    result = GroqService(
+        api_key="synthetic-key", model="synthetic", provider="groq"
+    ).chat_with_tools(
+        message="Review my profile and documents",
+        customer_id="customer-1",
+        tools=TOOL_SCHEMAS,
+        tool_executor=injected,
+    )
+
+    assert result["success"] is True
+    assert {call.args[0] for call in injected.call_args_list} == {
+        "get_profile_status",
+        "get_document_status",
+    }
 
 
 @pytest.fixture(autouse=True)
