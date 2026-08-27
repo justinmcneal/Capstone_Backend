@@ -107,6 +107,9 @@ class TestNotificationListView:
         assert response.status_code == 200
         assert response.data['data']['notifications'] == []
         assert response.data['data']['pagination']['total_items'] == 0
+        assert response.data['data']['pagination']['total_pages'] == 0
+        assert response.data['data']['pagination']['has_next'] is False
+        assert response.data['data']['pagination']['has_previous'] is False
 
     def test_lists_notifications_owned_by_customer(self, monkeypatch):
         db = _setup_db(monkeypatch)

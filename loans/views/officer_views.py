@@ -4,6 +4,7 @@ from loans.views.officer.base import (
 )
 from loans.views.officer.applications import (
     OfficerApplicationListView,
+    OfficerApplicationStatusCountsView,
     OfficerApplicationDetailView,
     OfficerApplicationNotesView,
     OfficerRequestMissingDocumentsView,
