@@ -1,6 +1,6 @@
 # Loans Production Readiness Review
 
-Last updated: 2026-08-15
+Last updated: 2026-08-27
 
 Scope: `loans/`, `/api/loans/`, loan products, qualification, applications,
 assignment and review, disbursement, repayment accounting, penalties, payoff,
@@ -29,7 +29,8 @@ settlement, or blockchain behavior.
 
 ## Executive Summary
 
-The Loans module is **feature-rich but not yet production-ready**. Product
+The Loans module is **application-complete for the approved cash/check baseline,
+but not yet approved for production deployment**. Product
 management, qualification, customer applications, manual assignment, scoped
 officer review, cash/check disbursement, centavo-based repayment accounting,
 penalties, early payoff, encrypted sensitive fields, audit integration, and a
@@ -47,9 +48,11 @@ when blockchain is explicitly enabled. No other settlement rail is represented
 in the API, persistence validator, AI guidance, or smart-contract enums. The
 remaining blockers are deployment and release evidence:
 
-1. The isolated real-Mongo Stage 2 suite exists but has not been executed
-   against an approved target; local `mongomock` concurrency is not deployment
-   evidence.
+1. The expanded six-case isolated real-Mongo Stage 2 suite exists. Its
+   configured-target execution was attempted on 2026-08-27, but Atlas rejected
+   the TLS handshake during the preflight ping, before a test database was
+   created. Resolve target connectivity and rerun it; local `mongomock`
+   concurrency is not real-Mongo evidence.
 2. Stage 4 inventory/backfill commands, validators, compound indexes, and an
    isolated real-Mongo suite exist, but have not been executed against a
    reviewed deployment copy or approved isolated MongoDB target.
@@ -63,20 +66,36 @@ remaining blockers are deployment and release evidence:
    operational gauges pass locally but still require deployed traffic, worker
    loss, dashboard, and alert-delivery evidence.
 
+Stage 6 validation tooling is now implemented. The read-only
+`loan_release_check` command fails closed on missing configuration, MongoDB
+indexes/validators, dirty inventory, or unrecorded external evidence. Opt-in
+deployment probes cover shared Redis state, multiple Loans queue consumers,
+authenticated HTTPS/read load, and every Loans Prometheus metric family. These
+tools make the remaining work repeatable; they do not turn local development
+results into production evidence.
+
 Current automated baseline:
 
-- Loan/blockchain-related selection: **510 passed, 13 skipped, 713 deselected**
-  on 2026-08-15.
-- Full repository regression: **1,276 passed, 39 skipped** on 2026-08-15.
-- The 13 loan-selection skips are nine real-Ganache cases, three opt-in Stage 2
-  real-Mongo cases, and one opt-in Stage 4 real-Mongo case; skips are not
-  deployment evidence.
+- Loan/blockchain-related selection: **527 passed, 20 skipped, 720 deselected**
+  on 2026-08-27.
+- Full repository regression: **1,301 passed, 46 skipped** on 2026-08-27.
+- The 20 loan-selection skips are nine real-Ganache cases, six opt-in Stage 2
+  real-Mongo cases, one opt-in Stage 4 real-Mongo case, and four opt-in Stage 6
+  deployment probes; skips are not deployment evidence.
 - The selection includes model, API, permission, qualification, payment,
   disbursement, repayment, export, audit, task, wallet-recovery, blockchain
   service, event-listener, and saga tests.
 - Stage 4 focused validation: **11 passed, 1 skipped** on 2026-08-15. The skip
   is the deliberately opt-in isolated real-Mongo validator/index/query-plan
   case and is not deployment evidence.
+- Stage 6 focused local validation: **10 passed, 4 skipped** on 2026-08-27,
+  covering the fail-closed checker, lease/worker-loss recovery, task routing,
+  and a complete cash/check lifecycle smoke flow. The four skips are the
+  deliberately opt-in Redis, Celery-worker, HTTPS/load, and metrics probes.
+- The Redis and Celery probes were also opted in separately against a
+  disposable local Redis and two independent local workers; both passed. This
+  is useful process-level evidence, but must still be repeated in the selected
+  deployment topology.
 
 ## Current Status
 
@@ -87,7 +106,7 @@ Current automated baseline:
 | Applications | Implemented; real-Mongo proof pending | Owner-scoped create/list/detail/update/resubmit flows use guarded submit/resubmit transitions and stable conflicts. |
 | Assignment | Implemented; real-Mongo proof pending | Admin assign/reassign transitions compare the expected status and assignee; competing stale requests cannot overwrite the winner. Auto-assignment remains unused. |
 | Officer review | Implemented; deployment proof pending | Review decisions are one-winner transitions, encrypted note appends use retrying compare-and-set, and document-request history is atomically preserved. Customer outcomes use the durable loan outbox. |
-| Cash/check disbursement | Implemented with remaining hardening | Idempotency, atomic disbursement claims, safe public failures, and a cash default exist; deployment concurrency proof remains. |
+| Cash/check disbursement | Implemented locally; deployment proof pending | Idempotency, atomic disbursement claims, safe public failures, and a full disbursement/payment/payoff smoke flow exist; real-Mongo and deployed concurrency proof remain. |
 | Wallet disbursement/payment | Partial; deployment-gated | Confirmation, durable retries, leases, exact rebroadcast, and recovery exist; real-chain and multi-worker evidence remain. |
 | Repayment accounting | Implemented for the baseline | Versioned centavo math, optimistic schedule updates, exact payoff terms, and atomic penalty/waiver handling exist. Collected waiver credit is carried forward; a waiver requiring an external refund is rejected. Reserved reversal/write-off workflows remain unavailable. |
 | Retrieval/search/export | Implemented locally; load proof pending | Role-scoped pagination, keyed exact payment-reference search, explicit supporting-search truncation, and a configurable 10,000-row synchronous export ceiling are implemented. |
@@ -95,7 +114,7 @@ Current automated baseline:
 | MongoDB schema/indexes | Implemented locally; real-Mongo proof pending | Count-only inventory, dry-run-first backfill, strict validator manifests, compound indexes, and an isolated real-Mongo suite exist. Target execution remains pending. |
 | Background processing | Implemented locally; deployment proof pending | Overdue, lifecycle, wallet, retention, notification, and metric jobs are bounded and routed to a dedicated queue; mutation scans use leases/checkpoints and notification delivery uses per-record leases. Multi-worker/load proof remains. |
 | Monitoring | Implemented locally; deployment proof pending | Low-cardinality request, lifecycle/settlement, notification, backlog, and oldest-age metrics plus tested Prometheus rules and a provisioned Grafana dashboard exist. Live alert delivery remains Stage 6 evidence. |
-| Production deployment | Not approved | Real MongoDB, Redis/Celery, chain/RPC, proxy, secrets, backup/restore, monitoring, and incident evidence remain. |
+| Production deployment | Validation tooling implemented; not approved | `loan_release_check` and opt-in deployment probes now fail closed and report missing evidence. Real MongoDB, Redis/Celery, optional chain/RPC, proxy, secrets, backup/restore, monitoring, and incident evidence still must come from the selected topology. |
 
 ## Module Responsibilities
 
@@ -275,7 +294,7 @@ The exact request/response examples and test sequence are maintained in
   schedule exports fail closed if their required access audit cannot be stored.
 - CSV exports stream in 200-schedule processing batches, fail closed when their
   access audit cannot be recorded, and protect against spreadsheet formula
-  injection. The total export is not bounded.
+  injection. A preflight count rejects exports above `LOAN_EXPORT_MAX_ROWS`.
 
 ## Persistence and Background Processing
 
@@ -285,19 +304,24 @@ Primary collections are:
 - `loan_applications`;
 - `repayment_schedules`;
 - `loan_payments`;
-- `blockchain_transactions`; and
-- supporting blockchain sender-lock and audit-cursor records.
+- `blockchain_transactions`;
+- `loan_notification_deliveries`; and
+- supporting operational lease/checkpoint, blockchain sender-lock, and
+  audit-cursor records.
 
 `init_db.py` installs model indexes, including unique product code, one schedule
 per loan, payment/disbursement idempotency, external reference fingerprints,
 wallet transaction hashes, and blockchain transaction keys. It does **not**
-install loan JSON-schema validators.
+silently ignore failures: it installs the strict Loans JSON-schema validators
+and fails closed if an index or validator cannot be applied.
 
 Scheduled work currently includes daily overdue marking, daily paid-off
 reconciliation, five-minute wallet-disbursement reconciliation, one-minute
-blockchain audit polling, and five-minute blockchain domain reconciliation.
-Wallet execution is routed to the `blockchain` queue; the repayment scans use
-the default queue.
+notification reconciliation, daily retention enforcement, five-minute metrics,
+one-minute blockchain audit polling, and five-minute blockchain domain
+reconciliation. Wallet execution is routed to the `blockchain` queue; bounded
+Loans lifecycle, notification, retention, and metrics tasks use the dedicated
+`loans` queue.
 
 ## Implemented Controls and Remaining Release Conditions
 
@@ -319,8 +343,8 @@ the default queue.
    treated literally and results are deterministically ordered.
 
 Evidence: `tests/test_loans_stage1_security_contract.py` provides 17 focused
-regressions. The broader Loans selection passes with 477 passed and 9 opt-in
-Ganache tests skipped.
+regressions. The current broader Loans selection result is recorded in the
+automated baseline above.
 
 ### 2. Atomic lifecycle and financial correctness
 
@@ -340,9 +364,13 @@ Ganache tests skipped.
    decision blockchain jobs.
 5. Wallet rebroadcast count now increments only from the successful broadcast
    callback; failed sends do not inflate it.
-6. Eight focused local Stage 2 regressions pass. Three opt-in real-Mongo tests
-   cover review, assignment, notes, disbursement claims, payment tokens, payoff,
-   and schedule completion but remain unexecuted pending target approval.
+6. Nine focused local Stage 2 regressions pass, including direct model-layer
+   cross-officer review denial and administrator review that preserves the
+   assigned officer. Six opt-in real-Mongo tests cover review, assignment,
+   notes, submission/resubmission, missing-document history, disbursement
+   claims, payment tokens, crash/replay recovery, payoff, and lifecycle
+   reconciliation. Their configured-target attempt was blocked at the TLS
+   preflight before any test database was created.
 
 Release evidence: one-winner concurrent transition tests and crash/replay tests
 at every mutation boundary.
@@ -396,9 +424,10 @@ Implemented:
   and blockchain reconciliation.
 - Payment-reference search now uses a normalized keyed HMAC blind index and
   supports previous encryption keys during rotation; ciphertext regex is gone.
-- An opt-in isolated real-Mongo suite installs the validators/indexes, rejects
-  invalid writes, inserts a representative payment fixture, and requires an
-  indexed reference-search plan.
+- An opt-in isolated real-Mongo suite installs every Loans validator/index,
+  rejects invalid writes across all five validated collections, inventories
+  duplicate-sensitive keys, inserts a representative 500-payment fixture, and
+  requires indexed plans for eleven critical query shapes.
 
 Release evidence: reviewed inventory, approved backup, applied backfill,
 validator/index manifest, clean post-inventory, and target query plans.
@@ -421,8 +450,9 @@ validator/index manifest, clean post-inventory, and target query plans.
   financial records are not skipped into a lossy dead-letter path: the durable
   checkpoint remains before the failure so the next scheduled run retries it.
 
-Release evidence: query-plan assertions, large-fixture tests, overlapping-worker
-tests, and representative load/latency measurements.
+Release evidence: the local lease/checkpoint and two-worker Redis/Celery probes
+pass. Target query-plan assertions, representative production-volume load and
+latency measurements, and deployed worker-loss/Beat-overlap proof remain.
 
 ### 6. Privacy, notification durability, and observability
 
@@ -538,10 +568,11 @@ query plans, validators reject invalid data, and scheduled work is batched,
 leased, checkpointed, and safe under overlap.
 
 The application-code exit condition is met by 11 focused local regressions.
-Final closure requires reviewing inventory/backfill against a deployment copy,
-then running the isolated Stage 4 real-Mongo suite and representative
-multi-worker/load evidence. No production database mutation was performed as
-part of this stage.
+The real-Mongo suite now covers every validator, duplicate-sensitive keys, and
+eleven critical query plans. Final closure requires reviewing
+inventory/backfill against a deployment copy, then running that suite and
+representative deployed load evidence. No production database mutation was
+performed as part of this stage.
 
 ### Stage 5 — Privacy lifecycle, notification durability, and observability
 
@@ -566,7 +597,8 @@ remain Stage 6 conditions rather than missing Stage 5 code.
 
 ### Stage 6 — Real-environment release validation
 
-**Status: Pending — begins after Stages 1–5 and deployment-topology selection**
+**Status: Validation tooling and local process proof complete — deployment
+execution pending (2026-08-27)**
 
 - Run reviewed inventory/backfill, backup/restore, validators, indexes, and
   real-Mongo query plans against a deployment copy.
@@ -577,9 +609,27 @@ remain Stage 6 conditions rather than missing Stage 5 code.
 - Test authenticated APIs, large exports, and stable errors through HTTPS.
 - Rehearse key rotation, incident response, rollback, and alert delivery; then
   run the full suite and end-to-end release smoke flows.
+- Use the read-only `loan_release_check` as the final fail-closed summary. It
+  checks runtime safety settings, MongoDB connectivity, required indexes and
+  validators, bounded inventory, task routing/recovery configuration,
+  monitoring assets, the cash/check or approved blockchain baseline, and
+  explicit evidence flags.
+- Use `tests/test_loans_stage6_deployment_integrations.py` for opt-in probes of
+  multi-process Redis, at least two workers consuming the `loans` queue,
+  authenticated HTTPS/load behavior, and deployed metric families. Existing
+  Stage 2/4 real-Mongo and blockchain integration suites remain the canonical
+  proof for those boundaries.
 
 **Exit condition:** the release checklist has recorded evidence from the actual
 deployment topology and contains no unresolved production blocker.
+
+The Stage 6 application tooling exit condition is met by ten focused local
+regressions, including worker-loss recovery and the full cash/check lifecycle.
+The Redis shared-state and two-worker queue probes also passed against
+disposable local processes. Production approval remains pending because those
+results do not prove the deployed topology, the HTTPS/load and live-metrics
+probes still need deployed targets, and the external backup, recovery, policy,
+alert-delivery, and final release evidence has not been recorded.
 
 ## API and Client Impact Notes
 
@@ -618,10 +668,14 @@ deployment topology and contains no unresolved production blocker.
 ## Review Boundaries
 
 This review inspected repository code and documentation and ran local automated
-tests. It did not read `.env`, customer uploads, ML data, private keys, cloud
-credentials, backups, logs, `dump.rdb`, or production data. It did not initialize
-or mutate MongoDB, deploy contracts, send blockchain transactions, run Celery
-operations, or call external payment providers.
+tests. It did not directly read `.env`, customer uploads, ML data, private keys,
+cloud credentials, backups, logs, `dump.rdb`, or production data. The configured
+MongoDB URI was passed internally to the isolated test runner without printing
+it; the connection failed during TLS preflight, so no test database was created
+or mutated. Disposable local Redis and two local Celery workers were used and
+shut down after their probes passed. The review did not initialize the
+application database, deploy contracts, send blockchain transactions, or call
+external payment providers.
 
 The review does not approve lending, pricing, collections, write-off, privacy,
 or regulatory policy. Those require authorized business, accounting, legal,
@@ -646,7 +700,10 @@ After Stages 1–5 are complete, Stage 6 production approval requires:
    restore, incident response, and rollback;
 10. generate representative traffic and prove metrics, dashboards, and alert
     delivery; and
-11. run the full repository suite plus an end-to-end loan lifecycle smoke test.
+11. repeat the green full repository suite and cash/check lifecycle smoke test
+    in the release revision; then run
+    `.venv/bin/python manage.py loan_release_check` and require every check and
+    the overall result to report `PASS`.
 
 If the first release deliberately excludes blockchain, set
 `BLOCKCHAIN_ENABLED=False`, expose only cash/check operations, disable wallet in

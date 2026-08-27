@@ -1,6 +1,6 @@
 # Loans Testing Guide
 
-Last updated: 2026-08-15
+Last updated: 2026-08-27
 
 Scope: local automated tests, authenticated API checks, MongoDB persistence,
 Redis/Celery work, and optional blockchain validation for the Loans module.
@@ -26,16 +26,17 @@ release conditions are tracked in `LOANS_PRODUCTION_READINESS_REVIEW.md`.
 
 ## Current Automated Baseline
 
-The following repository selection passed on 2026-08-15:
+The following repository selection passed on 2026-08-27:
 
 ```bash
 .venv/bin/pytest -q tests \
   -k 'loan or blockchain or qualification or wallet_disbursement or repayment'
 ```
 
-Result after Stage 5: **510 passed, 13 skipped, 713 deselected**. Nine skips
-require Ganache/RPC, three are the explicitly opt-in Stage 2 real-Mongo suite,
-and one is the opt-in Stage 4 real-Mongo suite.
+Current result after the Loans closure validation: **527 passed, 20 skipped,
+720 deselected**. Nine skips require Ganache/RPC, six are the
+explicitly opt-in Stage 2 real-Mongo suite, one is the opt-in Stage 4 real-Mongo
+suite, and four are the new Stage 6 deployment probes.
 
 Stage 1 focused validation also passed:
 
@@ -47,9 +48,24 @@ Result: **17 passed**. These cases cover cross-officer concealment, role-safe
 blockchain payloads, strict administrator queries, stable public failures, and
 disbursement/recovery response minimization.
 
-The full repository regression result after Stage 5 is **1,276 passed and 39
+The full repository regression result on 2026-08-27 is **1,301 passed and 46
 skipped**. The skips remain explicitly opt-in external-service suites; they are
 not counted as deployment evidence.
+
+Stage 6 release-tooling validation:
+
+```bash
+.venv/bin/pytest -q \
+  tests/test_loans_stage6_release_validation.py \
+  tests/test_loans_stage6_worker_recovery.py \
+  tests/test_loans_cash_check_release_smoke.py \
+  tests/test_loans_stage6_deployment_integrations.py
+```
+
+Result on 2026-08-27: **10 passed, 4 skipped**. The four opt-in probes skip in
+the ordinary local suite. The Redis shared-state and Celery queue probes were
+then run separately against a disposable local Redis and two independent local
+workers; both passed. HTTPS/load and deployed metrics remain deployment-only.
 
 Stage 2 local validation:
 
@@ -57,7 +73,8 @@ Stage 2 local validation:
 .venv/bin/pytest -q tests/test_loans_stage2_atomic_lifecycle.py
 ```
 
-Result: **8 passed**.
+Result: **9 passed**. This includes the direct cross-officer review guard and
+administrator-review assignment-preservation regression.
 
 Stage 3 focused policy validation:
 
@@ -493,9 +510,8 @@ Test `search`, `loan_id`, `customer_id`, `disbursed_only`, `payment_status`,
 
 Test officer scope, admin scope, required audit failure, JSON output, CSV
 streaming, date/status filters, and values beginning with `=`, `+`, `-`, or `@`
-to prove spreadsheet formula protection. Add a large-result test that exposes
-the current full pre-count plus second scan and, after remediation, proves the
-approved maximum or asynchronous export contract.
+to prove spreadsheet formula protection. Verify that a result above
+`LOAN_EXPORT_MAX_ROWS` is rejected before a partial synchronous export begins.
 
 ## Stage Validation Map
 
@@ -505,11 +521,11 @@ mapping between each stage and its required test evidence.
 | Stage | Primary test scope | Current evidence status |
 | --- | --- | --- |
 | Stage 1 — Authorization and public response contract | Authenticated routes, role/permission/owner/assignment isolation, blockchain field allowlists, stable errors | **Complete:** 17 focused regressions pass; broader Loans selection passes |
-| Stage 2 — Atomic lifecycle and financial correctness | Concurrent review/assignment/notes, idempotent disbursement/payment/payoff, crash/replay | Application code and eight focused local regressions complete; three isolated real-Mongo tests added but execution is pending approval |
+| Stage 2 — Atomic lifecycle and financial correctness | Concurrent review/assignment/notes, idempotent disbursement/payment/payoff, crash/replay | Application code and nine focused local regressions pass; the expanded six-case isolated real-Mongo run was attempted but its configured Atlas target failed the TLS preflight before test-database creation |
 | Stage 3 — Settlement scope and approved policies | Cash/check, feature-gated wallet, public policy contract, concurrent penalty/waiver credit, explicit payoff/rate terms | **Complete in application code:** seven focused regressions and the broader Loans selection pass; institutional policy approval and optional deployed-wallet evidence remain release gates |
-| Stage 4 — MongoDB schema and bounded execution | Validators, inventory/backfill, unique indexes, query plans, large fixtures, overlapping jobs | **Implemented locally:** 11 focused regressions pass; the isolated real-Mongo proof is present but not yet executed |
+| Stage 4 — MongoDB schema and bounded execution | Validators, inventory/backfill, unique indexes, query plans, large fixtures, overlapping jobs | **Implemented locally:** 11 focused regressions pass; the isolated suite now covers all five validators and eleven critical query plans, but target execution remains pending |
 | Stage 5 — Privacy, notifications, and observability | Export/retention/hold/pseudonymization, encryption rotation, outbox recovery, metrics/rules/dashboard | **Complete locally:** eight focused regressions and Prometheus rule/config validation pass; policy and deployed alert evidence remain release gates |
-| Stage 6 — Real-environment release validation | Deployment MongoDB, Redis/Celery, optional chain, HTTPS, load, backup/restore, rollback, dashboards/alerts | Pending deployment topology |
+| Stage 6 — Real-environment release validation | Deployment MongoDB, Redis/Celery, optional chain, HTTPS, load, backup/restore, rollback, dashboards/alerts | **Tooling/local proof complete:** ten local regressions and the disposable Redis/two-worker probes pass; HTTPS, deployed metrics, recovery rehearsals, and final target evidence remain pending |
 
 When implementing a stage, add its focused tests in the same change and update
 both this guide and the production review with the exact result. Do not mark a
@@ -620,6 +636,56 @@ promtool check rules monitoring/loans/prometheus-rules.yml
 promtool test rules monitoring/loans/prometheus-rules.test.yml
 promtool check config monitoring/loans/prometheus-smoke.yml
 ```
+
+## Stage 6 Release Validation
+
+Run the non-secret, read-only summary at any time:
+
+```bash
+.venv/bin/python manage.py loan_release_check
+.venv/bin/python manage.py loan_release_check --json
+```
+
+It intentionally exits non-zero until every production condition is proven.
+The `LOANS_*_VERIFIED` values in `.env.example` are evidence acknowledgements,
+not switches that perform a test. Keep them `False` in development. In the
+final deployment, set a flag to `True` only after retaining the corresponding
+test output or approved operational record. If blockchain remains disabled,
+`LOANS_BLOCKCHAIN_VERIFIED` may remain `False`; the release command accepts the
+cash/check baseline when `BLOCKCHAIN_ENABLED=False`.
+
+Run the deployment probes against the approved target:
+
+```bash
+RUN_LOANS_REDIS_DEPLOYMENT_TESTS=1 \
+LOANS_DEPLOYMENT_REDIS_URL='<deployment Redis URL>' \
+.venv/bin/pytest -q \
+  tests/test_loans_stage6_deployment_integrations.py::test_two_processes_share_deployment_redis_state
+
+RUN_LOANS_CELERY_DEPLOYMENT_TESTS=1 \
+CELERY_BROKER_URL='<deployment Redis broker URL>' \
+.venv/bin/pytest -q \
+  tests/test_loans_stage6_deployment_integrations.py::test_multiple_deployed_workers_consume_the_loans_queue
+
+RUN_LOANS_HTTPS_DEPLOYMENT_TESTS=1 \
+LOANS_DEPLOYMENT_PRODUCTS_URL='https://<host>/api/loans/products/' \
+LOANS_DEPLOYMENT_CUSTOMER_TOKEN='<short-lived synthetic customer token>' \
+LOANS_DEPLOYMENT_LOAD_REQUESTS=20 \
+LOANS_DEPLOYMENT_LOAD_CONCURRENCY=4 \
+.venv/bin/pytest -q \
+  tests/test_loans_stage6_deployment_integrations.py::test_authenticated_api_contract_and_representative_read_load_through_https
+
+RUN_LOANS_METRICS_DEPLOYMENT_TESTS=1 \
+LOANS_DEPLOYMENT_METRICS_URL='https://<monitoring-only-host>/metrics/' \
+.venv/bin/pytest -q \
+  tests/test_loans_stage6_deployment_integrations.py::test_deployed_metrics_expose_every_loans_metric_family
+```
+
+Use a synthetic account/token and a private monitoring endpoint. These probes
+do not create loans or payments. The Redis probe creates one expiring random
+key and removes it; the Celery probe only inspects worker pings and queues.
+Deployment workers must be started so at least two consume the dedicated
+`loans` queue, for example with `-Q loans` in their approved worker command.
 
 ## Loans Operations Runbook
 
@@ -746,10 +812,12 @@ REAL_MONGO_TEST_URI='<approved isolated MongoDB URI>' \
 .venv/bin/pytest -q tests/test_loans_stage4_real_mongo.py
 ```
 
-Do not point this command at production. The present suite proves validator
-installation/rejection, index creation, a 500-payment fixture, and an indexed
-blind-reference query plan. The Stage 2 isolated suite separately proves atomic
-lifecycle behavior.
+Do not point this command at production. The present suite proves installation
+and invalid-write rejection for all five validator manifests, every required
+index, duplicate-sensitive key integrity, a 500-payment fixture, and indexed
+plans for eleven application, disbursement, schedule, payment, blockchain, and
+notification query shapes. The Stage 2 isolated suite separately proves atomic
+lifecycle and crash/replay behavior.
 
 Use a dedicated opt-in marker and a unique temporary database. At minimum:
 
@@ -847,8 +915,9 @@ database URIs, raw signed transactions, or internal exception detail.
 
 - [x] **Stage 1:** scope, permission, response-minimization, and stable-error
       regressions pass.
-- [ ] **Stage 2:** application code and local regressions pass; execute and
-      record the isolated real-Mongo atomic lifecycle/idempotency suite.
+- [ ] **Stage 2:** application code and nine local regressions pass. Resolve the
+      configured Atlas TLS preflight failure, then execute and record the
+      six-case isolated real-Mongo atomic lifecycle/idempotency suite.
 - [x] **Stage 3 application code:** cash/check are active, wallet is
       feature-gated, unsupported methods are rejected, waiver credits are
       carried forward or rejected safely, and
@@ -862,10 +931,17 @@ database URIs, raw signed transactions, or internal exception detail.
       encryption rotation, notification outbox recovery, metrics, dashboards,
       and Prometheus rule tests pass. Authorized policy approval and deployed
       dashboard/alert evidence remain Stage 6 release conditions.
-- [ ] **Stage 6:** multi-worker Redis/Celery recovery, optional blockchain,
-      HTTPS proxy, load, backup/restore, key rotation, rollback, dashboards, and
-      delivered alerts are proven in the selected topology.
-- [ ] Full repository suite and every applicable end-to-end smoke branch pass.
+- [x] **Stage 6 validation tooling:** the fail-closed release command and
+      opt-in Redis, Celery-worker, HTTPS/load, and metrics probes are implemented
+      and ten focused local regressions pass. The shared-Redis and two-worker
+      probes also pass with disposable local processes.
+- [ ] **Stage 6 deployment evidence:** multi-worker Redis/Celery recovery,
+      optional blockchain, HTTPS proxy, load, backup/restore, key rotation,
+      rollback, dashboards, and delivered alerts are proven in the selected
+      topology; `loan_release_check` reports overall `PASS`.
+- [x] Current revision's full repository suite and automated cash/check
+      lifecycle smoke pass. Repeat both on the final release revision; manually
+      exercise rejection/resubmission and any enabled wallet branch there.
 
 ## Canonical Test Files
 
@@ -881,6 +957,7 @@ database URIs, raw signed transactions, or internal exception detail.
 - `tests/test_loan_tasks.py`
 - `tests/test_loans_api.py`
 - `tests/test_loans_api_stubs.py`
+- `tests/test_loans_cash_check_release_smoke.py`
 - `tests/test_loans_smoke.py`
 - `tests/test_loans_stage1_security_contract.py`
 - `tests/test_loans_stage2_atomic_lifecycle.py`
@@ -888,6 +965,9 @@ database URIs, raw signed transactions, or internal exception detail.
 - `tests/test_loans_stage4_persistence_scalability.py`
 - `tests/test_loans_stage4_real_mongo.py`
 - `tests/test_loans_stage5_privacy_notifications_observability.py`
+- `tests/test_loans_stage6_release_validation.py`
+- `tests/test_loans_stage6_deployment_integrations.py`
+- `tests/test_loans_stage6_worker_recovery.py`
 - `tests/test_loans_stage3_settlement_policy.py`
 - `tests/test_qualification_enforcement.py`
 - `tests/test_wallet_disbursement_tasks.py`

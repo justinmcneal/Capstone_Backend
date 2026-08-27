@@ -84,7 +84,13 @@ LOAN_VALIDATORS = {
                 "term_months": {"bsonType": ["int", "long"], "minimum": 1},
                 "status": {"enum": APPLICATION_STATUSES},
                 "disbursement_status": {
-                    "enum": ["not_started", "pending", "executed", "failed", "cancelled"]
+                    "enum": [
+                        "not_started",
+                        "pending",
+                        "executed",
+                        "failed",
+                        "cancelled",
+                    ]
                 },
                 "preferred_disbursement_method": {
                     "oneOf": [{"enum": [None]}, {"enum": SETTLEMENT_METHODS}]
@@ -94,9 +100,7 @@ LOAN_VALIDATORS = {
                 },
                 "internal_notes": {"oneOf": [{"enum": ["", None]}, ENCRYPTED_BSON]},
                 "purpose": {"oneOf": [{"enum": ["", None]}, ENCRYPTED_STRING]},
-                "ai_recommendation": {
-                    "oneOf": [{"enum": ["", None]}, ENCRYPTED_BSON]
-                },
+                "ai_recommendation": {"oneOf": [{"enum": ["", None]}, ENCRYPTED_BSON]},
                 "officer_notes": {"oneOf": [{"enum": ["", None]}, ENCRYPTED_STRING]},
                 "rejection_reason": {"oneOf": [{"enum": ["", None]}, ENCRYPTED_STRING]},
                 "missing_documents_reason": {
@@ -111,9 +115,7 @@ LOAN_VALIDATORS = {
                 "disbursement_error": {
                     "oneOf": [{"enum": ["", None]}, ENCRYPTED_STRING]
                 },
-                "eth_disbursement_recovery_history": {
-                    "bsonType": "array"
-                },
+                "eth_disbursement_recovery_history": {"bsonType": "array"},
                 "legal_hold_reason": {
                     "oneOf": [{"enum": ["", None]}, ENCRYPTED_STRING]
                 },
@@ -175,12 +177,8 @@ LOAN_VALIDATORS = {
                 "payment_status": {"enum": PAYMENT_STATUSES},
                 "reference": {"oneOf": [{"enum": [""]}, ENCRYPTED_STRING]},
                 "notes": {"oneOf": [{"enum": [""]}, ENCRYPTED_STRING]},
-                "failure_reason": {
-                    "oneOf": [{"enum": [""]}, ENCRYPTED_STRING]
-                },
-                "blockchain_sync_error": {
-                    "oneOf": [{"enum": [""]}, ENCRYPTED_STRING]
-                },
+                "failure_reason": {"oneOf": [{"enum": [""]}, ENCRYPTED_STRING]},
+                "blockchain_sync_error": {"oneOf": [{"enum": [""]}, ENCRYPTED_STRING]},
                 "reference_search_index": {
                     "bsonType": "string",
                     "pattern": "^$|^[0-9a-f]{64}$",
@@ -241,7 +239,11 @@ INVENTORY_CONFIG = {
         "sensitive": RepaymentSchedule.encrypted_fields,
         "unique": ["loan_id"],
         "statuses": ("status", set(SCHEDULE_STATUSES)),
-        "metadata": ["principal_centavos", "total_amount_centavos", "accounting_version"],
+        "metadata": [
+            "principal_centavos",
+            "total_amount_centavos",
+            "accounting_version",
+        ],
     },
     LoanPayment.collection_name: {
         "required": ["loan_id", "customer_id", "payment_method", "recorded_at"],
@@ -282,12 +284,14 @@ def install_loan_validators():
         )
 
 
-def loan_data_inventory(limit=10_000):
+def loan_data_inventory(limit=10_000, *, db=None):
     """Return a bounded, count-only inventory without exposing record values."""
     limit = max(1, int(limit))
+    if db is None:
+        db = settings.MONGODB
     result = {"limit": limit, "collections": {}, "complete": True}
     for collection_name, config in INVENTORY_CONFIG.items():
-        collection = settings.MONGODB[collection_name]
+        collection = db[collection_name]
         total = collection.count_documents({})
         rows = list(collection.find({}).sort("_id", 1).limit(limit))
         counts = {
@@ -305,7 +309,10 @@ def loan_data_inventory(limit=10_000):
         seen = {field: set() for field in config.get("unique", ())}
         duplicates = {field: set() for field in config.get("unique", ())}
         for raw in rows:
-            if any(field not in raw or raw.get(field) is None for field in config["required"]):
+            if any(
+                field not in raw or raw.get(field) is None
+                for field in config["required"]
+            ):
                 counts["missing_required"] += 1
             if any(field not in raw for field in config.get("metadata", ())):
                 counts["missing_metadata"] += 1
@@ -391,7 +398,8 @@ def prepare_loan_backfill(collection_name, raw):
                 "retention_policy_version": raw.get("retention_policy_version")
                 or getattr(settings, "LOAN_RETENTION_POLICY_VERSION", "2026-08-15-v1"),
                 "retention_expires_at": raw.get("retention_expires_at")
-                or created_at + timedelta(days=int(getattr(settings, "LOAN_RETENTION_DAYS", 2555))),
+                or created_at
+                + timedelta(days=int(getattr(settings, "LOAN_RETENTION_DAYS", 2555))),
                 "legal_hold": bool(raw.get("legal_hold", False)),
             }
         )
@@ -414,9 +422,9 @@ def prepare_loan_backfill(collection_name, raw):
                     payment.reference
                 ),
                 "timing_status": _payment_timing(schedule, raw),
-                "scope_officer_id": str(application.assigned_officer or "")
-                if application
-                else "",
+                "scope_officer_id": (
+                    str(application.assigned_officer or "") if application else ""
+                ),
                 "loan_disbursed": bool(
                     application
                     and application.status in {"disbursed", "completed", "written_off"}

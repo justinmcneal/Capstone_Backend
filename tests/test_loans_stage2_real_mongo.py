@@ -9,7 +9,14 @@ from bson import ObjectId
 from cryptography.fernet import Fernet
 from pymongo import MongoClient
 
-from loans.models import LoanApplication, LoanTransitionConflict, RepaymentSchedule
+from loans.models import (
+    LoanApplication,
+    LoanPayment,
+    LoanTransitionConflict,
+    RepaymentSchedule,
+)
+from loans.services.payment import post_verified_payment
+from loans.tasks import reconcile_repayment_lifecycle_task
 
 pytestmark = [pytest.mark.deployment_integration, pytest.mark.real_mongo]
 
@@ -32,6 +39,9 @@ def loans_real_mongo(settings, monkeypatch):
     monkeypatch.setattr(
         settings, "FIELD_ENCRYPTION_KEY", Fernet.generate_key().decode()
     )
+    LoanApplication.create_indexes()
+    RepaymentSchedule.create_indexes()
+    LoanPayment.create_indexes()
     try:
         yield database
     finally:
@@ -168,3 +178,138 @@ def test_real_mongo_disbursement_claim_has_one_winner(loans_real_mongo):
     stored = LoanApplication.find_by_id(application.id)
     assert sorted(results) == ["conflict", "won"]
     assert stored.disbursement_status == "pending"
+
+
+def test_real_mongo_submit_resubmit_and_document_history_are_atomic(
+    loans_real_mongo,
+):
+    draft = _real_application(status="draft", assigned_officer=None)
+
+    def submit(_index):
+        copy = LoanApplication.find_by_id(draft.id)
+        try:
+            copy.submit()
+            return "won"
+        except LoanTransitionConflict:
+            return "conflict"
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        assert sorted(executor.map(submit, range(2))) == ["conflict", "won"]
+
+    rejected = _real_application(status="rejected")
+
+    def resubmit(_index):
+        copy = LoanApplication.find_by_id(rejected.id)
+        try:
+            copy.resubmit()
+            return "won"
+        except LoanTransitionConflict:
+            return "conflict"
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        assert sorted(executor.map(resubmit, range(2))) == ["conflict", "won"]
+
+    review = _real_application()
+
+    def request(document_type):
+        copy = LoanApplication.find_by_id(review.id)
+        copy.request_missing_documents(
+            "officer-a", [document_type], reason=f"Need {document_type}"
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        list(executor.map(request, ("valid_id", "bank_statement")))
+    stored = LoanApplication.find_by_id(review.id)
+    assert {
+        item["requested_documents"][0] for item in stored.document_request_history
+    } == {"valid_id", "bank_statement"}
+
+
+def test_real_mongo_payment_replay_recovers_after_schedule_mutation(
+    loans_real_mongo, monkeypatch
+):
+    application = _real_application(
+        status="disbursed",
+        assigned_officer="officer-a",
+        approved_amount=1_000,
+    )
+    schedule = RepaymentSchedule(
+        loan_id=application.id,
+        customer_id=application.customer_id,
+        principal=1_000,
+        total_amount=1_000,
+        installments=[
+            {
+                "number": 1,
+                "principal": 1_000,
+                "interest": 0,
+                "total_amount": 1_000,
+                "paid_amount": 0,
+                "status": "pending",
+            }
+        ],
+    ).save()
+    original_mark_posted = LoanPayment.mark_posted
+    attempts = {"count": 0}
+
+    def interrupt_once(payment, source):
+        attempts["count"] += 1
+        if attempts["count"] == 1:
+            raise RuntimeError("simulated process loss")
+        return original_mark_posted(payment, source)
+
+    monkeypatch.setattr(LoanPayment, "mark_posted", interrupt_once)
+    kwargs = {
+        "schedule": schedule,
+        "installment_number": 1,
+        "amount": 1_000,
+        "payment_method": "cash",
+        "reference": "STAGE2-RECOVERY",
+        "notes": "",
+        "recorded_by": "officer-a",
+        "idempotency_key": "stage2-payment-recovery",
+        "verification_source": "isolated_real_mongo",
+    }
+    with pytest.raises(RuntimeError, match="simulated process loss"):
+        post_verified_payment(**kwargs)
+
+    payment, _installment, replayed = post_verified_payment(**kwargs)
+    stored_schedule = RepaymentSchedule.find_by_loan(application.id)
+    stored_application = LoanApplication.find_by_id(application.id)
+    assert replayed is True
+    assert payment.payment_status == "posted"
+    assert stored_schedule.get_remaining_balance_centavos() == 0
+    assert stored_application.status == "completed"
+
+
+def test_real_mongo_lifecycle_reconciler_closes_interrupted_completion(
+    loans_real_mongo,
+):
+    application = _real_application(
+        status="disbursed",
+        assigned_officer="officer-a",
+        approved_amount=500,
+    )
+    schedule = RepaymentSchedule(
+        loan_id=application.id,
+        customer_id=application.customer_id,
+        principal=500,
+        total_amount=500,
+        installments=[
+            {
+                "number": 1,
+                "principal": 500,
+                "interest": 0,
+                "total_amount": 500,
+                "paid_amount": 0,
+                "status": "pending",
+            }
+        ],
+    ).save()
+    schedule.apply_payment_atomic(1, 500, "stage2-interrupted-completion")
+    assert LoanApplication.find_by_id(application.id).status == "disbursed"
+
+    result = reconcile_repayment_lifecycle_task()
+
+    assert result == {"paid_off_reconciled": 1}
+    assert LoanApplication.find_by_id(application.id).status == "completed"

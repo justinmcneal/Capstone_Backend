@@ -54,6 +54,24 @@ def test_concurrent_approve_and_reject_have_exactly_one_winner():
     assert stored.last_transition_id.startswith("loan_evt_")
 
 
+def test_review_actor_must_match_assignment_while_admin_preserves_it():
+    application = _application(assigned_officer="officer-a")
+    with pytest.raises(LoanTransitionConflict, match="another loan officer"):
+        LoanApplication.find_by_id(application.id).approve("officer-b", 18_000)
+
+    admin_review = LoanApplication.find_by_id(application.id)
+    admin_review.approve(
+        "admin-a",
+        18_000,
+        actor_type="admin",
+    )
+    stored = LoanApplication.find_by_id(application.id)
+    assert stored.status == "approved"
+    assert stored.assigned_officer == "officer-a"
+    assert stored.lifecycle_transitions[-1]["actor_id"] == "admin-a"
+    assert stored.lifecycle_transitions[-1]["actor_type"] == "admin"
+
+
 def test_concurrent_assignment_has_exactly_one_winner():
     application = _application(status="submitted", assigned_officer=None)
     first = LoanApplication.find_by_id(application.id)

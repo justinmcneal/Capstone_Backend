@@ -4,14 +4,11 @@
 **Status:** Draft for adviser and UREC/ethics review before administration
 
 ## 1. Basis in Chapters 1 and 2
-
-The instruments in this folder implement the study as currently described in the manuscript:
-
 - **Objective 1:** Identify the demographic profile, financial behaviors, challenges, and technological needs of underserved starting entrepreneurs in the informal sector.
 - **Objective 2:** Determine the system features and functionalities based on identified user needs and challenges.
-- **Objective 3:** Evaluate the system's functionality and its effect on loan understanding, readiness, and confidence through technical testing, usability testing, and user feedback.
+- **Objective 3:** Evaluate the system in terms of functionality, usability, clarity of financial guidance, perceived usefulness, and user confidence through system testing and user feedback.
 - **Sampling:** Purposive sampling.
-- **Proposed participants:** Three informal-sector microentrepreneurs and one loan officer or lending representative.
+- **Participants:** The final number of microentrepreneurs and lending representatives must be confirmed with the research adviser and reflected consistently in Table 1 and the approved ethics documents.
 - **Locale:** PHINMA University of Pangasinan, Dagupan City, and nearby areas.
 - **Methods:** Semi-structured interviews, questionnaires, non-participant observation, technical testing, and triangulation.
 
@@ -23,11 +20,10 @@ The current manuscript says that a structured post-use survey will be administer
 |---|---|---|---|
 | `01_RESPONDENT_PROFILE_FORM.md` | All participants | Before interview/testing | Table 2 |
 | `02_MICROENTREPRENEUR_INTERVIEW_GUIDE.md` | Microentrepreneurs | Before prototype evaluation | Tables 3 and 4 |
-| `03_PRE_POST_ASSESSMENT.md` | Microentrepreneurs | Immediately before and after prototype use | Table 9 |
 | `04_MICROENTREPRENEUR_USABILITY_QUESTIONNAIRE.md` | Microentrepreneurs | After prototype use | Table 7 |
 | `05_LOAN_OFFICER_EVALUATION_FORM.md` | Loan officer/lending representative | After officer workflow testing | Table 8 |
-| `06_OBSERVATION_AND_TASK_CHECKLIST.md` | All participants | During prototype use | Tables 6 and 10; narrative findings |
-| `07_TALLY_AND_ANALYSIS_TEMPLATE.md` | Researchers | After collection | Tables 2–4 and 7–10 |
+| `06_OBSERVATION_AND_TASK_CHECKLIST.md` | All participants | During prototype use | Tables 6 and 9; narrative findings |
+| `07_TALLY_AND_ANALYSIS_TEMPLATE.md` | Researchers | After collection | Tables 2–4 and 7–9 |
 
 Table 5 is a requirements-traceability table. It is prepared by combining the interview findings in Tables 3–4 with the implemented features, screenshots, and functional-test evidence. It is not produced by one questionnaire alone.
 
@@ -38,8 +34,7 @@ Before inviting participants:
 1. Ask the adviser to review the questions, scales, sample, and planned analysis.
 2. Determine whether the existing UREC/ethics submission covers these instruments. Submit an amendment if required.
 3. Use the correct approved adult consent form. Use parental permission and minor assent only if minors are intentionally and ethically included; the target population described in Chapters 1–2 is normally adult entrepreneurs and lending personnel.
-4. Confirm whether four participants are sufficient for the course requirement and the claims made in the objectives.
-5. Confirm whether Objective 3 will retain the word **improving**. If it does, administer both the pre- and post-assessment. If it does not, revise the objective with adviser approval and report only perceived usability/usefulness.
+4. Confirm the number of respondents required by the course and approved research design.
 
 ## 4. Participant Recruitment
 
@@ -71,13 +66,11 @@ Each controlled session may take approximately 60–120 minutes, consistent with
 2. Assign a respondent code such as `ME-01`; do not place the participant's name on response or tally sheets.
 3. Administer the respondent profile form.
 4. Conduct and document the semi-structured interview.
-5. Administer the **pre-interaction** assessment.
-6. Give the participant a standard orientation that explains the prototype's educational nature without teaching the assessment answers.
-7. Let the participant complete the customer tasks in the observation checklist using a test account and synthetic information.
-8. Do not coach unless the participant asks for help or cannot continue. Record every assistance event.
-9. Administer the **post-interaction** assessment.
-10. Administer the microentrepreneur usability questionnaire.
-11. Ask for final comments, remind the participant that the system does not guarantee approval, and explain how study data will be protected.
+5. Give the participant a standard orientation that explains the prototype's educational nature.
+6. Let the participant complete the customer tasks in the observation checklist using a test account and synthetic information.
+7. Do not coach unless the participant asks for help or cannot continue. Record every assistance event.
+8. Administer the microentrepreneur usability questionnaire.
+9. Ask for final comments, remind the participant that the system does not guarantee approval, and explain how study data will be protected.
 
 ### B. Loan-officer/lending-representative session
 
@@ -108,9 +101,8 @@ If the prototype fails during a task, record the failure. Do not silently mark t
 Separate the forms by purpose:
 
 1. **Microentrepreneur Profile Form** — copy `01_RESPONDENT_PROFILE_FORM.md`.
-2. **Pre-Interaction Assessment** — copy the pre section of `03_PRE_POST_ASSESSMENT.md`.
-3. **Post-Interaction Assessment and Usability Form** — copy the post section of `03_PRE_POST_ASSESSMENT.md`, followed by `04_MICROENTREPRENEUR_USABILITY_QUESTIONNAIRE.md`.
-4. **Loan-Officer Evaluation Form** — copy `05_LOAN_OFFICER_EVALUATION_FORM.md`.
+2. **Post-Use Usability Form** — copy `04_MICROENTREPRENEUR_USABILITY_QUESTIONNAIRE.md`.
+3. **Loan-Officer Evaluation Form** — copy `05_LOAN_OFFICER_EVALUATION_FORM.md`.
 
 Recommended Google Forms settings:
 
@@ -132,7 +124,6 @@ Use the following evidence together:
 - Profile data describe the participants included in the controlled study.
 - Task observations show whether participants could complete the intended workflows.
 - Usability ratings show perceived clarity, ease, usefulness, trust, and confidence.
-- Pre/post results show descriptive change when Objective 3 retains the term *improving*.
 - Automated tests show whether executed technical cases passed.
 
 Do not use one source to claim something it did not measure. For example, automated tests do not prove that users understood the interface, while three user ratings do not prove production scalability.
@@ -152,4 +143,3 @@ Retain only as permitted by the approved protocol:
 - Instrument/adviser validation record.
 
 Do not place raw identifying information in Chapter 3 or public appendices.
-

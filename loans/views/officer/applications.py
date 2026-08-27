@@ -856,14 +856,19 @@ class OfficerRequestMissingDocumentsView(LoanOfficerRequiredMixin, APIView):
 
         if customer and customer.email:
             try:
-                from loans.services.notifications import queue_customer_loan_notification
+                from loans.services.notifications import (
+                    queue_customer_loan_notification,
+                )
 
                 queue_customer_loan_notification(
                     loan_id=app.id,
                     event_type="missing_documents",
                     event_key=app.last_transition_id,
                     customer=customer,
-                    payload={"missing_documents": app.missing_documents_requested, "reason": app.missing_documents_reason},
+                    payload={
+                        "missing_documents": app.missing_documents_requested,
+                        "reason": app.missing_documents_reason,
+                    },
                 )
             except Exception as e:
                 logger.warning(f"Failed to send missing documents email: {e}")
@@ -964,9 +969,7 @@ class OfficerReviewView(LoanOfficerRequiredMixin, APIView):
                         "Required documents must be approved before loan approval"
                     ),
                     errors={
-                        "missing_documents": document_check[
-                            "missing_requirements"
-                        ]
+                        "missing_documents": document_check["missing_requirements"]
                     },
                     status_code=status.HTTP_400_BAD_REQUEST,
                 )
@@ -986,6 +989,7 @@ class OfficerReviewView(LoanOfficerRequiredMixin, APIView):
                     officer_id=officer_id,
                     approved_amount=data["approved_amount"],
                     notes=data.get("notes", ""),
+                    actor_type=self._actor_type(user),
                 )
             except LoanTransitionConflict:
                 return error_response(
@@ -1015,7 +1019,9 @@ class OfficerReviewView(LoanOfficerRequiredMixin, APIView):
             # Send approval email
             if customer_email:
                 try:
-                    from loans.services.notifications import queue_customer_loan_notification
+                    from loans.services.notifications import (
+                        queue_customer_loan_notification,
+                    )
 
                     queue_customer_loan_notification(
                         loan_id=app.id,
@@ -1027,7 +1033,7 @@ class OfficerReviewView(LoanOfficerRequiredMixin, APIView):
                 except Exception as e:
                     logger.warning(f"Failed to send approval email: {e}")
 
-            # Blockchain sync — approval (background thread, no Celery needed)
+            # Durable, feature-gated approval sync through Celery.
             try:
                 from loans.blockchain.sync import sync_approval
 
@@ -1041,6 +1047,7 @@ class OfficerReviewView(LoanOfficerRequiredMixin, APIView):
                     officer_id=officer_id,
                     reason=data["rejection_reason"],
                     notes=data.get("notes", ""),
+                    actor_type=self._actor_type(user),
                 )
             except LoanTransitionConflict:
                 return error_response(
@@ -1070,7 +1077,9 @@ class OfficerReviewView(LoanOfficerRequiredMixin, APIView):
             # Send rejection email
             if customer_email:
                 try:
-                    from loans.services.notifications import queue_customer_loan_notification
+                    from loans.services.notifications import (
+                        queue_customer_loan_notification,
+                    )
 
                     queue_customer_loan_notification(
                         loan_id=app.id,
@@ -1081,7 +1090,7 @@ class OfficerReviewView(LoanOfficerRequiredMixin, APIView):
                     )
                 except Exception as e:
                     logger.warning(f"Failed to send rejection email: {e}")
-            # Blockchain sync — rejection (background thread, no Celery needed)
+            # Durable, feature-gated rejection sync through Celery.
             try:
                 from loans.blockchain.sync import sync_rejection
 

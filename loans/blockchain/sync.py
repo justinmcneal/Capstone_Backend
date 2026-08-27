@@ -132,7 +132,7 @@ def sync_consent(
 
 
 # ---------------------------------------------------------------------------
-# Implementation (runs in background thread)
+# Worker implementation (invoked by durable Celery tasks)
 # ---------------------------------------------------------------------------
 
 

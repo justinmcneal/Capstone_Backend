@@ -215,31 +215,11 @@ Table 7 indicates that [state the actual overall mean and interpretation]. The h
 
 The lending-personnel evaluation shows that [insert the actual result]. The evaluator particularly noted [insert verified comment], while [insert feature or concern] required further improvement. If only one lending respondent participates, the result must be reported as an individual expert or stakeholder assessment rather than a broadly generalizable statistical finding.
 
-### Change in Loan Understanding, Readiness, and Confidence
-
-The third research objective uses the term *improving*, which requires evidence of change rather than only a satisfaction rating after system use. Subject to adviser and instrument approval, the same respondents should answer aligned questions before and after interacting with the prototype. With the proposed small sample, the researchers should report individual and descriptive change scores and avoid unsupported claims of statistical significance.
-
-**Table 9**  
-*Pre-Interaction and Post-Interaction Assessment Results*
-
-| Evaluation indicator | Pre-interaction mean | Post-interaction mean | Mean change | Interpretation |
-|---|---:|---:|---:|---|
-| Understanding of interest, repayment terms, and penalties | [Enter] | [Enter] | [Enter] | [Enter] |
-| Ability to recognize a risky or unsuitable loan offer | [Enter] | [Enter] | [Enter] | [Enter] |
-| Knowledge of information and documents needed before applying | [Enter] | [Enter] | [Enter] | [Enter] |
-| Understanding of loan-readiness or qualification results | [Enter] | [Enter] | [Enter] | [Enter] |
-| Confidence in preparing for a formal loan application | [Enter] | [Enter] | [Enter] | [Enter] |
-| **Overall mean** | **[Enter]** | **[Enter]** | **[Enter]** | **[Enter]** |
-
-Table 9 shows that the overall mean changed from [enter pre-interaction mean] before prototype use to [enter post-interaction mean] after prototype use, representing a descriptive change of [enter value]. The greatest change was observed in [enter indicator], while the smallest change was recorded for [enter indicator]. These findings [support/do not support] the conclusion that the prototype improved the participating respondents' loan understanding, readiness, or confidence within the controlled evaluation session. The result must not be generalized beyond the approved participants.
-
-If no baseline measurement was collected, Table 9 and all claims of *improvement* must be removed. In that case, Objective 3 and the corresponding research question should be revised, with adviser approval, to evaluate perceived usability, clarity, usefulness, and confidence after system use.
-
 ### User Feedback and Observed Issues
 
 Open-ended survey responses and observation notes should be grouped according to repeated comments and observed interaction problems.
 
-**Table 10**  
+**Table 9**  
 *Summary of User Feedback and System Revisions*
 
 | Feedback or observed issue | Respondent evidence | Revision made or recommended | Status |
@@ -258,13 +238,13 @@ Based on the results available at the time of drafting, the following findings w
 
 2. **System features and functionalities.** The requirements were translated into an integrated prototype containing secure role-based accounts, customer and business profiling, readiness and qualification support, AI-enabled English/Tagalog guidance, document processing, loan workflows, notifications, dashboards, audit records, and blockchain-integrity components. The traceability analysis shows how these components correspond to financial-guidance, preparedness, security, and preliminary-review needs.
 
-3. **System effectiveness.** Existing automated evidence supports the functionality of the executed local test cases, including a documented full regression result of 1,276 passed tests and a controlled AI system-level benchmark result of 18 out of 18. Nevertheless, external integration and production deployment evidence remains incomplete. [Add the actual usability overall mean, loan-officer result, pre/post descriptive change if collected, user-confidence result, and dominant feedback theme.] Only after these respondent results are inserted can the study make a complete conclusion concerning usability and effectiveness.
+3. **System evaluation.** Existing automated evidence supports the functionality of the executed local test cases, including a documented full regression result of 1,276 passed tests and a controlled AI system-level benchmark result of 18 out of 18. Nevertheless, external integration and production deployment evidence remains incomplete. [Add the actual usability overall mean, loan-officer result, user-confidence result, and dominant feedback theme.] Only after these respondent results are inserted can the study make a complete conclusion concerning functionality, usability, clarity, perceived usefulness, and user confidence.
 
 ## Conclusions
 
 The study concludes that *MSME Pathways* was developed as an integrated prototype that responds to the intended functions of financial education, loan-readiness preparation, preliminary qualification support, document and loan workflow management, and transaction traceability. Its architecture and implemented controls support differentiated customer, loan-officer, and administrator responsibilities while treating AI output as advisory and keeping sensitive information outside blockchain records.
 
-The existing automated results indicate that the executed local functional, security, safety, and contract tests behaved as expected. They do not, by themselves, establish that the system improves the financial understanding, readiness, or confidence of the target users. **[Insert the human-evaluation conclusion here after calculating the questionnaire results and analyzing the interviews.]** The final conclusion must remain limited to the controlled prototype, the approved respondents, the evaluation period, and the available infrastructure.
+The existing automated results indicate that the executed local functional, security, safety, and contract tests behaved as expected. They do not, by themselves, establish the system's usability, clarity, perceived usefulness, or user confidence. **[Insert the human-evaluation conclusion here after calculating the questionnaire results and analyzing the interviews.]** The final conclusion must remain limited to the controlled prototype, the approved respondents, the evaluation period, and the available infrastructure.
 
 ## Recommendations
 
@@ -278,4 +258,4 @@ Based on the implementation and currently available technical findings, the rese
 6. Improve accessibility through plain-language content, readable interfaces, guided data entry, and testing on the devices and network conditions used by the target population.
 7. Seek legal, privacy, security, and institutional review before connecting the prototype to live lenders, payment services, credit bureaus, wallets, or production blockchain networks.
 8. Preserve the system's stated limitation that readiness, risk, chatbot, and qualification outputs are educational or decision-support results and do not constitute guaranteed loan approval or professional financial advice.
-9. Add the respondents' actual recommendations from Table 10: **[Insert respondent-supported recommendation(s)].**
+9. Add the respondents' actual recommendations from Table 9: **[Insert respondent-supported recommendation(s)].**
