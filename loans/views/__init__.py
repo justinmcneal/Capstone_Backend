@@ -24,6 +24,7 @@ from .admin_views import (
 )
 from .officer_views import (
     OfficerApplicationListView,
+    OfficerApplicationStatusCountsView,
     OfficerApplicationDetailView,
     OfficerApplicationNotesView,
     OfficerRequestMissingDocumentsView,

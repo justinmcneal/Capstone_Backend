@@ -10,6 +10,7 @@ from accounts.authentication import CustomJWTAuthentication
 from accounts.utils.response_helpers import error_response, success_response
 from accounts.utils.validation_utils import sanitize_text
 from loans.models import LoanApplication, LoanProduct, LoanTransitionConflict
+from loans.models.application import APPLICATION_STATUSES, get_db
 from loans.serializers import (
     ApplicationInternalNoteSerializer,
     LoanReviewSerializer,
@@ -28,6 +29,45 @@ from loans.utils.serialization import (
 from loans.views.officer.base import LoanOfficerRequiredMixin, internal_note_summary
 
 logger = logging.getLogger("loans")
+
+
+class OfficerApplicationStatusCountsView(LoanOfficerRequiredMixin, APIView):
+    """Return assignment-scoped application counts for the officer queue."""
+
+    authentication_classes = [CustomJWTAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        has_permission, result = self.check_officer_permission(request)
+        if not has_permission:
+            return result
+
+        user = request.user
+        query = {}
+        if getattr(user, "role", "") == "loan_officer":
+            query["assigned_officer"] = self._actor_id(user)
+
+        counts = {
+            application_status: 0 for application_status in APPLICATION_STATUSES
+        }
+        total = 0
+        collection = get_db()[LoanApplication.collection_name]
+        for row in collection.aggregate(
+            [
+                {"$match": query},
+                {"$group": {"_id": "$status", "count": {"$sum": 1}}},
+            ]
+        ):
+            count = int(row.get("count", 0))
+            total += count
+            application_status = row.get("_id")
+            if application_status in counts:
+                counts[application_status] = count
+
+        return success_response(
+            data={"status_counts": {"all": total, **counts}},
+            message="Application status counts retrieved",
+        )
 
 
 class OfficerApplicationListView(LoanOfficerRequiredMixin, APIView):

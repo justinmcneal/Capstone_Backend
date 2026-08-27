@@ -7,7 +7,10 @@ from accounts.authentication import AuthenticatedUser
 from accounts.models import Customer, LoanOfficer
 from loans.models import LoanApplication, LoanProduct
 from loans.serializers import LoanReviewSerializer, MissingDocumentsRequestSerializer
-from loans.views.officer_views import OfficerApplicationListView
+from loans.views.officer_views import (
+    OfficerApplicationListView,
+    OfficerApplicationStatusCountsView,
+)
 from profiles.serializers import RiskReviewResolutionSerializer
 
 
@@ -146,3 +149,65 @@ def test_application_list_is_mongo_backed_role_and_assignment_scoped(monkeypatch
     denied = OfficerApplicationListView.as_view()(customer_request)
 
     assert denied.status_code == 403
+
+
+def test_application_status_counts_are_assignment_scoped(monkeypatch):
+    assigned_officer = _officer("CountsAssigned")
+    other_officer = _officer("CountsOther")
+    assigned_customer = _customer("CountsAssigned")
+    other_customer = _customer("CountsOther")
+    product = LoanProduct(
+        name="Status Counts Product",
+        code=f"SCP-{ObjectId()}",
+        min_amount=1000,
+        max_amount=50000,
+        interest_rate=0.01,
+        min_term_months=1,
+        max_term_months=12,
+        active=True,
+    ).save()
+    for status in ("submitted", "under_review", "approved"):
+        LoanApplication(
+            customer_id=str(assigned_customer.id),
+            product_id=product.id,
+            requested_amount=10000,
+            term_months=6,
+            purpose="Inventory",
+            status=status,
+            assigned_officer=str(assigned_officer.id),
+        ).save()
+    LoanApplication(
+        customer_id=str(other_customer.id),
+        product_id=product.id,
+        requested_amount=12000,
+        term_months=6,
+        purpose="Equipment",
+        status="submitted",
+        assigned_officer=str(other_officer.id),
+    ).save()
+
+    factory = APIRequestFactory()
+    request = factory.get("/api/loans/officer/applications/counts/")
+    force_authenticate(request, user=_auth(assigned_officer, "loan_officer"))
+    monkeypatch.setattr(
+        OfficerApplicationStatusCountsView,
+        "authentication_classes",
+        [],
+        raising=False,
+    )
+    monkeypatch.setattr(
+        OfficerApplicationStatusCountsView,
+        "permission_classes",
+        [],
+        raising=False,
+    )
+
+    response = OfficerApplicationStatusCountsView.as_view()(request)
+
+    assert response.status_code == 200
+    counts = response.data["data"]["status_counts"]
+    assert counts["all"] == 3
+    assert counts["submitted"] == 1
+    assert counts["under_review"] == 1
+    assert counts["approved"] == 1
+    assert counts["rejected"] == 0

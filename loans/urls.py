@@ -72,6 +72,7 @@ urlpatterns = [
     path("admin/blockchain/transactions/", AdminBlockchainTransactionsView.as_view(), name="admin-blockchain-transactions"),
     # Loan officer endpoints
     path("officer/applications/", OfficerApplicationListView.as_view(), name="officer-applications"),
+    path("officer/applications/counts/", OfficerApplicationStatusCountsView.as_view(), name="officer-application-status-counts"),
     path("officer/applications/<str:application_id>/", OfficerApplicationDetailView.as_view(), name="officer-application-detail"),
     path("officer/applications/<str:application_id>/notes/", OfficerApplicationNotesView.as_view(), name="officer-application-notes"),
     path("officer/applications/<str:application_id>/request-missing-documents/", OfficerRequestMissingDocumentsView.as_view(), name="officer-request-missing-documents"),
