@@ -521,6 +521,7 @@ class GroqService:
         customer_id,
         request_id=None,
         max_workers=4,
+        tool_executor=None,
     ):
         """
         Execute multiple tool calls concurrently using ThreadPoolExecutor.
@@ -534,7 +535,9 @@ class GroqService:
         Returns:
             List of (tool_call_id, tool_name, result_json) tuples in original order
         """
-        from ai_assistant.services.tool_safety import safe_execute_tool
+        from ai_assistant.services.tools import execute_tool_result
+
+        executor = tool_executor or execute_tool_result
         
         def run_tool(tool_call):
             func = tool_call.get('function', {})
@@ -550,8 +553,7 @@ class GroqService:
                 extra={'request_id': request_id, 'tool': tool_name},
             )
             
-            # Use safe executor with rate limiting and validation
-            result = safe_execute_tool(
+            result = executor(
                 tool_name,
                 tool_args,
                 customer_id,
@@ -635,6 +637,7 @@ class GroqService:
         top_p=0.9,
         max_tool_rounds=3,
         request_id=None,
+        tool_executor=None,
     ):
         """
         Send a message with function calling support.
@@ -656,6 +659,8 @@ class GroqService:
             dict with success, response, model, response_time_ms, tokens_used, tools_called
         """
         from ai_assistant.services.tools import execute_tool_result
+
+        executor = tool_executor or execute_tool_result
 
         max_tokens, max_tool_rounds = self._bounded_limits(max_tokens, max_tool_rounds)
         policy_result = _policy_result(
@@ -759,6 +764,7 @@ class GroqService:
                             tool_calls,
                             customer_id,
                             request_id=request_id,
+                            tool_executor=executor,
                         )
                         for tool_call_id, tool_name, tool_result, _success in tool_results:
                             tools_called.append(tool_name)
@@ -781,7 +787,7 @@ class GroqService:
                             "AI tool call started",
                             extra={'request_id': request_id, 'tool': tool_name},
                         )
-                        execution = execute_tool_result(
+                        execution = executor(
                             tool_name,
                             tool_args,
                             customer_id,
@@ -959,6 +965,7 @@ class GroqService:
         top_p=0.9,
         max_tool_rounds=3,
         request_id=None,
+        tool_executor=None,
     ):
         """
         Stream chat with function calling support.
@@ -974,6 +981,8 @@ class GroqService:
             {'type': 'error', 'content': '...'} - Error
         """
         from ai_assistant.services.tools import execute_tool_result
+
+        executor = tool_executor or execute_tool_result
 
         max_tokens, max_tool_rounds = self._bounded_limits(max_tokens, max_tool_rounds)
         policy_result = _policy_result(
@@ -1099,6 +1108,7 @@ class GroqService:
                             tool_calls,
                             customer_id,
                             request_id=request_id,
+                            tool_executor=executor,
                         )
                         
                         # Yield results and add to messages
@@ -1126,7 +1136,7 @@ class GroqService:
 
                         yield {'type': 'tool_call', 'name': tool_name}
                         
-                        execution = execute_tool_result(
+                        execution = executor(
                             tool_name,
                             tool_args,
                             customer_id,
