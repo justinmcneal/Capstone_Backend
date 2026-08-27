@@ -150,7 +150,7 @@ def test_inactive_customer_is_hidden_from_directory_and_detail(
     assert detail.data["message"] == "Customer not found"
 
 
-def test_unassigned_submitted_customer_is_in_shared_review_scope(monkeypatch):
+def test_unassigned_submitted_customer_is_admin_only(monkeypatch):
     officer = _officer()
     customer = _customer()
     settings.MONGODB["loan_applications"].insert_one(
@@ -172,8 +172,9 @@ def test_unassigned_submitted_customer_is_in_shared_review_scope(monkeypatch):
     )
 
     assert directory.status_code == 200
-    assert directory.data["data"]["customers"][0]["customer_id"] == customer.id
-    assert detail.status_code == 200
+    assert directory.data["data"]["customers"] == []
+    assert directory.data["data"]["total"] == 0
+    assert detail.status_code == 404
 
 
 def test_directory_does_not_search_or_return_phone_values(monkeypatch):

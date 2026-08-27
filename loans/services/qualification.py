@@ -885,6 +885,71 @@ def rule_based_qualification(
     }
 
 
+def _required_document_result(
+    documents,
+    required_doc_types,
+    *,
+    require_approved_documents,
+    requirements_scope,
+):
+    missing = []
+
+    latest_documents_by_type = {}
+    for document in documents:
+        canonical_type = canonicalize_document_type(document.document_type)
+        if canonical_type and canonical_type not in latest_documents_by_type:
+            latest_documents_by_type[canonical_type] = document
+
+    submission_statuses = {"pending", "needs_review", "approved"}
+    for required_type in required_doc_types:
+        label = document_type_label(required_type)
+        document = latest_documents_by_type.get(required_type)
+        if not document:
+            missing.append(f"Document required: {label}")
+        elif getattr(document, "reupload_requested", False):
+            missing.append(f"Document re-upload requested: {label}")
+        elif require_approved_documents and document.status != "approved":
+            if document.status in {"pending", "needs_review"}:
+                missing.append(f"Document pending verification: {label}")
+            elif document.status == "rejected":
+                missing.append(f"Document rejected, please re-upload: {label}")
+            else:
+                missing.append(f"Document not yet approved: {label}")
+        elif (
+            not require_approved_documents
+            and document.status not in submission_statuses
+        ):
+            if document.status == "rejected":
+                missing.append(f"Document rejected, please re-upload: {label}")
+            else:
+                missing.append(f"Document unavailable, please re-upload: {label}")
+
+    return {
+        "requirements_met": len(missing) == 0,
+        "missing_requirements": missing,
+        "required_documents_resolved": required_doc_types,
+        "requirements_scope": requirements_scope,
+    }
+
+
+def check_required_documents(
+    customer_id,
+    product,
+    requirements_scope="product",
+    require_approved_documents=True,
+):
+    """Check product-required documents for submission or final approval."""
+    scope = _normalize_scope(requirements_scope)
+    required_doc_types = resolve_required_document_types(product, scope)
+    documents = get_customer_data(customer_id).get("documents", [])
+    return _required_document_result(
+        documents,
+        required_doc_types,
+        require_approved_documents=require_approved_documents,
+        requirements_scope=scope,
+    )
+
+
 def check_basic_eligibility(
     customer_id,
     product,
@@ -936,34 +1001,13 @@ def check_basic_eligibility(
     required_doc_types = resolve_required_document_types(product, scope)
 
     if require_approved_documents:
-        # Check required documents - must be APPROVED, not just uploaded
-        documents = data.get("documents", [])
-
-        latest_documents_by_type = {}
-        for doc in documents:
-            canonical_type = canonicalize_document_type(doc.document_type)
-            if not canonical_type:
-                continue
-            if canonical_type not in latest_documents_by_type:
-                latest_documents_by_type[canonical_type] = doc
-
-        for req_doc in required_doc_types:
-            label = document_type_label(req_doc)
-            # Find document of this type
-            doc_found = latest_documents_by_type.get(req_doc)
-
-            if not doc_found:
-                missing.append(f"Document required: {label}")
-            elif doc_found.status != "approved":
-                # Document exists but not approved
-                if doc_found.reupload_requested:
-                    missing.append(f"Document re-upload requested: {label}")
-                elif doc_found.status in ["pending", "needs_review"]:
-                    missing.append(f"Document pending verification: {label}")
-                elif doc_found.status == "rejected":
-                    missing.append(f"Document rejected, please re-upload: {label}")
-                else:
-                    missing.append(f"Document not yet approved: {label}")
+        document_result = _required_document_result(
+            data.get("documents", []),
+            required_doc_types,
+            require_approved_documents=True,
+            requirements_scope=scope,
+        )
+        missing.extend(document_result["missing_requirements"])
 
     return {
         "can_apply": len(missing) == 0,

@@ -64,6 +64,19 @@ def _document(customer):
     ).save()
 
 
+def _capture_reviewer_recipients(monkeypatch):
+    recipients = []
+
+    class Sender:
+        def send_document_pending_review(self, **kwargs):
+            recipients.append(kwargs["reviewer_email"])
+
+    monkeypatch.setattr(
+        "documents.services.notification.get_email_sender", lambda: Sender()
+    )
+    return recipients
+
+
 def test_admin_and_officer_review_mutations_require_explicit_permission():
     customer = _customer()
     document = _document(customer)
@@ -121,6 +134,13 @@ def test_list_is_metadata_only_and_staff_read_is_audited(monkeypatch, settings):
     customer = _customer()
     officer = _officer()
     document = _document(customer)
+    settings.MONGODB["loan_applications"].insert_one(
+        {
+            "customer_id": customer.id,
+            "assigned_officer": officer.id,
+            "status": "submitted",
+        }
+    )
 
     class NoUrlStorage:
         def get_url(self, file_path):
@@ -152,6 +172,13 @@ def test_required_read_audit_failure_is_queued_and_reconciled(
     customer = _customer()
     officer = _officer()
     _document(customer)
+    settings.MONGODB["loan_applications"].insert_one(
+        {
+            "customer_id": customer.id,
+            "assigned_officer": officer.id,
+            "status": "submitted",
+        }
+    )
     request = APIRequestFactory().get("/api/documents/")
     force_authenticate(request, user=_auth(officer, "loan_officer"))
 
@@ -189,9 +216,97 @@ def test_required_read_audit_failure_is_queued_and_reconciled(
     )["resolved_at"] is not None
 
 
-def test_reviewer_notification_respects_permission_and_assignment(
+def test_unassigned_document_is_hidden_from_officer_list_and_review(settings):
+    customer = _customer()
+    officer = _officer()
+    document = _document(customer)
+    factory = APIRequestFactory()
+
+    list_request = factory.get("/api/documents/")
+    force_authenticate(list_request, user=_auth(officer, "loan_officer"))
+    list_response = DocumentListView.as_view(authentication_classes=[])(list_request)
+
+    review_request = factory.put(
+        f"/api/documents/{document.id}/verify/",
+        {"action": "approve"},
+        format="json",
+    )
+    force_authenticate(review_request, user=_auth(officer, "loan_officer"))
+    review_response = DocumentVerifyView.as_view(authentication_classes=[])(
+        review_request,
+        document_id=document.id,
+    )
+
+    assert list_response.status_code == 200
+    assert list_response.data["data"]["documents"] == []
+    assert review_response.status_code == 404
+
+
+def test_only_assigned_officer_can_review_customer_document(
     monkeypatch, settings
 ):
+    customer = _customer()
+    assigned = _officer()
+    outside = _officer()
+    document = _document(customer)
+    settings.MONGODB["loan_applications"].insert_one(
+        {
+            "customer_id": customer.id,
+            "assigned_officer": assigned.id,
+            "status": "submitted",
+        }
+    )
+    monkeypatch.setattr(
+        "documents.views.document_views.queue_customer_document_notification",
+        lambda *args, **kwargs: None,
+    )
+    factory = APIRequestFactory()
+
+    outside_request = factory.put(
+        f"/api/documents/{document.id}/verify/",
+        {"action": "approve"},
+        format="json",
+    )
+    force_authenticate(outside_request, user=_auth(outside, "loan_officer"))
+    outside_response = DocumentVerifyView.as_view(authentication_classes=[])(
+        outside_request,
+        document_id=document.id,
+    )
+
+    assigned_request = factory.put(
+        f"/api/documents/{document.id}/verify/",
+        {"action": "approve"},
+        format="json",
+    )
+    force_authenticate(assigned_request, user=_auth(assigned, "loan_officer"))
+    assigned_response = DocumentVerifyView.as_view(authentication_classes=[])(
+        assigned_request,
+        document_id=document.id,
+    )
+
+    assert outside_response.status_code == 404
+    assert assigned_response.status_code == 200
+    assert assigned_response.data["data"]["status"] == "approved"
+
+
+def test_unassigned_document_notifies_permitted_admins_only(monkeypatch):
+    customer = _customer()
+    permitted_officer = _officer()
+    denied_officer = _officer(permissions=[])
+    permitted_admin = _admin(permissions=["review_documents"])
+    denied_admin = _admin(permissions=[])
+    document = _document(customer)
+    recipients = _capture_reviewer_recipients(monkeypatch)
+
+    notify_reviewers_document_pending(document)
+
+    assert recipients == [permitted_admin.email]
+    assert permitted_officer.email not in recipients
+    assert denied_officer.email not in recipients
+    assert denied_admin.email not in recipients
+
+
+def test_assigned_document_notifies_assigned_officer_only(monkeypatch, settings):
     customer = _customer()
     assigned = _officer()
     outside = _officer()
@@ -205,19 +320,42 @@ def test_reviewer_notification_respects_permission_and_assignment(
             "status": "submitted",
         }
     )
-    recipients = []
-
-    class Sender:
-        def send_document_pending_review(self, **kwargs):
-            recipients.append(kwargs["reviewer_email"])
-
-    monkeypatch.setattr(
-        "documents.services.notification.get_email_sender", lambda: Sender()
-    )
+    recipients = _capture_reviewer_recipients(monkeypatch)
 
     notify_reviewers_document_pending(document)
 
-    assert assigned.email in recipients
-    assert allowed_admin.email in recipients
+    assert recipients == [assigned.email]
+    assert allowed_admin.email not in recipients
     assert outside.email not in recipients
     assert denied_admin.email not in recipients
+
+
+def test_reassigned_document_notifies_new_officer_only(monkeypatch, settings):
+    customer = _customer()
+    old_officer = _officer()
+    new_officer = _officer()
+    permitted_admin = _admin(permissions=["review_documents"])
+    document = _document(customer)
+    application_id = settings.MONGODB["loan_applications"].insert_one(
+        {
+            "customer_id": customer.id,
+            "assigned_officer": old_officer.id,
+            "status": "submitted",
+        }
+    ).inserted_id
+    recipients = _capture_reviewer_recipients(monkeypatch)
+
+    notify_reviewers_document_pending(document)
+    assert recipients == [old_officer.email]
+
+    settings.MONGODB["loan_applications"].update_one(
+        {"_id": application_id},
+        {"$set": {"assigned_officer": new_officer.id}},
+    )
+    recipients.clear()
+
+    notify_reviewers_document_pending(document)
+
+    assert recipients == [new_officer.email]
+    assert old_officer.email not in recipients
+    assert permitted_admin.email not in recipients

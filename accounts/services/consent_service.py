@@ -377,6 +377,65 @@ class ConsentService:
         }
 
     @classmethod
+    def get_consent_statuses(cls, user_ids, user_type="customer"):
+        """Resolve consent status for many customers with set-based reads."""
+        normalized_type = str(user_type or "").strip().lower()
+        if normalized_type not in cls.SUPPORTED_USER_TYPES:
+            raise ConsentRoleError("Consent preferences are customer-only")
+
+        normalized_ids = [
+            cls._normalize_identity(user_id, normalized_type)[0]
+            for user_id in user_ids
+        ]
+        events = ConsentEvent.latest_by_users(normalized_ids, normalized_type)
+        ids_without_events = [
+            user_id for user_id in normalized_ids if str(user_id) not in events
+        ]
+        legacy_records = Consent.find_by_users(
+            ids_without_events, normalized_type
+        )
+        current_policy = cls.current_policy()
+        current_version = current_policy["consent_version"]
+        statuses = {}
+
+        for user_id in normalized_ids:
+            key = str(user_id)
+            event = events.get(key)
+            legacy = legacy_records.get(key)
+            record = event or legacy
+            data_consent = bool(record.data_consent) if record else False
+            ai_consent = bool(record.ai_consent) if record else False
+            consent_version = record.consent_version if record else None
+            recorded_at = (
+                event.recorded_at
+                if event
+                else legacy.updated_at
+                if legacy
+                else None
+            )
+            has_record = record is not None
+            version_current = consent_version == current_version
+            statuses[key] = {
+                "data_consent": data_consent,
+                "ai_consent": ai_consent,
+                "consent_date": recorded_at,
+                "updated_at": recorded_at,
+                "consent_version": consent_version,
+                "current_policy": current_policy,
+                "requires_reconsent": bool(
+                    has_record
+                    and any((data_consent, ai_consent))
+                    and not version_current
+                ),
+                "can_access_ai": bool(
+                    data_consent and ai_consent and version_current
+                ),
+                "has_consent_record": has_record,
+                "revision": int(record.revision) if record else 0,
+            }
+        return statuses
+
+    @classmethod
     def get_consent_history(cls, user_id, user_type="customer", limit=100):
         user_id, user_type = cls._normalize_identity(user_id, user_type)
         return ConsentEvent.find_by_user(user_id, user_type, limit=limit)
