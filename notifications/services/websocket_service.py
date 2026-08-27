@@ -48,7 +48,10 @@ def serialize_notification_for_ws(notification):
         "related_id": str(notification.related_id) if notification.related_id else None,
         "metadata": getattr(notification, "metadata", {}),
         "channel": notification.channel,
-        "status": notification.status,
-        "is_read": notification.status == "read",
+        "status": notification.delivery_status,
+        "delivery_status": notification.delivery_status,
+        "is_read": notification.is_read,
         "created_at": serialize_utc_datetime(notification.created_at),
+        "sent_at": serialize_utc_datetime(notification.sent_at),
+        "read_at": serialize_utc_datetime(notification.read_at),
     }

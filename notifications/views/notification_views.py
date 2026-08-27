@@ -15,6 +15,8 @@ from datetime import datetime, timezone
 from typing import ClassVar
 
 from bson import ObjectId
+from bson.errors import InvalidId
+from django.conf import settings
 from rest_framework import status as http_status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
@@ -32,8 +34,19 @@ from notifications.models.notification import (
 from notifications.ownership import (
     build_notification_owner_query as _build_notification_owner_query,
 )
+from notifications.services.inbox import (
+    bounded_owner_ids,
+    mark_notification_read,
+    with_unread_state,
+)
+from notifications.throttles import (
+    NotificationDeviceTokenRateThrottle,
+    NotificationReadRateThrottle,
+    NotificationWriteRateThrottle,
+)
 
 logger = logging.getLogger('notifications')
+NOTIFICATION_LIST_QUERY_PARAMS = {"page", "page_size", "unread", "channel"}
 
 
 def _serialize_related_id(value):
@@ -55,6 +68,7 @@ class NotificationListView(AccessControlMixin, APIView):
     """
     authentication_classes: ClassVar[list] = [CustomJWTAuthentication]
     permission_classes: ClassVar[list] = [IsAuthenticated]
+    throttle_classes: ClassVar[list] = [NotificationReadRateThrottle]
     
     def get(self, request):
         has_permission, result = self.require_roles(
@@ -64,21 +78,47 @@ class NotificationListView(AccessControlMixin, APIView):
         if not has_permission:
             return result
 
+        unknown_params = sorted(
+            set(request.query_params.keys()) - NOTIFICATION_LIST_QUERY_PARAMS
+        )
+        if unknown_params:
+            return error_response(
+                message="Unknown notification query parameter",
+                errors={"query": f"Unsupported parameters: {', '.join(unknown_params)}"},
+                code="NOTIFICATION_QUERY_INVALID",
+                status_code=http_status.HTTP_400_BAD_REQUEST,
+            )
+
         # Parse query params
         try:
             page = int(request.query_params.get('page', 1))
-            page_size = min(int(request.query_params.get('page_size', 20)), 100)
+            page_size = int(request.query_params.get('page_size', 20))
         except (TypeError, ValueError):
             return error_response(
                 message="Invalid pagination parameters",
                 errors={'pagination': 'page and page_size must be integers'},
                 status_code=http_status.HTTP_400_BAD_REQUEST
             )
-        if page < 1 or page_size < 1:
+        if page < 1 or not 1 <= page_size <= 100:
             return error_response(
                 message="Invalid pagination parameters",
-                errors={'pagination': 'page and page_size must be at least 1'},
+                errors={
+                    'pagination': 'page must be at least 1 and page_size must be between 1 and 100'
+                },
                 status_code=http_status.HTTP_400_BAD_REQUEST
+            )
+        skip = (page - 1) * page_size
+        if skip > settings.NOTIFICATIONS_MAX_OFFSET:
+            return error_response(
+                message="Notification page exceeds the supported offset",
+                errors={
+                    "page": (
+                        f"The requested offset exceeds {settings.NOTIFICATIONS_MAX_OFFSET}; "
+                        "use a lower page"
+                    )
+                },
+                code="NOTIFICATION_OFFSET_LIMIT_EXCEEDED",
+                status_code=http_status.HTTP_400_BAD_REQUEST,
             )
 
         unread_raw = request.query_params.get('unread')
@@ -105,7 +145,7 @@ class NotificationListView(AccessControlMixin, APIView):
         
         query = _build_notification_owner_query(request.user)
         if unread_only:
-            query['status'] = {'$nin': ['read']}
+            query = with_unread_state(query)
         if channel_filter:
             query['channel'] = channel_filter
         
@@ -114,7 +154,6 @@ class NotificationListView(AccessControlMixin, APIView):
         total_pages = math.ceil(total_count / page_size)
         
         # Fetch notifications with pagination
-        skip = (page - 1) * page_size
         cursor = collection.find(query).sort('created_at', -1).skip(skip).limit(page_size)
         
         notifications = []
@@ -129,15 +168,17 @@ class NotificationListView(AccessControlMixin, APIView):
                 'related_id': _serialize_related_id(notification.related_id),
                 'metadata': notification.metadata,
                 'channel': notification.channel,
-                'status': notification.status,
-                'is_read': notification.status == 'read',
+                'status': notification.delivery_status,
+                'delivery_status': notification.delivery_status,
+                'is_read': notification.is_read,
                 'created_at': serialize_utc_datetime(notification.created_at),
                 'sent_at': serialize_utc_datetime(notification.sent_at),
+                'read_at': serialize_utc_datetime(notification.read_at),
             })
         
         # Get unread count
         unread_query = _build_notification_owner_query(request.user)
-        unread_query['status'] = {'$nin': ['read']}
+        unread_query = with_unread_state(unread_query)
         unread_count = collection.count_documents(unread_query)
         
         return success_response(
@@ -165,6 +206,7 @@ class NotificationMarkReadView(AccessControlMixin, APIView):
     """
     authentication_classes: ClassVar[list] = [CustomJWTAuthentication]
     permission_classes: ClassVar[list] = [IsAuthenticated]
+    throttle_classes: ClassVar[list] = [NotificationWriteRateThrottle]
 
     def post(self, request, notification_id):
         has_permission, result = self.require_roles(
@@ -174,43 +216,40 @@ class NotificationMarkReadView(AccessControlMixin, APIView):
         if not has_permission:
             return result
 
-        # Find notification
         db = get_db()
-        collection = db[Notification.collection_name]
-        
         try:
             owner_query = _build_notification_owner_query(request.user)
-            find_query = {'_id': ObjectId(notification_id)}
-            if '$or' in owner_query:
-                find_query['$or'] = owner_query['$or']
-            else:
-                find_query.update(owner_query)
-
-            doc = collection.find_one({
-                **find_query
-            })
-        except Exception:  # noqa: BLE001
+            outcome = mark_notification_read(db, notification_id, owner_query)
+        except (InvalidId, TypeError):
             return error_response(
                 message="Invalid notification ID",
                 status_code=http_status.HTTP_400_BAD_REQUEST
             )
-        
-        if not doc:
+
+        if not outcome["found"]:
             return error_response(
                 message="Notification not found",
                 status_code=http_status.HTTP_404_NOT_FOUND
             )
-        
-        # Mark as read
-        collection.update_one(
-            {'_id': doc['_id']},
-            {'$set': {'status': 'read', 'read_at': datetime.now(timezone.utc)}}
-        )
+        if outcome.get("conflict"):
+            return error_response(
+                message="Notification read state changed concurrently",
+                code="NOTIFICATION_STATE_CONFLICT",
+                status_code=http_status.HTTP_409_CONFLICT,
+            )
         
         logger.info(f"Notification {notification_id} marked as read")
         
         return success_response(
-            data={'notification_id': notification_id, 'status': 'read'},
+            data={
+                'notification_id': notification_id,
+                'is_read': True,
+                'read_at': serialize_utc_datetime(outcome["document"].get("read_at")),
+                'delivery_status': Notification.from_dict(
+                    outcome["document"]
+                ).delivery_status,
+                'replayed': outcome["replayed"],
+            },
             message="Notification marked as read"
         )
 
@@ -223,6 +262,7 @@ class NotificationMarkAllReadView(AccessControlMixin, APIView):
     """
     authentication_classes: ClassVar[list] = [CustomJWTAuthentication]
     permission_classes: ClassVar[list] = [IsAuthenticated]
+    throttle_classes: ClassVar[list] = [NotificationWriteRateThrottle]
     
     def post(self, request):
         has_permission, result = self.require_roles(
@@ -236,12 +276,23 @@ class NotificationMarkAllReadView(AccessControlMixin, APIView):
         db = get_db()
         collection = db[Notification.collection_name]
 
-        update_query = _build_notification_owner_query(request.user)
-        update_query['status'] = {'$nin': ['read']}
+        owner_query = _build_notification_owner_query(request.user)
+        update_query = with_unread_state(owner_query)
+        ids = bounded_owner_ids(
+            collection,
+            update_query,
+            limit=settings.NOTIFICATIONS_BULK_MUTATION_LIMIT,
+        )
+        if ids is None:
+            return error_response(
+                message="Inbox is too large for a synchronous mark-all operation",
+                code="NOTIFICATION_BULK_LIMIT_EXCEEDED",
+                status_code=http_status.HTTP_409_CONFLICT,
+            )
 
         result = collection.update_many(
-            update_query,
-            {'$set': {'status': 'read', 'read_at': datetime.now(timezone.utc)}}
+            {"_id": {"$in": ids}, **owner_query},
+            {'$set': {'is_read': True, 'read_at': datetime.now(timezone.utc)}}
         )
         
         logger.info(f"Marked {result.modified_count} notifications as read")
@@ -260,6 +311,7 @@ class NotificationUnreadCountView(AccessControlMixin, APIView):
     """
     authentication_classes: ClassVar[list] = [CustomJWTAuthentication]
     permission_classes: ClassVar[list] = [IsAuthenticated]
+    throttle_classes: ClassVar[list] = [NotificationReadRateThrottle]
     
     def get(self, request):
         has_permission, result = self.require_roles(
@@ -273,7 +325,7 @@ class NotificationUnreadCountView(AccessControlMixin, APIView):
         collection = db[Notification.collection_name]
 
         unread_query = _build_notification_owner_query(request.user)
-        unread_query['status'] = {'$nin': ['read']}
+        unread_query = with_unread_state(unread_query)
         unread_count = collection.count_documents(unread_query)
         
         return success_response(
@@ -289,6 +341,7 @@ class NotificationDeleteView(AccessControlMixin, APIView):
     """
     authentication_classes: ClassVar[list] = [CustomJWTAuthentication]
     permission_classes: ClassVar[list] = [IsAuthenticated]
+    throttle_classes: ClassVar[list] = [NotificationWriteRateThrottle]
     
     def delete(self, request, notification_id):
         has_permission, result = self.require_roles(
@@ -338,6 +391,7 @@ class NotificationClearAllView(AccessControlMixin, APIView):
     """
     authentication_classes: ClassVar[list] = [CustomJWTAuthentication]
     permission_classes: ClassVar[list] = [IsAuthenticated]
+    throttle_classes: ClassVar[list] = [NotificationWriteRateThrottle]
     
     def delete(self, request):
         has_permission, result = self.require_roles(
@@ -350,8 +404,19 @@ class NotificationClearAllView(AccessControlMixin, APIView):
         db = get_db()
         collection = db[Notification.collection_name]
 
-        delete_query = _build_notification_owner_query(request.user)
-        result = collection.delete_many(delete_query)
+        owner_query = _build_notification_owner_query(request.user)
+        ids = bounded_owner_ids(
+            collection,
+            owner_query,
+            limit=settings.NOTIFICATIONS_BULK_MUTATION_LIMIT,
+        )
+        if ids is None:
+            return error_response(
+                message="Inbox is too large for a synchronous clear-all operation",
+                code="NOTIFICATION_BULK_LIMIT_EXCEEDED",
+                status_code=http_status.HTTP_409_CONFLICT,
+            )
+        result = collection.delete_many({"_id": {"$in": ids}, **owner_query})
         
         logger.info(f"Deleted {result.deleted_count} notifications")
         
@@ -372,6 +437,7 @@ class RegisterDeviceTokenView(AccessControlMixin, APIView):
     """
     authentication_classes: ClassVar[list] = [CustomJWTAuthentication]
     permission_classes: ClassVar[list] = [IsAuthenticated]
+    throttle_classes: ClassVar[list] = [NotificationDeviceTokenRateThrottle]
     
     def post(self, request):
         has_permission, result = self.require_roles(

@@ -792,6 +792,8 @@ def _get_customer_dashboard(customer_id, **kwargs):
 
 def _get_notification_status(customer_id, **kwargs):
     """Get notification inbox status with unread count and recent notifications."""
+    from notifications.services.inbox import notification_is_read, with_unread_state
+
     db = settings.MONGODB
     collection = db["notifications"]
 
@@ -800,23 +802,28 @@ def _get_notification_status(customer_id, **kwargs):
     if cached is not None:
         return cached
 
-    # Build owner query (customers strictly by user_id)
-    owner_query = _owner_query('user_id', customer_id)
+    # Notifications are qualified by both account ID and role.
+    owner_query = {**_owner_query('user_id', customer_id), 'user_type': 'customer'}
     if not customer_id:
         return {"unread_count": 0, "recent_notifications": [], "summary": "No notifications."}
 
-    unread_query = {**owner_query, 'status': {'$nin': ['read']}}
+    unread_query = with_unread_state(owner_query)
     unread_count = collection.count_documents(unread_query)
 
     recent_cursor = collection.find(owner_query).sort('created_at', -1).limit(5)
     recent_notifications = []
     for doc in recent_cursor:
+        legacy_status = doc.get('status', 'pending')
+        delivery_status = doc.get('delivery_status', legacy_status)
+        if delivery_status == 'read':
+            delivery_status = 'unknown'
         recent_notifications.append({
             "id": str(doc.get('_id')),
             "notification_type": doc.get('notification_type'),
             "subject": doc.get('subject'),
-            "status": doc.get('status'),
-            "is_read": doc.get('status') == 'read',
+            "status": delivery_status,
+            "delivery_status": delivery_status,
+            "is_read": notification_is_read(doc),
             "created_at": doc.get('created_at'),
         })
 

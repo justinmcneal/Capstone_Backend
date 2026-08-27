@@ -1010,7 +1010,9 @@ class AccountLifecycleService:
             {"user_id": customer.id}, sort=[("created_at", -1)]
         )
         login_activity = LoginActivity.find({"user_id": customer.id}, limit=200)
-        notifications = Notification.find_by_user(customer.id, limit=200)
+        notifications = Notification.find_by_user(
+            customer.id, limit=200, user_type="customer"
+        )
 
         payload = {
             "generated_at": AccountLifecycleService._serialize_datetime(

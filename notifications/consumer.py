@@ -1,15 +1,22 @@
 import json
 import logging
+from collections import deque
 from datetime import datetime, timezone
+from time import monotonic
 
 from channels.db import database_sync_to_async
 from channels.generic.websocket import AsyncWebsocketConsumer
+from django.conf import settings
 from django.contrib.auth.models import AnonymousUser
 
 from notifications.ownership import (
     build_notification_owner_query_from_values,
     notification_group_name,
     notification_owner_identity,
+)
+from notifications.services.inbox import (
+    mark_notification_read,
+    with_unread_state,
 )
 
 logger = logging.getLogger("notifications")
@@ -32,6 +39,8 @@ class NotificationConsumer(AsyncWebsocketConsumer):
         if not self.user_group:
             await self.close(code=4001)
             return
+
+        self._action_times = deque()
 
         await self.channel_layer.group_add(self.user_group, self.channel_name)
 
@@ -63,6 +72,12 @@ class NotificationConsumer(AsyncWebsocketConsumer):
             )
 
     async def receive(self, text_data):
+        if not self._allow_action():
+            await self.send_error(
+                "rate_limited",
+                "Too many WebSocket actions; retry later",
+            )
+            return
         try:
             data = json.loads(text_data)
             if not isinstance(data, dict):
@@ -98,8 +113,9 @@ class NotificationConsumer(AsyncWebsocketConsumer):
                         {
                             "type": "mark_read_response",
                             "data": {
-                                "success": success,
+                                "success": success["success"],
                                 "notification_id": notification_id,
+                                "replayed": success.get("replayed", False),
                             },
                         }
                     )
@@ -108,6 +124,17 @@ class NotificationConsumer(AsyncWebsocketConsumer):
                 await self.send_error("unsupported_action", "Unsupported action")
         except json.JSONDecodeError:
             await self.send_error("invalid_json", "Invalid JSON")
+
+    def _allow_action(self):
+        limit = int(getattr(settings, "NOTIFICATIONS_WS_ACTIONS_PER_MINUTE", 120))
+        now = monotonic()
+        cutoff = now - 60
+        while self._action_times and self._action_times[0] <= cutoff:
+            self._action_times.popleft()
+        if len(self._action_times) >= limit:
+            return False
+        self._action_times.append(now)
+        return True
 
     async def send_error(self, code, message):
         await self.send(
@@ -140,26 +167,24 @@ class NotificationConsumer(AsyncWebsocketConsumer):
         db = get_db()
         collection = db[Notification.collection_name]
         unread_query = _build_notification_owner_query(user)
-        unread_query["status"] = {"$nin": ["read"]}
+        unread_query = with_unread_state(unread_query)
         return collection.count_documents(unread_query)
 
     @database_sync_to_async
     def mark_notification_read(self, notification_id):
-        from bson import ObjectId
-
-        from notifications.models.notification import Notification, get_db
+        from notifications.models.notification import get_db
 
         try:
             db = get_db()
-            collection = db[Notification.collection_name]
             owner_query = build_notification_owner_query_from_values(
                 self.user_id, self.user_type
             )
-            result = collection.update_one(
-                {"_id": ObjectId(notification_id), **owner_query},
-                {"$set": {"status": "read", "read_at": datetime.now(timezone.utc)}},
-            )
-            return result.modified_count > 0
+            outcome = mark_notification_read(db, notification_id, owner_query)
+            return {
+                "success": bool(outcome.get("found"))
+                and not bool(outcome.get("conflict")),
+                "replayed": bool(outcome.get("replayed")),
+            }
         except Exception as exc:  # noqa: BLE001
             logger.error("Error marking notification read: %s", exc)
-            return False
+            return {"success": False, "replayed": False}

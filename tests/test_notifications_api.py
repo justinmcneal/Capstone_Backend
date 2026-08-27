@@ -318,10 +318,13 @@ class TestNotificationMarkReadView:
 
         response = view.post(request, notification_id=notif.id)
         assert response.status_code == 200
-        assert response.data['data']['status'] == 'read'
+        assert response.data['data']['is_read'] is True
+        assert response.data['data']['delivery_status'] == 'pending'
+        assert response.data['data']['replayed'] is False
 
         updated = Notification.find_by_user(customer.id, limit=1)[0]
-        assert updated.status == 'read'
+        assert updated.is_read is True
+        assert updated.delivery_status == 'pending'
 
     def test_returns_404_for_notification_owned_by_other_user(self, monkeypatch):
         db = _setup_db(monkeypatch)
@@ -390,7 +393,9 @@ class TestNotificationMarkAllReadView:
         assert response.status_code == 200
         assert response.data['data']['marked_count'] == 2
 
-        unread_count = db['notifications'].count_documents({'user_id': str(customer.id), 'status': {'$nin': ['read']}})
+        unread_count = db['notifications'].count_documents(
+            {'user_id': str(customer.id), 'is_read': False}
+        )
         assert unread_count == 0
 
 
