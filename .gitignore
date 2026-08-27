@@ -228,3 +228,6 @@ logs/security_events.jsonl
 frontend/
 
 dump.rdb
+
+# Isolated feature worktrees
+.worktrees/
