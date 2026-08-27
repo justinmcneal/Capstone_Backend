@@ -12,13 +12,14 @@ from ai_assistant.services.officer_scope import (
 )
 from documents.models.document import Document
 from loans.models import LoanApplication
-from loans.models.payment import LoanPayment
 from loans.models.product import LoanProduct
 from loans.services.qualification import document_type_label, resolve_required_document_types
+from loans.utils.money import from_centavos, to_centavos
 
 logger = logging.getLogger("ai_assistant")
 
 DOCUMENT_RESULT_LIMIT = 20
+LOAN_PAYMENT_COLLECTION = "loan_payments"
 
 OFFICER_TOOL_SCHEMAS = [
     {
@@ -219,6 +220,68 @@ def _get_document_review_status(scope):
     }
 
 
+def _summarize_posted_payments(loan_id, customer_id):
+    """Return a one-row aggregate for posted and legacy status-less payments."""
+    rows = list(
+        settings.MONGODB[LOAN_PAYMENT_COLLECTION].aggregate(
+            [
+                {
+                    "$match": {
+                        "loan_id": str(loan_id),
+                        "customer_id": str(customer_id),
+                        "$or": [
+                            {"payment_status": "posted"},
+                            {"payment_status": {"$exists": False}},
+                        ],
+                    }
+                },
+                {
+                    "$group": {
+                        "_id": None,
+                        "count": {"$sum": 1},
+                        "amount_centavos": {
+                            "$sum": {"$ifNull": ["$amount_centavos", 0]}
+                        },
+                        "legacy_amount": {
+                            "$sum": {
+                                "$cond": [
+                                    {
+                                        "$eq": [
+                                            {"$ifNull": ["$amount_centavos", None]},
+                                            None,
+                                        ]
+                                    },
+                                    {"$ifNull": ["$amount", 0]},
+                                    0,
+                                ]
+                            }
+                        },
+                    }
+                },
+                {
+                    "$project": {
+                        "_id": 0,
+                        "count": 1,
+                        "amount_centavos": 1,
+                        "legacy_amount": 1,
+                    }
+                },
+                {"$limit": 1},
+            ]
+        )
+    )
+    if not rows:
+        return {"count": 0, "total_amount": 0}
+
+    aggregate = rows[0]
+    total_centavos = int(aggregate.get("amount_centavos") or 0)
+    total_centavos += to_centavos(aggregate.get("legacy_amount") or 0, "amount")
+    return {
+        "count": int(aggregate.get("count") or 0),
+        "total_amount": from_centavos(total_centavos),
+    }
+
+
 def _get_repayment_summary(scope):
     projection = {
         "status": 1,
@@ -233,12 +296,8 @@ def _get_repayment_summary(scope):
     if not schedule:
         return {"schedule_available": False}
 
-    payment_summary = LoanPayment.summarize(
-        {
-            "loan_id": str(scope.application_id),
-            "customer_id": str(scope.customer_id),
-            "payment_status": "posted",
-        }
+    payment_summary = _summarize_posted_payments(
+        scope.application_id, scope.customer_id
     )
     total_amount = schedule.get("total_amount") or 0
     total_paid = payment_summary["total_amount"]

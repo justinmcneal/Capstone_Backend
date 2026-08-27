@@ -6,8 +6,9 @@ from bson import ObjectId
 from cryptography.fernet import Fernet
 from django.conf import settings
 
+from ai_assistant.services import officer_tools
 from ai_assistant.services.officer_scope import OfficerAssistantScope
-from loans.models import LoanApplication
+from loans.models import LoanApplication, LoanPayment
 from loans.models.repayment import RepaymentSchedule
 
 from ai_assistant.services.officer_tools import (
@@ -365,6 +366,116 @@ def test_repayment_summary_uses_safe_aggregates_for_encrypted_long_schedules(
     assert summary["remaining_balance"] == 24000
     assert "installments" not in summary
     assert "encbson::" not in result["result"]
+
+
+def test_repayment_summary_counts_statusless_legacy_payments_as_posted(officer_scope):
+    settings.MONGODB[LoanPayment.collection_name].insert_one(
+        {
+            "loan_id": officer_scope.application_id,
+            "customer_id": officer_scope.customer_id,
+            "amount_centavos": 125050,
+        }
+    )
+
+    result = execute_officer_tool_result(
+        "get_repayment_summary", {}, officer_scope, request_id="request-1"
+    )
+
+    assert result["success"] is True
+    summary = json.loads(result["result"])
+    assert summary["posted_payment_count"] == 1
+    assert summary["total_paid"] == 1250.5
+
+
+def test_repayment_summary_accurately_includes_amount_only_legacy_payments(officer_scope):
+    settings.MONGODB[LoanPayment.collection_name].insert_one(
+        {
+            "loan_id": officer_scope.application_id,
+            "customer_id": officer_scope.customer_id,
+            "amount": 1250.55,
+        }
+    )
+
+    result = execute_officer_tool_result(
+        "get_repayment_summary", {}, officer_scope, request_id="request-1"
+    )
+
+    assert result["success"] is True
+    summary = json.loads(result["result"])
+    assert summary["posted_payment_count"] == 1
+    assert summary["total_paid"] == 1250.55
+
+
+def test_repayment_summary_excludes_non_posted_payment_statuses(officer_scope):
+    settings.MONGODB[LoanPayment.collection_name].insert_many(
+        [
+            {
+                "loan_id": officer_scope.application_id,
+                "customer_id": officer_scope.customer_id,
+                "amount_centavos": 10000,
+                "payment_status": status,
+            }
+            for status in ("failed", "reversed", "pending_verification")
+        ]
+    )
+
+    result = execute_officer_tool_result(
+        "get_repayment_summary", {}, officer_scope, request_id="request-1"
+    )
+
+    assert result["success"] is True
+    summary = json.loads(result["result"])
+    assert summary["posted_payment_count"] == 0
+    assert summary["total_paid"] == 0
+
+
+def test_repayment_payment_aggregate_is_grouped_and_never_falls_back_to_find(
+    monkeypatch,
+):
+    class AggregateOnlyPayments:
+        def __init__(self):
+            self.pipeline = None
+            self.find_called = False
+
+        def aggregate(self, pipeline):
+            self.pipeline = pipeline
+            return iter(
+                [
+                    {
+                        "count": 2,
+                        "amount_centavos": 10000,
+                        "legacy_amount": 20.5,
+                    }
+                ]
+            )
+
+        def find(self, *args, **kwargs):
+            self.find_called = True
+            raise AssertionError("Officer repayment summary must not use find()")
+
+    collection = AggregateOnlyPayments()
+    monkeypatch.setattr(
+        officer_tools.settings,
+        "MONGODB",
+        {LoanPayment.collection_name: collection},
+    )
+
+    summary = officer_tools._summarize_posted_payments("loan-1", "customer-1")
+
+    assert summary == {"count": 2, "total_amount": 120.5}
+    assert collection.find_called is False
+    assert collection.pipeline[0] == {
+        "$match": {
+            "loan_id": "loan-1",
+            "customer_id": "customer-1",
+            "$or": [
+                {"payment_status": "posted"},
+                {"payment_status": {"$exists": False}},
+            ],
+        }
+    }
+    assert collection.pipeline[-1] == {"$limit": 1}
+    assert any("$group" in stage for stage in collection.pipeline)
 
 
 def test_document_review_status_excludes_unrequired_customer_documents(officer_scope):
