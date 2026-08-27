@@ -15,6 +15,7 @@ from accounts.tasks import finalize_scheduled_customer_deletions_task
 from accounts.utils.email_utils import EmailUtils
 from accounts.utils.token_utils import TokenUtils
 from analytics.models import AuditLog
+from notifications.models.device_token import DeviceToken
 
 
 @pytest.fixture(autouse=True)
@@ -180,9 +181,16 @@ def test_first_new_device_login_emits_security_event():
     WEBSOCKET_ENABLED=False,
     ACCOUNT_DELETION_RETENTION_DAYS=0,
 )
-def test_deletion_can_be_cancelled_with_credentials_and_finalized_after_retention():
+def test_deletion_can_be_cancelled_with_credentials_and_finalized_after_retention(settings):
     customer = _customer("deletion-stage8@example.com")
-    client, _tokens = _customer_client(customer)
+    client, tokens = _customer_client(customer)
+    device_token = DeviceToken.register(
+        user_id=customer.id,
+        user_type="customer",
+        session_id=RefreshToken(tokens["refresh"])["session_id"],
+        token="deletion-device-token-1234567890",
+        platform="android",
+    )
 
     requested = client.post(
         reverse("accounts:account-deletion-request"),
@@ -226,6 +234,9 @@ def test_deletion_can_be_cancelled_with_credentials_and_finalized_after_retentio
     assert deleted.active is False
     assert deleted.password == ""
     assert deleted.email.endswith("@deleted.local")
+    assert settings.MONGODB[DeviceToken.collection_name].find_one(
+        {"_id": device_token._id}
+    )["is_active"] is False
 
     cleanup_status = admin_client.get(
         reverse("accounts:admin-customer-detail", kwargs={"customer_id": customer.id})

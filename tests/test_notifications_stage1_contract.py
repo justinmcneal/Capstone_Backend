@@ -181,7 +181,7 @@ def test_routed_customer_exercises_all_seven_operations():
 
     registered = client.post(
         reverse("notifications:notification-register-token"),
-        {"token": "stage1-device-token", "platform": "android"},
+        {"token": "stage1-device-token-1234567890", "platform": "android"},
         format="json",
     )
     assert registered.status_code == 200

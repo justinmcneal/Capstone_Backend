@@ -33,9 +33,9 @@ client receipt.
 
 ## Executive Summary
 
-The Notifications module is **functional but not production-ready**. Seven REST
-operations provide an owner-scoped inbox, unread counts, read mutations,
-deletion, clear-all, and device-token registration. An authenticated WebSocket
+The Notifications module is **functional but not production-ready**. Eight REST
+method operations provide an owner-scoped inbox, unread counts, read mutations,
+deletion, clear-all, and device-token registration/unregistration. An authenticated WebSocket
 provides connection state, ping/pong, owner-scoped mark-read, and real-time
 broadcasts. Role-qualified ownership correctly prevents customers, officers,
 and administrators with the same raw ID from sharing inbox rows or Channels
@@ -44,15 +44,17 @@ present, including the temporary-password pair.
 
 The current code does not yet provide a coherent production delivery system:
 
-1. **FCM delivery is currently broken.** The pinned `firebase-admin==7.4.0`
-   installation exposes `send_each_for_multicast` but not the invoked
-   `messaging.send_multicast`. The exception is swallowed and logged, so inbox
-   creation succeeds while every attempted push silently fails.
-2. **Device-token ownership is unsafe.** Tokens store `user_id` without
-   `user_type`, token lookup is not role-qualified, and registering an existing
-   token transfers it to the current caller. There is no unregister/logout or
-   account-deletion cleanup path, no strict platform/token validation, and no
-   500-token FCM batching.
+1. **FCM and current device-token lifecycle are implemented locally.** Stage 2
+   uses the installed `send_each_for_multicast` API, batches at no more than
+   500 tokens, processes partial results, and deactivates permanently invalid
+   registrations without logging credentials. Live Firebase acceptance still
+   requires deployment validation.
+2. **Device tokens are now protected and owner-safe.** Current registrations
+   use encrypted token values, deterministic fingerprints, role-qualified
+   ownership, session binding, strict token/platform validation, active-device
+   limits, expiry, refresh/deduplication, explicit unregister, session/logout
+   cleanup, and account-deletion cleanup. Stage 4 must inventory/backfill legacy
+   rows before production index work.
 3. **The advertised standalone Celery email path is not operational.** Celery
    autodiscovery does not import `notifications/services/email_tasks.py`, so
    `notifications.services.email_tasks.send_email_task` is not registered in a
@@ -74,17 +76,19 @@ The current code does not yet provide a coherent production delivery system:
    `email_loan_updates`, `email_payment_reminders`, and `email_promotions`, but
    notification/email producers do not consult them. The UI therefore exposes
    controls that do not currently control delivery.
-7. **Privacy lifecycle is incomplete.** Recipient email/name, message,
-   metadata, errors, and FCM tokens are plaintext. Email addresses, subjects,
-   user IDs, exception details, and complete FCM tokens can enter logs.
+7. **Privacy lifecycle is incomplete.** Device-token values are encrypted and
+   token delivery logs contain only non-sensitive error types. Recipient
+   email/name, message, metadata, and errors remain plaintext, while email
+   addresses, subjects, user IDs, and other exception details can enter logs.
    Customer export is limited to the latest 200 notifications without explicit
-   truncation and queries by raw ID only. Account deletion does not remove or
-   pseudonymize core notifications and does not deactivate device tokens.
+   truncation. Account deletion does not remove or pseudonymize core
+   notifications, although it now deactivates device tokens.
 8. **Persistence and scale controls are incomplete.** Stage 1 added strict
    query parameters, a maximum offset, bounded bulk mutations, and REST/WS
    action throttles. MongoDB validators, inventory/backfill tooling,
-   query-specific compound indexes, device-token lookup bounds, and push
-   fan-out bounds remain.
+   query-specific notification indexes and legacy inventory/backfill remain.
+   Current device-token lookup, per-owner registrations, and FCM fan-out are
+   bounded.
 9. **WebSocket production controls are partial.** Handshake authentication,
    origin checking, and per-connection action throttling are present, but an
    already-connected socket is not
@@ -100,19 +104,23 @@ The current code does not yet provide a coherent production delivery system:
     an `EMAIL_SENDER_THREADPOOL_MAX_WORKERS` setting/thread pool that the code
     does not implement.
 
-Current Stage 1 automated evidence:
+Current local automated evidence:
 
 - Core Notifications-focused selection: **62 passed** on 2026-08-27.
 - Stage 1 focused contract/security selection: **78 passed**.
+- Stage 2 provider/token lifecycle selection: **14 passed**.
 - Routed tests cover missing/revoked JWTs, customer/officer/admin role-qualified
   isolation, all seven REST operations, cross-owner concealment, independent
   read/delivery state, replay, strict bounds, REST throttles, and WebSocket
   action throttling.
-- Broader notification/WebSocket/email-template selection: **117 passed and
+- Broader notification/WebSocket/email-template selection: **131 passed and
   1,245 deselected**.
-- Full repository: **1,316 passed and 46 opt-in integration tests skipped**.
-- There is no FCM send test, real SMTP test, real-Mongo query-plan/validator
-  test, Redis multi-process test, or Notifications deployment release suite.
+- Full repository: **1,330 passed and 46 opt-in integration tests skipped**.
+- Mocked FCM success, batching, partial/permanent/transient failure behavior,
+  encryption, ownership, deduplication, expiry, unregister, logout/session,
+  and account cleanup are covered. There is no live Firebase/SMTP test,
+  real-Mongo query-plan/validator test, Redis multi-process test, or
+  Notifications deployment release suite.
 
 ## Current Status
 
@@ -124,9 +132,9 @@ Current Stage 1 automated evidence:
 | Standalone Celery email | Not operational | Task source exists but is not autodiscovered/routed/called, and returned failures bypass Celery autoretry. |
 | Loan/document delivery | Implemented in owning modules | Their domain outboxes provide leases, retries, and reconciliation; those guarantees do not cover all Notifications producers. |
 | Assignment/security events | Partial | Owner-scoped records and broadcasts exist, but publication is best-effort with no durable recovery. |
-| FCM push | Broken | Installed Firebase API and invoked method are incompatible; device ownership and cleanup also require redesign. |
+| FCM push | Implemented locally; deployment-gated | Installed-version API, 500-token batching, partial results, permanent-token cleanup, encrypted role/session-qualified registrations, expiry, unregister, and session/account cleanup are covered. Live Firebase proof remains. |
 | Preferences | Stored but unenforced | Profiles persists three customer email preferences; delivery paths do not apply them. |
-| Privacy lifecycle | Incomplete | Plaintext sensitive fields/tokens, unsafe logs, incomplete export, and missing account-deletion cleanup remain. |
+| Privacy lifecycle | Incomplete | Device tokens are encrypted and lifecycle-bound; notification content/recipient fields, broader log safety, retention, and complete export/deletion remain. |
 | MongoDB schema/indexes | Partial | Basic indexes are bootstrapped; no validator, compound query indexes, inventory/backfill, or real-Mongo proof exists. |
 | Observability | Incomplete | Two task counters exist, but no end-to-end channel outcomes, backlog/age gauges, rules, dashboard, readiness, or alert evidence exists. |
 | Production deployment | Not ready | SMTP, Firebase, Redis/Channels, workers, HTTPS/WSS, backup/restore, monitoring, and release gates remain unproven. |
@@ -165,7 +173,8 @@ loan officer, admin, and super admin; super admin normalizes to stored `admin`.
 | `POST <notification_id>/read/` | Atomic owner-scoped read mutation | Implemented; idempotent replay is explicit in REST and WS |
 | `DELETE <notification_id>/` | Delete one owned row | Implemented |
 | `DELETE clear-all/` | Delete a bounded snapshot of owned rows | Implemented; returns 409 when synchronous bound is exceeded |
-| `POST register-token/` | Insert/update an FCM token | Present but unsafe until token ownership/validation is fixed |
+| `POST register-token/` | Validate and register/refresh an encrypted token for the authenticated role/session | Implemented with ownership conflict and active-device bounds |
+| `DELETE register-token/` | Deactivate one token owned by the authenticated account | Implemented; cross-owner requests are concealed |
 
 WebSocket route: `GET /ws/notifications/` upgrades through
 `AllowedHostsOriginValidator` and `JWTAuthMiddleware`.
@@ -266,19 +275,21 @@ reconciliation without repeating the business mutation.
 
 ### 3. Device tokens and FCM
 
-**Status: Production blocker**
+**Status: Implemented locally; deployment and legacy-data validation pending**
 
-- replace the removed Firebase call with the supported pinned-version API and
-  test partial-success response handling;
-- scope tokens by both user ID and user type and prevent unauthorized token
-  reassignment;
-- add bounded token/platform validation and approved platform values;
-- add unregister-current-token, logout/session cleanup, stale-token expiry,
-  account-deletion cleanup, and last-used maintenance;
-- encrypt or otherwise protect tokens as bearer-like delivery credentials;
-- batch multicast requests to Firebase's provider limit; and
-- make push asynchronous, retryable, preference-aware, observable, and safe
-  under partial failure.
+- [x] Use the supported installed-version Firebase API and test complete and
+  partial results.
+- [x] Scope tokens by user ID and role and reject active cross-owner claims.
+- [x] Validate token length/shape and approved `android`/`ios`/`web` platforms.
+- [x] Implement explicit unregister, session/logout and account cleanup,
+  expiry, refresh, active-device bounds, and last-used maintenance.
+- [x] Encrypt token values, use non-reversible fingerprints for identity, and
+  include the model in field-encryption rotation/verification tooling.
+- [x] Batch multicast requests at the configured maximum of 500.
+- [ ] Stage 3 must make push durable, asynchronous, retryable,
+  preference-aware, and observable under provider uncertainty.
+- [ ] Stage 4 must inventory/backfill legacy rows and prove indexes/validators
+  against isolated real MongoDB.
 
 ### 4. Preferences, privacy, and lifecycle
 
@@ -371,13 +382,14 @@ bounded, request-level-tested contract and cannot corrupt delivery evidence.
 
 ### Stage 2 — Secure and working push notifications
 
-**Status: Not started**
+**Status: Complete locally (2026-08-27)**
 
-- Replace the incompatible Firebase API call and add success/partial/failure
-  tests.
-- Redesign role-qualified token ownership, validation, deduplication, revoke,
-  expiry, logout, and account-deletion behavior.
-- Protect tokens and batch provider requests.
+- [x] Replace the incompatible Firebase API call and add
+  success/partial/permanent/transient failure tests.
+- [x] Add role-qualified ownership, validation, deduplication, active-device
+  bounds, expiry, explicit revoke, logout/session, and account-deletion behavior.
+- [x] Encrypt tokens, fingerprint lookups, sanitize provider logs, and batch
+  requests to the Firebase maximum.
 
 **Exit condition:** no caller can claim another account's token, the installed
 Firebase version passes mocked contract tests, and token lifecycle is complete.
@@ -460,8 +472,13 @@ topology and all approved policy/evidence records are retained.
   JavaScript.
 - Customer mobile query/subprotocol compatibility is temporary and requires a
   coordinated client migration before removal.
-- Device-token registration should not be treated as production-safe until
-  Stage 2 is complete. Clients will need an unregister/logout call.
+- Clients must register or refresh their token after login using
+  `POST register-token/`, including an approved platform. Use
+  `DELETE register-token/` with the token during explicit device unregister;
+  normal logout also deactivates registrations bound to that session.
+- Registration may return HTTP 409 if a token is actively owned by another
+  account or the account has reached its active-device limit. Clients must not
+  silently substitute or transfer token ownership.
 - Notification preferences are not currently enforced; frontends must not
   claim that toggles control delivery until Stage 3 closes that gap.
 - The WebSocket supports only `ping` and `mark_read`. REST fallback is an

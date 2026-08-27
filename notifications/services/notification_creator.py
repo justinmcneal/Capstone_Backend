@@ -1,5 +1,7 @@
 import logging
 
+from django.conf import settings
+
 from notifications.models.device_token import DeviceToken
 from notifications.models.notification import Notification
 from notifications.services.websocket_service import (
@@ -61,14 +63,14 @@ def create_and_broadcast_notification(
     broadcast_notification_to_user(user_id, user_type, notification_data)
 
     # 3. Send Push Notification via Firebase Cloud Messaging (FCM)
-    _send_push_notification(user_id, subject, message, notification_data)
+    _send_push_notification(user_id, user_type, subject, message, notification_data)
 
     return notification
 
 
-def _send_push_notification(user_id, title, body, data_payload):
+def _send_push_notification(user_id, user_type, title, body, data_payload):
     if not user_id or firebase_admin is None or messaging is None:
-        return
+        return {"attempted": 0, "succeeded": 0, "failed": 0, "deactivated": 0}
 
     try:
         # Check if Firebase is initialized, initialize if not (requires credentials in env or default service account)
@@ -77,41 +79,58 @@ def _send_push_notification(user_id, title, body, data_payload):
                 firebase_admin.initialize_app()
             except Exception as exc:  # noqa: BLE001 - Firebase init guard
                 logger.warning("Could not initialize firebase admin: %s", exc)
-                return
+                return {
+                    "attempted": 0,
+                    "succeeded": 0,
+                    "failed": 0,
+                    "deactivated": 0,
+                }
 
-        tokens = DeviceToken.get_tokens_for_user(user_id)
+        tokens = DeviceToken.get_tokens_for_user(user_id, user_type)
         if not tokens:
-            return
+            return {"attempted": 0, "succeeded": 0, "failed": 0, "deactivated": 0}
 
-        fcm_tokens = [t.token for t in tokens]
+        batch_size = int(settings.NOTIFICATIONS_FCM_BATCH_SIZE)
+        totals = {"attempted": 0, "succeeded": 0, "failed": 0, "deactivated": 0}
 
         # Ensure data payload values are strings (FCM requirement)
         stringified_data = {k: str(v) for k, v in data_payload.items() if v is not None}
 
-        message = messaging.MulticastMessage(
-            notification=messaging.Notification(
-                title=title,
-                body=body,
-            ),
-            data=stringified_data,
-            tokens=fcm_tokens,
-        )
+        for start in range(0, len(tokens), batch_size):
+            batch = tokens[start : start + batch_size]
+            message = messaging.MulticastMessage(
+                notification=messaging.Notification(title=title, body=body),
+                data=stringified_data,
+                tokens=[item.token for item in batch],
+            )
+            response = messaging.send_each_for_multicast(message)
+            totals["attempted"] += len(batch)
+            totals["succeeded"] += int(response.success_count)
+            totals["failed"] += int(response.failure_count)
 
-        response = messaging.send_multicast(message)
-
-        if response.failure_count > 0:
-            responses = response.responses
-            for idx, resp in enumerate(responses):
-                if not resp.success:
-                    # The order of responses corresponds to the order of the registration tokens.
-                    failed_token = fcm_tokens[idx]
-                    logger.error(
-                        f"Failed to send push to token {failed_token}: {resp.exception}"
-                    )
-                    # If token is unregistered, deactivate it
-                    if isinstance(resp.exception, messaging.UnregisteredError):
-                        DeviceToken.deactivate_token(failed_token)
-                        logger.info(f"Deactivated stale token: {failed_token}")
+            attempted_hashes = [item.token_hash for item in batch]
+            DeviceToken.touch_hashes(attempted_hashes)
+            permanent_failures = []
+            for token_record, send_response in zip(batch, response.responses):
+                if send_response.success:
+                    continue
+                exception = send_response.exception
+                logger.warning(
+                    "FCM token delivery failed: error_type=%s",
+                    type(exception).__name__,
+                )
+                if isinstance(
+                    exception,
+                    (messaging.UnregisteredError, messaging.SenderIdMismatchError),
+                ):
+                    permanent_failures.append(token_record.token_hash)
+            totals["deactivated"] += DeviceToken.deactivate_hashes(
+                permanent_failures, "provider_permanent_failure"
+            )
+        return totals
 
     except Exception as exc:  # noqa: BLE001 - Push delivery guard
-        logger.error("Push notification delivery failed: %s", exc)
+        logger.error(
+            "Push notification delivery failed: error_type=%s", type(exc).__name__
+        )
+        return {"attempted": 0, "succeeded": 0, "failed": 0, "deactivated": 0}

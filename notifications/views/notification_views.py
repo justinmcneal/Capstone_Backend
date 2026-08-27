@@ -25,7 +25,11 @@ from accounts.authentication import CustomJWTAuthentication
 from accounts.utils.access_control import AccessControlMixin
 from accounts.utils.validation_utils import parse_optional_bool, sanitize_text
 from config.views import error_response, success_response
-from notifications.models.device_token import DeviceToken
+from notifications.models.device_token import (
+    DeviceToken,
+    DeviceTokenLimitExceeded,
+    DeviceTokenOwnershipConflict,
+)
 from notifications.models.notification import (
     Notification,
     get_db,
@@ -33,6 +37,9 @@ from notifications.models.notification import (
 )
 from notifications.ownership import (
     build_notification_owner_query as _build_notification_owner_query,
+)
+from notifications.ownership import (
+    notification_owner_identity,
 )
 from notifications.services.inbox import (
     bounded_owner_ids,
@@ -447,28 +454,83 @@ class RegisterDeviceTokenView(AccessControlMixin, APIView):
         if not has_permission:
             return result
 
-        token = request.data.get('token')
-        platform = request.data.get('platform', 'unknown')
-
-        if not token:
+        user_id, user_type = notification_owner_identity(request.user)
+        try:
+            device_token = DeviceToken.register(
+                user_id=user_id,
+                user_type=user_type,
+                session_id=getattr(request.user, "session_id", ""),
+                token=request.data.get("token"),
+                platform=request.data.get("platform"),
+            )
+        except DeviceTokenOwnershipConflict:
             return error_response(
-                message="Missing required field: token",
-                status_code=http_status.HTTP_400_BAD_REQUEST
+                message="Device token is already registered to another account",
+                code="DEVICE_TOKEN_OWNERSHIP_CONFLICT",
+                status_code=http_status.HTTP_409_CONFLICT,
+            )
+        except DeviceTokenLimitExceeded:
+            return error_response(
+                message="Active device-token limit has been reached",
+                code="DEVICE_TOKEN_LIMIT_EXCEEDED",
+                status_code=http_status.HTTP_409_CONFLICT,
+            )
+        except (TypeError, ValueError) as exc:
+            return error_response(
+                message="Invalid device-token registration",
+                errors={"device_token": str(exc)},
+                code="DEVICE_TOKEN_INVALID",
+                status_code=http_status.HTTP_400_BAD_REQUEST,
             )
 
-        user_id = str(getattr(request.user, 'customer_id', '') or getattr(request.user, '_id', ''))
-        
-        device_token = DeviceToken(
-            user_id=user_id,
-            token=token,
-            platform=platform,
-            is_active=True
+        logger.info(
+            "Registered device token: user_type=%s user=%s platform=%s",
+            user_type,
+            user_id,
+            device_token.platform,
         )
-        device_token.save()
-
-        logger.info(f"Registered device token for user {user_id} on {platform}")
 
         return success_response(
-            data={'status': 'registered'},
+            data={
+                "status": "registered",
+                "device_token_id": device_token.id,
+                "platform": device_token.platform,
+            },
             message="Device token registered successfully"
+        )
+
+    def delete(self, request):
+        """Deactivate one token owned by the authenticated account."""
+        has_permission, result = self.require_roles(
+            request,
+            {'customer', 'loan_officer', 'admin', 'super_admin'},
+        )
+        if not has_permission:
+            return result
+
+        user_id, user_type = notification_owner_identity(request.user)
+        try:
+            revoked = DeviceToken.deactivate_token_for_owner(
+                token=request.data.get("token"),
+                user_id=user_id,
+                user_type=user_type,
+            )
+        except (TypeError, ValueError) as exc:
+            return error_response(
+                message="Invalid device token",
+                errors={"token": str(exc)},
+                code="DEVICE_TOKEN_INVALID",
+                status_code=http_status.HTTP_400_BAD_REQUEST,
+            )
+        if not revoked:
+            return error_response(
+                message="Device token not found",
+                status_code=http_status.HTTP_404_NOT_FOUND,
+            )
+        logger.info(
+            "Unregistered device token: user_type=%s user=%s", user_type, user_id
+        )
+        return success_response(
+            data={"status": "unregistered"},
+            message="Device token unregistered successfully",
         )

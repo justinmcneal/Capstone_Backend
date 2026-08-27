@@ -471,6 +471,9 @@ class AccountLifecycleService:
 
         updated = Customer.from_dict(document)
         TokenUtils.revoke_all_sessions(updated.id, "customer")
+        from notifications.models.device_token import DeviceToken
+
+        DeviceToken.deactivate_for_owner(updated.id, "customer")
 
         if updated.profile_cleanup_status == "pending":
             from profiles.services.lifecycle import delete_customer_profile_data

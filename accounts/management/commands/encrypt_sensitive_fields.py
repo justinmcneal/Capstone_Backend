@@ -13,6 +13,7 @@ from config.field_encryption import (
 )
 from documents.models import Document
 from loans.models import LoanApplication, LoanPayment, LoanProduct, RepaymentSchedule
+from notifications.models.device_token import DeviceToken
 from profiles.models import (
     AlternativeData,
     BusinessProfile,
@@ -34,6 +35,7 @@ ENCRYPTED_MODELS = (
     LoanProduct,
     RepaymentSchedule,
     AIInteraction,
+    DeviceToken,
 )
 
 # Retained as a public constant for operational tooling and tests. Deriving this

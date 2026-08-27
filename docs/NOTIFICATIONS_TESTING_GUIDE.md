@@ -26,8 +26,8 @@ complete delivery lifecycle:
   the durable Loans/Documents delivery workers
 - **Standalone Celery Email**: source exists but is not registered or called in
   a normal startup; do not treat it as an active production path
-- **FCM Push**: attempted synchronously after inbox creation, but currently
-  broken with the pinned Firebase version
+- **FCM Push**: installed-version multicast delivery with bounded batching and
+  partial-result handling; still synchronous until Stage 3
 - **Assignment Events**: structured notifications for loan-assignment lifecycle
 
 Depending on the producer, the system can:
@@ -38,8 +38,8 @@ Depending on the producer, the system can:
 4. Attempt FCM push for registered tokens
 
 Persistence, WebSocket publication, email acceptance, push acceptance, and
-user read state are separate facts even though the current `status` field
-incorrectly combines some of them.
+user read state are separate facts. Inbox read state and delivery state are
+independent; Stage 3 still needs durable per-channel attempts.
 
 ## Base URL and Auth
 
@@ -103,6 +103,18 @@ Stage 1 routed contract command:
 Result on 2026-08-27: **78 passed**. This includes real URL routing and issued
 JWT/session evidence rather than relying only on direct view calls.
 
+Stage 2 push/token command:
+
+```bash
+.venv/bin/pytest -q tests/test_notifications_stage2_push.py
+```
+
+Result on 2026-08-27: **14 passed**. This verifies the API selected from the
+installed Firebase package, batching, partial outcomes, permanent/transient
+failures, encryption, role/session ownership, hostile reassignment rejection,
+deduplication, expiry, unregister, logout/session revocation, and account
+cleanup without contacting Firebase.
+
 Broader cross-domain selection:
 
 ```bash
@@ -110,8 +122,8 @@ Broader cross-domain selection:
   -k 'notification or websocket or email_template or email_tls'
 ```
 
-Result after Stage 1 on 2026-08-27: **117 passed, 1,245 deselected**. The latest
-full repository result on the same revision is **1,316 passed, 46 skipped**.
+Result after Stage 2 on 2026-08-27: **131 passed, 1,245 deselected**. The latest
+full repository result on the same revision is **1,330 passed, 46 skipped**.
 
 Evidence limits:
 
@@ -120,8 +132,8 @@ Evidence limits:
 - WebSocket security tests do use ASGI routing and real issued token/session
   behavior, but use an in-memory channel layer rather than deployed Redis.
 - Email tests mock rendering/transport. No SMTP message is sent.
-- Device registration has two basic tests; no FCM send/partial-failure test
-  exists.
+- Stage 2 has mocked installed-API FCM and routed device-lifecycle evidence;
+  live Firebase receipt remains deployment-only evidence.
 - No Notifications-specific real-Mongo, multi-worker Redis/Celery, HTTPS/WSS,
   load, backup/restore, monitoring, or deployment probe exists yet.
 
@@ -130,7 +142,7 @@ Evidence limits:
 | Stage | Primary evidence required | Current status |
 | --- | --- | --- |
 | Stage 1 — Contract and owner-safe inbox | Routed auth/role/owner tests, independent read/delivery state, atomic replay, bounds/throttles | Complete locally; 78 focused tests pass |
-| Stage 2 — Secure working push | Installed Firebase API, role-qualified token ownership, validation, revoke/cleanup, provider batching | Not started; current FCM call is incompatible |
+| Stage 2 — Secure working push | Installed Firebase API, role-qualified token ownership, validation, revoke/cleanup, provider batching | Complete locally; 14 focused tests pass |
 | Stage 3 — Durable preference-aware delivery | Registered/routed tasks, leases/retries, broker/worker/provider recovery, preference policy | Not started; Loans/Documents outboxes cover only their events |
 | Stage 4 — Privacy and MongoDB correctness | Encryption/log safety, lifecycle/export, validators/indexes, inventory/backfill, real-Mongo plans | Not started |
 | Stage 5 — WebSocket resilience/observability | Post-connect revocation/expiry, limits, cross-device sync, metrics/rules/dashboard/health | Not started |
@@ -220,9 +232,9 @@ Users can only mark read / list notifications they own. Accessing another user's
 
 HTTP ownership checks and WebSocket groups are role-qualified. Users from separate account collections cannot share notifications even if their raw IDs are identical. The `super_admin` authentication role is normalized to the stored `admin` notification type.
 
-This guarantee now extends to `Notification.find_by_user`, customer account
-export, and the AI notification-status tool. Device-token ownership still uses
-only raw user ID and remains a Stage 2 gap.
+This guarantee extends to `Notification.find_by_user`, customer account export,
+the AI notification-status tool, and current device-token registration,
+retrieval, unregistration, and provider fan-out.
 
 ---
 
@@ -480,43 +492,56 @@ Register an FCM device token for push notifications.
 **Request body (JSON):**
 ```json
 {
-  "token": "fcm-device-token",
+  "token": "fcm-device-token-at-least-20-characters",
   "platform": "android"
 }
 ```
 
 **Validation:**
-- `token` is required and non-empty
-- `platform` defaults to `unknown` if omitted
+- `token` is required, 20–4096 characters, and cannot contain whitespace or
+  control characters
+- `platform` is required and must be `android`, `ios`, or `web`
+- the authenticated JWT must have a live session ID
 
 **Behavior:**
-- If the same token already exists, the existing record is reassigned to the
-  current caller; this is a known ownership vulnerability, not an approved
-  production behavior
-- New tokens are inserted with `is_active: true`
+- Stores an encrypted token plus deterministic non-reversible fingerprint
+- Binds the registration to normalized user ID, role, and session
+- Refreshes the same owner's registration without creating a duplicate
+- Rejects an active token owned by another role/account with HTTP 409
+- Applies configured active-device and expiry bounds
 
 **Response fields (`data`):**
 
 | Field | Type | Description |
 |-------|------|-------------|
 | `status` | string (`registered`) | Registration confirmation |
+| `device_token_id` | string | Internal registration identifier; the raw token is never returned |
+| `platform` | string | Normalized approved platform |
 
 **Example:**
 ```bash
 curl -X POST /api/notifications/register-token/ \
   -H "Authorization: Bearer <token>" \
   -H "Content-Type: application/json" \
-  -d '{"token": "fcm-token-123", "platform": "android"}'
+  -d '{"token": "fcm-token-1234567890abcdef", "platform": "android"}'
 ```
 
-**Current platform values:** any caller-supplied value is accepted. Stage 2
-must restrict this to approved values such as `android`, `ios`, and `web`, add
-token length/format bounds, role-qualified ownership, and unregister/logout
-support.
+### 8. `DELETE /register-token/`
+
+Deactivate one token owned by the authenticated account.
+
+```json
+{"token": "fcm-token-1234567890abcdef"}
+```
+
+Returns `404` for a missing, inactive, or cross-owner token. Normal account
+logout also deactivates all token registrations bound to the revoked session;
+security-wide session revocation and account deletion deactivate every affected
+registration.
 
 ---
 
-## Complete URL Index (7 endpoints)
+## Complete URL Index (8 method operations)
 
 | # | Method | URL | Roles |
 |---|--------|-----|-------|
@@ -527,6 +552,7 @@ support.
 | 5 | DELETE | `/api/notifications/<notification_id>/` | Customer, Officer, Admin, Super Admin |
 | 6 | DELETE | `/api/notifications/clear-all/` | Customer, Officer, Admin, Super Admin |
 | 7 | POST | `/api/notifications/register-token/` | Customer, Officer, Admin, Super Admin |
+| 8 | DELETE | `/api/notifications/register-token/` | Customer, Officer, Admin, Super Admin |
 
 ---
 
@@ -599,34 +625,49 @@ WebSocket groups are role-qualified: `notifications_<user_type>_<user_id>`. This
 
 Device tokens are stored in MongoDB (`device_tokens` collection) and used by `notifications/services/notification_creator.py` to send push notifications via Firebase Cloud Messaging.
 
-**Current status: broken and not production-safe.** The project pins
-`firebase-admin==7.4.0`, which provides
-`messaging.send_each_for_multicast`; the implementation calls the absent
-`messaging.send_multicast`. The broad exception handler logs the failure and
-allows inbox creation to continue, so an API success does not indicate that a
-push was sent.
+**Current status: implemented locally; deployment proof pending.** The project
+uses the pinned package's `messaging.send_each_for_multicast`, with a maximum
+configured batch size of 500. Provider acceptance is still not proof that a
+device displayed the notification.
 
-**Registration endpoint:** `POST /api/notifications/register-token/`
+**Lifecycle endpoint:** `POST` and `DELETE /api/notifications/register-token/`
+
+Current stored fields include `user_id`, `user_type`, `session_id`, encrypted
+`token`, `token_hash`, `platform`, `is_active`, `created_at`, `updated_at`,
+`last_used_at`, `expires_at`, `deactivated_at`, and `deactivation_reason`.
+`token_hash` identifies a registration without decrypting or returning the raw
+credential; it must never be accepted as a substitute token from a client.
+
+Operational bounds:
+
+| Setting | Development default | Purpose |
+| --- | --- | --- |
+| `NOTIFICATIONS_DEVICE_TOKEN_TTL_DAYS` | `180` | Registration refresh/expiry window |
+| `NOTIFICATIONS_MAX_ACTIVE_DEVICE_TOKENS` | `20` | Per-role/account active-device bound |
+| `NOTIFICATIONS_FCM_BATCH_SIZE` | `500` | Maximum tokens per Firebase multicast call |
+| `NOTIFICATIONS_DEVICE_TOKEN_RATE` | `60/hour` | Registration/unregistration API throttle |
 
 **Behavior:**
-- Duplicate tokens currently update and may transfer the token to a different
-  caller
-- token queries use raw `user_id` without `user_type`
-- intended `UnregisteredError` handling would deactivate stale tokens, but the
-  incompatible send call prevents provider responses from being processed
-- push is attempted synchronously during notification creation, not
-  asynchronously
-- all active tokens are loaded and submitted in one request without the
-  provider's multicast batch bound
+- encrypted token value and fingerprinted lookup identity
+- role- and session-qualified owner queries
+- safe same-owner refresh/deduplication and hostile reassignment rejection
+- strict platform/token/device-count/expiry bounds
+- provider batches of at most 500 with ordered partial-result processing
+- `UnregisteredError` and `SenderIdMismatchError` deactivate only affected
+  tokens; transient failures remain active for Stage 3 retry handling
+- no raw token or provider exception body is written to notification logs
+- explicit unregister plus automatic session/logout/security/account cleanup
+- push remains synchronous until Stage 3 introduces durable background delivery
 
 **Dependencies:**
 - `firebase_admin` Python package
 - Firebase service account credentials in environment
 
-Stage 2 tests must mock the API present in the pinned package and cover complete
-success, partial success, unregistered tokens, transient errors, batching,
-role-ID collision, hostile token reassignment, unregister/logout, and account
-deletion. Do not run live FCM tests with real customer tokens.
+The Stage 2 suite mocks the provider boundary and covers complete/partial
+success, permanent/transient failures, batching, role-ID collision, hostile
+reassignment, encryption, unregister/logout, and account deletion. Do not run
+live FCM tests with real customer tokens; use an approved Firebase test project
+during Stage 6 deployment validation.
 
 ---
 
@@ -886,7 +927,7 @@ Redis fan-out, metrics scrape, dashboard series, and alert firing/resolution.
 - [x] Existing ASGI WebSocket handshake/group/security tests pass locally.
 - [x] Existing mocked template-email and assignment tests pass.
 - [x] Stage 1 routed REST and independent read/delivery-state tests pass.
-- [ ] Stage 2 FCM/device-token security and lifecycle tests pass.
+- [x] Stage 2 FCM/device-token security and lifecycle tests pass locally.
 - [ ] Stage 3 durable/preference-aware broker/worker/provider recovery passes.
 - [ ] Stage 4 privacy lifecycle, validator/index, inventory/backfill, and real-
       Mongo tests pass.
@@ -922,24 +963,25 @@ Redis fan-out, metrics scrape, dashboard series, and alert firing/resolution.
 
 ## Notes for API Test Automation
 
-1. All inbox endpoints return JSON; the only mutating endpoints that accept a body are `POST /register-token/` and assignment event notifications.
+1. All inbox endpoints return JSON. `POST` and `DELETE /register-token/` accept
+   token bodies; assignment event producers also accept structured data.
 2. Mark-read endpoints use **POST**, not PUT/PATCH.
 3. `is_read` and `read_at` are authoritative and stored separately from
    delivery state. Legacy `status: read` rows are still interpreted safely.
 4. Marking read preserves `status`/`delivery_status`; repeated mark-read calls
    succeed with `replayed: true`.
 5. List response includes `unread_count` even when filtering — it always reflects total unread, not filtered count.
-6. Inbox ownership is by both `user_id` and normalized `user_type`; seed both.
-   Separately test the remaining raw-ID-only device-token gap in Stage 2.
+6. Inbox and device-token ownership are by both `user_id` and normalized
+   `user_type`; seed both, and bind device tokens to a live `session_id`.
 7. Staff WebSocket connections use the HttpOnly access cookie. Customer mobile query/subprotocol access tokens remain temporarily supported; rejected credentials close with `4001`.
 8. Current `status: sent` is not reliable end-to-end email evidence because it
    can be set before SMTP. Stage 1 preserves it independently from read state;
    after Stage 3, assert channel attempt/outcome fields and domain outbox state.
 9. Notification preferences (opt-in/opt-out) are under `/api/profile/notifications/` — separate from this inbox API.
 10. Generate diverse `notification_type` values by running the full loan lifecycle (see `docs/LOANS_TESTING_GUIDE.md` smoke sequence).
-11. FCM is currently attempted synchronously and calls an API absent from the
-    pinned Firebase version. Stage 2 tests should mock
-    `send_each_for_multicast`; never call live customer tokens in unit tests.
+11. FCM remains synchronous but now calls the installed
+    `send_each_for_multicast` API in bounded batches. Mock it in unit tests;
+    never call live customer tokens outside an approved Firebase test project.
 12. Assignment notifications do not send email or push notifications — they are in-app only with structured metadata.
 13. Profiles notification preferences are currently unenforced. Add allow/deny
     tests for each optional category when Stage 3 implements the policy.
