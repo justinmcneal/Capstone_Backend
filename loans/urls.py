@@ -23,6 +23,7 @@ from loans.views import (
     AdminBlockchainTransactionsView,
     # Officer
     OfficerApplicationListView,
+    OfficerApplicationStatusCountsView,
     OfficerApplicationDetailView,
     OfficerApplicationNotesView,
     OfficerRequestMissingDocumentsView,
