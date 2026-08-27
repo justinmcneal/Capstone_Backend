@@ -111,7 +111,7 @@ class NotificationListView(AccessControlMixin, APIView):
         
         # Get total count for pagination
         total_count = collection.count_documents(query)
-        total_pages = max(1, math.ceil(total_count / page_size))
+        total_pages = math.ceil(total_count / page_size)
         
         # Fetch notifications with pagination
         skip = (page - 1) * page_size
