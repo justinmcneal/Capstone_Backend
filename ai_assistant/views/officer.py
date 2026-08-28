@@ -94,6 +94,10 @@ def _require_officer(request):
 
 def _safe_tool_names(values):
     names = []
+    if values is None:
+        return names
+    if not isinstance(values, (list, tuple)):
+        raise ValueError("Malformed provider tool metadata")
     for value in values or []:
         name = str(value or "")
         if name in ALLOWED_TOOL_NAMES and name not in names:
@@ -377,6 +381,23 @@ class OfficerChatView(AIRequestMetricsMixin, APIView):
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             )
 
+        authorization_error = _authorization_error(scope)
+        if authorization_error:
+            record_officer_ai_result(
+                scope,
+                request_id,
+                data["language"],
+                outcome=authorization_error,
+                duration_ms=int((time.monotonic() - started) * 1000),
+            )
+            return error_response(
+                message="Officer access to this application is no longer available."
+                if authorization_error == "AI_OFFICER_SCOPE_CHANGED"
+                else "Customer AI consent is no longer available.",
+                code=authorization_error,
+                status_code=status.HTTP_403_FORBIDDEN,
+            )
+
         try:
             result = llm.chat_with_tools(
                 message=data["message"],
@@ -413,6 +434,30 @@ class OfficerChatView(AIRequestMetricsMixin, APIView):
             )
         if not isinstance(result, dict):
             result = {}
+        raw_tool_names = result.get("tools_called")
+        if raw_tool_names is not None and not isinstance(raw_tool_names, (list, tuple)):
+            _record_provider_metrics(
+                llm,
+                outcome="error",
+                started=started,
+                operation="chat",
+                provider=result.get("provider"),
+            )
+            record_officer_ai_result(
+                scope,
+                request_id,
+                data["language"],
+                outcome="AI_PROVIDER_ERROR",
+                duration_ms=_safe_duration_ms(
+                    result.get("response_time_ms"),
+                    (time.monotonic() - started) * 1000,
+                ),
+            )
+            return error_response(
+                message="Failed to process officer AI request",
+                code="AI_PROVIDER_ERROR",
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
         duration_ms = _safe_duration_ms(
             result.get("response_time_ms"),
             (time.monotonic() - started) * 1000,
@@ -640,6 +685,27 @@ class OfficerStreamingChatView(AIRequestMetricsMixin, APIView):
                 )
 
             try:
+                authorization_error = _authorization_error(scope)
+                if authorization_error:
+                    terminal_emitted = True
+                    record_result(authorization_error)
+                    _record_provider_metrics(
+                        llm,
+                        outcome=authorization_error,
+                        started=started,
+                        operation="stream",
+                    )
+                    yield self._event(
+                        "error",
+                        {
+                            "content": "Officer access to this application is no longer available."
+                            if authorization_error == "AI_OFFICER_SCOPE_CHANGED"
+                            else "Customer AI consent is no longer available.",
+                            "code": authorization_error,
+                            "request_id": request_id,
+                        },
+                    )
+                    return
                 provider_stream = llm.chat_with_tools_stream(
                     message=data["message"],
                     customer_id=scope.customer_id,
@@ -716,6 +782,10 @@ class OfficerStreamingChatView(AIRequestMetricsMixin, APIView):
                             break
                         if "model" in chunk and not isinstance(
                             chunk.get("model"), str
+                        ):
+                            raise ValueError("Malformed provider metadata")
+                        if "tools_called" in chunk and not isinstance(
+                            chunk.get("tools_called"), (list, tuple)
                         ):
                             raise ValueError("Malformed provider metadata")
                         tool_names[:] = _safe_tool_names(

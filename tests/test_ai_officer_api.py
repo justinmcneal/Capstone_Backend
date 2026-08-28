@@ -327,6 +327,12 @@ def test_officer_endpoints_enforce_role_before_body_or_query_validation(monkeypa
         "李 小龙",
         "محمد علي",
         "1990年1月1日",
+        "ana.santos",
+        "Ana‑Santos",
+        "a@b。com",
+        "1990⁄01⁄01",
+        "123 Rizal،",
+        "pay‐12345",
     ],
 )
 @pytest.mark.parametrize("view_class", [OfficerChatView, OfficerStreamingChatView])
@@ -371,6 +377,12 @@ def test_officer_context_privacy_rejects_restricted_current_message(
         "Review the application at 123 Rizal, Quezon City",
         "123 rizal quezon city",
         "Customer email customer@example.com",
+        "ana.santos",
+        "Ana‑Santos",
+        "a@b。com",
+        "1990⁄01⁄01",
+        "123 Rizal،",
+        "pay‐12345",
     ],
 )
 @pytest.mark.parametrize("view_class", [OfficerChatView, OfficerStreamingChatView])
@@ -430,6 +442,37 @@ def test_officer_context_privacy_preserves_safe_review_prompts(monkeypatch):
 
     assert response.status_code == 200
     assert llm.kwargs["message"] == "Review missing documents and repayment status"
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "Review missing documents.",
+        "Summarize what is still needed before review.",
+    ],
+)
+def test_officer_context_privacy_preserves_documented_safe_prompts(
+    monkeypatch, message
+):
+    officer = _officer()
+    application = _application(officer.id)
+    llm = JsonLLM()
+    monkeypatch.setattr("ai_assistant.views.officer.get_llm_service", lambda **kwargs: llm)
+    monkeypatch.setattr(
+        "ai_assistant.views.officer.has_current_ai_consent", lambda scope: True
+    )
+
+    response = OfficerChatView.as_view()(
+        _request(
+            "POST",
+            "/api/ai/officer/chat/",
+            officer.id,
+            data={"message": message, "application_id": str(application.id)},
+        )
+    )
+
+    assert response.status_code == 200
+    assert llm.kwargs["message"] == message
 
 
 @pytest.mark.parametrize("view_class", [OfficerChatView, OfficerStreamingChatView])
@@ -798,6 +841,30 @@ def test_officer_chat_audits_before_provider_and_returns_minimized_json(monkeypa
             "attacker-selected-customer",
         ):
             assert forbidden not in serialized
+
+
+def test_officer_chat_rejects_malformed_provider_tool_metadata(monkeypatch):
+    officer = _officer()
+    application = _application(officer.id)
+    llm = JsonLLM(
+        result={
+            "success": True,
+            "response": "summary",
+            "tools_called": 42,
+        }
+    )
+    monkeypatch.setattr("ai_assistant.views.officer.get_llm_service", lambda **kwargs: llm)
+    monkeypatch.setattr(
+        "ai_assistant.views.officer.has_current_ai_consent", lambda scope: True
+    )
+
+    response = OfficerChatView.as_view()(
+        _chat_request(officer.id, application.id)
+    )
+
+    assert response.status_code == 500
+    assert response.data["code"] == "AI_PROVIDER_ERROR"
+    assert _audit_events()[-1].details["outcome"] == "AI_PROVIDER_ERROR"
 
 
 def test_officer_ai_audit_documents_pseudonymize_officer_and_customer_identifiers(
@@ -1178,7 +1245,7 @@ def test_officer_stream_revalidates_before_done_terminal(monkeypatch):
         nonlocal authorization_checks
         authorization_checks += 1
         return (
-            "AI_OFFICER_SCOPE_CHANGED" if authorization_checks >= 2 else None
+            "AI_OFFICER_SCOPE_CHANGED" if authorization_checks >= 3 else None
         )
 
     monkeypatch.setattr(

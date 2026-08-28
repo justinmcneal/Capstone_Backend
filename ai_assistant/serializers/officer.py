@@ -47,6 +47,8 @@ _OFFICER_CONTEXT_SAFE_PROMPTS = frozenset(
         "ano pa ang kulang sa profile bago ang pagsusuri?",
         "ibuod ang katayuan ng mga kinakailangang dokumento.",
         "ipaliwanag ang kasalukuyang buod ng pagbabayad.",
+        "summarize what is still needed before review",
+        "review missing documents",
     }
 )
 _OFFICER_CONTEXT_NAME_AFTER_CONTEXT = re.compile(
@@ -88,10 +90,34 @@ _OFFICER_CONTEXT_STOP_WORDS = frozenset(
         "information", "is", "loan", "missing", "next", "payment", "please",
         "profile", "question", "readiness", "repayment", "required", "review",
         "show", "still", "status", "statuses", "summary", "summarize", "tell",
+        "explain", "stream",
         "the", "this", "what", "with",
     }
 )
 _OFFICER_CONTEXT_ERROR = "This request cannot be processed"
+_OFFICER_CONTEXT_UNICODE_SLASHES = frozenset({"⁄", "∕", "／", "⧸"})
+
+
+def _canonicalize_officer_detection_text(value):
+    """Normalize Unicode separators before running the privacy detectors."""
+    normalized = unicodedata.normalize("NFKC", str(value or "")).casefold()
+    canonical = []
+    for character in normalized:
+        if unicodedata.category(character) == "Cf":
+            continue
+        if character in _OFFICER_CONTEXT_UNICODE_SLASHES:
+            canonical.append("/")
+            continue
+        category = unicodedata.category(character)
+        if category == "Pd":
+            canonical.append("-")
+        elif character in {"．", "。", "｡"}:
+            canonical.append(".")
+        elif category.startswith("P") and character not in {"'", "’", ".", "+", "@", "-", "/"}:
+            canonical.append(" ")
+        else:
+            canonical.append(character)
+    return re.sub(r"\s+", " ", "".join(canonical)).strip()
 
 
 def _validate_officer_context(value):
@@ -100,10 +126,10 @@ def _validate_officer_context(value):
         " ",
         unicodedata.normalize("NFKC", str(value or "")).casefold(),
     ).strip()
-    if normalized in _OFFICER_CONTEXT_SAFE_PROMPTS:
+    safe_prompt_key = normalized.strip(" .!?;:")
+    if safe_prompt_key in _OFFICER_CONTEXT_SAFE_PROMPTS:
         return
-    detection_text = re.sub(r"[\u200b-\u200d\ufeff]", "", normalized)
-    detection_text = re.sub(r"[,;:/]+", " ", detection_text)
+    detection_text = _canonicalize_officer_detection_text(value)
     if any(
         unicodedata.category(character).startswith("L")
         and "LATIN" not in unicodedata.name(character, "")
@@ -116,12 +142,26 @@ def _validate_officer_context(value):
         and second not in _OFFICER_CONTEXT_STOP_WORDS
         for first, second in _OFFICER_CONTEXT_BARE_NAME.findall(detection_text)
     )
+    single_name = bool(
+        re.fullmatch(r"[^\W\d_][^\W\d_']{1,30}", detection_text)
+        and detection_text not in _OFFICER_CONTEXT_STOP_WORDS
+    )
+    separated_name = any(
+        first not in _OFFICER_CONTEXT_STOP_WORDS
+        and second not in _OFFICER_CONTEXT_STOP_WORDS
+        for first, second in re.findall(
+            r"(?<!\w)([^\W\d_]{2,30})[.\-]([^\W\d_]{2,30})(?!\w)",
+            detection_text,
+        )
+    )
     if (
         any(pattern.search(detection_text) for pattern in _OFFICER_CONTEXT_RESTRICTED_PATTERNS)
         or _OFFICER_CONTEXT_NAME_AFTER_CONTEXT.search(detection_text)
         or _OFFICER_CONTEXT_UNICODE_NAME.search(detection_text)
         or _OFFICER_CONTEXT_LATIN_NAME.search(str(value or ""))
         or bare_name
+        or single_name
+        or separated_name
         or re.search(r"(?<!\w)(?:\d[\s().,/+-]*){7,}(?!\w)", detection_text)
     ):
         raise serializers.ValidationError(_OFFICER_CONTEXT_ERROR)
