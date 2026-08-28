@@ -10,16 +10,32 @@ This guide covers the AI Assistant's API, consent and customer isolation,
 context/tool safety, chat persistence, SSE behavior, provider integration,
 privacy lifecycle, observability, and deployment validation.
 
-The current focused AI test command passed during the review:
+The loan-officer assistant is a separate contract from the customer assistant.
+Its routes are `GET /api/ai/officer/status/`, `GET
+/api/ai/officer/suggestions/`, `POST /api/ai/officer/chat/`, and `POST
+/api/ai/officer/chat/stream/`. Officer contextual routes require the
+`loan_officer` role, a currently assigned application, and current customer
+data/AI consent. The four tools are parameterless, read-only, application-bound
+capabilities: `get_application_summary`, `get_profile_readiness`,
+`get_document_review_status`, and `get_repayment_summary`. Assignment and
+consent are revalidated before provider work, recognized tool execution, and
+stream termination.
 
-```text
-226 passed
-```
-
-The focused command is an offline regression set. Real MongoDB and the
+The focused AI command is an offline regression set. Real MongoDB and the
 deployment probes are separately opt-in; recorded exercises cover the owner-
 designated database, local Redis/Ollama, and local monitoring. They do not
-replace future deployed proxy, worker, load, recovery, and alert-route gates.
+replace future deployed proxy, worker, load, recovery, provider, and alert-route
+gates.
+
+The focused officer/customer/safety test files passed on 2026-08-28:
+
+```text
+277 passed
+```
+
+The broader AI suite passed 429 tests with 7 skips. The skips are two
+isolated-real-Mongo cases and five Stage 6 deployment probes. The ordinary
+suite verifies offline behavior; it does not replace those opt-in gates.
 
 The complete local repository suite also passed after Stage 6:
 
@@ -108,6 +124,31 @@ Invalid provider/model/URL/rate/range combinations raise
 `ImproperlyConfigured` during startup.
 
 ## API Reference
+
+### Loan-officer assistant routes
+
+These routes are not customer-route aliases. The server resolves the officer's
+current assignment and the selected application; the client cannot choose a
+customer by supplying a tool argument. Access and result audit records are
+metadata-only and exclude prompts, responses, raw tool output, direct
+identifiers, and exception details.
+
+`GET /api/ai/officer/status/` returns bounded provider readiness for an
+authenticated loan officer without reading application data.
+
+`GET /api/ai/officer/suggestions/?application_id=<id>&language=en|tl` returns
+static suggestions after role, assignment, and consent checks.
+
+`POST /api/ai/officer/chat/` accepts the same bounded message/history shape as
+the client contract and returns the standard success/error envelope. Successful
+data contains response/request/conversation metadata and allowlisted tool
+names only.
+
+`POST /api/ai/officer/chat/stream/` emits named `tool_call`, `tool_result`, and
+`token` events followed by exactly one terminal `done` or `error` event. A
+successful `done` includes `conversation_id`, `request_id`,
+`response_time_ms`, `tokens_used`, and allowlisted `tools_called`. Clients must
+not treat HTTP 200 alone as stream success.
 
 ### `POST /api/ai/chat/`
 
@@ -257,6 +298,27 @@ Static checks for the module and its focused tests:
   tests/test_tool_safety.py \
   tests/test_context_builder.py
 ```
+
+For the 2026-08-28 officer-assistant verification, the isolated worktree used
+the dependency-safe equivalent:
+
+```bash
+UV_CACHE_DIR=/private/tmp/msme-ai-uv-cache uv run \
+  --with-requirements requirements.txt \
+  python -m pytest \
+  tests/test_ai_officer_scope.py \
+  tests/test_ai_officer_tools.py \
+  tests/test_ai_officer_api.py \
+  tests/test_chatbot_api.py \
+  tests/test_ai_tool_safety_integration.py \
+  tests/test_tool_safety.py \
+  tests/test_ai_stage5_streaming_correctness.py -q
+```
+
+That focused command passed 277 tests. The broader AI command passed 429 tests
+with 7 skips, and `python manage.py check` reported no issues. No deployed
+provider, production database, proxy, Redis/Celery, or browser operation was
+performed.
 
 The two context/tool files without the `ai_` prefix are intentional legacy test
 modules and are required for the current focused count.
