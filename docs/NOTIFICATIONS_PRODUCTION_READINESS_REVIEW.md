@@ -102,8 +102,8 @@ The current code does not yet provide a coherent production delivery system:
     identifier-free health component, scheduled collector, Prometheus rules,
     rule test, smoke configuration, and Grafana dashboard. Real Redis
     multi-process behavior, proxy limits, provider outcomes, scrape traffic,
-    and delivered alerts remain deployment evidence. The release checker is
-    intentionally Stage 6.
+    and delivered alerts remain deployment evidence. Stage 6 now provides a
+    fail-closed release checker and explicitly gated synthetic probes.
 
 Current local automated evidence:
 
@@ -111,6 +111,8 @@ Current local automated evidence:
 - Stage 4 privacy/persistence selection: **8 passed and 1 opt-in real-Mongo test
   skipped** on 2026-08-28.
 - Stage 5 resilience/observability selection: **7 passed** on 2026-08-28.
+- Stage 6 release-gate selection: **5 passed and 7 opt-in deployment probes
+  skipped** on 2026-08-28.
 - Notifications plus account-lifecycle regression selection: **121 passed and
   1 opt-in test skipped** on 2026-08-28.
 - Notifications and affected cross-domain regression selection: **129 passed**
@@ -125,7 +127,7 @@ Current local automated evidence:
   action throttling.
 - Broader notification/WebSocket/email-template selection: **131 passed and
   1,245 deselected**.
-- Full repository: **1,357 passed and 47 opt-in integration tests skipped** on
+- Full repository: **1,362 passed and 54 opt-in integration tests skipped** on
   2026-08-28.
 - Mocked FCM success, batching, partial/permanent/transient failure behavior,
   encryption, ownership, deduplication, expiry, unregister, logout/session,
@@ -148,7 +150,7 @@ Current local automated evidence:
 | Privacy lifecycle | Implemented locally; policy/deployment-gated | Core sensitive fields and idempotency material are protected, logs are sanitized, export is bounded/explicit, retention is scheduled, account deletion erases credentials/data, and legal holds are retained through pseudonymization. Final retention/policy approval remains. |
 | MongoDB schema/indexes | Implemented locally; real-Mongo proof pending | Strict validators, compounds, inventory/backfill/encryption commands, fail-closed installation, and an isolated opt-in query-plan suite exist. They have not been executed against an approved real target. |
 | Observability | Implemented locally; deployment-gated | Low-cardinality REST, delivery/channel, backlog/age, token, WebSocket, broadcast, and freshness metrics plus health, tested rules, smoke config, dashboard, and runbook exist. Live scrape/dashboard/alert delivery remains. |
-| Production deployment | Not ready | SMTP, Firebase, Redis/Channels, workers, HTTPS/WSS, backup/restore, monitoring, and release gates remain unproven. |
+| Production deployment | Validation tooling implemented; not approved | A read-only fail-closed release checker and opt-in synthetic MongoDB, Redis/Celery, HTTPS/WSS/load, SMTP, Firebase, and metrics probes exist. Target evidence, recovery rehearsals, and authorized approvals remain. |
 
 ## Module Responsibilities and Boundaries
 
@@ -261,6 +263,8 @@ WebSocket route: `GET /ws/notifications/` upgrades through
 - Strict validators cover `notifications`, `device_tokens`, and
   `notification_deliveries`; compound indexes match inbox, reconciliation,
   retention, token-owner, and cleanup queries.
+- `notification_data_inventory` and the release gate expose a bounded
+  completeness marker; an incomplete scan cannot pass the final gate.
 
 ## Implemented Controls and Remaining Release Conditions
 
@@ -383,7 +387,10 @@ nonexistent synchronous-email counters or a thread pool.
 
 Provider availability and acceptance are represented by durable/channel
 outcomes without recipient/provider-body labels. A fail-closed read-only
-`notifications_release_check` and deployment probes remain Stage 6 work.
+`notifications_release_check` now binds configuration, MongoDB
+indexes/validators/inventory, health, task routing, monitoring assets, and
+explicit deployment-evidence flags. Opt-in probes cover selected real services
+without making ordinary local tests contact them.
 
 Deployment evidence must prove real Redis fan-out across ASGI workers, at least
 two notification workers, SMTP and Firebase sandbox behavior, HTTPS/WSS proxy
@@ -477,15 +484,23 @@ events without privacy leakage, and revoked users cannot retain live sockets.
 
 ### Stage 6 — Real-environment release validation
 
-**Status: Not started**
+**Status: Tooling and local fail-closed evidence complete (2026-08-28); target
+execution pending**
 
-- Add a fail-closed read-only release checker and opt-in deployment probes.
-- Prove MongoDB indexes/validators, Redis multi-worker fan-out, Celery recovery,
-  SMTP/Firebase sandbox outcomes, HTTPS/WSS proxy behavior, load, metrics,
-  dashboard, and alert delivery.
-- Rehearse backup/restore, key rotation, provider/broker outage, incident
-  response, and rollback.
-- Run the full suite and customer/staff end-to-end notification smoke flows.
+- [x] Add a fail-closed read-only release checker binding safe configuration,
+  task recovery, monitoring assets, health, indexes, validators, and bounded
+  clean inventory.
+- [x] Add explicitly opted-in synthetic probes for Redis sharing, multiple
+  Notifications workers, authenticated HTTPS/WSS, bounded load, metrics, SMTP,
+  and Firebase.
+- [x] Keep every real-service probe skipped unless its target and explicit run
+  flag are supplied.
+- [ ] Run the Stage 4 real-Mongo and Stage 6 deployment probes against approved
+  isolated/final targets.
+- [ ] Rehearse backup/restore, key rotation, provider/broker outage, incident
+  response, and rollback in the selected topology.
+- [ ] Run final customer/staff smoke flows, verify dashboard/alert delivery, set
+  only evidence-backed flags, and require `notifications_release_check` PASS.
 
 **Exit condition:** every applicable release check passes in the selected
 topology and all approved policy/evidence records are retained.

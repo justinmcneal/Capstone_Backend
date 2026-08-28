@@ -499,6 +499,12 @@ delivery outcomes, retry/terminal backlog and oldest age, token invalidation,
 WebSocket connections/actions/broadcasts, and metrics-collector freshness. Use
 the assets under `monitoring/notifications/` and the operator commands in
 [`docs/NOTIFICATIONS_TESTING_GUIDE.md`](docs/NOTIFICATIONS_TESTING_GUIDE.md).
+The final read-only Notifications gate is intentionally fail-closed:
+
+```bash
+.venv/bin/python manage.py notifications_release_check
+.venv/bin/python manage.py notifications_release_check --json
+```
 
 Profiles metrics cover scoring outcomes/backlogs, duplicate records, encryption
 coverage, audit recovery, review queues, and denied access. See

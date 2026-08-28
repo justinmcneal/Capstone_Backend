@@ -137,7 +137,7 @@ NOTIFICATION_VALIDATORS = {
 
 
 def install_notification_validators(db=None):
-    database = db or settings.MONGODB
+    database = db if db is not None else settings.MONGODB
     existing = set(database.list_collection_names())
     for collection_name, validator in NOTIFICATION_VALIDATORS.items():
         if collection_name not in existing:
@@ -173,29 +173,39 @@ def _duplicate_count(collection, field):
     return int(first["groups"]) if first else 0
 
 
-def inventory_notification_data(db=None):
-    database = db or settings.MONGODB
+def inventory_notification_data(db=None, *, limit=10_000):
+    database = db if db is not None else settings.MONGODB
+    limit = max(1, min(int(limit), 1_000_000))
     notifications = database[Notification.collection_name]
     tokens = database[DeviceToken.collection_name]
     deliveries = database[NotificationDelivery.collection_name]
     sensitive_fields = Notification.encrypted_fields
     plaintext = 0
     invalid_notification_timestamps = 0
-    for row in notifications.find({}, {field: 1 for field in sensitive_fields}):
+    for row in notifications.find({}, {field: 1 for field in sensitive_fields}).limit(
+        limit
+    ):
         plaintext += sum(
             1
             for field in sensitive_fields
             if row.get(field) not in (None, "")
             and not is_encrypted_value(row.get(field))
         )
-    for row in notifications.find({}, {"created_at": 1, "retention_expires_at": 1}):
+    for row in notifications.find(
+        {}, {"created_at": 1, "retention_expires_at": 1}
+    ).limit(limit):
         if not isinstance(row.get("created_at"), datetime) or (
             "retention_expires_at" in row
             and not isinstance(row.get("retention_expires_at"), datetime)
         ):
             invalid_notification_timestamps += 1
+    notification_count = notifications.count_documents({})
+    token_count = tokens.count_documents({})
+    delivery_count = deliveries.count_documents({})
     return {
-        "notifications": notifications.count_documents({}),
+        "limit": limit,
+        "complete": max(notification_count, token_count, delivery_count) <= limit,
+        "notifications": notification_count,
         "legacy_read_status": notifications.count_documents({"status": "read"}),
         "missing_user_type": notifications.count_documents(
             {"user_type": {"$exists": False}}
@@ -220,10 +230,10 @@ def inventory_notification_data(db=None):
         "duplicate_idempotency_hash_groups": _duplicate_count(
             notifications, "idempotency_key_hash"
         ),
-        "device_tokens": tokens.count_documents({}),
+        "device_tokens": token_count,
         "plaintext_device_tokens": sum(
             1
-            for row in tokens.find({}, {"token": 1})
+            for row in tokens.find({}, {"token": 1}).limit(limit)
             if row.get("token") and not is_encrypted_value(row["token"])
         ),
         "missing_token_hash": tokens.count_documents(
@@ -242,7 +252,7 @@ def inventory_notification_data(db=None):
             {"expires_at": {"$exists": False}}
         ),
         "duplicate_token_hash_groups": _duplicate_count(tokens, "token_hash"),
-        "deliveries": deliveries.count_documents({}),
+        "deliveries": delivery_count,
         "plaintext_delivery_event_keys": deliveries.count_documents(
             {"event_key": {"$not": {"$regex": "^[a-f0-9]{64}$"}}}
         ),
@@ -251,7 +261,7 @@ def inventory_notification_data(db=None):
 
 def backfill_notification_data(db=None, *, apply=False):
     """Conditionally repair deterministic legacy shape; encryption is separate."""
-    database = db or settings.MONGODB
+    database = db if db is not None else settings.MONGODB
     collection = database[Notification.collection_name]
     now = datetime.now(timezone.utc)
     counts = {"scanned": 0, "changed": 0, "conflicts": 0}

@@ -172,8 +172,8 @@ Broader cross-domain selection:
 ```
 
 Result after Stage 2 on 2026-08-27: **131 passed, 1,245 deselected**. The latest
-full repository result after Stage 5 on 2026-08-28 is **1,357 passed, 47
-skipped**.
+full repository result after Stage 6 tooling on 2026-08-28 is **1,362 passed,
+54 skipped**.
 
 Evidence limits:
 
@@ -198,7 +198,7 @@ Evidence limits:
 | Stage 3 — Durable preference-aware delivery | Registered/routed tasks, leases/retries, broker/worker/provider recovery, preference policy | Complete locally; 12 focused tests pass |
 | Stage 4 — Privacy and MongoDB correctness | Encryption/log safety, lifecycle/export, validators/indexes, inventory/backfill, real-Mongo plans | Complete locally; 8 tests pass, isolated real-Mongo execution pending |
 | Stage 5 — WebSocket resilience/observability | Post-connect revocation/expiry, limits, cross-device sync, metrics/rules/dashboard/health | Complete locally; 7 focused tests pass, deployment proof pending |
-| Stage 6 — Deployment validation | Real MongoDB/Redis/Celery/SMTP/FCM/HTTPS/WSS/load/recovery and release checker | Not started |
+| Stage 6 — Deployment validation | Real MongoDB/Redis/Celery/SMTP/FCM/HTTPS/WSS/load/recovery and release checker | Tooling complete locally; 5 release-gate tests pass and 7 real-service probes skip pending targets |
 
 Do not turn a missing external-service test into a passing mock. Add each stage's
 focused evidence with its implementation and retain opt-in gates for tests that
@@ -960,7 +960,7 @@ Run these only after confirming the intended MongoDB target. The first command
 and every command without `--apply` are read-only:
 
 ```bash
-python manage.py notification_data_inventory
+python manage.py notification_data_inventory --limit 10000
 python manage.py backfill_notification_data
 python manage.py backfill_notification_data --apply
 python manage.py encrypt_sensitive_fields
@@ -974,7 +974,8 @@ Review and back up the target before each applied operation. Backfill repairs
 safe deterministic legacy fields with conditional updates; encryption handles
 plaintext/old-key fields separately. Schema installation refuses to drop the
 obsolete raw-idempotency index or create indexes/validators while any inventory
-blocker remains.
+blocker remains or the bounded inventory is incomplete. Raise `--limit` only
+after reviewing the target size and query cost.
 
 Opt-in isolated real-Mongo proof:
 
@@ -986,6 +987,77 @@ REAL_MONGO_TEST_URI='<isolated MongoDB URI>' \
 
 The fixture creates and drops only its uniquely named `_isolated` database.
 Do not point it at production.
+
+## Stage 6 Release Gate and Deployment Probes
+
+The final gate is read-only and intentionally fails in development or whenever
+evidence is missing:
+
+```bash
+.venv/bin/python manage.py notifications_release_check
+.venv/bin/python manage.py notifications_release_check --json
+```
+
+It checks production-safe runtime configuration, encrypted strict mode,
+Redis-backed Channels/Celery, recoverable task routing, monitoring assets,
+secure proxy/cookies/hosts/CORS, SMTP configuration, MongoDB connectivity,
+required indexes and validators, bounded complete/clean inventory,
+Notifications health, and explicit reviewed evidence flags. A `True` flag
+records evidence; it does not perform or replace the corresponding test.
+
+Local Stage 6 tooling evidence:
+
+```bash
+.venv/bin/pytest -q \
+  tests/test_notifications_stage6_release_validation.py \
+  tests/test_notifications_stage6_deployment_integrations.py
+```
+
+Current local result: **5 passed and 7 opt-in deployment probes skipped**.
+
+Run real-service probes only with synthetic accounts/recipients/tokens and an
+approved target. Each probe has its own explicit opt-in boundary:
+
+```bash
+RUN_NOTIFICATIONS_REDIS_DEPLOYMENT_TESTS=1 \
+NOTIFICATIONS_DEPLOYMENT_REDIS_URL='<redis URL>' \
+.venv/bin/pytest -q tests/test_notifications_stage6_deployment_integrations.py::test_two_processes_share_deployment_redis_state
+
+RUN_NOTIFICATIONS_CELERY_DEPLOYMENT_TESTS=1 \
+.venv/bin/pytest -q tests/test_notifications_stage6_deployment_integrations.py::test_multiple_workers_consume_notifications_queue
+
+RUN_NOTIFICATIONS_HTTPS_DEPLOYMENT_TESTS=1 \
+NOTIFICATIONS_DEPLOYMENT_INBOX_URL='https://<host>/api/notifications/' \
+NOTIFICATIONS_DEPLOYMENT_ACCESS_TOKEN='<synthetic customer token>' \
+.venv/bin/pytest -q tests/test_notifications_stage6_deployment_integrations.py::test_authenticated_inbox_contract_and_read_load_through_https
+
+RUN_NOTIFICATIONS_WSS_DEPLOYMENT_TESTS=1 \
+NOTIFICATIONS_DEPLOYMENT_WSS_URL='wss://<host>/ws/notifications/' \
+NOTIFICATIONS_DEPLOYMENT_ACCESS_TOKEN='<synthetic customer token>' \
+.venv/bin/pytest -q tests/test_notifications_stage6_deployment_integrations.py::test_authenticated_wss_connect_ping_and_disconnect
+
+RUN_NOTIFICATIONS_METRICS_DEPLOYMENT_TESTS=1 \
+NOTIFICATIONS_DEPLOYMENT_METRICS_URL='<private metrics URL>' \
+.venv/bin/pytest -q tests/test_notifications_stage6_deployment_integrations.py::test_deployed_metrics_expose_notifications_families
+```
+
+The SMTP and Firebase probes perform a real external send. Run them only after
+explicit approval with a controlled recipient/token:
+
+```bash
+RUN_NOTIFICATIONS_SMTP_DEPLOYMENT_TESTS=1 \
+NOTIFICATIONS_DEPLOYMENT_SMTP_RECIPIENT='<synthetic inbox>' \
+.venv/bin/pytest -q tests/test_notifications_stage6_deployment_integrations.py::test_approved_synthetic_smtp_delivery
+
+RUN_NOTIFICATIONS_FIREBASE_DEPLOYMENT_TESTS=1 \
+NOTIFICATIONS_DEPLOYMENT_FCM_TOKEN='<synthetic device token>' \
+.venv/bin/pytest -q tests/test_notifications_stage6_deployment_integrations.py::test_approved_synthetic_firebase_delivery
+```
+
+After each approved proof, retain its revision, target, timestamp, sanitized
+output, reviewer, and rollback reference. Set only the corresponding
+`NOTIFICATIONS_*_VERIFIED` flag. Run the final release checker after all
+evidence is recorded.
 
 ## Required Future Integration Evidence
 
@@ -1057,7 +1129,9 @@ Redis fan-out, metrics scrape, dashboard series, and alert firing/resolution.
       target and reviewed inventory/backfill/schema work is complete.
 - [x] Stage 5 post-connect WebSocket security, limits, synchronization,
       monitoring assets, and alert tests pass locally.
-- [ ] Stage 6 deployment probes and `notifications_release_check` pass.
+- [x] Stage 6 fail-closed release checker and opt-in probes pass local contract
+      tests without contacting external services.
+- [ ] Stage 6 probes and `notifications_release_check` pass in the final target.
 - [ ] Final full suite and customer/officer/admin end-to-end smoke flows pass on
       the release revision.
 
@@ -1089,6 +1163,8 @@ Redis fan-out, metrics scrape, dashboard series, and alert firing/resolution.
 | Notification creator + FCM | `notifications/services/notification_creator.py` |
 | Assignment triggers | `notifications/services/assignment_events.py` |
 | Prometheus toggle command | `notifications/management/commands/toggle_prometheus.py` |
+| Release checker | `notifications/management/commands/notifications_release_check.py` |
+| Release/health summary | `notifications/services/operations.py` |
 | Email templates | `notifications/templates/email/*.html`, `notifications/templates/email/*.txt` |
 
 ---

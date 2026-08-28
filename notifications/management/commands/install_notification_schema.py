@@ -49,6 +49,8 @@ class Command(BaseCommand):
             for key in BLOCKING_INVENTORY_KEYS
             if inventory.get(key, 0)
         }
+        if not inventory.get("complete", False):
+            blockers["inventory_incomplete"] = True
         self.stdout.write(json.dumps({"blockers": blockers}, sort_keys=True))
         if not options["apply"]:
             self.stdout.write("DRY RUN: no indexes or validators changed")
