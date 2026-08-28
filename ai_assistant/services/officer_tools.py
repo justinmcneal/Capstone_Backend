@@ -21,6 +21,7 @@ from loans.models import LoanApplication
 from loans.models.product import LoanProduct
 from loans.models.repayment import RepaymentSchedule
 from loans.services.qualification import (
+    canonicalize_document_type,
     document_type_label,
     resolve_required_document_types,
 )
@@ -463,6 +464,16 @@ def _get_document_review_status(scope):
     )
     if not product_data:
         raise LookupError("Bound application product is unavailable")
+    raw_required_documents = product_data.get("required_documents")
+    if raw_required_documents is not None:
+        if not isinstance(raw_required_documents, list):
+            raise LookupError("Bound application product requirements are invalid")
+        if any(
+            not isinstance(raw_type, str)
+            or canonicalize_document_type(raw_type) is None
+            for raw_type in raw_required_documents
+        ):
+            raise LookupError("Bound application product requirements are invalid")
     product = LoanProduct.from_dict(product_data)
     required_types = resolve_required_document_types(product)
     projection = {"document_type": 1, "status": 1, "verified": 1}
@@ -524,6 +535,7 @@ def _summarize_posted_payments(loan_id, customer_id):
                         ],
                     }
                 },
+                {"$limit": MAX_SAFE_INSTALLMENTS + 1},
                 {
                     "$project": {
                         "amount_centavos": {"$ifNull": ["$amount_centavos", None]},
@@ -561,11 +573,14 @@ def _summarize_posted_payments(loan_id, customer_id):
         return {
             "count": min(MAX_SAFE_INSTALLMENTS, count or 0),
             "total_centavos": total_centavos or 0,
+            **({"truncated": True} if count > MAX_SAFE_INSTALLMENTS else {}),
         }
 
     count = 0
     total_centavos = 0
-    for payment in aggregate.get("payments") or []:
+    payments = aggregate.get("payments") or []
+    truncated = len(payments) > MAX_SAFE_INSTALLMENTS
+    for payment in payments[:MAX_SAFE_INSTALLMENTS]:
         if not isinstance(payment, dict):
             continue
         if payment.get("amount_centavos") is not None:
@@ -586,7 +601,11 @@ def _summarize_posted_payments(loan_id, customer_id):
             continue
         total_centavos += amount_centavos
         count += 1
-    return {"count": count, "total_centavos": total_centavos}
+    return {
+        "count": count,
+        "total_centavos": total_centavos,
+        **({"truncated": True} if truncated else {}),
+    }
 
 
 def _summarize_installment_statuses(installments):
@@ -672,6 +691,7 @@ def _get_repayment_summary(scope):
         "total_amount": from_centavos(total_amount_centavos),
         "total_paid": from_centavos(total_paid_centavos),
         "posted_payment_count": payment_summary["count"],
+        "payments_truncated": bool(payment_summary.get("truncated")),
         "remaining_balance": from_centavos(
             max(total_amount_centavos - total_paid_centavos, 0)
         ),
@@ -726,7 +746,26 @@ def execute_officer_tool_result(tool_name, tool_args, scope: OfficerAssistantSco
             "Officer tool arguments are invalid.",
         )
     try:
-        return {"success": True, "result": json.dumps(executor(scope), default=str)}
+        result = executor(scope)
+        try:
+            scope_is_current = revalidate_officer_scope(scope)
+        except Exception:
+            scope_is_current = False
+        if not scope_is_current:
+            return _error(
+                "AI_OFFICER_SCOPE_CHANGED",
+                "Officer access to this application is no longer available.",
+            )
+        try:
+            consent_is_current = has_current_ai_consent(scope)
+        except Exception:
+            consent_is_current = False
+        if not consent_is_current:
+            return _error(
+                "AI_OFFICER_CONSENT_CHANGED",
+                "Customer AI consent is no longer available.",
+            )
+        return {"success": True, "result": json.dumps(result, default=str)}
     except Exception:
         logger.warning(
             "Officer AI tool read failed",

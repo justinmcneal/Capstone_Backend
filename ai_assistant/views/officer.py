@@ -39,9 +39,11 @@ from ai_assistant.services.officer_tools import (
 )
 from ai_assistant.services.request_limits import resolve_request_id
 from ai_assistant.metrics import (
+    AI_ACTIVE_STREAMS,
     AI_PROVIDER_LATENCY,
     AI_PROVIDER_REQUESTS,
     AI_TOKENS,
+    decrement,
     increment,
     observe,
 )
@@ -71,6 +73,7 @@ SAFE_CONTROLLED_ERROR_CODES = frozenset(
 SAFE_METRIC_PROVIDERS = frozenset({"groq", "ollama"})
 SAFE_MODEL_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}\Z")
 MAX_SAFE_PROVIDER_TOKENS = 1_000_000
+MAX_SAFE_DURATION_MS = 86_400_000
 
 
 def _consent_required_response():
@@ -132,6 +135,23 @@ def _safe_token_count(value):
     ):
         return 0
     return min(MAX_SAFE_PROVIDER_TOKENS, int(numeric))
+
+
+def _safe_duration_ms(value, fallback):
+    measured = max(0, min(MAX_SAFE_DURATION_MS, int(fallback or 0)))
+    if isinstance(value, bool):
+        return measured
+    try:
+        numeric = Decimal(str(value))
+    except (InvalidOperation, TypeError, ValueError):
+        return measured
+    if (
+        not numeric.is_finite()
+        or numeric < 0
+        or numeric > MAX_SAFE_DURATION_MS
+    ):
+        return measured
+    return min(MAX_SAFE_DURATION_MS, int(numeric))
 
 
 def _record_provider_metrics(
@@ -376,12 +396,11 @@ class OfficerChatView(AIRequestMetricsMixin, APIView):
                 code="AI_PROVIDER_ERROR",
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
-        duration_ms = max(
-            0,
-            int(
-                result.get("response_time_ms")
-                or (time.monotonic() - started) * 1000
-            ),
+        if not isinstance(result, dict):
+            result = {}
+        duration_ms = _safe_duration_ms(
+            result.get("response_time_ms"),
+            (time.monotonic() - started) * 1000,
         )
         tool_names = _safe_tool_names(result.get("tools_called"))
         if not result.get("success"):
@@ -564,6 +583,7 @@ class OfficerStreamingChatView(AIRequestMetricsMixin, APIView):
 
         def event_stream():
             started = time.monotonic()
+            increment(AI_ACTIVE_STREAMS)
             provider_stream = None
             terminal_emitted = False
             result_recorded = False
@@ -760,6 +780,7 @@ class OfficerStreamingChatView(AIRequestMetricsMixin, APIView):
                             "Officer AI provider stream cleanup failed",
                             extra={"request_id": request_id},
                         )
+                decrement(AI_ACTIVE_STREAMS)
 
         return self._streaming_response(event_stream())
 

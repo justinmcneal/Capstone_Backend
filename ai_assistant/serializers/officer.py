@@ -29,66 +29,36 @@ _OFFICER_CONTEXT_RESTRICTED_PATTERNS = tuple(
         r"\b(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+\d{1,2}(?:st|nd|rd|th)?(?:,\s*|\s+)\d{4}\b",
         r"\b\d{1,2}(?:st|nd|rd|th)?\s+(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+\d{4}\b",
         r"\b\d{1,5}\s+[A-Za-z][A-Za-z.'-]*(?:,\s*|\s+)[A-Za-z][A-Za-z.'-]*\s+(?:city|municipality|barangay)\b",
-        r"\b\d{1,6}\s+[A-Za-z][A-Za-z.'-]{2,}(?:\s+[A-Za-z][A-Za-z.'-]{2,}){1,4}(?:,|$)",
+        r"\b\d{1,6}\s+[\w][\w.'’-]{1,}(?:\s+[\w][\w.'’-]{1,}){0,4}(?:,|$)",
     )
 )
-_OFFICER_CONTEXT_NAME_PATTERNS = tuple(
-    re.compile(pattern, re.IGNORECASE)
-    for pattern in (
-        r"\b(?:customer|borrower|applicant)\s+(?:mr|mrs|ms|miss)?\.?\s*[a-z][a-z'-]{1,30}\s+[a-z][a-z'-]{1,30}(?:['’]s)?\b",
-    )
+_OFFICER_CONTEXT_SAFE_PROMPTS = frozenset(
+    {
+        "summarize this application's review readiness.",
+        "summarize review readiness",
+        "review summary",
+        "review this application",
+        "review missing documents and repayment status",
+        "what documents are present?",
+        "what profile information is still incomplete?",
+        "summarize the required document review statuses.",
+        "explain the current repayment summary.",
+        "ibuod ang kahandaan ng aplikasyon para sa pagsusuri.",
+        "ano pa ang kulang sa profile bago ang pagsusuri?",
+        "ibuod ang katayuan ng mga kinakailangang dokumento.",
+        "ipaliwanag ang kasalukuyang buod ng pagbabayad.",
+    }
 )
-_OFFICER_CONTEXT_NAME_PATTERN = re.compile(
-    r"\b([a-z][a-z'-]{1,30})\s+([a-z][a-z'-]{1,30})(?:['’]s)?\b",
+_OFFICER_CONTEXT_NAME_AFTER_CONTEXT = re.compile(
+    r"\b(?:review|about|for|contact|call|customer|borrower|applicant)\s+"
+    r"(?:mr|mrs|ms|miss)?\.?\s*[\w'’-]+(?:\s+[\w'’-]+)?\b",
     re.IGNORECASE,
 )
-_OFFICER_CONTEXT_NAME_STOP_WORDS = frozenset(
-    {
-        "about",
-        "application",
-        "and",
-        "are",
-        "call",
-        "contact",
-        "current",
-        "document",
-        "documents",
-        "for",
-        "earlier",
-        "explain",
-        "is",
-        "loan",
-        "missing",
-        "next",
-        "payment",
-        "please",
-        "profile",
-        "readiness",
-        "repayment",
-        "review",
-        "show",
-        "status",
-        "summary",
-        "summarize",
-        "question",
-        "tell",
-        "the",
-        "what",
-        "with",
-    }
+_OFFICER_CONTEXT_UNICODE_NAME = re.compile(
+    r"(?<!\w)[\u0400-\u04ff\u0370-\u03ff]+\s+[\u0400-\u04ff\u0370-\u03ff]+(?!\w)"
 )
-_OFFICER_CONTEXT_SAFE_PHRASES = frozenset(
-    {
-        "application summary",
-        "document review",
-        "loan application",
-        "missing documents",
-        "payment status",
-        "profile readiness",
-        "repayment status",
-        "review readiness",
-        "working capital",
-    }
+_OFFICER_CONTEXT_LATIN_NAME = re.compile(
+    r"(?<!\w)[A-Z][a-zÀ-ÖØ-öø-ÿ'’-]{1,30}\s+[A-Z][a-zÀ-ÖØ-öø-ÿ'’-]{1,30}(?!\w)"
 )
 _OFFICER_CONTEXT_ERROR = "This request cannot be processed"
 
@@ -99,16 +69,15 @@ def _validate_officer_context(value):
         " ",
         unicodedata.normalize("NFKC", str(value or "")).casefold(),
     ).strip()
-    words = re.findall(r"[a-z][a-z'-]{1,30}", normalized)
-    likely_name = any(
-        first not in _OFFICER_CONTEXT_NAME_STOP_WORDS
-        and second not in _OFFICER_CONTEXT_NAME_STOP_WORDS
-        and f"{first} {second}" not in _OFFICER_CONTEXT_SAFE_PHRASES
-        for first, second in zip(words, words[1:])
-    )
-    if any(pattern.search(normalized) for pattern in _OFFICER_CONTEXT_RESTRICTED_PATTERNS) or any(
-        pattern.search(normalized) for pattern in _OFFICER_CONTEXT_NAME_PATTERNS
-    ) or likely_name:
+    if normalized in _OFFICER_CONTEXT_SAFE_PROMPTS:
+        return
+    if (
+        any(pattern.search(normalized) for pattern in _OFFICER_CONTEXT_RESTRICTED_PATTERNS)
+        or _OFFICER_CONTEXT_NAME_AFTER_CONTEXT.search(normalized)
+        or _OFFICER_CONTEXT_UNICODE_NAME.search(normalized)
+        or _OFFICER_CONTEXT_LATIN_NAME.search(str(value or ""))
+        or re.search(r"(?<!\w)(?:\d[\s()./+-]*){7,}(?!\w)", normalized)
+    ):
         raise serializers.ValidationError(_OFFICER_CONTEXT_ERROR)
 
 
