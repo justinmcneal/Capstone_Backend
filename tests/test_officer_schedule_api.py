@@ -105,3 +105,66 @@ def test_active_schedule_remains_readable_when_application_status_is_stale():
     assert schedule_response.data["data"]["loan_id"] == application.id
     assert schedule_response.data["data"]["paid_count"] == 1
 
+
+def test_active_loan_search_keeps_matching_customer_beyond_initial_customer_batch():
+    officer = LoanOfficer(
+        employee_id="LO-SCHEDULE-2",
+        first_name="Lina",
+        last_name="Torres",
+        email="lina.torres.2@example.com",
+        password="hashed",
+    ).save()
+    for index in range(20):
+        Customer(
+            first_name=f"JoshPrefix{index}",
+            last_name="Customer",
+            email=f"josh.prefix.{index}@example.com",
+            password="hashed",
+        ).save()
+    customer = Customer(
+        first_name="JoshSep",
+        last_name="Stop",
+        email="joshsep.stop@example.com",
+        password="hashed",
+    ).save()
+    product = LoanProduct(name="Home-Based Business Starter", code="HBS-1").save()
+    application = LoanApplication(
+        customer_id=customer.id,
+        product_id=product.id,
+        assigned_officer=officer.id,
+        status="approved",
+        approved_amount=15_000,
+        term_months=1,
+    ).save()
+    RepaymentSchedule(
+        loan_id=application.id,
+        customer_id=customer.id,
+        principal=15_000,
+        interest_rate=0,
+        term_months=1,
+        monthly_payment=15_000,
+        total_amount=15_000,
+        total_interest=0,
+        status="active",
+        installments=[
+            {
+                "number": 1,
+                "due_date": datetime(2026, 9, 23, tzinfo=timezone.utc),
+                "principal": 15_000,
+                "interest": 0,
+                "total_amount": 15_000,
+                "status": "pending",
+                "paid_amount": 0,
+            }
+        ],
+    ).save()
+    for search_term in ("jos", "josh"):
+        request = APIRequestFactory().get(
+            "/api/loans/officer/active-loans/", {"search": search_term}
+        )
+        force_authenticate(request, user=_authenticated_officer(officer))
+
+        response = ActiveLoansView.as_view()(request)
+
+        assert response.status_code == 200
+        assert response.data["data"]["loans"][0]["customer_name"] == "JoshSep Stop"
