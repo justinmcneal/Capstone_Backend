@@ -290,6 +290,51 @@ def test_application_summary_omits_hostile_purpose_product_and_status_text(
     assert summary["status"] == "unknown"
 
 
+def test_application_summary_bounds_hostile_persisted_scalars_and_reason_codes(
+    officer_scope,
+):
+    settings.MONGODB[LoanApplication.collection_name].update_one(
+        {"_id": ObjectId(officer_scope.application_id)},
+        {
+            "$set": {
+                "requested_amount": -1,
+                "recommended_amount": "Infinity",
+                "approved_amount": Decimal128("1000000000000000000000000"),
+                "term_months": 999999,
+                "eligibility_score": "not-a-score",
+                "risk_category": {"raw": "Maria Santos"},
+                "status": "Approved for Maria Santos",
+                "ai_recommendation": {
+                    "reason_codes": [
+                        "manual-review",
+                        "income_high",
+                        "unknown-code",
+                        "Maria Santos",
+                    ],
+                    "manual_review_required": "false",
+                },
+            }
+        },
+    )
+
+    result = execute_officer_tool_result(
+        "get_application_summary", {}, officer_scope, request_id="request-1"
+    )
+
+    assert result["success"] is True
+    summary = json.loads(result["result"])
+    assert summary["status"] == "unknown"
+    assert summary["risk_category"] == "unknown"
+    assert summary["requested_amount"] == 0
+    assert summary["recommended_amount"] == 0
+    assert summary["approved_amount"] == 0
+    assert summary["term_months"] == 0
+    assert summary["eligibility_score"] == 0
+    assert summary["reason_codes"] == ["manual-review", "income_high"]
+    assert summary["review_readiness"]["manual_review_required"] is False
+    assert "maria santos" not in result["result"].lower()
+
+
 def test_profile_readiness_matches_complete_safe_contract(officer_scope):
     result = execute_officer_tool_result(
         "get_profile_readiness", {}, officer_scope, request_id="request-1"
@@ -674,6 +719,117 @@ def test_repayment_summary_rounds_each_legacy_amount_before_aggregation(
     summary = json.loads(result["result"])
     assert summary["posted_payment_count"] == 2
     assert summary["total_paid"] == 0.02
+
+
+def test_repayment_summary_rejects_invalid_centavo_and_legacy_payment_rows(
+    officer_scope,
+    mongomock_decimal128_aggregation,
+):
+    settings.MONGODB[LoanPayment.collection_name].insert_many(
+        [
+            {
+                "loan_id": officer_scope.application_id,
+                "customer_id": officer_scope.customer_id,
+                "amount_centavos": 101,
+                "payment_status": "posted",
+            },
+            {
+                "loan_id": officer_scope.application_id,
+                "customer_id": officer_scope.customer_id,
+                "amount_centavos": -50,
+                "payment_status": "posted",
+            },
+            {
+                "loan_id": officer_scope.application_id,
+                "customer_id": officer_scope.customer_id,
+                "amount_centavos": Decimal128("100.5"),
+                "payment_status": "posted",
+            },
+            {
+                "loan_id": officer_scope.application_id,
+                "customer_id": officer_scope.customer_id,
+                "amount_centavos": Decimal128("1000000000000000000000000"),
+                "payment_status": "posted",
+            },
+            {
+                "loan_id": officer_scope.application_id,
+                "customer_id": officer_scope.customer_id,
+                "amount": Decimal128("0.005"),
+                "payment_status": "posted",
+            },
+            {
+                "loan_id": officer_scope.application_id,
+                "customer_id": officer_scope.customer_id,
+                "amount": Decimal128("-1"),
+                "payment_status": "posted",
+            },
+            {
+                "loan_id": officer_scope.application_id,
+                "customer_id": officer_scope.customer_id,
+                "amount": "not-a-number",
+                "payment_status": "posted",
+            },
+            {
+                "loan_id": officer_scope.application_id,
+                "customer_id": officer_scope.customer_id,
+                "amount": Decimal128("NaN"),
+                "payment_status": "posted",
+            },
+        ]
+    )
+
+    result = execute_officer_tool_result(
+        "get_repayment_summary", {}, officer_scope, request_id="request-1"
+    )
+
+    assert result["success"] is True
+    summary = json.loads(result["result"])
+    assert summary["posted_payment_count"] == 2
+    assert summary["total_paid"] == 1.02
+
+
+def test_repayment_summary_bounds_invalid_schedule_centavos_and_dates(
+    officer_scope,
+):
+    settings.MONGODB["repayment_schedules"].delete_many(
+        {"loan_id": officer_scope.application_id}
+    )
+    settings.MONGODB["repayment_schedules"].insert_one(
+        {
+            "loan_id": officer_scope.application_id,
+            "customer_id": officer_scope.customer_id,
+            "status": {"raw": "private"},
+            "term_months": "999999",
+            "monthly_payment_centavos": Decimal128("100.5"),
+            "total_amount_centavos": -1,
+            "total_amount": "not-a-total",
+            "installments": [
+                {
+                    "status": "paid",
+                    "due_date": "not-a-date",
+                    "total_amount_centavos": Decimal128("10.5"),
+                },
+                {
+                    "status": "pending",
+                    "due_date": "2026-02-01",
+                    "total_amount_centavos": -10,
+                },
+            ],
+        }
+    )
+
+    result = execute_officer_tool_result(
+        "get_repayment_summary", {}, officer_scope, request_id="request-1"
+    )
+
+    assert result["success"] is True
+    summary = json.loads(result["result"])
+    assert summary["schedule_status"] == "unknown"
+    assert summary["term_months"] == 0
+    assert summary["monthly_amount"] == 0
+    assert summary["total_amount"] == 0
+    assert summary["next_due_date"] == "2026-02-01T00:00:00"
+    assert summary["schedule_progress"]["paid_count"] == 1
 
 
 def test_repayment_aggregate_rounds_one_point_zero_zero_five_to_101_centavos(

@@ -307,6 +307,7 @@ def test_officer_endpoints_enforce_role_before_body_or_query_validation(monkeypa
         "Customer name: Ana Santos",
         "Review Ana Santos's repayment status",
         "Review Ana Santos",
+        "review ana santos's repayment status",
         "Customer email: customer@example.com",
         "Customer mobile: +639171234567",
         "Call +1 202 555 0147",
@@ -358,9 +359,13 @@ def test_officer_context_privacy_rejects_restricted_current_message(
     [
         "Review Ana Santos's repayment status",
         "Ana Santos",
+        "review ana santos",
         "The applicant was born 1990-01-01",
+        "born March 3, 1990",
         "Call +1 202 555 0147",
+        "Call 001 202 555 0147",
         "Review the application at 123 Rizal, Quezon City",
+        "123 rizal quezon city",
         "Customer email customer@example.com",
     ],
 )
@@ -931,6 +936,40 @@ def test_officer_chat_unknown_provider_error_code_maps_to_safe_code(monkeypatch)
     assert "PROVIDER_INTERNAL_SECRET_CODE" not in json.dumps(result_event.details)
 
 
+def test_officer_chat_uses_trusted_model_and_normalizes_provider_tokens(monkeypatch):
+    officer = _officer()
+    application = _application(officer.id)
+    llm = JsonLLM(
+        result={
+            "success": True,
+            "response": "safe response",
+            "model": "attacker-model\ncustomer@example.com",
+            "provider": "groq",
+            "response_time_ms": 17,
+            "tokens_used": "not-a-token-count",
+            "tools_called": [],
+        }
+    )
+    metric_calls = Mock()
+    monkeypatch.setattr("ai_assistant.views.officer.get_llm_service", lambda **kwargs: llm)
+    monkeypatch.setattr(
+        "ai_assistant.views.officer.has_current_ai_consent", lambda scope: True
+    )
+    monkeypatch.setattr("ai_assistant.views.officer.increment", metric_calls)
+
+    response = OfficerChatView.as_view()(
+        _chat_request(officer.id, application.id)
+    )
+
+    assert response.status_code == 200
+    assert response.data["data"]["model"] == "officer-model"
+    token_calls = [
+        call.kwargs for call in metric_calls.call_args_list if "amount" in call.kwargs
+    ]
+    assert token_calls[-1]["amount"] == 0
+    assert "attacker-model" not in json.dumps(response.data)
+
+
 def test_officer_chat_provider_exception_returns_safe_error_and_audits(monkeypatch):
     officer = _officer()
     application = _application(officer.id)
@@ -1153,6 +1192,41 @@ def test_officer_stream_accepts_event_stream_negotiation_for_successful_sse(
         "done",
     ]
     assert provider_stream.closed is True
+
+
+def test_officer_stream_bounds_provider_model_and_tokens(monkeypatch):
+    officer = _officer()
+    application = _application(officer.id)
+    provider_stream = CloseAwareStream(
+        [
+            {"type": "token", "content": "summary"},
+            {
+                "type": "done",
+                "model": "attacker-model\nsecret",
+                "tokens_used": "not-a-token-count",
+            },
+        ]
+    )
+    llm = StreamLLM(provider_stream)
+    monkeypatch.setattr("ai_assistant.views.officer.get_llm_service", lambda **kwargs: llm)
+    monkeypatch.setattr(
+        "ai_assistant.views.officer.has_current_ai_consent", lambda scope: True
+    )
+
+    response = OfficerStreamingChatView.as_view()(
+        _request(
+            "POST",
+            "/api/ai/officer/chat/stream/",
+            officer.id,
+            data={"message": "Stream", "application_id": str(application.id)},
+        )
+    )
+    frames = _stream_frames(response)
+
+    assert frames[-1][0] == "done"
+    assert frames[-1][1]["model"] == "officer-model"
+    assert frames[-1][1]["tokens_used"] == 0
+    assert "attacker-model" not in json.dumps(frames)
 
 
 def test_officer_stream_without_terminal_emits_incomplete_error_and_audits(monkeypatch):

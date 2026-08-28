@@ -1,4 +1,5 @@
 import re
+import unicodedata
 import uuid
 
 from rest_framework import serializers
@@ -13,6 +14,8 @@ _OFFICER_CONTEXT_RESTRICTED_PATTERNS = tuple(
         r"\b(?:customer|borrower|applicant)\s*:\s*[a-z][a-z' -]{2,}",
         r"\b[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}\b",
         r"(?<!\w)\+\d{1,3}(?:[\s().-]*\d){7,14}(?!\w)",
+        r"(?<!\w)(?:00\d{1,3}|011)[\s().-]*(?:\d[\s().-]*){7,14}(?!\w)",
+        r"(?<!\w)(?:\d[\s().-]*){10,15}(?!\w)",
         r"(?<!\w)(?:\+?63|0)9\d{9}(?!\w)",
         r"\b(?:phone|mobile|address|government\s+id|national\s+id|passport|id\s+number|date\s+of\s+birth|dob)\b",
         r"\b(?:document|file)\s+(?:filename|name|content|path|url|storage)\b",
@@ -22,22 +25,57 @@ _OFFICER_CONTEXT_RESTRICTED_PATTERNS = tuple(
         r"\b(?:internal\s+note|staff\s+(?:password|credential)|password|secret|api\s+key|token|credential)\b",
         r"\b0x[0-9a-f]{8,}\b",
         r"\b(?:pay|txn|ref)[-_][A-Za-z0-9]{4,}\b",
-        r"\b(?:\d{4}[-/]\d{1,2}[-/]\d{1,2}|\d{1,2}[-/]\d{1,2}[-/]\d{2,4})\b",
+        r"\b(?:\d{4}[-/]\d{1,2}[-/]\d{1,2}|\d{1,2}[-/]\d{1,2}[-/]\d{2,4}|\d{8})\b",
+        r"\b(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+\d{1,2}(?:st|nd|rd|th)?(?:,\s*|\s+)\d{4}\b",
+        r"\b\d{1,2}(?:st|nd|rd|th)?\s+(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+\d{4}\b",
         r"\b\d{1,5}\s+[A-Za-z][A-Za-z.'-]*(?:,\s*|\s+)[A-Za-z][A-Za-z.'-]*\s+(?:city|municipality|barangay)\b",
+        r"\b\d{1,6}\s+[A-Za-z][A-Za-z.'-]{2,}(?:\s+[A-Za-z][A-Za-z.'-]{2,}){1,4}(?:,|$)",
     )
 )
 _OFFICER_CONTEXT_NAME_PATTERNS = tuple(
-    re.compile(pattern)
+    re.compile(pattern, re.IGNORECASE)
     for pattern in (
-        r"\b(?:customer|borrower|applicant)\s+(?:mr|mrs|ms|miss)?\.?\s*[A-Z][a-z]{1,30}\s+[A-Z][a-z]{1,30}(?:['’]s)?\b",
-        r"\b(?:Review|review|About|about|For|for|Contact|contact|Call|call)\s+(?:mr|mrs|ms|miss)?\.?\s*[A-Z][a-z]{1,30}\s+[A-Z][a-z]{1,30}(?:['’]s)?\b",
+        r"\b(?:customer|borrower|applicant)\s+(?:mr|mrs|ms|miss)?\.?\s*[a-z][a-z'-]{1,30}\s+[a-z][a-z'-]{1,30}(?:['’]s)?\b",
     )
 )
 _OFFICER_CONTEXT_NAME_PATTERN = re.compile(
-    r"\b([A-Z][a-z]{1,30})\s+([A-Z][a-z]{1,30})(?:['’]s)?\b"
+    r"\b([a-z][a-z'-]{1,30})\s+([a-z][a-z'-]{1,30})(?:['’]s)?\b",
+    re.IGNORECASE,
 )
 _OFFICER_CONTEXT_NAME_STOP_WORDS = frozenset(
-    {"about", "call", "contact", "for", "review", "show", "summarize"}
+    {
+        "about",
+        "application",
+        "and",
+        "are",
+        "call",
+        "contact",
+        "current",
+        "document",
+        "documents",
+        "for",
+        "earlier",
+        "explain",
+        "is",
+        "loan",
+        "missing",
+        "next",
+        "payment",
+        "please",
+        "profile",
+        "readiness",
+        "repayment",
+        "review",
+        "show",
+        "status",
+        "summary",
+        "summarize",
+        "question",
+        "tell",
+        "the",
+        "what",
+        "with",
+    }
 )
 _OFFICER_CONTEXT_SAFE_PHRASES = frozenset(
     {
@@ -56,14 +94,21 @@ _OFFICER_CONTEXT_ERROR = "This request cannot be processed"
 
 
 def _validate_officer_context(value):
-    if any(pattern.search(value) for pattern in _OFFICER_CONTEXT_RESTRICTED_PATTERNS) or any(
-        pattern.search(value) for pattern in _OFFICER_CONTEXT_NAME_PATTERNS
-    ) or any(
-        first.lower() not in _OFFICER_CONTEXT_NAME_STOP_WORDS
-        and f"{first.lower()} {second.lower()}"
-        not in _OFFICER_CONTEXT_SAFE_PHRASES
-        for first, second in _OFFICER_CONTEXT_NAME_PATTERN.findall(value)
-    ):
+    normalized = re.sub(
+        r"\s+",
+        " ",
+        unicodedata.normalize("NFKC", str(value or "")).casefold(),
+    ).strip()
+    words = re.findall(r"[a-z][a-z'-]{1,30}", normalized)
+    likely_name = any(
+        first not in _OFFICER_CONTEXT_NAME_STOP_WORDS
+        and second not in _OFFICER_CONTEXT_NAME_STOP_WORDS
+        and f"{first} {second}" not in _OFFICER_CONTEXT_SAFE_PHRASES
+        for first, second in zip(words, words[1:])
+    )
+    if any(pattern.search(normalized) for pattern in _OFFICER_CONTEXT_RESTRICTED_PATTERNS) or any(
+        pattern.search(normalized) for pattern in _OFFICER_CONTEXT_NAME_PATTERNS
+    ) or likely_name:
         raise serializers.ValidationError(_OFFICER_CONTEXT_ERROR)
 
 

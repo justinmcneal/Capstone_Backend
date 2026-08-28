@@ -3,9 +3,10 @@ import json
 import logging
 import re
 from collections import Counter
+from datetime import date, datetime
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 
 from bson import ObjectId
-from bson.decimal128 import Decimal128
 from django.conf import settings
 
 from ai_assistant.services.officer_scope import (
@@ -13,6 +14,7 @@ from ai_assistant.services.officer_scope import (
     has_current_ai_consent,
     revalidate_officer_scope,
 )
+from config.field_encryption import decrypt_fields
 from documents.models.document import Document
 from loans.models import LoanApplication
 from loans.models.product import LoanProduct
@@ -50,6 +52,41 @@ SAFE_DOCUMENT_STATUSES = frozenset(
 SAFE_INSTALLMENT_STATUSES = frozenset(
     {"pending", "partial", "overdue", "partial_overdue", "paid"}
 )
+SAFE_SCHEDULE_STATUSES = frozenset(
+    {"active", "paid_off", "restructured", "written_off"}
+)
+SAFE_REASON_CODES = frozenset(
+    {
+        "income_missing",
+        "income_high",
+        "income_moderate",
+        "income_low",
+        "no_existing_loans",
+        "loan_history_on_time",
+        "loan_history_sometimes_late",
+        "loan_history_often_late",
+        "loan_history_defaulted",
+        "loan_history_no_history",
+        "utility_history_on_time",
+        "utility_history_sometimes_late",
+        "utility_history_often_late",
+        "utility_history_no_history",
+        "community_participation_present",
+        "community_participation_absent",
+        "housing_owned",
+        "housing_rented",
+        "housing_living_with_family",
+        "housing_company_provided",
+        "housing_missing",
+        "digital_accounts_present",
+        "digital_accounts_absent",
+        "manual-review",
+    }
+)
+MAX_SAFE_MONEY = Decimal("10000000000000")
+MAX_SAFE_CENTAVOS = 10**15
+MAX_SAFE_TERM_MONTHS = 120
+MAX_SAFE_INSTALLMENTS = 120
 SAFE_MISSING_FIELD_LABELS = {
     "personal.gender": "Gender",
     "personal.civil_status": "Civil status",
@@ -142,27 +179,27 @@ def _scope_application_query(scope):
 
 
 def _safe_enum(value, allowed, fallback="unknown"):
-    normalized = str(value or "").strip().lower()
+    normalized = value.strip().lower() if isinstance(value, str) else ""
     return normalized if normalized in allowed else fallback
 
 
 def _safe_percentage(value):
+    if isinstance(value, bool):
+        return 0
     try:
-        return max(0, min(100, int(float(value or 0))))
-    except (TypeError, ValueError):
+        numeric = Decimal(str(value))
+        if not numeric.is_finite() or numeric < 0 or numeric > 100:
+            return 0
+        return int(numeric)
+    except (InvalidOperation, TypeError, ValueError):
         return 0
 
 
 def _safe_codes(value, limit=10):
     codes = []
     for raw_code in value if isinstance(value, (list, tuple)) else []:
-        code = str(raw_code or "").strip().lower()
-        if (
-            code
-            and len(code) <= 64
-            and re.fullmatch(r"[a-z0-9][a-z0-9_.-]*", code)
-            and code not in codes
-        ):
+        code = raw_code.strip().lower() if isinstance(raw_code, str) else ""
+        if code in SAFE_REASON_CODES and code not in codes:
             codes.append(code)
         if len(codes) >= limit:
             break
@@ -185,6 +222,78 @@ def _safe_product(product_data):
     if category is None:
         category = _safe_category(product_data.get("name"), SAFE_PRODUCT_CATEGORIES)
     return {"category": category or "other"}
+
+
+def _safe_decimal(value):
+    if isinstance(value, bool):
+        return None
+    try:
+        decimal_value = Decimal(str(value))
+    except (InvalidOperation, TypeError, ValueError):
+        return None
+    return decimal_value if decimal_value.is_finite() else None
+
+
+def _safe_money(value):
+    decimal_value = _safe_decimal(value)
+    if (
+        decimal_value is None
+        or decimal_value < 0
+        or decimal_value > MAX_SAFE_MONEY
+    ):
+        return 0
+    try:
+        normalized = decimal_value.quantize(
+            Decimal("0.01"), rounding=ROUND_HALF_UP
+        )
+    except (InvalidOperation, ValueError):
+        return 0
+    if normalized == normalized.to_integral_value():
+        return int(normalized)
+    return float(normalized)
+
+
+def _safe_integer(value, *, minimum=0, maximum=MAX_SAFE_TERM_MONTHS, fallback=0):
+    decimal_value = _safe_decimal(value)
+    if (
+        decimal_value is None
+        or decimal_value < minimum
+        or decimal_value > maximum
+        or decimal_value != decimal_value.to_integral_value()
+    ):
+        return fallback
+    integer_value = int(decimal_value)
+    return integer_value
+
+
+def _safe_bool(value, fallback=False):
+    return value if isinstance(value, bool) else fallback
+
+
+def _safe_centavos(value):
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, int)
+        or value < 0
+        or value > MAX_SAFE_CENTAVOS
+    ):
+        return None
+    return value
+
+
+def _safe_iso_datetime(value):
+    if isinstance(value, (datetime, date)):
+        return value.isoformat()
+    if not isinstance(value, str) or not value.strip():
+        return None
+    normalized = value.strip().replace("Z", "+00:00")
+    try:
+        return datetime.fromisoformat(normalized).isoformat()
+    except ValueError:
+        try:
+            return date.fromisoformat(value.strip()).isoformat()
+        except ValueError:
+            return None
 
 
 def _safe_missing_fields(profile):
@@ -233,19 +342,25 @@ def _get_application_summary(scope):
         )
         if product_data:
             product = _safe_product(product_data)
-    manual_review_required = bool(
-        recommendation.get("manual_review_required") or status == "under_review"
+    manual_review_required = (
+        _safe_bool(recommendation.get("manual_review_required"))
+        or status == "under_review"
     )
     return {
         "status": status,
         "product": product,
-        "product_assigned": bool(product_id),
-        "requested_amount": application_model.requested_amount,
-        "recommended_amount": application_model.recommended_amount,
-        "approved_amount": application_model.approved_amount,
-        "term_months": application_model.term_months,
+        "product_assigned": bool(product_id) and isinstance(product_id, (str, ObjectId)),
+        "requested_amount": _safe_money(application_model.requested_amount),
+        "recommended_amount": _safe_money(application_model.recommended_amount),
+        "approved_amount": _safe_money(application_model.approved_amount),
+        "term_months": _safe_integer(application_model.term_months),
         "purpose": _safe_purpose(application_model.purpose),
-        "eligibility_score": application_model.eligibility_score,
+        "eligibility_score": _safe_money(
+            application_model.eligibility_score
+        )
+        if _safe_decimal(application_model.eligibility_score) is not None
+        and 0 <= _safe_decimal(application_model.eligibility_score) <= 100
+        else 0,
         "risk_category": _safe_enum(
             application_model.risk_category, SAFE_RISK_CATEGORIES
         ),
@@ -296,15 +411,16 @@ def _get_profile_readiness(scope):
             "completion_percentage": _safe_percentage(
                 profile.get("completion_percentage", 0)
             ),
-            "complete": bool(profile.get("profile_completed", False)),
+            "complete": _safe_bool(profile.get("profile_completed", False)),
             "missing_fields": _safe_missing_fields(profile),
         }
         if label == "alternative":
             risk_status = _safe_enum(
                 profile.get("risk_score_status"), SAFE_RISK_STATUSES
             )
-            manual_review_required = bool(
-                profile.get("risk_score_manual_review_required", True)
+            raw_manual_review = profile.get("risk_score_manual_review_required")
+            manual_review_required = (
+                True if raw_manual_review is None else _safe_bool(raw_manual_review)
             )
             result[label].update(
                 {
@@ -354,10 +470,15 @@ def _get_document_review_status(scope):
     )
     truncated = len(documents) > DOCUMENT_RESULT_LIMIT
     documents = documents[:DOCUMENT_RESULT_LIMIT]
+    safe_required_types = [
+        document_type
+        for document_type in required_types
+        if isinstance(document_type, str) and document_type
+    ]
     return {
         "required_document_types": [
             {"code": document_type, "label": document_type_label(document_type)}
-            for document_type in required_types
+            for document_type in safe_required_types
         ],
         "documents": [
             {
@@ -365,9 +486,11 @@ def _get_document_review_status(scope):
                 "status": _safe_enum(
                     document.get("status"), SAFE_DOCUMENT_STATUSES
                 ),
-                "verified": bool(document.get("verified", False)),
+                "verified": _safe_bool(document.get("verified", False)),
                 "verification_status": (
-                    "verified" if document.get("verified", False) else "unverified"
+                    "verified"
+                    if _safe_bool(document.get("verified", False))
+                    else "unverified"
                 ),
             }
             for document in documents
@@ -393,53 +516,25 @@ def _summarize_posted_payments(loan_id, customer_id):
                 },
                 {
                     "$project": {
-                        "amount_centavos": {
-                            "$cond": [
-                                {
-                                    "$eq": [
-                                        {"$ifNull": ["$amount_centavos", None]},
-                                        None,
-                                    ]
-                                },
-                                {
-                                    "$toLong": {
-                                        "$floor": {
-                                            "$add": [
-                                                {
-                                                    "$multiply": [
-                                                        {
-                                                            "$toDecimal": {
-                                                                "$ifNull": [
-                                                                    "$amount",
-                                                                    0,
-                                                                ]
-                                                            }
-                                                        },
-                                                        Decimal128("100"),
-                                                    ]
-                                                },
-                                                Decimal128("0.5"),
-                                            ]
-                                        }
-                                    }
-                                },
-                                {"$toLong": "$amount_centavos"},
-                            ]
-                        }
+                        "amount_centavos": {"$ifNull": ["$amount_centavos", None]},
+                        "amount": {"$ifNull": ["$amount", None]},
                     }
                 },
                 {
                     "$group": {
                         "_id": None,
-                        "count": {"$sum": 1},
-                        "total_centavos": {"$sum": "$amount_centavos"},
+                        "payments": {
+                            "$push": {
+                                "amount_centavos": "$amount_centavos",
+                                "amount": "$amount",
+                            }
+                        },
                     }
                 },
                 {
                     "$project": {
                         "_id": 0,
-                        "count": 1,
-                        "total_centavos": 1,
+                        "payments": 1,
                     }
                 },
                 {"$limit": 1},
@@ -450,10 +545,39 @@ def _summarize_posted_payments(loan_id, customer_id):
         return {"count": 0, "total_centavos": 0}
 
     aggregate = rows[0]
-    return {
-        "count": int(aggregate.get("count") or 0),
-        "total_centavos": int(aggregate.get("total_centavos") or 0),
-    }
+    if "count" in aggregate and "total_centavos" in aggregate:
+        return {
+            "count": max(0, min(MAX_SAFE_INSTALLMENTS, int(aggregate["count"] or 0))),
+            "total_centavos": max(
+                0,
+                min(MAX_SAFE_CENTAVOS, int(aggregate["total_centavos"] or 0)),
+            ),
+        }
+
+    count = 0
+    total_centavos = 0
+    for payment in aggregate.get("payments") or []:
+        if not isinstance(payment, dict):
+            continue
+        if payment.get("amount_centavos") is not None:
+            amount_centavos = _safe_centavos(payment.get("amount_centavos"))
+        else:
+            legacy_amount = _safe_decimal(payment.get("amount"))
+            amount_centavos = None
+            if (
+                legacy_amount is not None
+                and legacy_amount >= 0
+                and legacy_amount <= MAX_SAFE_MONEY
+            ):
+                try:
+                    amount_centavos = to_centavos(legacy_amount, "amount")
+                except (InvalidOperation, TypeError, ValueError):
+                    amount_centavos = None
+        if amount_centavos is None or total_centavos + amount_centavos > MAX_SAFE_CENTAVOS:
+            continue
+        total_centavos += amount_centavos
+        count += 1
+    return {"count": count, "total_centavos": total_centavos}
 
 
 def _summarize_installment_statuses(installments):
@@ -465,6 +589,25 @@ def _summarize_installment_statuses(installments):
         {"status": status, "count": counts[status]}
         for status in sorted(counts)
     ]
+
+
+def _schedule_centavos(schedule, field, *, fallback_field=None):
+    raw_value = schedule.get(f"{field}_centavos")
+    if raw_value is not None:
+        return _safe_centavos(raw_value) or 0
+    if fallback_field is None:
+        return 0
+    legacy_value = _safe_decimal(schedule.get(fallback_field))
+    if (
+        legacy_value is None
+        or legacy_value < 0
+        or legacy_value > MAX_SAFE_MONEY
+    ):
+        return 0
+    try:
+        return min(MAX_SAFE_CENTAVOS, to_centavos(legacy_value, fallback_field))
+    except (InvalidOperation, TypeError, ValueError):
+        return 0
 
 
 def _get_repayment_summary(scope):
@@ -487,37 +630,35 @@ def _get_repayment_summary(scope):
     payment_summary = _summarize_posted_payments(
         scope.application_id, scope.customer_id
     )
-    monthly_payment_centavos = schedule.get("monthly_payment_centavos")
-    if monthly_payment_centavos is None:
-        monthly_payment_centavos = to_centavos(
-            schedule.get("monthly_payment") or 0, "monthly_payment"
-        )
-    total_amount_centavos = schedule.get("total_amount_centavos")
-    if total_amount_centavos is None:
-        total_amount_centavos = to_centavos(
-            schedule.get("total_amount") or 0, "total_amount"
-        )
+    schedule_data = decrypt_fields(schedule, RepaymentSchedule.encrypted_fields)
+    monthly_payment_centavos = _schedule_centavos(schedule, "monthly_payment")
+    total_amount_centavos = _schedule_centavos(
+        schedule, "total_amount", fallback_field="total_amount"
+    )
     total_paid_centavos = payment_summary["total_centavos"]
-    installments = RepaymentSchedule.from_dict(schedule).installments or []
-    paid_count = sum(
-        1 for installment in installments if installment.get("status") == "paid"
-    )
-    next_installment = next(
-        (
-            installment
-            for installment in installments
-            if installment.get("status") != "paid"
-        ),
-        None,
-    )
-    next_due_date = next_installment.get("due_date") if next_installment else None
-    if hasattr(next_due_date, "isoformat"):
-        next_due_date = next_due_date.isoformat()
+    installments = [
+        installment
+        for installment in (schedule_data.get("installments") or [])
+        if isinstance(installment, dict)
+    ][:MAX_SAFE_INSTALLMENTS]
+    installment_statuses = [
+        _safe_enum(installment.get("status"), SAFE_INSTALLMENT_STATUSES)
+        for installment in installments
+    ]
+    paid_count = sum(1 for status in installment_statuses if status == "paid")
+    next_due_date = None
+    for installment, installment_status in zip(installments, installment_statuses):
+        if installment_status != "paid":
+            next_due_date = _safe_iso_datetime(installment.get("due_date"))
+            if next_due_date:
+                break
     installment_count = len(installments)
     return {
         "schedule_available": True,
-        "schedule_status": schedule.get("status"),
-        "term_months": schedule.get("term_months"),
+        "schedule_status": _safe_enum(
+            schedule.get("status"), SAFE_SCHEDULE_STATUSES
+        ),
+        "term_months": _safe_integer(schedule.get("term_months")),
         "monthly_amount": from_centavos(monthly_payment_centavos),
         "total_amount": from_centavos(total_amount_centavos),
         "total_paid": from_centavos(total_paid_centavos),

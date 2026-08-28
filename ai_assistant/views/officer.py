@@ -2,7 +2,9 @@
 
 import json
 import logging
+import re
 import time
+from decimal import Decimal, InvalidOperation
 
 from django.conf import settings
 from django.http import StreamingHttpResponse
@@ -67,6 +69,8 @@ SAFE_CONTROLLED_ERROR_CODES = frozenset(
     }
 )
 SAFE_METRIC_PROVIDERS = frozenset({"groq", "ollama"})
+SAFE_MODEL_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}\Z")
+MAX_SAFE_PROVIDER_TOKENS = 1_000_000
 
 
 def _consent_required_response():
@@ -106,6 +110,30 @@ def _safe_metric_provider(value):
     return provider if provider in SAFE_METRIC_PROVIDERS else "other"
 
 
+def _safe_model_identifier(llm):
+    model = getattr(llm, "model", "")
+    if not isinstance(model, str):
+        return "unknown"
+    model = model.strip()
+    return model if SAFE_MODEL_PATTERN.fullmatch(model) else "unknown"
+
+
+def _safe_token_count(value):
+    if isinstance(value, bool) or not isinstance(value, (str, int, float, Decimal)):
+        return 0
+    try:
+        numeric = Decimal(str(value))
+    except (InvalidOperation, TypeError, ValueError):
+        return 0
+    if (
+        not numeric.is_finite()
+        or numeric != numeric.to_integral_value()
+        or numeric < 0
+    ):
+        return 0
+    return min(MAX_SAFE_PROVIDER_TOKENS, int(numeric))
+
+
 def _record_provider_metrics(
     llm, *, outcome, started, operation, tokens_used=0, provider=None
 ):
@@ -119,10 +147,7 @@ def _record_provider_metrics(
         provider=provider_name,
         operation=operation,
     )
-    try:
-        tokens = max(0, int(tokens_used or 0))
-    except (TypeError, ValueError):
-        tokens = 0
+    tokens = _safe_token_count(tokens_used)
     increment(AI_TOKENS, amount=tokens, provider=provider_name)
 
 
@@ -178,7 +203,7 @@ class OfficerAIStatusView(AccessControlMixin, APIView):
             data={
                 "available": available,
                 "provider": llm.provider,
-                "current_model": llm.model if available else None,
+                "current_model": _safe_model_identifier(llm) if available else None,
                 "api_configured": readiness["configured"],
                 "reachable": readiness["reachable"],
                 "authenticated": readiness["authenticated"],
@@ -426,7 +451,7 @@ class OfficerChatView(AIRequestMetricsMixin, APIView):
             data={
                 "response": ai_response,
                 "conversation_id": data["conversation_id"],
-                "model": result.get("model"),
+                "model": _safe_model_identifier(llm),
                 "response_time_ms": duration_ms,
                 "request_id": request_id,
                 "tools_called": tool_names,
@@ -595,6 +620,10 @@ class OfficerStreamingChatView(AIRequestMetricsMixin, APIView):
                             "token", {"content": escape_llm_output(raw_content)}
                         )
                     elif chunk_type == "done":
+                        if "model" in chunk and not isinstance(
+                            chunk.get("model"), str
+                        ):
+                            raise ValueError("Malformed provider metadata")
                         tool_names[:] = _safe_tool_names(
                             [*tool_names, *(chunk.get("tools_called") or [])]
                         )
@@ -627,9 +656,9 @@ class OfficerStreamingChatView(AIRequestMetricsMixin, APIView):
                             terminal_event = self._event(
                                 "done",
                                 {
-                                    "model": chunk.get("model"),
-                                    "tokens_used": max(
-                                        0, int(chunk.get("tokens_used") or 0)
+                                    "model": _safe_model_identifier(llm),
+                                    "tokens_used": _safe_token_count(
+                                        chunk.get("tokens_used")
                                     ),
                                     "response_time_ms": duration_ms,
                                     "conversation_id": data["conversation_id"],
@@ -643,7 +672,9 @@ class OfficerStreamingChatView(AIRequestMetricsMixin, APIView):
                                 outcome="success",
                                 started=started,
                                 operation="stream",
-                                tokens_used=chunk.get("tokens_used"),
+                                tokens_used=_safe_token_count(
+                                    chunk.get("tokens_used")
+                                ),
                                 provider=chunk.get("provider"),
                             )
                             terminal_emitted = True
