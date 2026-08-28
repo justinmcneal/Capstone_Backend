@@ -7,6 +7,7 @@ from datetime import date, datetime
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 
 from bson import ObjectId
+from bson.decimal128 import Decimal128
 from django.conf import settings
 
 from ai_assistant.services.officer_scope import (
@@ -271,14 +272,23 @@ def _safe_bool(value, fallback=False):
 
 
 def _safe_centavos(value):
-    if (
-        isinstance(value, bool)
-        or not isinstance(value, int)
-        or value < 0
-        or value > MAX_SAFE_CENTAVOS
-    ):
+    if isinstance(value, bool):
         return None
-    return value
+    if isinstance(value, int):
+        integer_value = value
+    elif isinstance(value, (Decimal, Decimal128)):
+        decimal_value = _safe_decimal(value)
+        if (
+            decimal_value is None
+            or decimal_value != decimal_value.to_integral_value()
+        ):
+            return None
+        integer_value = int(decimal_value)
+    else:
+        return None
+    if integer_value < 0 or integer_value > MAX_SAFE_CENTAVOS:
+        return None
+    return integer_value
 
 
 def _safe_iso_datetime(value):
@@ -546,12 +556,11 @@ def _summarize_posted_payments(loan_id, customer_id):
 
     aggregate = rows[0]
     if "count" in aggregate and "total_centavos" in aggregate:
+        count = _safe_centavos(aggregate.get("count"))
+        total_centavos = _safe_centavos(aggregate.get("total_centavos"))
         return {
-            "count": max(0, min(MAX_SAFE_INSTALLMENTS, int(aggregate["count"] or 0))),
-            "total_centavos": max(
-                0,
-                min(MAX_SAFE_CENTAVOS, int(aggregate["total_centavos"] or 0)),
-            ),
+            "count": min(MAX_SAFE_INSTALLMENTS, count or 0),
+            "total_centavos": total_centavos or 0,
         }
 
     count = 0
