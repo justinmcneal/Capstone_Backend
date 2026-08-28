@@ -1,5 +1,6 @@
 """Offline evidence for the fail-closed Notifications Stage 6 gate."""
 
+import json
 from io import StringIO
 from unittest.mock import MagicMock, patch
 
@@ -32,6 +33,18 @@ def test_release_command_is_read_only_and_fails_closed(settings):
     ) as readiness, pytest.raises(CommandError, match="readiness checks failed"):
         call_command("notifications_release_check", stdout=StringIO())
     readiness.assert_called_once_with(settings.MONGODB)
+
+
+def test_release_command_emits_machine_readable_pass_report(settings):
+    report = {"ready": True, "checks": {"all_evidence_bound": True}}
+    output = StringIO()
+    with patch(
+        "notifications.management.commands.notifications_release_check."
+        "notification_release_readiness",
+        return_value=report,
+    ):
+        call_command("notifications_release_check", as_json=True, stdout=output)
+    assert json.loads(output.getvalue()) == report
 
 
 def test_release_gate_passes_only_with_all_bound_evidence(settings, monkeypatch):

@@ -11,7 +11,8 @@ This guide documents the **Notifications service** under `/api/notifications/` f
 - Template email and durable domain/shared Celery outbox delivery
 - FCM push notifications and device-token registration
 - Assignment-lifecycle event notifications
-- Shared delivery reconciliation and planned operational monitoring
+- Shared delivery reconciliation, operational health, Prometheus/Grafana
+  monitoring, alerts, and release validation
 - Encrypted inbox persistence, bounded export/account cleanup/retention, and
   MongoDB inventory/backfill/schema validation
 
@@ -172,8 +173,8 @@ Broader cross-domain selection:
 ```
 
 Result after Stage 2 on 2026-08-27: **131 passed, 1,245 deselected**. The latest
-full repository result after Stage 6 tooling on 2026-08-28 is **1,362 passed,
-54 skipped**.
+full repository result after the final Notifications audit on 2026-08-28 is
+**1,363 passed, 55 skipped**.
 
 Evidence limits:
 
@@ -198,7 +199,7 @@ Evidence limits:
 | Stage 3 — Durable preference-aware delivery | Registered/routed tasks, leases/retries, broker/worker/provider recovery, preference policy | Complete locally; 12 focused tests pass |
 | Stage 4 — Privacy and MongoDB correctness | Encryption/log safety, lifecycle/export, validators/indexes, inventory/backfill, real-Mongo plans | Complete locally; 8 tests pass, isolated real-Mongo execution pending |
 | Stage 5 — WebSocket resilience/observability | Post-connect revocation/expiry, limits, cross-device sync, metrics/rules/dashboard/health | Complete locally; 7 focused tests pass, deployment proof pending |
-| Stage 6 — Deployment validation | Real MongoDB/Redis/Celery/SMTP/FCM/HTTPS/WSS/load/recovery and release checker | Tooling complete locally; 5 release-gate tests pass and 7 real-service probes skip pending targets |
+| Stage 6 — Deployment validation | Real MongoDB/Redis/Celery/SMTP/FCM/HTTPS/WSS/load/recovery and release checker | Tooling complete locally; 6 release-gate tests pass and 8 real-service probes skip pending targets |
 
 Do not turn a missing external-service test into a passing mock. Add each stage's
 focused evidence with its implementation and retain opt-in gates for tests that
@@ -820,17 +821,20 @@ before the SMTP attempt and then normally change it to `failed`. Do not infer
 email delivery from the existence of that row. Loans/Documents retry through
 their own outboxes; assignment/security in-app events do not use SMTP.
 
-The canonical tasks are `notifications.deliver` and
-`notifications.reconcile_deliveries`. Run a worker that consumes the dedicated
-queue during local integration testing:
+The canonical delivery tasks are `notifications.deliver` and
+`notifications.reconcile_deliveries`; retention and operational collection use
+`notifications.enforce_retention` and
+`notifications.collect_operational_metrics`. Run a worker that consumes the
+dedicated queue during local integration testing:
 
 ```bash
 celery -A config worker -Q notifications --loglevel=info
 celery -A config beat --loglevel=info
 ```
 
-The first command consumes delivery work; Beat publishes due reconciliation
-once per minute. Use synthetic recipients/providers for integration tests.
+The first command consumes delivery, reconciliation, retention, and metrics
+work. Beat publishes reconciliation and metrics collection every minute and
+retention daily. Use synthetic recipients/providers for integration tests.
 
 ---
 
@@ -873,7 +877,8 @@ GET /api/notifications/unread-count/
 ### WebSocket Smoke Test
 
 1. For staff Web, log in with cookie transport and open `/ws/notifications/` without a token in JavaScript or the URL. For customer mobile compatibility, use a valid access query/subprotocol token.
-2. Verify `connection_established` message includes `unread_count`.
+2. Verify `connection_established` includes `unread_count`,
+   `sync_required: true`, and `contract_version: 2`; refresh the REST list/count.
 3. Send `ping` and verify `pong.data.timestamp`.
 4. Trigger a notification event from the backend.
 5. Verify `notification` message arrives over WebSocket.
@@ -881,8 +886,13 @@ GET /api/notifications/unread-count/
 7. Close connection and verify cleanup.
 8. Verify missing, refresh, revoked, stale-security-version, inactive, and forced-password credentials close with `4001`.
 9. Verify accounts with the same raw ID but different roles do not share events or mutations.
-10. Revoke/logout the session after connection and record the current gap: the
-    socket remains active because post-connect authorization is not revalidated.
+10. Revoke/logout the session after connection and verify the next action or
+    timed revalidation closes the socket with `4002`.
+11. Verify oversized/binary frames close with `4005`, idle sockets close with
+    `4003`, and the per-process owner connection ceiling closes excess sockets
+    with `4004`.
+12. Mutate the inbox from another device and verify an `inbox_state` event is
+    received, then reconcile through REST.
 
 ---
 
@@ -894,8 +904,12 @@ GET /api/notifications/unread-count/
 | `401 Unauthorized` | Missing or expired JWT |
 | `403 Forbidden` | Role not in allowed set |
 | `404 Not Found` | Notification ID does not exist or is not owned by current user; officer account not resolved |
-| `409 Conflict` | Mark-all or clear-all exceeds the configured synchronous mutation bound; concurrent read-state conflict |
+| `409 Conflict` | Mark-all or clear-all exceeds the configured synchronous mutation bound; concurrent read-state conflict; active legal hold prevents single deletion |
 | `429 Too Many Requests` | Dedicated REST throttle exceeded |
+
+WebSocket private close codes: `4001` rejected handshake, `4002` live session
+invalidated, `4003` idle timeout, `4004` per-process owner connection limit,
+and `4005` binary/oversized frame.
 
 Standard error shape:
 ```json
@@ -1013,7 +1027,7 @@ Local Stage 6 tooling evidence:
   tests/test_notifications_stage6_deployment_integrations.py
 ```
 
-Current local result: **5 passed and 7 opt-in deployment probes skipped**.
+Current local result: **6 passed and 8 opt-in deployment probes skipped**.
 
 Run real-service probes only with synthetic accounts/recipients/tokens and an
 approved target. Each probe has its own explicit opt-in boundary:
@@ -1035,6 +1049,12 @@ RUN_NOTIFICATIONS_WSS_DEPLOYMENT_TESTS=1 \
 NOTIFICATIONS_DEPLOYMENT_WSS_URL='wss://<host>/ws/notifications/' \
 NOTIFICATIONS_DEPLOYMENT_ACCESS_TOKEN='<synthetic customer token>' \
 .venv/bin/pytest -q tests/test_notifications_stage6_deployment_integrations.py::test_authenticated_wss_connect_ping_and_disconnect
+
+RUN_NOTIFICATIONS_WSS_DEPLOYMENT_TESTS=1 \
+NOTIFICATIONS_DEPLOYMENT_WSS_URL='wss://<host>/ws/notifications/' \
+NOTIFICATIONS_DEPLOYMENT_STAFF_ACCESS_TOKEN='<synthetic staff token>' \
+NOTIFICATIONS_DEPLOYMENT_STAFF_ORIGIN='https://<staff-web-host>' \
+.venv/bin/pytest -q tests/test_notifications_stage6_deployment_integrations.py::test_staff_cookie_wss_transport_through_proxy
 
 RUN_NOTIFICATIONS_METRICS_DEPLOYMENT_TESTS=1 \
 NOTIFICATIONS_DEPLOYMENT_METRICS_URL='<private metrics URL>' \

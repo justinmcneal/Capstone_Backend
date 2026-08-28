@@ -33,16 +33,23 @@ client receipt.
 
 ## Executive Summary
 
-The Notifications module is **functional but not production-ready**. Eight REST
-method operations provide an owner-scoped inbox, unread counts, read mutations,
-deletion, clear-all, and device-token registration/unregistration. An authenticated WebSocket
-provides connection state, ping/pong, owner-scoped mark-read, and real-time
-broadcasts. Role-qualified ownership correctly prevents customers, officers,
-and administrators with the same raw ID from sharing inbox rows or Channels
-groups. Thirty-six notification types and eleven HTML/text template pairs are
-present, including the temporary-password pair.
+**Module implementation status: Complete for the reviewed repository baseline**
 
-The current code does not yet provide a coherent production delivery system:
+**Production deployment status: Ready for production-environment validation**
+
+Eight REST method operations provide an owner-scoped inbox, unread counts, read
+mutations, deletion, clear-all, and device-token registration/unregistration.
+An authenticated WebSocket provides connection state, ping/pong, owner-scoped
+mark-read, cross-device state events, and real-time broadcasts. Role-qualified
+ownership prevents customers, officers, and administrators with the same raw
+ID from sharing inbox rows or Channels groups. Thirty-six notification types
+and eleven HTML/text template pairs are present, including the temporary-
+password pair.
+
+The six implementation stages now provide a coherent local production
+baseline. The remaining conditions below require approved policy or evidence
+from the selected deployment topology rather than additional application
+features:
 
 1. **FCM and current device-token lifecycle are implemented locally.** Stage 2
    uses the installed `send_each_for_multicast` API, batches at no more than
@@ -111,7 +118,7 @@ Current local automated evidence:
 - Stage 4 privacy/persistence selection: **8 passed and 1 opt-in real-Mongo test
   skipped** on 2026-08-28.
 - Stage 5 resilience/observability selection: **7 passed** on 2026-08-28.
-- Stage 6 release-gate selection: **5 passed and 7 opt-in deployment probes
+- Stage 6 release-gate selection: **6 passed and 8 opt-in deployment probes
   skipped** on 2026-08-28.
 - Notifications plus account-lifecycle regression selection: **121 passed and
   1 opt-in test skipped** on 2026-08-28.
@@ -127,13 +134,13 @@ Current local automated evidence:
   action throttling.
 - Broader notification/WebSocket/email-template selection: **131 passed and
   1,245 deselected**.
-- Full repository: **1,362 passed and 54 opt-in integration tests skipped** on
+- Full repository: **1,363 passed and 55 opt-in integration tests skipped** on
   2026-08-28.
 - Mocked FCM success, batching, partial/permanent/transient failure behavior,
   encryption, ownership, deduplication, expiry, unregister, logout/session,
-  and account cleanup are covered. There is no live Firebase/SMTP test,
-  real-Mongo query-plan/validator test, Redis multi-process test, or
-  Notifications deployment release suite.
+  and account cleanup are covered. Opt-in Firebase/SMTP, real-Mongo,
+  Redis/Celery, HTTPS/WSS/load, and metrics deployment tests now exist, but none
+  has been executed against a final target.
 
 ## Current Status
 

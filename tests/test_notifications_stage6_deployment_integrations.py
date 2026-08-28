@@ -135,6 +135,35 @@ def test_authenticated_wss_connect_ping_and_disconnect():
     asyncio.run(exercise())
 
 
+def test_staff_cookie_wss_transport_through_proxy():
+    values = _opt_in(
+        "RUN_NOTIFICATIONS_WSS_DEPLOYMENT_TESTS",
+        "NOTIFICATIONS_DEPLOYMENT_WSS_URL",
+        "NOTIFICATIONS_DEPLOYMENT_STAFF_ACCESS_TOKEN",
+    )
+    assert values["NOTIFICATIONS_DEPLOYMENT_WSS_URL"].startswith("wss://")
+
+    async def exercise():
+        from websockets.asyncio.client import connect
+
+        async with connect(
+            values["NOTIFICATIONS_DEPLOYMENT_WSS_URL"],
+            additional_headers={
+                "Cookie": (
+                    "access_token="
+                    f"{values['NOTIFICATIONS_DEPLOYMENT_STAFF_ACCESS_TOKEN']}"
+                )
+            },
+            origin=os.getenv("NOTIFICATIONS_DEPLOYMENT_STAFF_ORIGIN") or None,
+            open_timeout=20,
+            close_timeout=10,
+        ) as socket:
+            established = await asyncio.wait_for(socket.recv(), timeout=20)
+            assert '"contract_version": 2' in established.lower()
+
+    asyncio.run(exercise())
+
+
 def test_deployed_metrics_expose_notifications_families():
     values = _opt_in(
         "RUN_NOTIFICATIONS_METRICS_DEPLOYMENT_TESTS",
