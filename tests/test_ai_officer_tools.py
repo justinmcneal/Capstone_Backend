@@ -238,7 +238,7 @@ def test_application_summary_matches_complete_safe_contract(officer_scope):
 
     assert result["success"] is True
     summary = json.loads(result["result"])
-    assert summary["product"] == {"name": "Working Capital", "code": "WCL"}
+    assert summary["product"] == {"category": "working_capital"}
     assert summary["requested_amount"] == 10000
     assert summary["recommended_amount"] == 9000
     assert summary["approved_amount"] == 8500
@@ -252,6 +252,42 @@ def test_application_summary_matches_complete_safe_contract(officer_scope):
         "is_reviewable": True,
         "manual_review_required": True,
     }
+
+
+def test_application_summary_omits_hostile_purpose_product_and_status_text(
+    officer_scope,
+):
+    settings.MONGODB[LoanApplication.collection_name].update_one(
+        {"_id": ObjectId(officer_scope.application_id)},
+        {
+            "$set": {
+                "purpose": "Maria Santos needs funds at 123 Rizal",
+                "status": "Approved for Maria Santos",
+            }
+        },
+    )
+    settings.MONGODB["loan_products"].update_one(
+        {"_id": ObjectId(officer_scope.application.product_id)},
+        {
+            "$set": {
+                "name": "Maria Santos Enterprise Loan",
+                "code": "MARIA-SANTOS",
+            }
+        },
+    )
+
+    result = execute_officer_tool_result(
+        "get_application_summary", {}, officer_scope, request_id="request-1"
+    )
+
+    assert result["success"] is True
+    summary = json.loads(result["result"])
+    serialized = result["result"].lower()
+    assert "maria santos" not in serialized
+    assert "123 rizal" not in serialized
+    assert summary["purpose"] is None
+    assert summary["product"] == {"category": "other"}
+    assert summary["status"] == "unknown"
 
 
 def test_profile_readiness_matches_complete_safe_contract(officer_scope):

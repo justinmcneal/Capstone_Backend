@@ -305,9 +305,14 @@ def test_officer_endpoints_enforce_role_before_body_or_query_validation(monkeypa
     "restricted_content",
     [
         "Customer name: Ana Santos",
+        "Review Ana Santos's repayment status",
+        "Review Ana Santos",
         "Customer email: customer@example.com",
         "Customer mobile: +639171234567",
+        "Call +1 202 555 0147",
         "Customer address: 123 Rizal Street",
+        "Review the application at 123 Rizal, Quezon City",
+        "The applicant was born 1990-01-01",
         "Government ID: PH-1234-5678",
         "Document filename: identity-card.png",
         "Document content: birth certificate scan",
@@ -348,9 +353,20 @@ def test_officer_context_privacy_rejects_restricted_current_message(
     provider.assert_not_called()
 
 
+@pytest.mark.parametrize(
+    "restricted_content",
+    [
+        "Review Ana Santos's repayment status",
+        "Ana Santos",
+        "The applicant was born 1990-01-01",
+        "Call +1 202 555 0147",
+        "Review the application at 123 Rizal, Quezon City",
+        "Customer email customer@example.com",
+    ],
+)
 @pytest.mark.parametrize("view_class", [OfficerChatView, OfficerStreamingChatView])
 def test_officer_context_privacy_rejects_restricted_history_before_provider(
-    monkeypatch, view_class
+    monkeypatch, restricted_content, view_class
 ):
     officer = _officer()
     application = _application(officer.id)
@@ -368,7 +384,7 @@ def test_officer_context_privacy_rejects_restricted_history_before_provider(
                 "history": [
                     {
                         "role": "user",
-                        "content": "Customer email customer@example.com",
+                        "content": restricted_content,
                     }
                 ],
             },
@@ -805,6 +821,60 @@ def test_officer_ai_audit_documents_pseudonymize_officer_and_customer_identifier
     assert stored
     assert all(row.get("user_id") != str(officer.id) for row in stored)
     assert all(row.get("scope_officer_id") != str(officer.id) for row in stored)
+
+
+def test_failed_officer_audits_recover_with_distinct_stable_event_ids(monkeypatch):
+    from ai_assistant.services.officer_audit import (
+        record_officer_ai_access,
+        record_officer_ai_result,
+    )
+    from ai_assistant.services.officer_scope import OfficerAssistantScope
+    from analytics.services.audit_writer import reconcile_audit_failures
+
+    officer = _officer()
+    application = _application(officer.id)
+    scope = OfficerAssistantScope(
+        officer_id=str(officer.id),
+        customer_id=application.customer_id,
+        application_id=str(application.id),
+        application=application,
+    )
+    monkeypatch.setattr(
+        "ai_assistant.services.officer_audit.AuditLog.log_action",
+        Mock(side_effect=RuntimeError("audit backend unavailable")),
+    )
+
+    record_officer_ai_access(scope, "request-1", "en")
+    record_officer_ai_access(scope, "request-1", "en")
+    record_officer_ai_result(scope, "request-1", "en", outcome="AI_PROVIDER_ERROR")
+
+    rows = list(
+        settings.MONGODB["audit_write_failures"].find({"domain": "ai_assistant"})
+    )
+    event_ids = {row["event_id"] for row in rows}
+    assert len(rows) == 2
+    assert event_ids == {
+        f"evt_{AuditLog.blind_index('officer-ai:request-1:ai_officer_assistant_access')}",
+        f"evt_{AuditLog.blind_index('officer-ai:request-1:ai_officer_assistant_result')}",
+    }
+
+    monkeypatch.undo()
+    replay = reconcile_audit_failures(domains={"ai_assistant"})
+
+    assert replay == {"resolved": 2, "failed": 0}
+    assert settings.MONGODB["audit_write_failures"].count_documents(
+        {"domain": "ai_assistant", "resolved_at": None}
+    ) == 0
+    assert settings.MONGODB[AuditLog.collection_name].count_documents(
+        {
+            "action": {
+                "$in": [
+                    "ai_officer_assistant_access",
+                    "ai_officer_assistant_result",
+                ]
+            }
+        }
+    ) == 2
 
 
 def test_officer_chat_provider_failure_records_metadata_result(monkeypatch):
@@ -1345,6 +1415,36 @@ def test_officer_stream_close_failure_cannot_escape_after_terminal_frame(
     assert sum(event in {"done", "error"} for event, _payload in frames) == 1
     assert provider_stream.closed is True
     assert _audit_events()[-1].details["outcome"] == "success"
+
+
+def test_officer_stream_disconnect_records_end_to_end_provider_latency(monkeypatch):
+    officer = _officer()
+    application = _application(officer.id)
+    provider_stream = EndlessCloseAwareStream()
+    llm = StreamLLM(provider_stream)
+    latency = Mock()
+    monkeypatch.setattr("ai_assistant.views.officer.get_llm_service", lambda **kwargs: llm)
+    monkeypatch.setattr(
+        "ai_assistant.views.officer.has_current_ai_consent", lambda scope: True
+    )
+    monkeypatch.setattr("ai_assistant.views.officer.observe", latency)
+
+    response = OfficerStreamingChatView.as_view()(
+        _request(
+            "POST",
+            "/api/ai/officer/chat/stream/",
+            officer.id,
+            data={"message": "Stream", "application_id": str(application.id)},
+        )
+    )
+    iterator = iter(response.streaming_content)
+    next(iterator)
+    response.close()
+
+    assert any(
+        call.kwargs.get("operation") == "stream"
+        for call in latency.call_args_list
+    )
 
 
 def test_officer_stream_disconnect_closes_provider_and_records_result(monkeypatch):

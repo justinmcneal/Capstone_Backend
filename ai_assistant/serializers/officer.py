@@ -12,20 +12,58 @@ _OFFICER_CONTEXT_RESTRICTED_PATTERNS = tuple(
         r"\b(?:customer|borrower|applicant)\s+(?:name|email|phone|mobile|address)\s*[:=-]",
         r"\b(?:customer|borrower|applicant)\s*:\s*[a-z][a-z' -]{2,}",
         r"\b[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}\b",
+        r"(?<!\w)\+\d{1,3}(?:[\s().-]*\d){7,14}(?!\w)",
         r"(?<!\w)(?:\+?63|0)9\d{9}(?!\w)",
-        r"\b(?:phone|mobile|address|government\s+id|national\s+id|passport|id\s+number)\b",
+        r"\b(?:phone|mobile|address|government\s+id|national\s+id|passport|id\s+number|date\s+of\s+birth|dob)\b",
         r"\b(?:document|file)\s+(?:filename|name|content|path|url|storage)\b",
+        r"\b[\w.-]+\.(?:pdf|png|jpe?g|docx?|csv)\b",
+        r"[\\/][^\s]+",
         r"\b(?:wallet|transaction\s+hash|payment\s+reference|reference\s+number)\b",
-        r"\b(?:internal\s+note|staff\s+(?:password|credential)|password|secret|api\s+key|token)\b",
+        r"\b(?:internal\s+note|staff\s+(?:password|credential)|password|secret|api\s+key|token|credential)\b",
         r"\b0x[0-9a-f]{8,}\b",
         r"\b(?:pay|txn|ref)[-_][A-Za-z0-9]{4,}\b",
+        r"\b(?:\d{4}[-/]\d{1,2}[-/]\d{1,2}|\d{1,2}[-/]\d{1,2}[-/]\d{2,4})\b",
+        r"\b\d{1,5}\s+[A-Za-z][A-Za-z.'-]*(?:,\s*|\s+)[A-Za-z][A-Za-z.'-]*\s+(?:city|municipality|barangay)\b",
     )
+)
+_OFFICER_CONTEXT_NAME_PATTERNS = tuple(
+    re.compile(pattern)
+    for pattern in (
+        r"\b(?:customer|borrower|applicant)\s+(?:mr|mrs|ms|miss)?\.?\s*[A-Z][a-z]{1,30}\s+[A-Z][a-z]{1,30}(?:['’]s)?\b",
+        r"\b(?:Review|review|About|about|For|for|Contact|contact|Call|call)\s+(?:mr|mrs|ms|miss)?\.?\s*[A-Z][a-z]{1,30}\s+[A-Z][a-z]{1,30}(?:['’]s)?\b",
+    )
+)
+_OFFICER_CONTEXT_NAME_PATTERN = re.compile(
+    r"\b([A-Z][a-z]{1,30})\s+([A-Z][a-z]{1,30})(?:['’]s)?\b"
+)
+_OFFICER_CONTEXT_NAME_STOP_WORDS = frozenset(
+    {"about", "call", "contact", "for", "review", "show", "summarize"}
+)
+_OFFICER_CONTEXT_SAFE_PHRASES = frozenset(
+    {
+        "application summary",
+        "document review",
+        "loan application",
+        "missing documents",
+        "payment status",
+        "profile readiness",
+        "repayment status",
+        "review readiness",
+        "working capital",
+    }
 )
 _OFFICER_CONTEXT_ERROR = "This request cannot be processed"
 
 
 def _validate_officer_context(value):
-    if any(pattern.search(value) for pattern in _OFFICER_CONTEXT_RESTRICTED_PATTERNS):
+    if any(pattern.search(value) for pattern in _OFFICER_CONTEXT_RESTRICTED_PATTERNS) or any(
+        pattern.search(value) for pattern in _OFFICER_CONTEXT_NAME_PATTERNS
+    ) or any(
+        first.lower() not in _OFFICER_CONTEXT_NAME_STOP_WORDS
+        and f"{first.lower()} {second.lower()}"
+        not in _OFFICER_CONTEXT_SAFE_PHRASES
+        for first, second in _OFFICER_CONTEXT_NAME_PATTERN.findall(value)
+    ):
         raise serializers.ValidationError(_OFFICER_CONTEXT_ERROR)
 
 

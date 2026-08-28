@@ -72,10 +72,24 @@ SAFE_MISSING_FIELD_LABELS = {
     "alternative.pays_utilities": "Utility payment status",
     "alternative.is_coop_member": "Cooperative membership",
 }
-_UNSAFE_PURPOSE_PATTERN = re.compile(
-    r"(?:@|\b(?:street|st\.?|road|rd\.?|avenue|ave\.?|barangay|address|phone|mobile)\b|\b\d{3,}\b|0x[0-9a-f]{8,})",
-    re.IGNORECASE,
-)
+SAFE_PRODUCT_CATEGORIES = {
+    "wcl": "working_capital",
+    "working capital": "working_capital",
+    "working_capital": "working_capital",
+    "mbl": "micro_business",
+    "micro business": "micro_business",
+    "micro_business": "micro_business",
+    "inventory": "inventory",
+    "inventory loan": "inventory",
+}
+SAFE_PURPOSE_CATEGORIES = {
+    "inventory": "inventory",
+    "working capital": "working_capital",
+    "working_capital": "working_capital",
+    "equipment": "equipment",
+    "expansion": "expansion",
+    "operations": "operations",
+}
 
 OFFICER_TOOL_SCHEMAS = [
     {
@@ -155,11 +169,22 @@ def _safe_codes(value, limit=10):
     return codes
 
 
+def _safe_category(value, allowlist):
+    normalized = re.sub(r"\s+", " ", str(value or "").strip().lower())
+    return allowlist.get(normalized)
+
+
 def _safe_purpose(value):
-    purpose = str(value or "").strip()
-    if not purpose or len(purpose) > 80 or _UNSAFE_PURPOSE_PATTERN.search(purpose):
+    return _safe_category(value, SAFE_PURPOSE_CATEGORIES)
+
+
+def _safe_product(product_data):
+    if not product_data:
         return None
-    return purpose
+    category = _safe_category(product_data.get("code"), SAFE_PRODUCT_CATEGORIES)
+    if category is None:
+        category = _safe_category(product_data.get("name"), SAFE_PRODUCT_CATEGORIES)
+    return {"category": category or "other"}
 
 
 def _safe_missing_fields(profile):
@@ -207,11 +232,7 @@ def _get_application_summary(scope):
             {"_id": ObjectId(str(product_id))}, {"name": 1, "code": 1}
         )
         if product_data:
-            product = {
-                key: str(product_data[key])[:80]
-                for key in ("name", "code")
-                if product_data.get(key)
-            }
+            product = _safe_product(product_data)
     manual_review_required = bool(
         recommendation.get("manual_review_required") or status == "under_review"
     )

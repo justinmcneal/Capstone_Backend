@@ -690,6 +690,12 @@ class OfficerStreamingChatView(AIRequestMetricsMixin, APIView):
             except GeneratorExit:
                 if not terminal_emitted:
                     record_result("disconnected")
+                    _record_provider_metrics(
+                        llm,
+                        outcome="disconnect",
+                        started=started,
+                        operation="stream",
+                    )
                 raise
             except Exception:
                 if not terminal_emitted:
