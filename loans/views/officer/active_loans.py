@@ -18,6 +18,9 @@ from loans.services.related_data import (
 from loans.views.officer.base import LoanOfficerRequiredMixin
 
 
+ACTIVE_LOAN_SEARCH_CUSTOMER_LIMIT = 500
+
+
 class ActiveLoansView(LoanOfficerRequiredMixin, APIView):
     """
     Loan Officer: Get active (disbursed) loans for payment recording.
@@ -92,7 +95,7 @@ class ActiveLoansView(LoanOfficerRequiredMixin, APIView):
                             {"email": full_regex},
                         ]
                     },
-                    limit=20,
+                    limit=ACTIVE_LOAN_SEARCH_CUSTOMER_LIMIT,
                 )
             else:
                 # Single word search: use original logic
@@ -107,7 +110,7 @@ class ActiveLoansView(LoanOfficerRequiredMixin, APIView):
                             {"email": regex},
                         ]
                     },
-                    limit=20,
+                    limit=ACTIVE_LOAN_SEARCH_CUSTOMER_LIMIT,
                 )
 
             # Exact customer ID lookup (MongoDB ObjectId string)
