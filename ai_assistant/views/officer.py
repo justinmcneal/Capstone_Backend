@@ -693,6 +693,27 @@ class OfficerStreamingChatView(AIRequestMetricsMixin, APIView):
                             "token", {"content": escape_llm_output(raw_content)}
                         )
                     elif chunk_type == "done":
+                        authorization_error = _authorization_error(scope)
+                        if authorization_error:
+                            terminal_emitted = True
+                            record_result(authorization_error)
+                            _record_provider_metrics(
+                                llm,
+                                outcome=authorization_error,
+                                started=started,
+                                operation="stream",
+                            )
+                            yield self._event(
+                                "error",
+                                {
+                                    "content": "Officer access to this application is no longer available."
+                                    if authorization_error == "AI_OFFICER_SCOPE_CHANGED"
+                                    else "Customer AI consent is no longer available.",
+                                    "code": authorization_error,
+                                    "request_id": request_id,
+                                },
+                            )
+                            break
                         if "model" in chunk and not isinstance(
                             chunk.get("model"), str
                         ):
@@ -775,6 +796,27 @@ class OfficerStreamingChatView(AIRequestMetricsMixin, APIView):
                         break
 
                 if not terminal_emitted:
+                    authorization_error = _authorization_error(scope)
+                    if authorization_error:
+                        terminal_emitted = True
+                        record_result(authorization_error)
+                        _record_provider_metrics(
+                            llm,
+                            outcome=authorization_error,
+                            started=started,
+                            operation="stream",
+                        )
+                        yield self._event(
+                            "error",
+                            {
+                                "content": "Officer access to this application is no longer available."
+                                if authorization_error == "AI_OFFICER_SCOPE_CHANGED"
+                                else "Customer AI consent is no longer available.",
+                                "code": authorization_error,
+                                "request_id": request_id,
+                            },
+                        )
+                        return
                     terminal_emitted = True
                     record_result("AI_STREAM_INCOMPLETE")
                     _record_provider_metrics(

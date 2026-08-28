@@ -323,6 +323,10 @@ def test_officer_endpoints_enforce_role_before_body_or_query_validation(monkeypa
         "Payment reference: PAY-12345",
         "Internal note: confidential review",
         "Staff password: hunter2",
+        "Łukasz Żółć",
+        "李 小龙",
+        "محمد علي",
+        "1990年1月1日",
     ],
 )
 @pytest.mark.parametrize("view_class", [OfficerChatView, OfficerStreamingChatView])
@@ -1156,6 +1160,52 @@ def test_officer_stream_emits_safe_named_events_and_one_done_terminal(monkeypatc
     assert result_event.action == "ai_officer_assistant_result"
     assert result_event.details["outcome"] == "success"
     assert result_event.details["tool_names"] == ["get_application_summary"]
+
+
+def test_officer_stream_revalidates_before_done_terminal(monkeypatch):
+    officer = _officer()
+    application = _application(officer.id)
+    provider_stream = CloseAwareStream(
+        [
+            {"type": "token", "content": "partial"},
+            {"type": "done", "model": "officer-model", "tokens_used": 1},
+        ]
+    )
+    llm = StreamLLM(provider_stream)
+    authorization_checks = 0
+
+    def authorization_error(scope):
+        nonlocal authorization_checks
+        authorization_checks += 1
+        return (
+            "AI_OFFICER_SCOPE_CHANGED" if authorization_checks >= 2 else None
+        )
+
+    monkeypatch.setattr(
+        "ai_assistant.views.officer.get_llm_service", lambda **kwargs: llm
+    )
+    monkeypatch.setattr(
+        "ai_assistant.views.officer.has_current_ai_consent", lambda scope: True
+    )
+    monkeypatch.setattr(
+        "ai_assistant.views.officer._authorization_error", authorization_error
+    )
+
+    frames = _stream_frames(
+        OfficerStreamingChatView.as_view()(
+            _request(
+                "POST",
+                "/api/ai/officer/chat/stream/",
+                officer.id,
+                data={"message": "Stream", "application_id": str(application.id)},
+            )
+        )
+    )
+
+    assert [event for event, _payload in frames] == ["token", "error"]
+    assert frames[-1][1]["code"] == "AI_OFFICER_SCOPE_CHANGED"
+    assert provider_stream.closed is True
+    assert _audit_events()[-1].details["outcome"] == "AI_OFFICER_SCOPE_CHANGED"
 
 
 def test_officer_stream_accepts_event_stream_negotiation_for_successful_sse(
