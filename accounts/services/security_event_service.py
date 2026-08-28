@@ -1,4 +1,5 @@
 import logging
+import uuid
 from typing import ClassVar
 
 from accounts.services.audit import record_account_audit
@@ -147,6 +148,7 @@ class SecurityEventService:
         record_audit: bool = True,
     ) -> None:
         subject, message = cls.EVENT_MESSAGES[action]
+        event_key = f"account-security:{action}:{user.id}:{uuid.uuid4().hex}"
         if record_audit:
             try:
                 record_account_audit(
@@ -164,21 +166,25 @@ class SecurityEventService:
                 logger.error("Failed to audit security event %s: %s", action, exc)
 
         try:
-            from notifications.services.notification_creator import (
-                create_and_broadcast_notification,
-            )
+            from notifications.services.delivery import queue_notification_delivery
 
-            create_and_broadcast_notification(
-                user_id=user.id,
-                user_type=user_type,
-                notification_type=action,
-                subject=subject,
-                message=message,
-                recipient_email=user.email,
-                recipient_name=getattr(user, "full_name", ""),
-                related_type="account_security",
-                related_id=user.id,
-                channel="in_app",
+            queue_notification_delivery(
+                event_key=event_key,
+                event_type=action,
+                recipient={
+                    "id": user.id,
+                    "user_type": user_type,
+                    "email": user.email,
+                    "name": getattr(user, "full_name", ""),
+                },
+                channels=["in_app", "push"],
+                payload={
+                    "subject": subject,
+                    "message": message,
+                    "related_type": "account_security",
+                    "related_id": user.id,
+                    "metadata": {"security_event": True},
+                },
             )
         except Exception as exc:  # noqa: BLE001 - notification is best-effort
             logger.error("Failed to notify security event %s: %s", action, exc)

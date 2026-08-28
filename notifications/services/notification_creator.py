@@ -31,6 +31,7 @@ def create_and_broadcast_notification(
     related_id=None,
     channel="in_app",
     idempotency_key=None,
+    metadata=None,
 ):
     notification = Notification(
         user_id=str(user_id),
@@ -42,6 +43,7 @@ def create_and_broadcast_notification(
         message=message,
         related_type=related_type,
         related_id=related_id,
+        metadata=dict(metadata or {}),
         channel=channel,
         status="sent",
         idempotency_key=idempotency_key,
@@ -54,23 +56,74 @@ def create_and_broadcast_notification(
     else:
         notification.save()
 
-    if not created:
-        return notification
-
-    logger.info(f"Created notification {notification.id} for user {user_id}")
-
     notification_data = serialize_notification_for_ws(notification)
-    broadcast_notification_to_user(user_id, user_type, notification_data)
+    if created:
+        logger.info("Created notification %s", notification.id)
+        broadcast_notification_to_user(user_id, user_type, notification_data)
 
-    # 3. Send Push Notification via Firebase Cloud Messaging (FCM)
-    _send_push_notification(user_id, user_type, subject, message, notification_data)
+    # Push intent is persisted even on an idempotent replay. This closes the
+    # crash window between inbox creation and broker publication.
+    if user_id:
+        from notifications.services.delivery import queue_notification_delivery
+
+        queue_notification_delivery(
+            event_key=f"notification-push:{notification.id}",
+            event_type=notification_type,
+            recipient={
+                "id": user_id,
+                "user_type": user_type,
+                "email": recipient_email,
+                "name": recipient_name,
+            },
+            channels=["push"],
+            payload={
+                "subject": subject,
+                "message": message,
+                "related_type": related_type,
+                "related_id": related_id,
+                "metadata": dict(metadata or {}),
+                "notification_id": notification.id,
+            },
+        )
 
     return notification
 
 
-def _send_push_notification(user_id, user_type, title, body, data_payload):
+def _send_push_notification(
+    user_id,
+    user_type,
+    title,
+    body,
+    data_payload,
+    *,
+    only_token_hashes=None,
+    include_details=False,
+):
+    def result(details=None, *, error_code=""):
+        details = details or {}
+        value = {
+            "attempted": int(details.get("attempted", 0)),
+            "succeeded": int(details.get("succeeded", 0)),
+            "failed": int(details.get("failed", 0)),
+            "deactivated": int(details.get("deactivated", 0)),
+        }
+        if include_details:
+            value.update(
+                {
+                    "succeeded_hashes": list(details.get("succeeded_hashes", [])),
+                    "permanent_failure_hashes": list(
+                        details.get("permanent_failure_hashes", [])
+                    ),
+                    "transient_failure_hashes": list(
+                        details.get("transient_failure_hashes", [])
+                    ),
+                    "error_code": error_code,
+                }
+            )
+        return value
+
     if not user_id or firebase_admin is None or messaging is None:
-        return {"attempted": 0, "succeeded": 0, "failed": 0, "deactivated": 0}
+        return result(error_code="provider_unavailable")
 
     try:
         # Check if Firebase is initialized, initialize if not (requires credentials in env or default service account)
@@ -78,20 +131,31 @@ def _send_push_notification(user_id, user_type, title, body, data_payload):
             try:
                 firebase_admin.initialize_app()
             except Exception as exc:  # noqa: BLE001 - Firebase init guard
-                logger.warning("Could not initialize firebase admin: %s", exc)
-                return {
-                    "attempted": 0,
-                    "succeeded": 0,
-                    "failed": 0,
-                    "deactivated": 0,
-                }
+                logger.warning(
+                    "Could not initialize firebase admin: error_type=%s",
+                    type(exc).__name__,
+                )
+                return result(error_code="provider_initialization_failed")
 
         tokens = DeviceToken.get_tokens_for_user(user_id, user_type)
+        missing_hashes = []
+        if only_token_hashes is not None:
+            selected = {str(value) for value in only_token_hashes}
+            tokens = [item for item in tokens if item.token_hash in selected]
+            missing_hashes = sorted(selected - {item.token_hash for item in tokens})
         if not tokens:
-            return {"attempted": 0, "succeeded": 0, "failed": 0, "deactivated": 0}
+            return result({"permanent_failure_hashes": missing_hashes})
 
         batch_size = int(settings.NOTIFICATIONS_FCM_BATCH_SIZE)
-        totals = {"attempted": 0, "succeeded": 0, "failed": 0, "deactivated": 0}
+        totals = {
+            "attempted": 0,
+            "succeeded": 0,
+            "failed": 0,
+            "deactivated": 0,
+            "succeeded_hashes": [],
+            "permanent_failure_hashes": list(missing_hashes),
+            "transient_failure_hashes": [],
+        }
 
         # Ensure data payload values are strings (FCM requirement)
         stringified_data = {k: str(v) for k, v in data_payload.items() if v is not None}
@@ -103,7 +167,17 @@ def _send_push_notification(user_id, user_type, title, body, data_payload):
                 data=stringified_data,
                 tokens=[item.token for item in batch],
             )
-            response = messaging.send_each_for_multicast(message)
+            try:
+                response = messaging.send_each_for_multicast(message)
+            except Exception as exc:  # noqa: BLE001 - batch remains retryable
+                logger.warning(
+                    "FCM batch delivery failed: error_type=%s", type(exc).__name__
+                )
+                batch_hashes = [item.token_hash for item in batch]
+                totals["attempted"] += len(batch)
+                totals["failed"] += len(batch)
+                totals["transient_failure_hashes"].extend(batch_hashes)
+                continue
             totals["attempted"] += len(batch)
             totals["succeeded"] += int(response.success_count)
             totals["failed"] += int(response.failure_count)
@@ -113,6 +187,7 @@ def _send_push_notification(user_id, user_type, title, body, data_payload):
             permanent_failures = []
             for token_record, send_response in zip(batch, response.responses):
                 if send_response.success:
+                    totals["succeeded_hashes"].append(token_record.token_hash)
                     continue
                 exception = send_response.exception
                 logger.warning(
@@ -124,13 +199,16 @@ def _send_push_notification(user_id, user_type, title, body, data_payload):
                     (messaging.UnregisteredError, messaging.SenderIdMismatchError),
                 ):
                     permanent_failures.append(token_record.token_hash)
+                    totals["permanent_failure_hashes"].append(token_record.token_hash)
+                else:
+                    totals["transient_failure_hashes"].append(token_record.token_hash)
             totals["deactivated"] += DeviceToken.deactivate_hashes(
                 permanent_failures, "provider_permanent_failure"
             )
-        return totals
+        return result(totals)
 
     except Exception as exc:  # noqa: BLE001 - Push delivery guard
         logger.error(
             "Push notification delivery failed: error_type=%s", type(exc).__name__
         )
-        return {"attempted": 0, "succeeded": 0, "failed": 0, "deactivated": 0}
+        return result(error_code="provider_delivery_failed")

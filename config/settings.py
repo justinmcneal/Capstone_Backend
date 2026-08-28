@@ -148,6 +148,18 @@ NOTIFICATIONS_MAX_ACTIVE_DEVICE_TOKENS = int(
     os.getenv("NOTIFICATIONS_MAX_ACTIVE_DEVICE_TOKENS", "20")
 )
 NOTIFICATIONS_FCM_BATCH_SIZE = int(os.getenv("NOTIFICATIONS_FCM_BATCH_SIZE", "500"))
+NOTIFICATIONS_DELIVERY_MAX_ATTEMPTS = int(
+    os.getenv("NOTIFICATIONS_DELIVERY_MAX_ATTEMPTS", "5")
+)
+NOTIFICATIONS_DELIVERY_RETRY_BACKOFF_SECONDS = int(
+    os.getenv("NOTIFICATIONS_DELIVERY_RETRY_BACKOFF_SECONDS", "60")
+)
+NOTIFICATIONS_DELIVERY_LEASE_SECONDS = int(
+    os.getenv("NOTIFICATIONS_DELIVERY_LEASE_SECONDS", "300")
+)
+NOTIFICATIONS_PREFERENCE_POLICY_VERSION = os.getenv(
+    "NOTIFICATIONS_PREFERENCE_POLICY_VERSION", "2026-08-28-v1"
+).strip()
 NOTIFICATIONS_WS_ACTIONS_PER_MINUTE = int(
     os.getenv("NOTIFICATIONS_WS_ACTIONS_PER_MINUTE", "120")
 )
@@ -174,6 +186,22 @@ if not 1 <= NOTIFICATIONS_MAX_ACTIVE_DEVICE_TOKENS <= 100:
 if not 1 <= NOTIFICATIONS_FCM_BATCH_SIZE <= 500:
     raise ImproperlyConfigured(
         "NOTIFICATIONS_FCM_BATCH_SIZE must be between 1 and 500"
+    )
+if not 1 <= NOTIFICATIONS_DELIVERY_MAX_ATTEMPTS <= 10:
+    raise ImproperlyConfigured(
+        "NOTIFICATIONS_DELIVERY_MAX_ATTEMPTS must be between 1 and 10"
+    )
+if not 1 <= NOTIFICATIONS_DELIVERY_RETRY_BACKOFF_SECONDS <= 3600:
+    raise ImproperlyConfigured(
+        "NOTIFICATIONS_DELIVERY_RETRY_BACKOFF_SECONDS must be between 1 and 3600"
+    )
+if not 30 <= NOTIFICATIONS_DELIVERY_LEASE_SECONDS <= 3600:
+    raise ImproperlyConfigured(
+        "NOTIFICATIONS_DELIVERY_LEASE_SECONDS must be between 30 and 3600"
+    )
+if not NOTIFICATIONS_PREFERENCE_POLICY_VERSION:
+    raise ImproperlyConfigured(
+        "NOTIFICATIONS_PREFERENCE_POLICY_VERSION must not be blank"
     )
 
 # Channel Layers Configuration
@@ -881,6 +909,8 @@ CELERY_TASK_ROUTES = {
     'loans.deliver_notification': {'queue': 'loans'},
     'loans.enforce_retention': {'queue': 'loans'},
     'loans.collect_operational_metrics': {'queue': 'loans'},
+    'notifications.deliver': {'queue': 'notifications'},
+    'notifications.reconcile_deliveries': {'queue': 'notifications'},
 }
 
 # MongoDB-backed leases coordinate the single configured blockchain sender.
@@ -964,6 +994,20 @@ CELERY_TASK_ANNOTATIONS = {
         "loans.collect_operational_metrics",
     )
 }
+CELERY_TASK_ANNOTATIONS.update(
+    {
+        task_name: {
+            "acks_late": True,
+            "reject_on_worker_lost": True,
+            "soft_time_limit": 90,
+            "time_limit": 120,
+        }
+        for task_name in (
+            "notifications.deliver",
+            "notifications.reconcile_deliveries",
+        )
+    }
+)
 
 # Logging Configuration
 LOGGING = {

@@ -51,7 +51,7 @@ from loans.models import (  # noqa: E402
     RepaymentSchedule,
 )
 from loans.services.persistence import install_loan_validators  # noqa: E402
-from notifications.models import Notification  # noqa: E402
+from notifications.models import Notification, NotificationDelivery  # noqa: E402
 from notifications.models.device_token import DeviceToken  # noqa: E402
 from profiles.models import (  # noqa: E402
     AlternativeData,
@@ -367,6 +367,15 @@ def create_indexes():
         print("⚠ DeviceToken indexes already exist, skipping")
     except Exception as e:
         print(f"✗ DeviceToken error: {e}")
+
+    try:
+        print("Creating indexes for NotificationDelivery collection...")
+        NotificationDelivery.create_indexes()
+        print("✓ NotificationDelivery indexes created")
+    except (DuplicateKeyError, OperationFailure):
+        print("⚠ NotificationDelivery indexes already exist, skipping")
+    except Exception as e:
+        print(f"✗ NotificationDelivery error: {e}")
 
     try:
         print("Creating indexes for ActiveSession collection...")

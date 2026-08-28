@@ -13,6 +13,7 @@ from config.field_encryption import (
 )
 from documents.models import Document
 from loans.models import LoanApplication, LoanPayment, LoanProduct, RepaymentSchedule
+from notifications.models.delivery import NotificationDelivery
 from notifications.models.device_token import DeviceToken
 from profiles.models import (
     AlternativeData,
@@ -36,14 +37,14 @@ ENCRYPTED_MODELS = (
     RepaymentSchedule,
     AIInteraction,
     DeviceToken,
+    NotificationDelivery,
 )
 
 # Retained as a public constant for operational tooling and tests. Deriving this
 # from model declarations prevents a backfill from encrypting fields that the
 # corresponding model cannot decrypt.
 FIELD_MAP = {
-    model.collection_name: tuple(model.encrypted_fields)
-    for model in ENCRYPTED_MODELS
+    model.collection_name: tuple(model.encrypted_fields) for model in ENCRYPTED_MODELS
 }
 
 

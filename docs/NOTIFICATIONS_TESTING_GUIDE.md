@@ -1,6 +1,6 @@
 # Notifications Testing Guide
 
-Last updated: 2026-08-27
+Last updated: 2026-08-28
 
 ## Scope
 
@@ -8,38 +8,40 @@ This guide documents the **Notifications service** under `/api/notifications/` f
 
 - Notification inbox REST API endpoints
 - WebSocket real-time delivery
-- Template email and domain-owned Celery outbox delivery
+- Template email and durable domain/shared Celery outbox delivery
 - FCM push notifications and device-token registration
 - Assignment-lifecycle event notifications
-- Existing email-task counters and planned operational monitoring
+- Shared delivery reconciliation and planned operational monitoring
 
-**Important distinction:** Email **preference settings** (`email_loan_updates`, etc.) live under **`/api/profile/notifications/`** (Profiles module), not this API. This guide covers the **inbox** only.
+**Important distinction:** Email **preference settings** (`email_loan_updates`,
+etc.) live under **`/api/profile/notifications/`** (Profiles module), not this
+API. Notifications now enforces those settings for optional email; they do not
+suppress the inbox or mandatory communications.
 
 ## Architecture Overview
 
-Notifications currently combine several channels, but they do not yet share one
-complete delivery lifecycle:
+Notifications combines multiple channels with explicit durable owners:
 
 - **REST API**: fetch/manage inbox, mark read/delete, get unread counts
 - **WebSocket**: real-time push of new notifications to connected clients
 - **Template Email**: synchronous `EmailSender` calls, normally invoked inside
-  the durable Loans/Documents delivery workers
-- **Standalone Celery Email**: source exists but is not registered or called in
-  a normal startup; do not treat it as an active production path
+  the durable Loans/Documents or shared Notifications delivery workers
+- **Shared Celery Delivery**: canonical routed tasks claim encrypted leased
+  outbox records for producers that do not own a domain outbox
 - **FCM Push**: installed-version multicast delivery with bounded batching and
-  partial-result handling; still synchronous until Stage 3
-- **Assignment Events**: structured notifications for loan-assignment lifecycle
+  partial-result checkpointing through the shared asynchronous outbox
+- **Assignment/Security Events**: structured, durable shared delivery intent
 
 Depending on the producer, the system can:
 1. Persist an in-app record
 2. Broadcast it over WebSocket to the owner
-3. Send template email, with durable retry only when the owning domain provides
-   an outbox
-4. Attempt FCM push for registered tokens
+3. Send or suppress template email according to the versioned policy
+4. Attempt FCM push for registered tokens and checkpoint per-token outcomes
 
 Persistence, WebSocket publication, email acceptance, push acceptance, and
-user read state are separate facts. Inbox read state and delivery state are
-independent; Stage 3 still needs durable per-channel attempts.
+user read state are separate facts. Inbox read state is independent of channel
+progress, and external providers remain at-least-once if acceptance happens
+before a durable checkpoint.
 
 ## Base URL and Auth
 
@@ -78,12 +80,12 @@ Focused module command:
   tests/test_notifications_websocket.py \
   tests/test_websocket_notifications.py \
   tests/test_notifications_email_sender.py \
-  tests/test_notifications_use_celery.py \
+  tests/test_notifications_stage3_delivery.py \
   tests/test_assignment_notifications.py \
   tests/test_notification_timestamps.py
 ```
 
-Result after Stage 1 on 2026-08-27: **62 passed**.
+Result after Stage 3 on 2026-08-28: **72 passed**.
 
 Stage 1 routed contract command:
 
@@ -115,6 +117,21 @@ failures, encryption, role/session ownership, hostile reassignment rejection,
 deduplication, expiry, unregister, logout/session revocation, and account
 cleanup without contacting Firebase.
 
+Stage 3 shared-delivery command:
+
+```bash
+.venv/bin/pytest -q tests/test_notifications_stage3_delivery.py
+```
+
+Result on 2026-08-28: **12 passed**. This verifies canonical registration and
+routing, encrypted idempotent intent, broker-publication recovery, atomic and
+stale leases, inbox replay repair, email policy/suppression, bounded email
+retry, mandatory-event handling, partial push checkpoints, and durable
+assignment/security publication.
+
+Affected Notifications/cross-domain regression result on 2026-08-28:
+**129 passed**.
+
 Broader cross-domain selection:
 
 ```bash
@@ -123,7 +140,8 @@ Broader cross-domain selection:
 ```
 
 Result after Stage 2 on 2026-08-27: **131 passed, 1,245 deselected**. The latest
-full repository result on the same revision is **1,330 passed, 46 skipped**.
+full repository result after Stage 3 on 2026-08-28 is **1,340 passed, 46
+skipped**.
 
 Evidence limits:
 
@@ -134,8 +152,9 @@ Evidence limits:
 - Email tests mock rendering/transport. No SMTP message is sent.
 - Stage 2 has mocked installed-API FCM and routed device-lifecycle evidence;
   live Firebase receipt remains deployment-only evidence.
-- No Notifications-specific real-Mongo, multi-worker Redis/Celery, HTTPS/WSS,
-  load, backup/restore, monitoring, or deployment probe exists yet.
+- Stage 3 worker/broker cases are deterministic local tests; no Notifications-
+  specific real-Mongo, multi-worker Redis/Celery, HTTPS/WSS, load,
+  backup/restore, monitoring, or deployment probe exists yet.
 
 ### Stage validation map
 
@@ -143,7 +162,7 @@ Evidence limits:
 | --- | --- | --- |
 | Stage 1 — Contract and owner-safe inbox | Routed auth/role/owner tests, independent read/delivery state, atomic replay, bounds/throttles | Complete locally; 78 focused tests pass |
 | Stage 2 — Secure working push | Installed Firebase API, role-qualified token ownership, validation, revoke/cleanup, provider batching | Complete locally; 14 focused tests pass |
-| Stage 3 — Durable preference-aware delivery | Registered/routed tasks, leases/retries, broker/worker/provider recovery, preference policy | Not started; Loans/Documents outboxes cover only their events |
+| Stage 3 — Durable preference-aware delivery | Registered/routed tasks, leases/retries, broker/worker/provider recovery, preference policy | Complete locally; 12 focused tests pass |
 | Stage 4 — Privacy and MongoDB correctness | Encryption/log safety, lifecycle/export, validators/indexes, inventory/backfill, real-Mongo plans | Not started |
 | Stage 5 — WebSocket resilience/observability | Post-connect revocation/expiry, limits, cross-device sync, metrics/rules/dashboard/health | Not started |
 | Stage 6 — Deployment validation | Real MongoDB/Redis/Celery/SMTP/FCM/HTTPS/WSS/load/recovery and release checker | Not started |
@@ -178,7 +197,8 @@ mutate or contact real services.
 
 ### Channels (`channel`)
 
-`email`, `in_app`
+Inbox rows use `email` or `in_app`. Shared delivery records may request
+`email`, `in_app`, and/or `push`.
 
 The model default is `email`, but shared email helpers explicitly create one
 `in_app` row and reuse it to track the SMTP attempt. They do not create a
@@ -198,9 +218,9 @@ is independent.
 | `unknown` | Delivery outcome is unavailable, including a loaded legacy `status: read` row |
 
 Legacy `status: read` rows are interpreted as `is_read: true` and
-`delivery_status: unknown` until Stage 4 inventory/backfill. Most shared email
-helpers still create an `in_app` row with `status: sent` before the SMTP
-attempt, so `sent` is not yet durable proof of external delivery.
+`delivery_status: unknown` until Stage 4 inventory/backfill. The shared/domain
+outbox is the authoritative processing record; an inbox `sent` value is not
+proof that an external provider or end user received the message.
 
 ### Unread Logic
 
@@ -259,9 +279,9 @@ core inbox record:
 | `document_flagged` | `PUT /api/documents/<id>/verify/` (reject) or `POST /api/documents/<id>/request-reupload/` | Officer |
 
 Loans/Documents persist recoverable delivery records before their task is
-published. Assignment and account-security events are best-effort and have no
-equivalent recovery record. Saved Profiles email preferences are not currently
-consulted by any of these paths.
+published. Assignment, account-security, and notification-creator push events
+use `notification_deliveries`. Optional customer email evaluates Profiles
+preferences; in-app and mandatory communications remain unaffected.
 
 ---
 
@@ -292,9 +312,11 @@ Full fields in `notifications` collection (not all exposed in list API):
 | `sent_at` | datetime | When email was sent; API responses use an explicit UTC ISO 8601 value when present |
 | `read_at` | datetime/null | Set once when marked read via API |
 
-Recipient identity, message content, metadata, errors, and device tokens are
-currently plaintext. No MongoDB validator enforces this table, the declared
-type list, channel/status values, role values, or timestamp shapes.
+Recipient identity, message content, metadata, and errors are currently
+plaintext in the core `notifications` collection; device-token values and
+shared-delivery recipient/payload fields are encrypted. No MongoDB validator
+yet enforces this table, the declared type list, channel/status values, role
+values, or timestamp shapes.
 
 ---
 
@@ -654,10 +676,12 @@ Operational bounds:
 - strict platform/token/device-count/expiry bounds
 - provider batches of at most 500 with ordered partial-result processing
 - `UnregisteredError` and `SenderIdMismatchError` deactivate only affected
-  tokens; transient failures remain active for Stage 3 retry handling
+  tokens; transient failures remain active for bounded shared-delivery retry
 - no raw token or provider exception body is written to notification logs
 - explicit unregister plus automatic session/logout/security/account cleanup
-- push remains synchronous until Stage 3 introduces durable background delivery
+- push intent is persisted before asynchronous dispatch; known successful and
+  permanently rejected token fingerprints are checkpointed so a later retry
+  targets only unresolved registrations
 
 **Dependencies:**
 - `firebase_admin` Python package
@@ -685,27 +709,18 @@ Assignment notifications:
 - Are in-app only (`channel: in_app`)
 - Include structured `metadata`: event type, participants, entity, occurrence time
 - Deduplicate recipients by `(user_id, user_type)`
+- Persist idempotent shared-delivery intent before broker publication
 - Do **not** send email or push notifications
 
 ---
 
 ## Prometheus Metrics
 
-Two counters are declared in `notifications/services/email_tasks.py`. Counters
-are only registered when `prometheus-client` is installed; otherwise they no-op
-gracefully.
-
-| Metric | Scope |
-|--------|-------|
-| `notifications_email_task_success_total` | Async Celery email sends |
-| `notifications_email_task_failure_total` | Async Celery email failures |
-
-There are no `notifications_email_send_success_total` or
-`notifications_email_send_failure_total` counters in the current sender. The
-standalone email task is not imported by Celery autodiscovery, is not called by
-producers, and converts SMTP failures to `False` rather than raising for
-autoretry. Therefore even the two declared counters do not represent the active
-domain delivery paths and are insufficient production monitoring.
+The obsolete standalone email-task counters were removed with the unregistered
+task. Stage 3 establishes the durable state that Stage 5 metrics will observe,
+but does not yet advertise Notifications-specific delivery counters or backlog
+gauges. Do not configure alerts against nonexistent
+`notifications_email_*` series.
 
 **Toggle command:**
 ```bash
@@ -743,9 +758,17 @@ before the SMTP attempt and then normally change it to `failed`. Do not infer
 email delivery from the existence of that row. Loans/Documents retry through
 their own outboxes; assignment/security in-app events do not use SMTP.
 
-The standalone `send_email_task` is currently neither autodiscovered nor used.
-After Stage 3, verify registration with a worker inspection test and prove that
-returned/raised provider failures enter the approved retry path.
+The canonical tasks are `notifications.deliver` and
+`notifications.reconcile_deliveries`. Run a worker that consumes the dedicated
+queue during local integration testing:
+
+```bash
+celery -A config worker -Q notifications --loglevel=info
+celery -A config beat --loglevel=info
+```
+
+The first command consumes delivery work; Beat publishes due reconciliation
+once per minute. Use synthetic recipients/providers for integration tests.
 
 ---
 
@@ -928,7 +951,8 @@ Redis fan-out, metrics scrape, dashboard series, and alert firing/resolution.
 - [x] Existing mocked template-email and assignment tests pass.
 - [x] Stage 1 routed REST and independent read/delivery-state tests pass.
 - [x] Stage 2 FCM/device-token security and lifecycle tests pass locally.
-- [ ] Stage 3 durable/preference-aware broker/worker/provider recovery passes.
+- [x] Stage 3 durable/preference-aware broker/worker/provider recovery passes
+      under deterministic local tests.
 - [ ] Stage 4 privacy lifecycle, validator/index, inventory/backfill, and real-
       Mongo tests pass.
 - [ ] Stage 5 post-connect WebSocket security, limits, synchronization,
@@ -951,8 +975,11 @@ Redis fan-out, metrics scrape, dashboard series, and alert firing/resolution.
 | Ownership/query helpers | `notifications/ownership.py` |
 | Notification model | `notifications/models/notification.py` |
 | Device token model | `notifications/models/device_token.py` |
+| Shared delivery model | `notifications/models/delivery.py` |
 | Email sender + record creation | `notifications/services/email_sender.py` |
-| Unregistered standalone email-task source | `notifications/services/email_tasks.py` |
+| Shared delivery service | `notifications/services/delivery.py` |
+| Preference policy | `notifications/services/preference_policy.py` |
+| Canonical Celery tasks | `notifications/tasks.py` |
 | WebSocket broadcast service | `notifications/services/websocket_service.py` |
 | Notification creator + FCM | `notifications/services/notification_creator.py` |
 | Assignment triggers | `notifications/services/assignment_events.py` |
@@ -974,17 +1001,18 @@ Redis fan-out, metrics scrape, dashboard series, and alert firing/resolution.
 6. Inbox and device-token ownership are by both `user_id` and normalized
    `user_type`; seed both, and bind device tokens to a live `session_id`.
 7. Staff WebSocket connections use the HttpOnly access cookie. Customer mobile query/subprotocol access tokens remain temporarily supported; rejected credentials close with `4001`.
-8. Current `status: sent` is not reliable end-to-end email evidence because it
-   can be set before SMTP. Stage 1 preserves it independently from read state;
-   after Stage 3, assert channel attempt/outcome fields and domain outbox state.
+8. `status: sent` is not end-to-end user-receipt evidence. Assert channel
+   progress in the owning Loans/Documents/shared outbox independently from read
+   state.
 9. Notification preferences (opt-in/opt-out) are under `/api/profile/notifications/` — separate from this inbox API.
 10. Generate diverse `notification_type` values by running the full loan lifecycle (see `docs/LOANS_TESTING_GUIDE.md` smoke sequence).
-11. FCM remains synchronous but now calls the installed
+11. FCM is called asynchronously by shared delivery using the installed
     `send_each_for_multicast` API in bounded batches. Mock it in unit tests;
     never call live customer tokens outside an approved Firebase test project.
 12. Assignment notifications do not send email or push notifications — they are in-app only with structured metadata.
-13. Profiles notification preferences are currently unenforced. Add allow/deny
-    tests for each optional category when Stage 3 implements the policy.
+13. Profiles preferences suppress only optional email. Test both allowed and
+    denied loan/document updates and verify mandatory security/staff/receipt
+    events remain deliverable.
 14. Test that logs and public payloads never contain email addresses, FCM
     tokens, provider exception bodies, credentials, or internal idempotency
     values.

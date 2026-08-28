@@ -57,13 +57,9 @@ def test_http_operations_are_isolated_for_cross_role_id_collision(monkeypatch):
 
     shared_id = "shared-account-id"
     admin_notification = _notification(shared_id, "admin", "Admin only")
-    officer_notification = _notification(
-        shared_id, "loan_officer", "Officer only"
-    )
+    officer_notification = _notification(shared_id, "loan_officer", "Officer only")
     admin_request = _request(shared_id, "admin", "admin@example.com")
-    officer_request = _request(
-        shared_id, "loan_officer", "officer@example.com"
-    )
+    officer_request = _request(shared_id, "loan_officer", "officer@example.com")
 
     admin_list = NotificationListView().get(admin_request)
     officer_list = NotificationListView().get(officer_request)
@@ -71,19 +67,15 @@ def test_http_operations_are_isolated_for_cross_role_id_collision(monkeypatch):
     assert [item["subject"] for item in admin_list.data["data"]["notifications"]] == [
         "Admin only"
     ]
-    assert [
-        item["subject"] for item in officer_list.data["data"]["notifications"]
-    ] == ["Officer only"]
+    assert [item["subject"] for item in officer_list.data["data"]["notifications"]] == [
+        "Officer only"
+    ]
     assert (
-        NotificationUnreadCountView().get(admin_request).data["data"][
-            "unread_count"
-        ]
+        NotificationUnreadCountView().get(admin_request).data["data"]["unread_count"]
         == 1
     )
     assert (
-        NotificationUnreadCountView().get(officer_request).data["data"][
-            "unread_count"
-        ]
+        NotificationUnreadCountView().get(officer_request).data["data"]["unread_count"]
         == 1
     )
 
@@ -91,13 +83,14 @@ def test_http_operations_are_isolated_for_cross_role_id_collision(monkeypatch):
         officer_request, admin_notification.id
     )
     assert cross_role_mark.status_code == 404
-    assert database[Notification.collection_name].find_one(
-        {"_id": admin_notification._id}
-    )["status"] == "sent"
-
-    own_mark = NotificationMarkReadView().post(
-        officer_request, officer_notification.id
+    assert (
+        database[Notification.collection_name].find_one(
+            {"_id": admin_notification._id}
+        )["status"]
+        == "sent"
     )
+
+    own_mark = NotificationMarkReadView().post(officer_request, officer_notification.id)
     assert own_mark.status_code == 200
 
     database[Notification.collection_name].update_one(
@@ -106,9 +99,12 @@ def test_http_operations_are_isolated_for_cross_role_id_collision(monkeypatch):
     )
     mark_all = NotificationMarkAllReadView().post(officer_request)
     assert mark_all.data["data"]["marked_count"] == 1
-    assert database[Notification.collection_name].find_one(
-        {"_id": admin_notification._id}
-    )["status"] == "sent"
+    assert (
+        database[Notification.collection_name].find_one(
+            {"_id": admin_notification._id}
+        )["status"]
+        == "sent"
+    )
 
     cross_role_delete = NotificationDeleteView().delete(
         officer_request, admin_notification.id
@@ -117,9 +113,10 @@ def test_http_operations_are_isolated_for_cross_role_id_collision(monkeypatch):
 
     clear_officer = NotificationClearAllView().delete(officer_request)
     assert clear_officer.data["data"]["deleted_count"] == 1
-    assert database[Notification.collection_name].find_one(
-        {"_id": admin_notification._id}
-    ) is not None
+    assert (
+        database[Notification.collection_name].find_one({"_id": admin_notification._id})
+        is not None
+    )
 
 
 def test_websocket_groups_and_mark_read_are_role_isolated(monkeypatch):
@@ -158,9 +155,12 @@ def test_websocket_groups_and_mark_read_are_role_isolated(monkeypatch):
         admin_notification.id
     )
     assert marked == {"success": False, "replayed": False}
-    assert database[Notification.collection_name].find_one(
-        {"_id": admin_notification._id}
-    )["status"] == "sent"
+    assert (
+        database[Notification.collection_name].find_one(
+            {"_id": admin_notification._id}
+        )["status"]
+        == "sent"
+    )
 
 
 def test_assignment_events_remain_isolated_through_inbox_api(monkeypatch):
@@ -168,7 +168,8 @@ def test_assignment_events_remain_isolated_through_inbox_api(monkeypatch):
     monkeypatch.setattr(settings, "MONGODB", database)
     _allow_authenticated_role(monkeypatch)
     monkeypatch.setattr(
-        assignment_events, "broadcast_notification_to_user", lambda *args: None
+        "notifications.services.delivery.broadcast_notification_to_user",
+        lambda *args: None,
     )
 
     admin = {
@@ -224,7 +225,8 @@ def test_initial_assignment_remains_isolated_through_inbox_api(monkeypatch):
     monkeypatch.setattr(settings, "MONGODB", database)
     _allow_authenticated_role(monkeypatch)
     monkeypatch.setattr(
-        assignment_events, "broadcast_notification_to_user", lambda *args: None
+        "notifications.services.delivery.broadcast_notification_to_user",
+        lambda *args: None,
     )
 
     admin = {
@@ -270,7 +272,8 @@ def test_unassignment_remains_isolated_through_inbox_api(monkeypatch):
     monkeypatch.setattr(settings, "MONGODB", database)
     _allow_authenticated_role(monkeypatch)
     monkeypatch.setattr(
-        assignment_events, "broadcast_notification_to_user", lambda *args: None
+        "notifications.services.delivery.broadcast_notification_to_user",
+        lambda *args: None,
     )
 
     admin = {

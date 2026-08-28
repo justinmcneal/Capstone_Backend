@@ -1,11 +1,11 @@
 # Notifications Production Readiness Review
 
-Last updated: 2026-08-27
+Last updated: 2026-08-28
 
 Scope: `notifications/`, `/api/notifications/`, `/ws/notifications/`, the
 `notifications` and `device_tokens` MongoDB collections, template email,
-Firebase Cloud Messaging (FCM), Channels/Redis broadcasting, the standalone
-notification email task, notification preferences, account lifecycle
+Firebase Cloud Messaging (FCM), Channels/Redis broadcasting, the shared
+notification delivery outbox, notification preferences, account lifecycle
 integration, cross-domain producers, persistence bootstrap, and notification-
 related automated tests and documentation.
 
@@ -55,27 +55,27 @@ The current code does not yet provide a coherent production delivery system:
    limits, expiry, refresh/deduplication, explicit unregister, session/logout
    cleanup, and account-deletion cleanup. Stage 4 must inventory/backfill legacy
    rows before production index work.
-3. **The advertised standalone Celery email path is not operational.** Celery
-   autodiscovery does not import `notifications/services/email_tasks.py`, so
-   `notifications.services.email_tasks.send_email_task` is not registered in a
-   normal app startup. No producer calls it. Even if imported, `EmailSender`
-   converts SMTP exceptions to `False`, so `autoretry_for=(Exception,)` does not
-   retry the failure.
-4. **The inbox contract is now stable, while delivery durability remains
-   partial.** Stage 1 separated `is_read/read_at` from delivery `status`, made
-   owner mutations atomic and replay-safe, and retained legacy `status: read`
-   compatibility. Most email helpers still create an `in_app` row marked
-   `sent` before SMTP is attempted, so Stage 3 must complete channel delivery
-   evidence.
-5. **Durability is inconsistent.** Loans and Documents have their own leased,
-   retryable outboxes before calling the shared sender. Assignment and account-
-   security notifications are best-effort and can be permanently lost after
-   the business mutation. A crash after SMTP acceptance but before outbox
-   completion can resend an email on retry.
-6. **Saved customer preferences are not enforced.** The Profiles module stores
-   `email_loan_updates`, `email_payment_reminders`, and `email_promotions`, but
-   notification/email producers do not consult them. The UI therefore exposes
-   controls that do not currently control delivery.
+3. **Stage 3 replaced the dead standalone email task with a canonical shared
+   delivery path.** `notifications/tasks.py` registers routed delivery and
+   reconciliation tasks with late acknowledgement, worker-loss rejection,
+   leases, bounded attempts, backoff, and stable error codes. The encrypted
+   shared outbox stores intent before broker publication, so a broker outage or
+   stale worker lease leaves recoverable work rather than losing the event.
+4. **The inbox contract and channel progress are independent.** Stage 1
+   separated `is_read/read_at` from inbox delivery compatibility state. Stage 3
+   adds per-channel progress to `notification_deliveries`, checkpoints the
+   inbox ID and successful/permanently rejected push token fingerprints, and
+   makes replay idempotent without repeating the business mutation.
+5. **Required producers now have a durable owner.** Loans and Documents retain
+   their domain outboxes. Assignment and account-security events use the shared
+   outbox, and every notification-creator push is published through it. SMTP or
+   FCM acceptance followed by a lost acknowledgement can still produce an
+   at-least-once external attempt; provider acceptance is not user receipt.
+6. **Saved customer email preferences are now enforced.** Loan/document update
+   categories use `email_loan_updates`; payment reminders and promotions have
+   explicit policy keys. Payment receipts, staff workflow mail, and security
+   notices remain mandatory. Each decision records its policy version; email
+   opt-out does not suppress the in-app inbox record.
 7. **Privacy lifecycle is incomplete.** Device-token values are encrypted and
    token delivery logs contain only non-sensitive error types. Recipient
    email/name, message, metadata, and errors remain plaintext, while email
@@ -96,8 +96,9 @@ The current code does not yet provide a coherent production delivery system:
    version change, or access-token expiry. Message-size and connection limits
    are not defined, and REST mutations are not synchronized
    to a user's other connected devices.
-10. **Operations evidence is insufficient.** Two email-task counters exist,
-    but there are no notification request/delivery/backlog/push/WebSocket
+10. **Operations evidence is insufficient.** The obsolete standalone task and
+    its isolated counters were removed, but there are no notification
+    request/delivery/backlog/push/WebSocket
     metrics, Prometheus rules, Grafana dashboard, health readiness, release
     checker, real-Mongo suite, or deployed SMTP/FCM/Redis/WSS recovery probes.
     The root README also lists two nonexistent synchronous-email counters and
@@ -106,7 +107,10 @@ The current code does not yet provide a coherent production delivery system:
 
 Current local automated evidence:
 
-- Core Notifications-focused selection: **62 passed** on 2026-08-27.
+- Stage 3 focused delivery selection: **12 passed** on 2026-08-28.
+- Notifications and affected cross-domain regression selection: **129 passed**
+  on 2026-08-28.
+- Core Notifications-focused selection: **72 passed** on 2026-08-28.
 - Stage 1 focused contract/security selection: **78 passed**.
 - Stage 2 provider/token lifecycle selection: **14 passed**.
 - Routed tests cover missing/revoked JWTs, customer/officer/admin role-qualified
@@ -115,7 +119,8 @@ Current local automated evidence:
   action throttling.
 - Broader notification/WebSocket/email-template selection: **131 passed and
   1,245 deselected**.
-- Full repository: **1,330 passed and 46 opt-in integration tests skipped**.
+- Full repository: **1,340 passed and 46 opt-in integration tests skipped** on
+  2026-08-28.
 - Mocked FCM success, batching, partial/permanent/transient failure behavior,
   encryption, ownership, deduplication, expiry, unregister, logout/session,
   and account cleanup are covered. There is no live Firebase/SMTP test,
@@ -128,15 +133,15 @@ Current local automated evidence:
 | --- | --- | --- |
 | REST inbox | Complete locally | Seven routed authenticated operations have strict role-qualified ownership, independent read/delivery state, atomic replay-safe read mutation, strict query validation, bounded offset/bulk work, and dedicated throttles. |
 | WebSocket inbox | Partial | Secure handshake, owner groups, ping, replay-safe mark-read, broadcasts, and per-connection action throttling exist; live-session revalidation, frame/connection limits, and cross-device state events remain. |
-| Template email | Partial | Templates and synchronous sender helpers work and read state no longer overwrites delivery status; uncertain SMTP outcomes can still duplicate. |
-| Standalone Celery email | Not operational | Task source exists but is not autodiscovered/routed/called, and returned failures bypass Celery autoretry. |
+| Template email | Implemented locally; deployment-gated | Templates and sender helpers work inside durable domain/shared workers and enforce the recorded email policy; uncertain SMTP acceptance can still result in an at-least-once retry. |
+| Shared Celery delivery | Implemented locally | Canonical registered/routed tasks, encrypted durable intent, idempotency, leases, checkpoints, bounded retry/backoff, and reconciliation cover producers without a domain outbox. |
 | Loan/document delivery | Implemented in owning modules | Their domain outboxes provide leases, retries, and reconciliation; those guarantees do not cover all Notifications producers. |
-| Assignment/security events | Partial | Owner-scoped records and broadcasts exist, but publication is best-effort with no durable recovery. |
-| FCM push | Implemented locally; deployment-gated | Installed-version API, 500-token batching, partial results, permanent-token cleanup, encrypted role/session-qualified registrations, expiry, unregister, and session/account cleanup are covered. Live Firebase proof remains. |
-| Preferences | Stored but unenforced | Profiles persists three customer email preferences; delivery paths do not apply them. |
+| Assignment/security events | Implemented locally | Both publish durable shared-delivery intent; assignment remains in-app and security events can request in-app plus push. |
+| FCM push | Implemented locally; deployment-gated | Push is asynchronous and recoverable, known successes are checkpointed, and installed-version batching, partial results, permanent-token cleanup, encrypted role/session-qualified registrations, expiry, unregister, and cleanup are covered. Live Firebase proof remains. |
+| Preferences | Implemented locally | Optional customer email categories are evaluated against Profiles settings and record a versioned decision; mandatory security, staff, and receipt messages are not suppressible. |
 | Privacy lifecycle | Incomplete | Device tokens are encrypted and lifecycle-bound; notification content/recipient fields, broader log safety, retention, and complete export/deletion remain. |
 | MongoDB schema/indexes | Partial | Basic indexes are bootstrapped; no validator, compound query indexes, inventory/backfill, or real-Mongo proof exists. |
-| Observability | Incomplete | Two task counters exist, but no end-to-end channel outcomes, backlog/age gauges, rules, dashboard, readiness, or alert evidence exists. |
+| Observability | Incomplete | No end-to-end channel outcomes, backlog/age gauges, rules, dashboard, readiness, or alert evidence exists. |
 | Production deployment | Not ready | SMTP, Firebase, Redis/Channels, workers, HTTPS/WSS, backup/restore, monitoring, and release gates remain unproven. |
 
 ## Module Responsibilities and Boundaries
@@ -146,6 +151,7 @@ The Notifications module currently owns:
 - inbox record persistence and serialization;
 - role-qualified inbox REST queries and mutations;
 - device-token registration and FCM dispatch;
+- encrypted, leased shared delivery intent and reconciliation;
 - notification WebSocket authentication, groups, frames, and broadcasts;
 - reusable email templates/sender helpers;
 - assignment event formatting; and
@@ -228,13 +234,15 @@ WebSocket route: `GET /ws/notifications/` upgrades through
 - Assignment events create per-audience structured metadata, deduplicate a
   recipient within one publication, and can use transition-based idempotency
   keys.
-- Account security events can create in-app notifications, but remain
-  best-effort.
+- Account security events create durable in-app/push intent through the shared
+  delivery outbox.
+- Optional customer email helpers evaluate Profiles preferences before SMTP;
+  denied email is recorded as suppressed without removing in-app delivery.
 
 ### Persistence bootstrap
 
-- `init_db.py` calls `Notification.create_indexes()` and
-  `DeviceToken.create_indexes()`.
+- `init_db.py` calls `Notification.create_indexes()`,
+  `DeviceToken.create_indexes()`, and `NotificationDelivery.create_indexes()`.
 - Notification idempotency keys and device tokens have unique indexes.
 - These bootstrap blocks currently catch errors and continue; there is no
   Notifications validator or fail-closed release verification.
@@ -243,35 +251,30 @@ WebSocket route: `GET /ws/notifications/` upgrades through
 
 ### 1. Inbox contract, authentication, and ownership
 
-**Status: Partial**
+**Status: Complete locally**
 
-Role-qualified list, count, mark, delete, clear, WebSocket group, and
-WebSocket mark-read behavior is implemented and locally tested. Remaining work:
-
-- add request-level JWT/session/role tests through actual REST URL routing;
-- make REST and WebSocket read replays share one idempotent result contract;
-- perform owner matching in the atomic update itself;
-- reject unknown query parameters and define a maximum page/offset;
-- add a dedicated authenticated throttle for reads, writes, token registration,
-  and WebSocket actions; and
-- decide whether clear-all is acceptable or should become a bounded/soft-delete
-  operation.
+Role-qualified list, count, mark, delete, bounded clear, WebSocket group, and
+WebSocket mark-read behavior is implemented and locally tested through routed
+JWT/session/role cases. REST and WebSocket replay contracts are aligned, owner
+matching is atomic, unknown/deep queries are rejected, and separate authenticated
+throttles protect reads, writes, token registration, and socket actions.
 
 ### 2. Delivery state, idempotency, and durable processing
 
-**Status: Incomplete**
+**Status: Complete locally; deployment validation pending**
 
-The inbox read state must be separated from channel-delivery attempts. Introduce
-an explicit event plus per-channel delivery records, or equivalent independent
-fields, so email/push delivery cannot overwrite read state. Register tasks in a
-canonical `notifications/tasks.py`, route them to a dedicated queue, use late
-acknowledgement, worker-loss rejection, bounded retries, leases/checkpoints, and
-stable non-sensitive failure codes. Apply durable intent-before-side-effect
-semantics to assignment and required security notifications.
+The encrypted `notification_deliveries` outbox owns events not already covered
+by Loans/Documents. It uses event/recipient idempotency, late-acknowledged routed
+tasks, worker-loss rejection, atomic leases, per-channel checkpoints, bounded
+attempts/backoff, stable failure codes, and periodic reconciliation. Assignment,
+account-security, and notification-creator push publication persist intent before
+broker dispatch. Tests cover broker publication failure, stale leases, replay,
+preference suppression, email retry, and partial push retry without resending
+known successes.
 
-Release evidence must cover broker outage, worker death before/after provider
-acceptance, retry/replay, duplicate event publication, provider timeout, and
-reconciliation without repeating the business mutation.
+Deployment evidence must still cover actual broker outage, worker termination
+before/after provider acceptance, and provider timeout. External SMTP/FCM calls
+remain at-least-once when acceptance occurs before the checkpoint is persisted.
 
 ### 3. Device tokens and FCM
 
@@ -286,19 +289,19 @@ reconciliation without repeating the business mutation.
 - [x] Encrypt token values, use non-reversible fingerprints for identity, and
   include the model in field-encryption rotation/verification tooling.
 - [x] Batch multicast requests at the configured maximum of 500.
-- [ ] Stage 3 must make push durable, asynchronous, retryable,
-  preference-aware, and observable under provider uncertainty.
+- [x] Stage 3 makes push durable, asynchronous, bounded-retry, and recoverable;
+  successful/permanent token outcomes are checkpointed before later retries.
 - [ ] Stage 4 must inventory/backfill legacy rows and prove indexes/validators
   against isolated real MongoDB.
 
 ### 4. Preferences, privacy, and lifecycle
 
-**Status: Production blocker**
+**Status: Partial; Stage 3 preference policy complete**
 
-Define mandatory transactional/security events separately from configurable
-loan/payment/promotional messages. Enforce Profiles preferences at durable
-delivery creation time and record the policy/version used. Add bounded,
-role-qualified customer export with total/truncation metadata. On account
+Mandatory transactional/security events are separated from configurable
+loan/payment/promotional messages. Profiles preferences are enforced before
+optional email delivery and the decision/version is stored. Stage 4 must add
+bounded, role-qualified customer export with total/truncation metadata. On account
 deletion, delete or approvedly pseudonymize notification records and deactivate
 tokens. Classify and protect recipient identity, content, metadata, provider
 errors, and tokens with the shared encryption/key-rotation lifecycle. Sanitize
@@ -396,13 +399,15 @@ Firebase version passes mocked contract tests, and token lifecycle is complete.
 
 ### Stage 3 — Durable, preference-aware channel delivery
 
-**Status: Not started**
+**Status: Complete locally (2026-08-28)**
 
-- Register and route Notifications tasks correctly.
-- Add a leased/retryable notification-wide delivery model for producers not
+- [x] Register and route Notifications tasks correctly.
+- [x] Add a leased/retryable notification-wide delivery model for producers not
   already protected by a domain outbox.
-- Make email/push asynchronous, preference/policy-aware, idempotent, and
+- [x] Make email/push asynchronous, preference/policy-aware, idempotent, and
   recoverable from broker/worker/provider uncertainty.
+- [x] Route assignment, account-security, and notification-creator push intent
+  through the shared outbox while preserving Loans/Documents domain outboxes.
 
 **Exit condition:** required notification intent survives process/broker loss,
 preferences are enforced, and retry never repeats the underlying business
@@ -479,8 +484,11 @@ topology and all approved policy/evidence records are retained.
 - Registration may return HTTP 409 if a token is actively owned by another
   account or the account has reached its active-device limit. Clients must not
   silently substitute or transfer token ownership.
-- Notification preferences are not currently enforced; frontends must not
-  claim that toggles control delivery until Stage 3 closes that gap.
+- Profiles preference toggles now control optional email only:
+  `email_loan_updates` covers loan/document status updates,
+  `email_payment_reminders` covers reminders, and `email_promotions` covers
+  promotional mail. In-app notifications, payment receipts, staff workflow
+  messages, and security notices remain enabled as mandatory communications.
 - The WebSocket supports only `ping` and `mark_read`. REST fallback is an
   acceptable baseline for other actions; this narrow action set is not itself a
   blocker.
@@ -488,8 +496,12 @@ topology and all approved policy/evidence records are retained.
 ## Operational Notes
 
 - A persisted inbox row is not proof of email/push/WebSocket delivery.
-- Loans and Documents outbox health must be monitored separately until a shared
-  delivery lifecycle is implemented.
+- Monitor Loans, Documents, and shared Notifications outboxes separately; each
+  owns different event sources.
+- A worker consuming the dedicated queue is required, for example
+  `celery -A config worker -Q notifications --loglevel=info`; Celery Beat must
+  run the minute reconciliation schedule. Use the deployment's approved worker
+  topology rather than assuming a default-queue worker consumes this queue.
 - Do not log or expose SMTP credentials, Firebase credentials, FCM tokens,
   access tokens, recipient PII, free-form messages, or provider exception bodies.
 - Production WebSockets require `wss://`, exact hosts/origins, trusted proxy
@@ -508,10 +520,10 @@ Firebase/cloud credentials, logs, backups, `dump.rdb`, or production data. It
 did not initialize/mutate MongoDB, start workers, send email/push messages, or
 connect to external providers.
 
-The review confirms that the installed Firebase library lacks the method the
-current code invokes and that the Celery app does not register the standalone
-email task during normal startup. It does not certify SMTP/Firebase terms,
-deliverability, privacy policy, retention periods, notification wording, or
+The review confirms the installed-version Firebase API and canonical Celery
+task registration through mocked local contracts. It does not certify
+SMTP/Firebase terms, deliverability, privacy policy, retention periods,
+notification wording, or
 on-call procedures; those require authorized product, privacy, security, and
 operations review.
 

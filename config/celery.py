@@ -103,6 +103,10 @@ app.conf.beat_schedule = {
         "task": "loans.reconcile_notification_deliveries",
         "schedule": crontab(minute="*"),
     },
+    "reconcile-shared-notification-deliveries-every-minute": {
+        "task": "notifications.reconcile_deliveries",
+        "schedule": crontab(minute="*"),
+    },
     "enforce-loan-retention-daily": {
         "task": "loans.enforce_retention",
         "schedule": crontab(hour=4, minute=0),
