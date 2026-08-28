@@ -138,7 +138,7 @@ def test_parallel_tools_receive_request_correlation_id():
         }
     ]
     with patch(
-        "ai_assistant.services.tool_safety.safe_execute_tool",
+        "ai_assistant.services.tools.execute_tool_result",
         return_value={"success": True, "result": json.dumps({"ok": True})},
     ) as execute:
         result = service._execute_tools_parallel(
