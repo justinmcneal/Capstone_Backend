@@ -102,6 +102,8 @@ def _validate_officer_context(value):
     ).strip()
     if normalized in _OFFICER_CONTEXT_SAFE_PROMPTS:
         return
+    detection_text = re.sub(r"[\u200b-\u200d\ufeff]", "", normalized)
+    detection_text = re.sub(r"[,;:/]+", " ", detection_text)
     if any(
         unicodedata.category(character).startswith("L")
         and "LATIN" not in unicodedata.name(character, "")
@@ -112,15 +114,15 @@ def _validate_officer_context(value):
         f"{first} {second}" not in _OFFICER_CONTEXT_SAFE_WORD_PAIRS
         and first not in _OFFICER_CONTEXT_STOP_WORDS
         and second not in _OFFICER_CONTEXT_STOP_WORDS
-        for first, second in _OFFICER_CONTEXT_BARE_NAME.findall(normalized)
+        for first, second in _OFFICER_CONTEXT_BARE_NAME.findall(detection_text)
     )
     if (
-        any(pattern.search(normalized) for pattern in _OFFICER_CONTEXT_RESTRICTED_PATTERNS)
-        or _OFFICER_CONTEXT_NAME_AFTER_CONTEXT.search(normalized)
-        or _OFFICER_CONTEXT_UNICODE_NAME.search(normalized)
+        any(pattern.search(detection_text) for pattern in _OFFICER_CONTEXT_RESTRICTED_PATTERNS)
+        or _OFFICER_CONTEXT_NAME_AFTER_CONTEXT.search(detection_text)
+        or _OFFICER_CONTEXT_UNICODE_NAME.search(detection_text)
         or _OFFICER_CONTEXT_LATIN_NAME.search(str(value or ""))
         or bare_name
-        or re.search(r"(?<!\w)(?:\d[\s()./+-]*){7,}(?!\w)", normalized)
+        or re.search(r"(?<!\w)(?:\d[\s().,/+-]*){7,}(?!\w)", detection_text)
     ):
         raise serializers.ValidationError(_OFFICER_CONTEXT_ERROR)
 

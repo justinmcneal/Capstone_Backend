@@ -660,7 +660,9 @@ def _get_repayment_summary(scope):
         scope.application_id, scope.customer_id
     )
     schedule_data = decrypt_fields(schedule, RepaymentSchedule.encrypted_fields)
-    monthly_payment_centavos = _schedule_centavos(schedule, "monthly_payment")
+    monthly_payment_centavos = _schedule_centavos(
+        schedule, "monthly_payment", fallback_field="monthly_payment"
+    )
     total_amount_centavos = _schedule_centavos(
         schedule, "total_amount", fallback_field="total_amount"
     )
