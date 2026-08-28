@@ -471,6 +471,9 @@ class AccountLifecycleService:
 
         updated = Customer.from_dict(document)
         TokenUtils.revoke_all_sessions(updated.id, "customer")
+        from notifications.models.device_token import DeviceToken
+
+        DeviceToken.deactivate_for_owner(updated.id, "customer")
 
         if updated.profile_cleanup_status == "pending":
             from profiles.services.lifecycle import delete_customer_profile_data
@@ -1010,7 +1013,9 @@ class AccountLifecycleService:
             {"user_id": customer.id}, sort=[("created_at", -1)]
         )
         login_activity = LoginActivity.find({"user_id": customer.id}, limit=200)
-        notifications = Notification.find_by_user(customer.id, limit=200)
+        notifications = Notification.find_by_user(
+            customer.id, limit=200, user_type="customer"
+        )
 
         payload = {
             "generated_at": AccountLifecycleService._serialize_datetime(

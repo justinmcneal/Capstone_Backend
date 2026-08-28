@@ -1,33 +1,45 @@
 # Notifications Testing Guide
 
+Last updated: 2026-08-27
+
 ## Scope
 
 This guide documents the **Notifications service** under `/api/notifications/` for API testing and implementation review. It covers:
 
 - Notification inbox REST API endpoints
 - WebSocket real-time delivery
-- Email delivery via Celery async tasks
+- Template email and domain-owned Celery outbox delivery
 - FCM push notifications and device-token registration
 - Assignment-lifecycle event notifications
-- Prometheus metrics for email sends
+- Existing email-task counters and planned operational monitoring
 
 **Important distinction:** Email **preference settings** (`email_loan_updates`, etc.) live under **`/api/profile/notifications/`** (Profiles module), not this API. This guide covers the **inbox** only.
 
 ## Architecture Overview
 
-Notifications use multiple channels together:
+Notifications currently combine several channels, but they do not yet share one
+complete delivery lifecycle:
 
 - **REST API**: fetch/manage inbox, mark read/delete, get unread counts
 - **WebSocket**: real-time push of new notifications to connected clients
-- **Celery + Email**: async email delivery with retry and metrics
-- **FCM Push**: optional mobile/desktop push via Firebase Cloud Messaging
+- **Template Email**: synchronous `EmailSender` calls, normally invoked inside
+  the durable Loans/Documents delivery workers
+- **Standalone Celery Email**: source exists but is not registered or called in
+  a normal startup; do not treat it as an active production path
+- **FCM Push**: installed-version multicast delivery with bounded batching and
+  partial-result handling; still synchronous until Stage 3
 - **Assignment Events**: structured notifications for loan-assignment lifecycle
 
-When a notification is created, the system can:
+Depending on the producer, the system can:
 1. Persist an in-app record
 2. Broadcast it over WebSocket to the owner
-3. Send an email via Celery
-4. Push to FCM if the user has registered device tokens
+3. Send template email, with durable retry only when the owning domain provides
+   an outbox
+4. Attempt FCM push for registered tokens
+
+Persistence, WebSocket publication, email acceptance, push acceptance, and
+user read state are separate facts. Inbox read state and delivery state are
+independent; Stage 3 still needs durable per-channel attempts.
 
 ## Base URL and Auth
 
@@ -44,9 +56,101 @@ Content-Type: application/json
 | Document | Purpose |
 |----------|---------|
 | `docs/NOTIFICATIONS_PRODUCTION_READINESS_REVIEW.md` | Notifications module review, risks, and roadmap |
-| `docs/NOTIFICATIONS_METRICS.md` | Prometheus metrics deployment patterns |
 | `docs/LOANS_TESTING_GUIDE.md` | Loan APIs that trigger notifications |
 | `docs/profiles/PROFILES_TESTING_GUIDE.md` | Notification **preferences** (`/api/profile/notifications/`) |
+
+---
+
+## Current Implementation and Test Baseline
+
+The inbox and WebSocket foundations are usable locally, but Notifications is
+not production-ready. Confirmed blockers and the remediation stages are tracked
+in `NOTIFICATIONS_PRODUCTION_READINESS_REVIEW.md`.
+
+Focused module command:
+
+```bash
+.venv/bin/pytest -q \
+  tests/test_notifications_api.py \
+  tests/test_notifications_views.py \
+  tests/test_notifications_mark_read.py \
+  tests/test_notification_isolation.py \
+  tests/test_notifications_websocket.py \
+  tests/test_websocket_notifications.py \
+  tests/test_notifications_email_sender.py \
+  tests/test_notifications_use_celery.py \
+  tests/test_assignment_notifications.py \
+  tests/test_notification_timestamps.py
+```
+
+Result after Stage 1 on 2026-08-27: **62 passed**.
+
+Stage 1 routed contract command:
+
+```bash
+.venv/bin/pytest -q \
+  tests/test_notifications_api.py \
+  tests/test_notifications_views.py \
+  tests/test_notifications_mark_read.py \
+  tests/test_notifications_websocket.py \
+  tests/test_websocket_notifications.py \
+  tests/test_notification_isolation.py \
+  tests/test_notification_timestamps.py \
+  tests/test_notifications_stage1_contract.py \
+  tests/test_ai_tool_safety_integration.py
+```
+
+Result on 2026-08-27: **78 passed**. This includes real URL routing and issued
+JWT/session evidence rather than relying only on direct view calls.
+
+Stage 2 push/token command:
+
+```bash
+.venv/bin/pytest -q tests/test_notifications_stage2_push.py
+```
+
+Result on 2026-08-27: **14 passed**. This verifies the API selected from the
+installed Firebase package, batching, partial outcomes, permanent/transient
+failures, encryption, role/session ownership, hostile reassignment rejection,
+deduplication, expiry, unregister, logout/session revocation, and account
+cleanup without contacting Firebase.
+
+Broader cross-domain selection:
+
+```bash
+.venv/bin/pytest -q tests accounts/tests \
+  -k 'notification or websocket or email_template or email_tls'
+```
+
+Result after Stage 2 on 2026-08-27: **131 passed, 1,245 deselected**. The latest
+full repository result on the same revision is **1,330 passed, 46 skipped**.
+
+Evidence limits:
+
+- Most REST tests call views directly and bypass `require_roles`; they verify
+  query/mutation behavior but not real URL/JWT/session enforcement.
+- WebSocket security tests do use ASGI routing and real issued token/session
+  behavior, but use an in-memory channel layer rather than deployed Redis.
+- Email tests mock rendering/transport. No SMTP message is sent.
+- Stage 2 has mocked installed-API FCM and routed device-lifecycle evidence;
+  live Firebase receipt remains deployment-only evidence.
+- No Notifications-specific real-Mongo, multi-worker Redis/Celery, HTTPS/WSS,
+  load, backup/restore, monitoring, or deployment probe exists yet.
+
+### Stage validation map
+
+| Stage | Primary evidence required | Current status |
+| --- | --- | --- |
+| Stage 1 — Contract and owner-safe inbox | Routed auth/role/owner tests, independent read/delivery state, atomic replay, bounds/throttles | Complete locally; 78 focused tests pass |
+| Stage 2 — Secure working push | Installed Firebase API, role-qualified token ownership, validation, revoke/cleanup, provider batching | Complete locally; 14 focused tests pass |
+| Stage 3 — Durable preference-aware delivery | Registered/routed tasks, leases/retries, broker/worker/provider recovery, preference policy | Not started; Loans/Documents outboxes cover only their events |
+| Stage 4 — Privacy and MongoDB correctness | Encryption/log safety, lifecycle/export, validators/indexes, inventory/backfill, real-Mongo plans | Not started |
+| Stage 5 — WebSocket resilience/observability | Post-connect revocation/expiry, limits, cross-device sync, metrics/rules/dashboard/health | Not started |
+| Stage 6 — Deployment validation | Real MongoDB/Redis/Celery/SMTP/FCM/HTTPS/WSS/load/recovery and release checker | Not started |
+
+Do not turn a missing external-service test into a passing mock. Add each stage's
+focused evidence with its implementation and retain opt-in gates for tests that
+mutate or contact real services.
 
 ---
 
@@ -65,7 +169,7 @@ Content-Type: application/json
 | `document_flagged` | Customer | `document` |
 | `document_verified` | Customer | `document` |
 | `document_pending_review` | Loan officer / reviewer | `document` |
-| `new_application` | Loan officer | `loan` |
+| `new_application` | Loan officer | `loan` (helper exists; no current producer calls it) |
 | `application_assigned` | Admin / new loan officer | `loan` |
 | `application_reassigned` | Assigning admin | `loan` |
 | `application_unassigned` | Previous loan officer | `loan` |
@@ -76,20 +180,33 @@ Content-Type: application/json
 
 `email`, `in_app`
 
-Default when records are created by the email sender: `email`.
+The model default is `email`, but shared email helpers explicitly create one
+`in_app` row and reuse it to track the SMTP attempt. They do not create a
+separate email-channel row.
 
 ### Delivery Statuses (MongoDB `status` field)
+
+`status` is now a backward-compatible alias for delivery state. New and
+rewritten records also expose the same value as `delivery_status`; read state
+is independent.
 
 | Status | Meaning |
 |--------|---------|
 | `pending` | Record created; email not yet sent |
 | `sent` | Email delivered successfully |
 | `failed` | Email send failed (`error_message` set) |
-| `read` | User marked notification as read in inbox (overwrites prior delivery status) |
+| `unknown` | Delivery outcome is unavailable, including a loaded legacy `status: read` row |
+
+Legacy `status: read` rows are interpreted as `is_read: true` and
+`delivery_status: unknown` until Stage 4 inventory/backfill. Most shared email
+helpers still create an `in_app` row with `status: sent` before the SMTP
+attempt, so `sent` is not yet durable proof of external delivery.
 
 ### Unread Logic
 
-A notification is **unread** when `status` is **not** `read`. Statuses `pending`, `sent`, and `failed` all count as unread until marked read.
+A current notification is unread when `is_read` is false. Compatibility queries
+also treat a legacy `status: read` row as read. Delivery statuses `pending`,
+`sent`, `failed`, and `unknown` do not decide inbox read state.
 
 ### Boolean Query Values (`unread` param)
 
@@ -115,11 +232,18 @@ Users can only mark read / list notifications they own. Accessing another user's
 
 HTTP ownership checks and WebSocket groups are role-qualified. Users from separate account collections cannot share notifications even if their raw IDs are identical. The `super_admin` authentication role is normalized to the stored `admin` notification type.
 
+This guarantee extends to `Notification.find_by_user`, customer account export,
+the AI notification-status tool, and current device-token registration,
+retrieval, unregistration, and provider fan-out.
+
 ---
 
 ## Automatic Trigger Map (populate inbox for testing)
 
-Notifications are created by `notifications/services/email_sender.py` when other APIs run. Use these to generate test data:
+Loan and document domain services call
+`notifications/services/email_sender.py` from their own delivery workers. Use
+these APIs to generate test data, while checking both the domain outbox and the
+core inbox record:
 
 | Notification Type | Triggering API | Actor |
 |-------------------|----------------|-------|
@@ -134,7 +258,10 @@ Notifications are created by `notifications/services/email_sender.py` when other
 | `document_verified` | `PUT /api/documents/<id>/verify/` (approve) | Officer |
 | `document_flagged` | `PUT /api/documents/<id>/verify/` (reject) or `POST /api/documents/<id>/request-reupload/` | Officer |
 
-Assignment event payloads and extension guidance are documented in `docs/ASSIGNMENT_NOTIFICATIONS.md`.
+Loans/Documents persist recoverable delivery records before their task is
+published. Assignment and account-security events are best-effort and have no
+equivalent recovery record. Saved Profiles email preferences are not currently
+consulted by any of these paths.
 
 ---
 
@@ -155,12 +282,19 @@ Full fields in `notifications` collection (not all exposed in list API):
 | `related_type` | string | `loan`, `document`, etc. |
 | `related_id` | string | Linked entity ID |
 | `metadata` | object | Optional structured event context (participants, entity, audience, and occurrence time) |
+| `idempotency_key` | string/null | Optional unique producer key; not exposed by the inbox API |
 | `channel` | string | `email` or `in_app` |
-| `status` | string | `pending`, `sent`, `failed`, `read` |
+| `status` | string | Delivery compatibility alias: `pending`, `sent`, `failed`, `unknown` |
+| `delivery_status` | string | Explicit delivery state matching `status` |
+| `is_read` | boolean | Authoritative inbox read state |
 | `error_message` | string | Set when `status` = `failed` |
 | `created_at` | datetime | Record creation time; API/WebSocket responses use an explicit UTC ISO 8601 value (for example, `2026-07-23T02:15:00Z`) |
 | `sent_at` | datetime | When email was sent; API responses use an explicit UTC ISO 8601 value when present |
-| `read_at` | datetime | Set when marked read via API |
+| `read_at` | datetime/null | Set once when marked read via API |
+
+Recipient identity, message content, metadata, errors, and device tokens are
+currently plaintext. No MongoDB validator enforces this table, the declared
+type list, channel/status values, role values, or timestamp shapes.
 
 ---
 
@@ -180,7 +314,7 @@ List notifications for the authenticated user (newest first).
 |-------|------|---------|------------|
 | `page` | int | 1 | >= 1 |
 | `page_size` | int | 20 | 1–100 |
-| `unread` | boolean | (no filter) | `true`/`false`/`1`/`0`/`yes`/`no`/`on`/`off` — when `true`, only non-`read` items |
+| `unread` | boolean | (no filter) | `true`/`false`/`1`/`0`/`yes`/`no`/`on`/`off` — when `true`, only unread items |
 | `channel` | string | (no filter) | `email` or `in_app` |
 
 **Response fields (`data`):**
@@ -196,8 +330,10 @@ List notifications for the authenticated user (newest first).
 | `notifications[].related_id` | string |
 | `notifications[].metadata` | object |
 | `notifications[].channel` | string |
-| `notifications[].status` | string |
-| `notifications[].is_read` | boolean | `true` when `status == 'read'` |
+| `notifications[].status` | delivery-status compatibility string |
+| `notifications[].delivery_status` | explicit delivery-status string |
+| `notifications[].is_read` | boolean |
+| `notifications[].read_at` | ISO datetime or null |
 | `notifications[].created_at` | ISO datetime |
 | `notifications[].sent_at` | ISO datetime |
 | `unread_count` | int | Total unread for user (ignores current page filters) |
@@ -228,7 +364,7 @@ Unread badge count for the authenticated user.
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `unread_count` | int | Count where `status` is not `read` |
+| `unread_count` | int | Count using independent read state with legacy compatibility |
 
 **Example:**
 ```
@@ -246,8 +382,10 @@ Mark all owned unread notifications as read.
 **Query params:** none
 
 **Behavior:**
-- Updates all records matching owner query where `status` is not `read`
-- Sets `status` = `read` and `read_at` = current UTC timestamp
+- Selects a stable owner-qualified snapshot up to
+  `NOTIFICATIONS_BULK_MUTATION_LIMIT`
+- Sets `is_read = true` and `read_at`; delivery status is unchanged
+- Returns HTTP 409 before mutation if the inbox exceeds the synchronous bound
 
 **Response fields (`data`):**
 
@@ -277,14 +415,19 @@ Mark a single owned notification as read.
 **Query params:** none
 
 **Behavior:**
-- Sets `status` = `read` and `read_at` = current UTC timestamp
+- Atomically matches the notification ID, normalized owner, and unread state
+- Sets `is_read = true` and `read_at`; delivery status is unchanged
+- Repeated calls succeed and return `replayed: true`
 
 **Response fields (`data`):**
 
 | Field | Type |
 |-------|------|
 | `notification_id` | string |
-| `status` | string (`read`) |
+| `is_read` | boolean (`true`) |
+| `read_at` | ISO datetime |
+| `delivery_status` | string |
+| `replayed` | boolean |
 
 **Example:**
 ```
@@ -349,38 +492,56 @@ Register an FCM device token for push notifications.
 **Request body (JSON):**
 ```json
 {
-  "token": "fcm-device-token",
+  "token": "fcm-device-token-at-least-20-characters",
   "platform": "android"
 }
 ```
 
 **Validation:**
-- `token` is required and non-empty
-- `platform` defaults to `unknown` if omitted
+- `token` is required, 20–4096 characters, and cannot contain whitespace or
+  control characters
+- `platform` is required and must be `android`, `ios`, or `web`
+- the authenticated JWT must have a live session ID
 
 **Behavior:**
-- If the same token already exists, the existing record is updated
-- New tokens are inserted with `is_active: true`
+- Stores an encrypted token plus deterministic non-reversible fingerprint
+- Binds the registration to normalized user ID, role, and session
+- Refreshes the same owner's registration without creating a duplicate
+- Rejects an active token owned by another role/account with HTTP 409
+- Applies configured active-device and expiry bounds
 
 **Response fields (`data`):**
 
 | Field | Type | Description |
 |-------|------|-------------|
 | `status` | string (`registered`) | Registration confirmation |
+| `device_token_id` | string | Internal registration identifier; the raw token is never returned |
+| `platform` | string | Normalized approved platform |
 
 **Example:**
 ```bash
 curl -X POST /api/notifications/register-token/ \
   -H "Authorization: Bearer <token>" \
   -H "Content-Type: application/json" \
-  -d '{"token": "fcm-token-123", "platform": "android"}'
+  -d '{"token": "fcm-token-1234567890abcdef", "platform": "android"}'
 ```
 
-**Platform values:** `android`, `ios`, `web`, or custom
+### 8. `DELETE /register-token/`
+
+Deactivate one token owned by the authenticated account.
+
+```json
+{"token": "fcm-token-1234567890abcdef"}
+```
+
+Returns `404` for a missing, inactive, or cross-owner token. Normal account
+logout also deactivates all token registrations bound to the revoked session;
+security-wide session revocation and account deletion deactivate every affected
+registration.
 
 ---
 
-## Complete URL Index (7 endpoints)
+## Complete URL Index (8 method operations)
 
 | # | Method | URL | Roles |
 |---|--------|-----|-------|
@@ -391,6 +552,7 @@ curl -X POST /api/notifications/register-token/ \
 | 5 | DELETE | `/api/notifications/<notification_id>/` | Customer, Officer, Admin, Super Admin |
 | 6 | DELETE | `/api/notifications/clear-all/` | Customer, Officer, Admin, Super Admin |
 | 7 | POST | `/api/notifications/register-token/` | Customer, Officer, Admin, Super Admin |
+| 8 | DELETE | `/api/notifications/register-token/` | Customer, Officer, Admin, Super Admin |
 
 ---
 
@@ -463,16 +625,49 @@ WebSocket groups are role-qualified: `notifications_<user_type>_<user_id>`. This
 
 Device tokens are stored in MongoDB (`device_tokens` collection) and used by `notifications/services/notification_creator.py` to send push notifications via Firebase Cloud Messaging.
 
-**Registration endpoint:** `POST /api/notifications/register-token/`
+**Current status: implemented locally; deployment proof pending.** The project
+uses the pinned package's `messaging.send_each_for_multicast`, with a maximum
+configured batch size of 500. Provider acceptance is still not proof that a
+device displayed the notification.
+
+**Lifecycle endpoint:** `POST` and `DELETE /api/notifications/register-token/`
+
+Current stored fields include `user_id`, `user_type`, `session_id`, encrypted
+`token`, `token_hash`, `platform`, `is_active`, `created_at`, `updated_at`,
+`last_used_at`, `expires_at`, `deactivated_at`, and `deactivation_reason`.
+`token_hash` identifies a registration without decrypting or returning the raw
+credential; it must never be accepted as a substitute token from a client.
+
+Operational bounds:
+
+| Setting | Development default | Purpose |
+| --- | --- | --- |
+| `NOTIFICATIONS_DEVICE_TOKEN_TTL_DAYS` | `180` | Registration refresh/expiry window |
+| `NOTIFICATIONS_MAX_ACTIVE_DEVICE_TOKENS` | `20` | Per-role/account active-device bound |
+| `NOTIFICATIONS_FCM_BATCH_SIZE` | `500` | Maximum tokens per Firebase multicast call |
+| `NOTIFICATIONS_DEVICE_TOKEN_RATE` | `60/hour` | Registration/unregistration API throttle |
 
 **Behavior:**
-- Duplicate tokens update the existing record
-- FCM `UnregisteredError` responses deactivate stale tokens automatically
-- Push notifications are sent as `MulticastMessage` with title, body, and data payload
+- encrypted token value and fingerprinted lookup identity
+- role- and session-qualified owner queries
+- safe same-owner refresh/deduplication and hostile reassignment rejection
+- strict platform/token/device-count/expiry bounds
+- provider batches of at most 500 with ordered partial-result processing
+- `UnregisteredError` and `SenderIdMismatchError` deactivate only affected
+  tokens; transient failures remain active for Stage 3 retry handling
+- no raw token or provider exception body is written to notification logs
+- explicit unregister plus automatic session/logout/security/account cleanup
+- push remains synchronous until Stage 3 introduces durable background delivery
 
 **Dependencies:**
 - `firebase_admin` Python package
 - Firebase service account credentials in environment
+
+The Stage 2 suite mocks the provider boundary and covers complete/partial
+success, permanent/transient failures, batching, role-ID collision, hostile
+reassignment, encryption, unregister/logout, and account deletion. Do not run
+live FCM tests with real customer tokens; use an approved Firebase test project
+during Stage 6 deployment validation.
 
 ---
 
@@ -496,14 +691,21 @@ Assignment notifications:
 
 ## Prometheus Metrics
 
-Implemented in `notifications/services/email_tasks.py`. Counters are only registered when `prometheus-client` is installed; otherwise they no-op gracefully.
+Two counters are declared in `notifications/services/email_tasks.py`. Counters
+are only registered when `prometheus-client` is installed; otherwise they no-op
+gracefully.
 
 | Metric | Scope |
 |--------|-------|
 | `notifications_email_task_success_total` | Async Celery email sends |
 | `notifications_email_task_failure_total` | Async Celery email failures |
-| `notifications_email_send_success_total` | Sync email sends |
-| `notifications_email_send_failure_total` | Sync email failures |
+
+There are no `notifications_email_send_success_total` or
+`notifications_email_send_failure_total` counters in the current sender. The
+standalone email task is not imported by Celery autodiscovery, is not called by
+producers, and converts SMTP failures to `False` rather than raising for
+autoretry. Therefore even the two declared counters do not represent the active
+domain delivery paths and are insufficient production monitoring.
 
 **Toggle command:**
 ```bash
@@ -512,7 +714,13 @@ python manage.py toggle_prometheus status --url
 python manage.py toggle_prometheus disable --url
 ```
 
-Metrics endpoint: `http://<host>:8000/metrics/` when enabled.
+The resolved private metrics URL is printed by `--url`; follow the root
+`README.md` sidecar instructions rather than assuming `/metrics/` is served by
+the public application port.
+
+Stage 5 must add request, per-channel outcome/latency, retry, terminal failure,
+backlog/oldest-age, token invalidation, WebSocket connection/rejection, and job-
+freshness metrics plus tested Prometheus rules and a Grafana dashboard.
 
 ---
 
@@ -530,7 +738,14 @@ EMAIL_HOST_PASSWORD=your-app-password
 DEFAULT_FROM_EMAIL=your-email@gmail.com
 ```
 
-For inbox-only API testing without SMTP, records still appear in MongoDB with `status: pending` or `failed`.
+For inbox-only API testing without SMTP, helpers persist/broadcast the inbox row
+before the SMTP attempt and then normally change it to `failed`. Do not infer
+email delivery from the existence of that row. Loans/Documents retry through
+their own outboxes; assignment/security in-app events do not use SMTP.
+
+The standalone `send_email_task` is currently neither autodiscovered nor used.
+After Stage 3, verify registration with a worker inspection test and prove that
+returned/raised provider failures enter the approved retry path.
 
 ---
 
@@ -543,11 +758,17 @@ For inbox-only API testing without SMTP, records still appear in MongoDB with `s
 3. Trigger a notification via another API (e.g. `POST /api/loans/apply/`).
 4. Call `GET /api/notifications/` and verify the new record appears.
 5. Call `GET /api/notifications/unread-count/` and note the count.
-6. Call `POST /api/notifications/<id>/read/` and verify `status: read`.
+6. Call `POST /api/notifications/<id>/read/` and verify `is_read: true`, an
+   unchanged `delivery_status`, and `replayed: false`; repeat and verify
+   `replayed: true`.
 7. Call `POST /api/notifications/mark-all-read/` and verify `marked_count`.
-8. Call `GET /api/notifications/<id>/` and confirm the field name is `id`, not `_id`.
+8. Confirm list/WebSocket payloads use `id`, not `_id`; no single-detail GET
+   endpoint exists.
 9. Call `DELETE /api/notifications/<id>/` and confirm deletion.
-10. Call `DELETE /api/notifications/clear-all/` and confirm all records are removed.
+10. Call `DELETE /api/notifications/clear-all/` only with disposable test data
+    and confirm role-qualified deletion.
+11. Repeat with customer/officer/admin records that deliberately share one raw
+    ID and prove isolation.
 
 ### Officer Inbox
 
@@ -575,6 +796,8 @@ GET /api/notifications/unread-count/
 7. Close connection and verify cleanup.
 8. Verify missing, refresh, revoked, stale-security-version, inactive, and forced-password credentials close with `4001`.
 9. Verify accounts with the same raw ID but different roles do not share events or mutations.
+10. Revoke/logout the session after connection and record the current gap: the
+    socket remains active because post-connect authorization is not revalidated.
 
 ---
 
@@ -582,10 +805,12 @@ GET /api/notifications/unread-count/
 
 | Code | When |
 |------|------|
-| `400 Bad Request` | Invalid `page` or `page_size`; invalid `unread` boolean; invalid `channel`; invalid `notification_id` format; missing FCM token |
+| `400 Bad Request` | Unknown list query parameter; invalid `page` or `page_size`; deep offset; invalid `unread`/`channel`/ID; missing FCM token |
 | `401 Unauthorized` | Missing or expired JWT |
 | `403 Forbidden` | Role not in allowed set |
 | `404 Not Found` | Notification ID does not exist or is not owned by current user; officer account not resolved |
+| `409 Conflict` | Mark-all or clear-all exceeds the configured synchronous mutation bound; concurrent read-state conflict |
+| `429 Too Many Requests` | Dedicated REST throttle exceeded |
 
 Standard error shape:
 ```json
@@ -611,10 +836,14 @@ Standard success shape:
 
 | Scenario | Expected |
 |----------|----------|
-| Empty inbox | `notifications: []`, `total_items: 0`, `total_pages: 1`, `unread_count: 0` |
+| Empty inbox | `notifications: []`, `total_items: 0`, `total_pages: 0`, `unread_count: 0` |
 | `page` beyond last page | `notifications: []`, `has_next: false` |
 | `page_size=100` (max) | Up to 100 items per page |
-| `page_size=101` (clamped) | Treated as 100 |
+| `page_size=101` | HTTP 400; values are rejected, not clamped |
+| offset above `NOTIFICATIONS_MAX_OFFSET` | HTTP 400 |
+
+Offset pagination is retained for compatibility but bounded by
+`NOTIFICATIONS_MAX_OFFSET`. Clients should not attempt to page beyond it.
 
 ---
 
@@ -634,9 +863,79 @@ Template files live in `notifications/templates/email/`:
 | `document_pending_review.html` / `.txt` | `document_pending_review` |
 | `missing_documents_requested.html` / `.txt` | `missing_documents_requested` |
 | `new_application.html` / `.txt` | `new_application` |
-| `loan_officer_temp_password.html` | Password setup for new officers |
+| `loan_officer_temp_password.html` / `.txt` | Password setup for new officers |
 
 Templates are rendered by `notifications/services/email_sender.py` using Django's `render_to_string`.
+
+---
+
+## Required Future Integration Evidence
+
+The following suites do not exist yet. Implement them with the corresponding
+readiness stage; keep external/state-changing cases explicitly opt-in.
+
+### Routed REST security suite
+
+Use `APIClient` with issued tokens, persisted active sessions, and live account
+records. For every endpoint test unauthenticated, expired/revoked token, wrong
+role, suspended/deactivated account, forced-password state, same-ID cross-role
+collision, another owner's ID, malformed ID, missing ID, unknown query
+parameters, bounds/throttle, and stable public errors.
+
+### Isolated real-Mongo suite
+
+Use a uniquely named temporary database ending in `_isolated` and remove only
+that database in fixture cleanup. After explicit target approval, prove:
+
+1. all notification/device validators reject invalid shapes;
+2. role-qualified token and event uniqueness under concurrency;
+3. atomic read/delete/replay behavior;
+4. inventory/backfill and key-rotation correctness;
+5. owner/date, owner/read, owner/channel/date, retention/reconciliation, and
+   active-token query plans use approved indexes; and
+6. representative inbox, bulk-operation, and delivery-backlog bounds.
+
+Never point this future suite at production.
+
+### Redis/Channels/Celery suite
+
+Prove at least two ASGI processes share owner-group broadcasts through Redis
+and at least two workers consume a dedicated notifications queue. Terminate a
+worker before provider call, after provider acceptance, and before completion;
+prove lease recovery, retry from durable intent, bounded attempts, no repeated
+business mutation, and visible backlog/oldest-age metrics. Also test Redis and
+broker outage, backpressure, and reconnect reconciliation.
+
+### SMTP and Firebase sandbox suite
+
+Use synthetic recipients/tokens only. Prove SMTP success, permanent refusal,
+transient timeout, uncertain acceptance, template/render failure, and redacted
+logging. For Firebase, prove installed-version compatibility, batching,
+complete/partial success, unregistered-token cleanup, transient/permanent
+errors, preference denial, role isolation, logout, and account deletion.
+
+### HTTPS/WSS and monitoring deployment suite
+
+Through the selected proxy, prove exact host/origin policy, secure cookies,
+staff-cookie and customer-mobile transports, rejected refresh/query staff
+tokens, token expiry/revocation after connection, frame/action limits, load,
+Redis fan-out, metrics scrape, dashboard series, and alert firing/resolution.
+
+## Release Test Checklist
+
+- [x] Existing direct-view inbox behavior and role-qualified owner queries pass.
+- [x] Existing ASGI WebSocket handshake/group/security tests pass locally.
+- [x] Existing mocked template-email and assignment tests pass.
+- [x] Stage 1 routed REST and independent read/delivery-state tests pass.
+- [x] Stage 2 FCM/device-token security and lifecycle tests pass locally.
+- [ ] Stage 3 durable/preference-aware broker/worker/provider recovery passes.
+- [ ] Stage 4 privacy lifecycle, validator/index, inventory/backfill, and real-
+      Mongo tests pass.
+- [ ] Stage 5 post-connect WebSocket security, limits, synchronization,
+      monitoring assets, and alert tests pass.
+- [ ] Stage 6 deployment probes and `notifications_release_check` pass.
+- [ ] Final full suite and customer/officer/admin end-to-end smoke flows pass on
+      the release revision.
 
 ---
 
@@ -653,7 +952,7 @@ Templates are rendered by `notifications/services/email_sender.py` using Django'
 | Notification model | `notifications/models/notification.py` |
 | Device token model | `notifications/models/device_token.py` |
 | Email sender + record creation | `notifications/services/email_sender.py` |
-| Celery async email task | `notifications/services/email_tasks.py` |
+| Unregistered standalone email-task source | `notifications/services/email_tasks.py` |
 | WebSocket broadcast service | `notifications/services/websocket_service.py` |
 | Notification creator + FCM | `notifications/services/notification_creator.py` |
 | Assignment triggers | `notifications/services/assignment_events.py` |
@@ -664,15 +963,28 @@ Templates are rendered by `notifications/services/email_sender.py` using Django'
 
 ## Notes for API Test Automation
 
-1. All inbox endpoints return JSON; the only mutating endpoints that accept a body are `POST /register-token/` and assignment event notifications.
+1. All inbox endpoints return JSON. `POST` and `DELETE /register-token/` accept
+   token bodies; assignment event producers also accept structured data.
 2. Mark-read endpoints use **POST**, not PUT/PATCH.
-3. `is_read` is derived (`status == 'read'`), not stored separately.
-4. Marking read **overwrites** delivery status (`sent`/`pending`/`failed` → `read`).
+3. `is_read` and `read_at` are authoritative and stored separately from
+   delivery state. Legacy `status: read` rows are still interpreted safely.
+4. Marking read preserves `status`/`delivery_status`; repeated mark-read calls
+   succeed with `replayed: true`.
 5. List response includes `unread_count` even when filtering — it always reflects total unread, not filtered count.
-6. Customer ownership is **strictly by `user_id`** — seed notifications with the correct `customer_id`.
+6. Inbox and device-token ownership are by both `user_id` and normalized
+   `user_type`; seed both, and bind device tokens to a live `session_id`.
 7. Staff WebSocket connections use the HttpOnly access cookie. Customer mobile query/subprotocol access tokens remain temporarily supported; rejected credentials close with `4001`.
-8. To test email delivery end-to-end, assert on MongoDB `status: sent` and `sent_at` after async send completes.
+8. Current `status: sent` is not reliable end-to-end email evidence because it
+   can be set before SMTP. Stage 1 preserves it independently from read state;
+   after Stage 3, assert channel attempt/outcome fields and domain outbox state.
 9. Notification preferences (opt-in/opt-out) are under `/api/profile/notifications/` — separate from this inbox API.
 10. Generate diverse `notification_type` values by running the full loan lifecycle (see `docs/LOANS_TESTING_GUIDE.md` smoke sequence).
-11. FCM push notifications are sent asynchronously; tests should mock `firebase_admin.messaging.send_multicast` to avoid external network calls.
+11. FCM remains synchronous but now calls the installed
+    `send_each_for_multicast` API in bounded batches. Mock it in unit tests;
+    never call live customer tokens outside an approved Firebase test project.
 12. Assignment notifications do not send email or push notifications — they are in-app only with structured metadata.
+13. Profiles notification preferences are currently unenforced. Add allow/deny
+    tests for each optional category when Stage 3 implements the policy.
+14. Test that logs and public payloads never contain email addresses, FCM
+    tokens, provider exception bodies, credentials, or internal idempotency
+    values.

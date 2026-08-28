@@ -71,6 +71,8 @@ NOTIFICATION_TYPES = [
     "admin_permissions_changed",
 ]
 
+DELIVERY_STATUSES = {"pending", "sent", "failed", "unknown"}
+
 
 class Notification:
     """
@@ -101,14 +103,25 @@ class Notification:
         self.metadata = kwargs.get("metadata", {})
         self.idempotency_key = kwargs.get("idempotency_key")
 
-        # Status
+        # Delivery and read state are independent. ``status == 'read'`` is a
+        # legacy stored shape retained only for read compatibility.
         self.channel = kwargs.get("channel", "email")
-        self.status = kwargs.get("status", "pending")  # pending/sent/failed
+        legacy_status = kwargs.get("status", "pending")
+        delivery_status = kwargs.get("delivery_status", legacy_status)
+        if delivery_status not in DELIVERY_STATUSES:
+            delivery_status = "unknown" if legacy_status == "read" else "pending"
+        self.delivery_status = delivery_status
+        self.status = delivery_status  # Backward-compatible model attribute.
+        stored_is_read = kwargs.get("is_read")
+        self.is_read = (
+            stored_is_read if type(stored_is_read) is bool else legacy_status == "read"
+        )
         self.error_message = kwargs.get("error_message", "")
 
         # Timestamps
         self.created_at = kwargs.get("created_at", datetime.now(timezone.utc))
         self.sent_at = kwargs.get("sent_at")
+        self.read_at = kwargs.get("read_at")
 
     @property
     def id(self):
@@ -128,10 +141,13 @@ class Notification:
             "metadata": self.metadata,
             "idempotency_key": self.idempotency_key,
             "channel": self.channel,
-            "status": self.status,
+            "status": self.delivery_status,
+            "delivery_status": self.delivery_status,
+            "is_read": self.is_read,
             "error_message": self.error_message,
             "created_at": self.created_at,
             "sent_at": self.sent_at,
+            "read_at": self.read_at,
         }
         if self._id:
             data["_id"] = self._id
@@ -156,11 +172,13 @@ class Notification:
         return self
 
     def mark_sent(self):
+        self.delivery_status = "sent"
         self.status = "sent"
         self.sent_at = datetime.now(timezone.utc)
         return self.save()
 
     def mark_failed(self, error):
+        self.delivery_status = "failed"
         self.status = "failed"
         self.error_message = str(error)
         return self.save()
@@ -181,14 +199,13 @@ class Notification:
         return cls.from_dict(record), result.upserted_id is not None
 
     @classmethod
-    def find_by_user(cls, user_id, limit=50):
+    def find_by_user(cls, user_id, limit=50, user_type=None):
         db = get_db()
         collection = db[cls.collection_name]
-        cursor = (
-            collection.find({"user_id": str(user_id)})
-            .sort("created_at", -1)
-            .limit(limit)
-        )
+        query = {"user_id": str(user_id)}
+        if user_type:
+            query["user_type"] = str(user_type)
+        cursor = collection.find(query).sort("created_at", -1).limit(limit)
         return [cls.from_dict(doc) for doc in cursor]
 
     @classmethod

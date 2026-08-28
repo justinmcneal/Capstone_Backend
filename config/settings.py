@@ -131,6 +131,51 @@ ASGI_APPLICATION = "config.asgi.application"
 # WebSocket settings
 WEBSOCKET_ENABLED = env_bool("WEBSOCKET_ENABLED", True)
 
+# Notifications inbox bounds and authenticated abuse controls.
+NOTIFICATIONS_MAX_OFFSET = int(os.getenv("NOTIFICATIONS_MAX_OFFSET", "10000"))
+NOTIFICATIONS_BULK_MUTATION_LIMIT = int(
+    os.getenv("NOTIFICATIONS_BULK_MUTATION_LIMIT", "1000")
+)
+NOTIFICATIONS_READ_RATE = os.getenv("NOTIFICATIONS_READ_RATE", "600/hour")
+NOTIFICATIONS_WRITE_RATE = os.getenv("NOTIFICATIONS_WRITE_RATE", "300/hour")
+NOTIFICATIONS_DEVICE_TOKEN_RATE = os.getenv(
+    "NOTIFICATIONS_DEVICE_TOKEN_RATE", "60/hour"
+)
+NOTIFICATIONS_DEVICE_TOKEN_TTL_DAYS = int(
+    os.getenv("NOTIFICATIONS_DEVICE_TOKEN_TTL_DAYS", "180")
+)
+NOTIFICATIONS_MAX_ACTIVE_DEVICE_TOKENS = int(
+    os.getenv("NOTIFICATIONS_MAX_ACTIVE_DEVICE_TOKENS", "20")
+)
+NOTIFICATIONS_FCM_BATCH_SIZE = int(os.getenv("NOTIFICATIONS_FCM_BATCH_SIZE", "500"))
+NOTIFICATIONS_WS_ACTIONS_PER_MINUTE = int(
+    os.getenv("NOTIFICATIONS_WS_ACTIONS_PER_MINUTE", "120")
+)
+if not 0 <= NOTIFICATIONS_MAX_OFFSET <= 1_000_000:
+    raise ImproperlyConfigured(
+        "NOTIFICATIONS_MAX_OFFSET must be between 0 and 1000000"
+    )
+if not 1 <= NOTIFICATIONS_BULK_MUTATION_LIMIT <= 10_000:
+    raise ImproperlyConfigured(
+        "NOTIFICATIONS_BULK_MUTATION_LIMIT must be between 1 and 10000"
+    )
+if not 1 <= NOTIFICATIONS_WS_ACTIONS_PER_MINUTE <= 10_000:
+    raise ImproperlyConfigured(
+        "NOTIFICATIONS_WS_ACTIONS_PER_MINUTE must be between 1 and 10000"
+    )
+if not 1 <= NOTIFICATIONS_DEVICE_TOKEN_TTL_DAYS <= 3650:
+    raise ImproperlyConfigured(
+        "NOTIFICATIONS_DEVICE_TOKEN_TTL_DAYS must be between 1 and 3650"
+    )
+if not 1 <= NOTIFICATIONS_MAX_ACTIVE_DEVICE_TOKENS <= 100:
+    raise ImproperlyConfigured(
+        "NOTIFICATIONS_MAX_ACTIVE_DEVICE_TOKENS must be between 1 and 100"
+    )
+if not 1 <= NOTIFICATIONS_FCM_BATCH_SIZE <= 500:
+    raise ImproperlyConfigured(
+        "NOTIFICATIONS_FCM_BATCH_SIZE must be between 1 and 500"
+    )
+
 # Channel Layers Configuration
 CHANNEL_LAYERS = {
     "default": {

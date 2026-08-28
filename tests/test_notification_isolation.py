@@ -101,7 +101,8 @@ def test_http_operations_are_isolated_for_cross_role_id_collision(monkeypatch):
     assert own_mark.status_code == 200
 
     database[Notification.collection_name].update_one(
-        {"_id": officer_notification._id}, {"$set": {"status": "sent"}}
+        {"_id": officer_notification._id},
+        {"$set": {"status": "sent", "is_read": False}, "$unset": {"read_at": ""}},
     )
     mark_all = NotificationMarkAllReadView().post(officer_request)
     assert mark_all.data["data"]["marked_count"] == 1
@@ -156,7 +157,7 @@ def test_websocket_groups_and_mark_read_are_role_isolated(monkeypatch):
     marked = async_to_sync(officer_consumer.mark_notification_read)(
         admin_notification.id
     )
-    assert marked is False
+    assert marked == {"success": False, "replayed": False}
     assert database[Notification.collection_name].find_one(
         {"_id": admin_notification._id}
     )["status"] == "sent"

@@ -36,7 +36,8 @@ def test_mark_read_and_mark_all_read_with_real_customer(monkeypatch):
     response = view.post(request, notification_id=notif1.id)
     assert response.status_code == 200
     data = response.data.get('data')
-    assert data and data.get('status') == 'read'
+    assert data and data.get('is_read') is True
+    assert data.get('delivery_status') == 'pending'
 
     # Now mark all unread - should affect remaining notification
     django_req2 = factory.post('/api/notifications/mark-all-read/')

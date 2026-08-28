@@ -1,25 +1,25 @@
 """
 Inbox API tests for /api/notifications/ endpoints.
 """
-import mongomock
-from datetime import datetime, timezone
 from types import SimpleNamespace
-from rest_framework.test import APIRequestFactory
-from django.conf import settings
-from bson import ObjectId
 
+import mongomock
+from bson import ObjectId
+from django.conf import settings
+from rest_framework.test import APIRequestFactory
+
+from accounts.models.admin import Admin
 from accounts.models.customer import Customer
 from accounts.models.loan_officer import LoanOfficer
-from accounts.models.admin import Admin
-from notifications.models.notification import Notification
 from notifications.models.device_token import DeviceToken
+from notifications.models.notification import Notification
 from notifications.views.notification_views import (
-    NotificationListView,
-    NotificationMarkReadView,
-    NotificationMarkAllReadView,
-    NotificationUnreadCountView,
-    NotificationDeleteView,
     NotificationClearAllView,
+    NotificationDeleteView,
+    NotificationListView,
+    NotificationMarkAllReadView,
+    NotificationMarkReadView,
+    NotificationUnreadCountView,
     RegisterDeviceTokenView,
 )
 
@@ -318,10 +318,13 @@ class TestNotificationMarkReadView:
 
         response = view.post(request, notification_id=notif.id)
         assert response.status_code == 200
-        assert response.data['data']['status'] == 'read'
+        assert response.data['data']['is_read'] is True
+        assert response.data['data']['delivery_status'] == 'pending'
+        assert response.data['data']['replayed'] is False
 
         updated = Notification.find_by_user(customer.id, limit=1)[0]
-        assert updated.status == 'read'
+        assert updated.is_read is True
+        assert updated.delivery_status == 'pending'
 
     def test_returns_404_for_notification_owned_by_other_user(self, monkeypatch):
         db = _setup_db(monkeypatch)
@@ -390,7 +393,9 @@ class TestNotificationMarkAllReadView:
         assert response.status_code == 200
         assert response.data['data']['marked_count'] == 2
 
-        unread_count = db['notifications'].count_documents({'user_id': str(customer.id), 'status': {'$nin': ['read']}})
+        unread_count = db['notifications'].count_documents(
+            {'user_id': str(customer.id), 'is_read': False}
+        )
         assert unread_count == 0
 
 
@@ -481,13 +486,18 @@ class TestRegisterDeviceTokenView:
     def test_registers_device_token(self, monkeypatch):
         db = _setup_db(monkeypatch)
         customer = _create_customer(db, customer_id='1601')
-        user = SimpleNamespace(customer_id=str(customer.id), email=customer.email, role='customer')
+        user = SimpleNamespace(
+            customer_id=str(customer.id),
+            email=customer.email,
+            role='customer',
+            session_id='customer-session-1601',
+        )
 
         request = _make_request(
             user,
             path='/api/notifications/register-token/',
             method='post',
-            data={'token': 'fcm-token-123', 'platform': 'android'},
+            data={'token': 'fcm-token-1234567890abcdef', 'platform': 'android'},
         )
         view = RegisterDeviceTokenView()
         view.require_roles = lambda *a, **k: (True, user)
@@ -496,9 +506,13 @@ class TestRegisterDeviceTokenView:
         assert response.status_code == 200
         assert response.data['data']['status'] == 'registered'
 
-        token_doc = db[DeviceToken.collection_name].find_one({'token': 'fcm-token-123'})
+        token_doc = db[DeviceToken.collection_name].find_one(
+            {'token_hash': DeviceToken.fingerprint('fcm-token-1234567890abcdef')}
+        )
         assert token_doc is not None
         assert token_doc['user_id'] == str(customer.id)
+        assert token_doc['user_type'] == 'customer'
+        assert token_doc['session_id'] == 'customer-session-1601'
         assert token_doc['platform'] == 'android'
 
     def test_returns_400_for_missing_token(self, monkeypatch):
