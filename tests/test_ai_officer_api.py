@@ -305,7 +305,7 @@ def test_officer_stream_role_preflight_returns_standard_json_error(monkeypatch):
             "admin-1",
             role="admin",
             data={},
-            headers={"HTTP_ACCEPT": "application/json"},
+            headers={"HTTP_ACCEPT": "text/event-stream"},
         )
     )
 
@@ -327,7 +327,7 @@ def test_officer_stream_validation_preflight_returns_standard_json_error(monkeyp
             "/api/ai/officer/chat/stream/",
             officer.id,
             data={},
-            headers={"HTTP_ACCEPT": "application/json"},
+            headers={"HTTP_ACCEPT": "text/event-stream"},
         )
     )
 
@@ -353,7 +353,7 @@ def test_officer_stream_consent_preflight_returns_standard_json_error(monkeypatc
             "/api/ai/officer/chat/stream/",
             officer.id,
             data={"message": "Stream", "application_id": str(application.id)},
-            headers={"HTTP_ACCEPT": "application/json"},
+            headers={"HTTP_ACCEPT": "text/event-stream"},
         )
     )
 
@@ -879,6 +879,42 @@ def test_officer_stream_emits_safe_named_events_and_one_done_terminal(monkeypatc
     assert result_event.action == "ai_officer_assistant_result"
     assert result_event.details["outcome"] == "success"
     assert result_event.details["tool_names"] == ["get_application_summary"]
+
+
+def test_officer_stream_accepts_event_stream_negotiation_for_successful_sse(
+    monkeypatch,
+):
+    officer = _officer()
+    application = _application(officer.id)
+    provider_stream = CloseAwareStream(
+        [
+            {"type": "token", "content": "summary"},
+            {"type": "done", "model": "officer-model", "tokens_used": 1},
+        ]
+    )
+    llm = StreamLLM(provider_stream)
+    monkeypatch.setattr("ai_assistant.views.officer.get_llm_service", lambda **kwargs: llm)
+    monkeypatch.setattr(
+        "ai_assistant.views.officer.has_current_ai_consent", lambda scope: True
+    )
+
+    response = OfficerStreamingChatView.as_view()(
+        _request(
+            "POST",
+            "/api/ai/officer/chat/stream/",
+            officer.id,
+            data={"message": "Stream", "application_id": str(application.id)},
+            headers={"HTTP_ACCEPT": "text/event-stream"},
+        )
+    )
+
+    assert response.status_code == 200
+    assert response["Content-Type"].startswith("text/event-stream")
+    assert [event for event, _payload in _stream_frames(response)] == [
+        "token",
+        "done",
+    ]
+    assert provider_stream.closed is True
 
 
 def test_officer_stream_without_terminal_emits_incomplete_error_and_audits(monkeypatch):

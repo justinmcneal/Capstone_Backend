@@ -368,6 +368,13 @@ class OfficerStreamingChatView(APIView):
     # returned as a StreamingHttpResponse with its own event-stream content type.
     renderer_classes = (JSONRenderer,)
 
+    def perform_content_negotiation(self, request, force=False):
+        """Keep SSE negotiation local while rendering preflight errors as JSON."""
+        accept = str(request.META.get("HTTP_ACCEPT", "") or "").lower()
+        if "text/event-stream" in accept:
+            return JSONRenderer(), "application/json"
+        return super().perform_content_negotiation(request, force=force)
+
     def post(self, request):
         role_response = _require_officer(request)
         if role_response is not None:
