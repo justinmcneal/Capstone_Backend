@@ -16,10 +16,11 @@ class OfficerAIAuditUnavailable(RuntimeError):
 
 
 def _payload(action, scope, request_id, language, details):
+    officer_index = AuditLog.blind_index(scope.officer_id)
     return normalize_audit_payload(
         {
             "action": action,
-            "user_id": scope.officer_id,
+            "user_id": officer_index,
             "user_type": "loan_officer",
             "user_email": "",
             "description": "Loan officer AI assistant access metadata",
@@ -28,7 +29,7 @@ def _payload(action, scope, request_id, language, details):
             "details": details,
             "ip_address": "",
             "idempotency_key": f"officer-ai:{request_id}:{action}",
-            "scope_officer_id": scope.officer_id,
+            "scope_officer_index": officer_index,
             "scope_policy_version": SCOPE_POLICY_VERSION,
         }
     )

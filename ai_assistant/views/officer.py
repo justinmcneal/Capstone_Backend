@@ -7,6 +7,7 @@ import time
 from django.conf import settings
 from django.http import StreamingHttpResponse
 from rest_framework import status
+from rest_framework.renderers import JSONRenderer
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 
@@ -35,12 +36,27 @@ from ai_assistant.services.officer_tools import (
     execute_officer_tool_result,
 )
 from ai_assistant.services.request_limits import resolve_request_id
-from ai_assistant.views.chat_views import EventStreamRenderer
 
 logger = logging.getLogger("ai_assistant")
 
 ALLOWED_TOOL_NAMES = frozenset(
     schema["function"]["name"] for schema in OFFICER_TOOL_SCHEMAS
+)
+SAFE_CONTROLLED_ERROR_CODES = frozenset(
+    {
+        "AI_PROVIDER_BUSY",
+        "AI_PROVIDER_CIRCUIT_OPEN",
+        "AI_PROVIDER_ERROR",
+        "AI_PROVIDER_STREAM_MALFORMED",
+        "AI_PROVIDER_STREAM_TRUNCATED",
+        "AI_PROVIDER_TIMEOUT",
+        "AI_PROVIDER_UNAVAILABLE",
+        "AI_OFFICER_CONSENT_CHANGED",
+        "AI_OFFICER_SCOPE_CHANGED",
+        "AI_OFFICER_TOOL_READ_FAILED",
+        "AI_OFFICER_TOOL_UNKNOWN",
+        "AI_OFFICER_TOOL_VALIDATION_FAILED",
+    }
 )
 
 
@@ -66,6 +82,14 @@ def _safe_tool_names(values):
         if name in ALLOWED_TOOL_NAMES and name not in names:
             names.append(name)
     return names
+
+
+def _safe_controlled_error_code(value):
+    try:
+        code = str(value or "").strip()
+    except Exception:
+        return "AI_PROVIDER_ERROR"
+    return code if code in SAFE_CONTROLLED_ERROR_CODES else "AI_PROVIDER_ERROR"
 
 
 def _bound_executor(scope, request_id):
@@ -283,7 +307,7 @@ class OfficerChatView(APIView):
         )
         tool_names = _safe_tool_names(result.get("tools_called"))
         if not result.get("success"):
-            outcome = str(result.get("code") or "AI_PROVIDER_ERROR")
+            outcome = _safe_controlled_error_code(result.get("code"))
             record_officer_ai_result(
                 scope,
                 request_id,
@@ -340,7 +364,9 @@ class OfficerStreamingChatView(APIView):
     authentication_classes = (CustomJWTAuthentication,)
     permission_classes = (IsAuthenticated,)
     throttle_classes = (ChatRateThrottle,)
-    renderer_classes = (EventStreamRenderer,)
+    # Preflight failures are normal API responses. The actual generator is
+    # returned as a StreamingHttpResponse with its own event-stream content type.
+    renderer_classes = (JSONRenderer,)
 
     def post(self, request):
         role_response = _require_officer(request)
@@ -481,12 +507,8 @@ class OfficerStreamingChatView(APIView):
                         safe_response = sanitize_multiline_text(
                             escape_llm_output("".join(response_parts))
                         )
-                        terminal_emitted = True
                         if not safe_response:
-                            record_result(
-                                "AI_EMPTY_RESPONSE", duration_ms=duration_ms
-                            )
-                            yield self._event(
+                            terminal_event = self._event(
                                 "error",
                                 {
                                     "content": "AI returned an empty response",
@@ -494,9 +516,13 @@ class OfficerStreamingChatView(APIView):
                                     "request_id": request_id,
                                 },
                             )
+                            record_result(
+                                "AI_EMPTY_RESPONSE", duration_ms=duration_ms
+                            )
+                            terminal_emitted = True
+                            yield terminal_event
                         else:
-                            record_result("success", duration_ms=duration_ms)
-                            yield self._event(
+                            terminal_event = self._event(
                                 "done",
                                 {
                                     "model": chunk.get("model"),
@@ -509,9 +535,12 @@ class OfficerStreamingChatView(APIView):
                                     "request_id": request_id,
                                 },
                             )
+                            record_result("success", duration_ms=duration_ms)
+                            terminal_emitted = True
+                            yield terminal_event
                         break
                     elif chunk_type == "error":
-                        outcome = str(chunk.get("code") or "AI_PROVIDER_ERROR")
+                        outcome = _safe_controlled_error_code(chunk.get("code"))
                         terminal_emitted = True
                         record_result(outcome)
                         yield self._event(

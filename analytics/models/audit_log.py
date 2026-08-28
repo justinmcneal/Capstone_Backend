@@ -1065,6 +1065,7 @@ class AuditLog:
         event_id=None,
         idempotency_key=None,
         scope_officer_id=None,
+        scope_officer_index=None,
         scope_policy_version=None,
     ):
         """
@@ -1100,6 +1101,7 @@ class AuditLog:
             ip_address=ip_address,
             event_id=stable_event_id,
             scope_officer_id=scope_officer_id,
+            scope_officer_index=scope_officer_index,
             scope_policy_version=scope_policy_version,
         )
         return log.save()

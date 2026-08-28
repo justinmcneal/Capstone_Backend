@@ -294,6 +294,76 @@ def test_officer_endpoints_enforce_role_before_body_or_query_validation(monkeypa
     provider.assert_not_called()
 
 
+def test_officer_stream_role_preflight_returns_standard_json_error(monkeypatch):
+    provider = Mock()
+    monkeypatch.setattr("ai_assistant.views.officer.get_llm_service", provider)
+
+    response = OfficerStreamingChatView.as_view()(
+        _request(
+            "POST",
+            "/api/ai/officer/chat/stream/",
+            "admin-1",
+            role="admin",
+            data={},
+            headers={"HTTP_ACCEPT": "application/json"},
+        )
+    )
+
+    assert response.status_code == 403
+    response.render()
+    assert response["Content-Type"].startswith("application/json")
+    assert json.loads(response.content)["status"] == "error"
+    provider.assert_not_called()
+
+
+def test_officer_stream_validation_preflight_returns_standard_json_error(monkeypatch):
+    officer = _officer()
+    provider = Mock()
+    monkeypatch.setattr("ai_assistant.views.officer.get_llm_service", provider)
+
+    response = OfficerStreamingChatView.as_view()(
+        _request(
+            "POST",
+            "/api/ai/officer/chat/stream/",
+            officer.id,
+            data={},
+            headers={"HTTP_ACCEPT": "application/json"},
+        )
+    )
+
+    assert response.status_code == 400
+    response.render()
+    assert response["Content-Type"].startswith("application/json")
+    assert json.loads(response.content)["status"] == "error"
+    provider.assert_not_called()
+
+
+def test_officer_stream_consent_preflight_returns_standard_json_error(monkeypatch):
+    officer = _officer()
+    application = _application(officer.id)
+    provider = Mock()
+    monkeypatch.setattr("ai_assistant.views.officer.get_llm_service", provider)
+    monkeypatch.setattr(
+        "ai_assistant.views.officer.has_current_ai_consent", lambda scope: False
+    )
+
+    response = OfficerStreamingChatView.as_view()(
+        _request(
+            "POST",
+            "/api/ai/officer/chat/stream/",
+            officer.id,
+            data={"message": "Stream", "application_id": str(application.id)},
+            headers={"HTTP_ACCEPT": "application/json"},
+        )
+    )
+
+    assert response.status_code == 403
+    response.render()
+    assert response["Content-Type"].startswith("application/json")
+    assert json.loads(response.content)["code"] == "CONSENT_REQUIRED"
+    provider.assert_not_called()
+
+
 def test_officer_chat_conceals_assignment_failure_before_provider(monkeypatch):
     officer = _officer()
     application = _application("another-officer")
@@ -537,6 +607,38 @@ def test_officer_chat_audits_before_provider_and_returns_minimized_json(monkeypa
             assert forbidden not in serialized
 
 
+def test_officer_ai_audit_documents_pseudonymize_officer_and_customer_identifiers(
+    monkeypatch,
+):
+    officer = _officer()
+    application = _application(officer.id, customer_id="customer-direct-identifier")
+    llm = JsonLLM()
+    monkeypatch.setattr("ai_assistant.views.officer.get_llm_service", lambda **kwargs: llm)
+    monkeypatch.setattr(
+        "ai_assistant.views.officer.has_current_ai_consent", lambda scope: True
+    )
+
+    response = OfficerChatView.as_view()(
+        _chat_request(officer.id, application.id)
+    )
+
+    assert response.status_code == 200, response.data
+    events = _audit_events()
+    assert len(events) == 2
+    for event in events:
+        assert event.user_id != str(officer.id)
+        assert event.scope_officer_index == AuditLog.blind_index(str(officer.id))
+        assert str(officer.id) not in json.dumps(event.to_dict(), default=str)
+        assert "customer-direct-identifier" not in json.dumps(
+            event.to_dict(), default=str
+        )
+
+    stored = list(settings.MONGODB[AuditLog.collection_name].find())
+    assert stored
+    assert all(row.get("user_id") != str(officer.id) for row in stored)
+    assert all(row.get("scope_officer_id") != str(officer.id) for row in stored)
+
+
 def test_officer_chat_provider_failure_records_metadata_result(monkeypatch):
     officer = _officer()
     application = _application(officer.id)
@@ -562,6 +664,33 @@ def test_officer_chat_provider_failure_records_metadata_result(monkeypatch):
     assert result_event.action == "ai_officer_assistant_result"
     assert result_event.details["outcome"] == "AI_PROVIDER_TIMEOUT"
     assert "raw provider exception text" not in json.dumps(result_event.details)
+
+
+def test_officer_chat_unknown_provider_error_code_maps_to_safe_code(monkeypatch):
+    officer = _officer()
+    application = _application(officer.id)
+    llm = JsonLLM(
+        result={
+            "success": False,
+            "error": "provider internal secret",
+            "code": "PROVIDER_INTERNAL_SECRET_CODE",
+        }
+    )
+    monkeypatch.setattr("ai_assistant.views.officer.get_llm_service", lambda **kwargs: llm)
+    monkeypatch.setattr(
+        "ai_assistant.views.officer.has_current_ai_consent", lambda scope: True
+    )
+
+    response = OfficerChatView.as_view()(
+        _chat_request(officer.id, application.id)
+    )
+
+    assert response.status_code == 503
+    assert response.data["code"] == "AI_PROVIDER_ERROR"
+    assert "PROVIDER_INTERNAL_SECRET_CODE" not in json.dumps(response.data)
+    result_event = _audit_events()[-1]
+    assert result_event.details["outcome"] == "AI_PROVIDER_ERROR"
+    assert "PROVIDER_INTERNAL_SECRET_CODE" not in json.dumps(result_event.details)
 
 
 def test_officer_chat_provider_exception_returns_safe_error_and_audits(monkeypatch):
@@ -823,6 +952,42 @@ def test_officer_stream_provider_error_is_terminal_safe_and_audited(monkeypatch)
     assert _audit_events()[-1].details["outcome"] == "AI_PROVIDER_BUSY"
 
 
+def test_officer_stream_unknown_provider_error_code_maps_to_safe_code(monkeypatch):
+    officer = _officer()
+    application = _application(officer.id)
+    provider_stream = CloseAwareStream(
+        [
+            {
+                "type": "error",
+                "content": "provider internal secret",
+                "code": "PROVIDER_INTERNAL_SECRET_CODE",
+            }
+        ]
+    )
+    llm = StreamLLM(provider_stream)
+    monkeypatch.setattr("ai_assistant.views.officer.get_llm_service", lambda **kwargs: llm)
+    monkeypatch.setattr(
+        "ai_assistant.views.officer.has_current_ai_consent", lambda scope: True
+    )
+
+    frames = _stream_frames(
+        OfficerStreamingChatView.as_view()(
+            _request(
+                "POST",
+                "/api/ai/officer/chat/stream/",
+                officer.id,
+                data={"message": "Stream", "application_id": str(application.id)},
+            )
+        )
+    )
+
+    assert len(frames) == 1
+    assert frames[0][0] == "error"
+    assert frames[0][1]["code"] == "AI_PROVIDER_ERROR"
+    assert "PROVIDER_INTERNAL_SECRET_CODE" not in json.dumps(frames)
+    assert _audit_events()[-1].details["outcome"] == "AI_PROVIDER_ERROR"
+
+
 def test_officer_stream_provider_setup_exception_is_safe_and_audited(monkeypatch):
     officer = _officer()
     application = _application(officer.id)
@@ -907,6 +1072,41 @@ def test_officer_stream_empty_done_becomes_error(monkeypatch):
     assert [event for event, _payload in frames] == ["error"]
     assert frames[0][1]["code"] == "AI_EMPTY_RESPONSE"
     assert _audit_events()[-1].details["outcome"] == "AI_EMPTY_RESPONSE"
+
+
+def test_officer_stream_malformed_done_metadata_emits_one_safe_terminal_error(
+    monkeypatch,
+):
+    officer = _officer()
+    application = _application(officer.id)
+    provider_stream = CloseAwareStream(
+        [
+            {"type": "token", "content": "partial"},
+            {"type": "done", "model": object(), "tokens_used": 1},
+        ]
+    )
+    llm = StreamLLM(provider_stream)
+    monkeypatch.setattr("ai_assistant.views.officer.get_llm_service", lambda **kwargs: llm)
+    monkeypatch.setattr(
+        "ai_assistant.views.officer.has_current_ai_consent", lambda scope: True
+    )
+
+    frames = _stream_frames(
+        OfficerStreamingChatView.as_view()(
+            _request(
+                "POST",
+                "/api/ai/officer/chat/stream/",
+                officer.id,
+                data={"message": "Stream", "application_id": str(application.id)},
+            )
+        )
+    )
+
+    assert [event for event, _payload in frames] == ["token", "error"]
+    assert frames[-1][1]["code"] == "AI_STREAM_ERROR"
+    assert sum(event in {"done", "error"} for event, _payload in frames) == 1
+    assert provider_stream.closed is True
+    assert _audit_events()[-1].details["outcome"] == "AI_STREAM_ERROR"
 
 
 def test_officer_stream_disconnect_closes_provider_and_records_result(monkeypatch):
