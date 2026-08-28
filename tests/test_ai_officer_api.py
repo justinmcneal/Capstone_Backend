@@ -3,6 +3,7 @@ import uuid
 from types import SimpleNamespace
 from unittest.mock import Mock
 
+import pytest
 from bson import ObjectId
 from django.conf import settings
 from django.test import override_settings
@@ -152,6 +153,12 @@ class CloseAwareStream:
         self.closed = True
 
 
+class CloseRaisingStream(CloseAwareStream):
+    def close(self):
+        self.closed = True
+        raise RuntimeError("provider cleanup secret")
+
+
 class EndlessCloseAwareStream:
     def __init__(self):
         self.closed = False
@@ -292,6 +299,167 @@ def test_officer_endpoints_enforce_role_before_body_or_query_validation(monkeypa
     assert stream.status_code == 403
     assert suggestions.status_code == 403
     provider.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "restricted_content",
+    [
+        "Customer name: Ana Santos",
+        "Customer email: customer@example.com",
+        "Customer mobile: +639171234567",
+        "Customer address: 123 Rizal Street",
+        "Government ID: PH-1234-5678",
+        "Document filename: identity-card.png",
+        "Document content: birth certificate scan",
+        "Document storage path: private/customer/id.png",
+        "Wallet address: 0x1234567890abcdef",
+        "Transaction hash: 0xabcdef1234567890",
+        "Payment reference: PAY-12345",
+        "Internal note: confidential review",
+        "Staff password: hunter2",
+    ],
+)
+@pytest.mark.parametrize("view_class", [OfficerChatView, OfficerStreamingChatView])
+def test_officer_context_privacy_rejects_restricted_current_message(
+    monkeypatch, restricted_content, view_class
+):
+    officer = _officer()
+    application = _application(officer.id)
+    provider = Mock()
+    monkeypatch.setattr("ai_assistant.views.officer.get_llm_service", provider)
+
+    response = view_class.as_view()(
+        _request(
+            "POST",
+            "/api/ai/officer/chat/",
+            officer.id,
+            data={
+                "message": restricted_content,
+                "application_id": str(application.id),
+            },
+        )
+    )
+
+    assert response.status_code == 400
+    serialized = json.dumps(response.data).lower()
+    assert restricted_content.lower() not in serialized
+    assert "customer" not in serialized
+    assert "provider" not in serialized
+    provider.assert_not_called()
+
+
+@pytest.mark.parametrize("view_class", [OfficerChatView, OfficerStreamingChatView])
+def test_officer_context_privacy_rejects_restricted_history_before_provider(
+    monkeypatch, view_class
+):
+    officer = _officer()
+    application = _application(officer.id)
+    provider = Mock()
+    monkeypatch.setattr("ai_assistant.views.officer.get_llm_service", provider)
+
+    response = view_class.as_view()(
+        _request(
+            "POST",
+            "/api/ai/officer/chat/",
+            officer.id,
+            data={
+                "message": "Review missing documents and repayment status",
+                "application_id": str(application.id),
+                "history": [
+                    {
+                        "role": "user",
+                        "content": "Customer email customer@example.com",
+                    }
+                ],
+            },
+        )
+    )
+
+    assert response.status_code == 400
+    serialized = json.dumps(response.data).lower()
+    assert "customer@example.com" not in serialized
+    assert "customer" not in serialized
+    provider.assert_not_called()
+
+
+def test_officer_context_privacy_preserves_safe_review_prompts(monkeypatch):
+    officer = _officer()
+    application = _application(officer.id)
+    llm = JsonLLM()
+    monkeypatch.setattr("ai_assistant.views.officer.get_llm_service", lambda **kwargs: llm)
+    monkeypatch.setattr(
+        "ai_assistant.views.officer.has_current_ai_consent", lambda scope: True
+    )
+
+    response = OfficerChatView.as_view()(
+        _request(
+            "POST",
+            "/api/ai/officer/chat/",
+            officer.id,
+            data={
+                "message": "Review missing documents and repayment status",
+                "application_id": str(application.id),
+            },
+        )
+    )
+
+    assert response.status_code == 200
+    assert llm.kwargs["message"] == "Review missing documents and repayment status"
+
+
+@pytest.mark.parametrize("view_class", [OfficerChatView, OfficerStreamingChatView])
+def test_officer_ai_metrics_are_low_cardinality_for_json_and_stream(
+    monkeypatch, view_class
+):
+    officer = _officer()
+    application = _application(officer.id)
+    if view_class is OfficerChatView:
+        llm = JsonLLM()
+    else:
+        llm = StreamLLM(
+            CloseAwareStream(
+                [
+                    {"type": "token", "content": "summary"},
+                    {"type": "done", "model": "officer-model", "tokens_used": 1},
+                ]
+            )
+        )
+    officer_metric_calls = Mock()
+    mixin_metric_calls = Mock()
+    monkeypatch.setattr("ai_assistant.views.officer.get_llm_service", lambda **kwargs: llm)
+    monkeypatch.setattr(
+        "ai_assistant.views.officer.has_current_ai_consent", lambda scope: True
+    )
+    monkeypatch.setattr(
+        "ai_assistant.views.officer.increment", officer_metric_calls, raising=False
+    )
+    monkeypatch.setattr("ai_assistant.views.chat_views.increment", mixin_metric_calls)
+
+    response = view_class.as_view()(
+        _request(
+            "POST",
+            "/api/ai/officer/chat/",
+            officer.id,
+            data={"message": "Review summary", "application_id": str(application.id)},
+        )
+    )
+    if view_class is OfficerStreamingChatView:
+        _stream_frames(response)
+
+    assert response.status_code == 200
+    provider_calls = [
+        call.kwargs
+        for call in officer_metric_calls.call_args_list
+        if call.kwargs.get("provider") == "groq"
+    ]
+    assert any(call.get("outcome") == "success" for call in provider_calls)
+    assert any("amount" in call.kwargs for call in officer_metric_calls.call_args_list)
+    assert any(call.kwargs.get("endpoint") for call in mixin_metric_calls.call_args_list)
+    assert all(
+        not {"message", "conversation_history", "customer_id"}.intersection(call.kwargs)
+        for call in officer_metric_calls.call_args_list
+        if call.kwargs
+    )
 
 
 def test_officer_stream_role_preflight_returns_standard_json_error(monkeypatch):
@@ -1143,6 +1311,40 @@ def test_officer_stream_malformed_done_metadata_emits_one_safe_terminal_error(
     assert sum(event in {"done", "error"} for event, _payload in frames) == 1
     assert provider_stream.closed is True
     assert _audit_events()[-1].details["outcome"] == "AI_STREAM_ERROR"
+
+
+def test_officer_stream_close_failure_cannot_escape_after_terminal_frame(
+    monkeypatch,
+):
+    officer = _officer()
+    application = _application(officer.id)
+    provider_stream = CloseRaisingStream(
+        [
+            {"type": "token", "content": "complete"},
+            {"type": "done", "model": "officer-model", "tokens_used": 1},
+        ]
+    )
+    llm = StreamLLM(provider_stream)
+    monkeypatch.setattr("ai_assistant.views.officer.get_llm_service", lambda **kwargs: llm)
+    monkeypatch.setattr(
+        "ai_assistant.views.officer.has_current_ai_consent", lambda scope: True
+    )
+
+    frames = _stream_frames(
+        OfficerStreamingChatView.as_view()(
+            _request(
+                "POST",
+                "/api/ai/officer/chat/stream/",
+                officer.id,
+                data={"message": "Stream", "application_id": str(application.id)},
+            )
+        )
+    )
+
+    assert [event for event, _payload in frames] == ["token", "done"]
+    assert sum(event in {"done", "error"} for event, _payload in frames) == 1
+    assert provider_stream.closed is True
+    assert _audit_events()[-1].details["outcome"] == "success"
 
 
 def test_officer_stream_disconnect_closes_provider_and_records_result(monkeypatch):

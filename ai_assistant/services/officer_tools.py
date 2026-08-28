@@ -1,6 +1,8 @@
 """Read-only, application-bound tools for the loan-officer AI assistant."""
 import json
 import logging
+import re
+from collections import Counter
 
 from bson import ObjectId
 from bson.decimal128 import Decimal128
@@ -14,13 +16,66 @@ from ai_assistant.services.officer_scope import (
 from documents.models.document import Document
 from loans.models import LoanApplication
 from loans.models.product import LoanProduct
-from loans.services.qualification import document_type_label, resolve_required_document_types
+from loans.models.repayment import RepaymentSchedule
+from loans.services.qualification import (
+    document_type_label,
+    resolve_required_document_types,
+)
 from loans.utils.money import from_centavos, to_centavos
 
 logger = logging.getLogger("ai_assistant")
 
 DOCUMENT_RESULT_LIMIT = 20
 LOAN_PAYMENT_COLLECTION = "loan_payments"
+SAFE_APPLICATION_STATUSES = frozenset(
+    {
+        "draft",
+        "submitted",
+        "under_review",
+        "approved",
+        "rejected",
+        "disbursed",
+        "completed",
+        "written_off",
+        "cancelled",
+    }
+)
+SAFE_RISK_CATEGORIES = frozenset({"low", "medium", "high"})
+SAFE_RISK_STATUSES = frozenset(
+    {"not_calculated", "pending", "calculated", "failed", "stale"}
+)
+SAFE_DOCUMENT_STATUSES = frozenset(
+    {"pending", "needs_review", "approved", "rejected", "expired"}
+)
+SAFE_INSTALLMENT_STATUSES = frozenset(
+    {"pending", "partial", "overdue", "partial_overdue", "paid"}
+)
+SAFE_MISSING_FIELD_LABELS = {
+    "personal.gender": "Gender",
+    "personal.civil_status": "Civil status",
+    "personal.nationality": "Nationality",
+    "business.business_type": "Business type",
+    "business.business_age_months": "Business age",
+    "business.is_registered": "Business registration status",
+    "business.estimated_monthly_income": "Monthly income",
+    "business.income_range": "Income range",
+    "business.estimated_monthly_expenses": "Monthly expenses",
+    "business.number_of_employees": "Number of employees",
+    "alternative.education_level": "Education level",
+    "alternative.employment_status": "Employment status",
+    "alternative.years_of_experience": "Business experience",
+    "alternative.housing_status": "Housing status",
+    "alternative.number_of_dependents": "Number of dependents",
+    "alternative.has_existing_loans": "Existing loans status",
+    "alternative.has_bank_account": "Bank account status",
+    "alternative.has_ewallet": "E-wallet status",
+    "alternative.pays_utilities": "Utility payment status",
+    "alternative.is_coop_member": "Cooperative membership",
+}
+_UNSAFE_PURPOSE_PATTERN = re.compile(
+    r"(?:@|\b(?:street|st\.?|road|rd\.?|avenue|ave\.?|barangay|address|phone|mobile)\b|\b\d{3,}\b|0x[0-9a-f]{8,})",
+    re.IGNORECASE,
+)
 
 OFFICER_TOOL_SCHEMAS = [
     {
@@ -72,6 +127,55 @@ def _scope_application_query(scope):
     }
 
 
+def _safe_enum(value, allowed, fallback="unknown"):
+    normalized = str(value or "").strip().lower()
+    return normalized if normalized in allowed else fallback
+
+
+def _safe_percentage(value):
+    try:
+        return max(0, min(100, int(float(value or 0))))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _safe_codes(value, limit=10):
+    codes = []
+    for raw_code in value if isinstance(value, (list, tuple)) else []:
+        code = str(raw_code or "").strip().lower()
+        if (
+            code
+            and len(code) <= 64
+            and re.fullmatch(r"[a-z0-9][a-z0-9_.-]*", code)
+            and code not in codes
+        ):
+            codes.append(code)
+        if len(codes) >= limit:
+            break
+    return codes
+
+
+def _safe_purpose(value):
+    purpose = str(value or "").strip()
+    if not purpose or len(purpose) > 80 or _UNSAFE_PURPOSE_PATTERN.search(purpose):
+        return None
+    return purpose
+
+
+def _safe_missing_fields(profile):
+    missing = []
+    seen = set()
+    for raw_code in profile.get("profile_missing_fields", []):
+        code = str(raw_code or "").strip().lower()
+        label = SAFE_MISSING_FIELD_LABELS.get(code)
+        if label and code not in seen:
+            seen.add(code)
+            missing.append({"code": code, "label": label})
+        if len(missing) >= 12:
+            break
+    return missing
+
+
 def _get_application_summary(scope):
     projection = {
         "status": 1,
@@ -82,6 +186,8 @@ def _get_application_summary(scope):
         "term_months": 1,
         "eligibility_score": 1,
         "risk_category": 1,
+        "purpose": 1,
+        "ai_recommendation": 1,
     }
     application = settings.MONGODB[LoanApplication.collection_name].find_one(
         _scope_application_query(scope), projection
@@ -89,20 +195,49 @@ def _get_application_summary(scope):
     if not application:
         raise LookupError("Bound application is unavailable")
 
+    application_model = LoanApplication.from_dict(application)
+    recommendation = application_model.ai_recommendation
+    if not isinstance(recommendation, dict):
+        recommendation = {}
+    status = _safe_enum(application_model.status, SAFE_APPLICATION_STATUSES)
+    product = None
+    product_id = application_model.product_id
+    if ObjectId.is_valid(str(product_id)):
+        product_data = settings.MONGODB[LoanProduct.collection_name].find_one(
+            {"_id": ObjectId(str(product_id))}, {"name": 1, "code": 1}
+        )
+        if product_data:
+            product = {
+                key: str(product_data[key])[:80]
+                for key in ("name", "code")
+                if product_data.get(key)
+            }
+    manual_review_required = bool(
+        recommendation.get("manual_review_required") or status == "under_review"
+    )
     return {
-        "status": application.get("status"),
-        "product_assigned": bool(application.get("product_id")),
-        "requested_amount": application.get("requested_amount"),
-        "recommended_amount": application.get("recommended_amount"),
-        "approved_amount": application.get("approved_amount"),
-        "term_months": application.get("term_months"),
-        "eligibility_score": application.get("eligibility_score"),
-        "risk_category": application.get("risk_category"),
-        "review_readiness": (
-            "ready_for_review"
-            if application.get("status") == "under_review"
-            else "not_ready_for_review"
+        "status": status,
+        "product": product,
+        "product_assigned": bool(product_id),
+        "requested_amount": application_model.requested_amount,
+        "recommended_amount": application_model.recommended_amount,
+        "approved_amount": application_model.approved_amount,
+        "term_months": application_model.term_months,
+        "purpose": _safe_purpose(application_model.purpose),
+        "eligibility_score": application_model.eligibility_score,
+        "risk_category": _safe_enum(
+            application_model.risk_category, SAFE_RISK_CATEGORIES
         ),
+        "reason_codes": _safe_codes(recommendation.get("reason_codes")),
+        "review_readiness": {
+            "status": (
+                "ready_for_review"
+                if status == "under_review"
+                else "not_ready_for_review"
+            ),
+            "is_reviewable": status in {"submitted", "under_review"},
+            "manual_review_required": manual_review_required,
+        },
     }
 
 
@@ -116,6 +251,7 @@ def _get_profile_readiness(scope):
     base_projection = {
         "completion_percentage": 1,
         "profile_completed": 1,
+        "profile_missing_fields": 1,
     }
     result = {}
     for label, collection in collections.items():
@@ -136,17 +272,30 @@ def _get_profile_readiness(scope):
             continue
         result[label] = {
             "available": True,
-            "completion_percentage": profile.get("completion_percentage", 0),
+            "completion_percentage": _safe_percentage(
+                profile.get("completion_percentage", 0)
+            ),
             "complete": bool(profile.get("profile_completed", False)),
+            "missing_fields": _safe_missing_fields(profile),
         }
         if label == "alternative":
+            risk_status = _safe_enum(
+                profile.get("risk_score_status"), SAFE_RISK_STATUSES
+            )
+            manual_review_required = bool(
+                profile.get("risk_score_manual_review_required", True)
+            )
             result[label].update(
                 {
-                    "risk_score_status": profile.get("risk_score_status"),
-                    "risk_category": profile.get("risk_category"),
-                    "manual_review_required": bool(
-                        profile.get("risk_score_manual_review_required", True)
+                    "risk_status": risk_status,
+                    "risk_score_status": risk_status,
+                    "risk_category": _safe_enum(
+                        profile.get("risk_category"), SAFE_RISK_CATEGORIES
                     ),
+                    "manual_review_required": manual_review_required,
+                    "manual_review_flags": ["risk_score"]
+                    if manual_review_required
+                    else [],
                 }
             )
     return result
@@ -185,11 +334,20 @@ def _get_document_review_status(scope):
     truncated = len(documents) > DOCUMENT_RESULT_LIMIT
     documents = documents[:DOCUMENT_RESULT_LIMIT]
     return {
+        "required_document_types": [
+            {"code": document_type, "label": document_type_label(document_type)}
+            for document_type in required_types
+        ],
         "documents": [
             {
                 "type": document_type_label(document.get("document_type", "unknown")),
-                "status": document.get("status", "unknown"),
+                "status": _safe_enum(
+                    document.get("status"), SAFE_DOCUMENT_STATUSES
+                ),
                 "verified": bool(document.get("verified", False)),
+                "verification_status": (
+                    "verified" if document.get("verified", False) else "unverified"
+                ),
             }
             for document in documents
         ],
@@ -277,6 +435,17 @@ def _summarize_posted_payments(loan_id, customer_id):
     }
 
 
+def _summarize_installment_statuses(installments):
+    counts = Counter(
+        _safe_enum(item.get("status"), SAFE_INSTALLMENT_STATUSES)
+        for item in installments
+    )
+    return [
+        {"status": status, "count": counts[status]}
+        for status in sorted(counts)
+    ]
+
+
 def _get_repayment_summary(scope):
     projection = {
         "status": 1,
@@ -285,6 +454,7 @@ def _get_repayment_summary(scope):
         "monthly_payment_centavos": 1,
         "total_amount": 1,
         "total_amount_centavos": 1,
+        "installments": 1,
     }
     schedule = settings.MONGODB["repayment_schedules"].find_one(
         {"loan_id": str(scope.application_id), "customer_id": str(scope.customer_id)},
@@ -307,6 +477,22 @@ def _get_repayment_summary(scope):
             schedule.get("total_amount") or 0, "total_amount"
         )
     total_paid_centavos = payment_summary["total_centavos"]
+    installments = RepaymentSchedule.from_dict(schedule).installments or []
+    paid_count = sum(
+        1 for installment in installments if installment.get("status") == "paid"
+    )
+    next_installment = next(
+        (
+            installment
+            for installment in installments
+            if installment.get("status") != "paid"
+        ),
+        None,
+    )
+    next_due_date = next_installment.get("due_date") if next_installment else None
+    if hasattr(next_due_date, "isoformat"):
+        next_due_date = next_due_date.isoformat()
+    installment_count = len(installments)
     return {
         "schedule_available": True,
         "schedule_status": schedule.get("status"),
@@ -318,6 +504,17 @@ def _get_repayment_summary(scope):
         "remaining_balance": from_centavos(
             max(total_amount_centavos - total_paid_centavos, 0)
         ),
+        "schedule_progress": {
+            "paid_count": paid_count,
+            "installment_count": installment_count,
+            "completed_percentage": (
+                int(paid_count * 100 / installment_count)
+                if installment_count
+                else 0
+            ),
+        },
+        "next_due_date": next_due_date,
+        "payment_status_summaries": _summarize_installment_statuses(installments),
     }
 
 

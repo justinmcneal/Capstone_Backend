@@ -215,6 +215,115 @@ def test_officer_tools_return_only_allowlisted_application_bound_summaries(offic
         assert forbidden not in serialized
 
 
+def test_application_summary_matches_complete_safe_contract(officer_scope):
+    settings.MONGODB[LoanApplication.collection_name].update_one(
+        {"_id": ObjectId(officer_scope.application_id)},
+        {
+            "$set": {
+                "ai_recommendation": {
+                    "reason_codes": ["manual-review"],
+                    "manual_review_required": True,
+                }
+            }
+        },
+    )
+    settings.MONGODB["loan_products"].update_one(
+        {"_id": ObjectId(officer_scope.application.product_id)},
+        {"$set": {"code": "WCL"}},
+    )
+
+    result = execute_officer_tool_result(
+        "get_application_summary", {}, officer_scope, request_id="request-1"
+    )
+
+    assert result["success"] is True
+    summary = json.loads(result["result"])
+    assert summary["product"] == {"name": "Working Capital", "code": "WCL"}
+    assert summary["requested_amount"] == 10000
+    assert summary["recommended_amount"] == 9000
+    assert summary["approved_amount"] == 8500
+    assert summary["term_months"] == 12
+    assert summary["purpose"] == "inventory"
+    assert summary["eligibility_score"] == 78
+    assert summary["risk_category"] == "medium"
+    assert summary["reason_codes"] == ["manual-review"]
+    assert summary["review_readiness"] == {
+        "status": "ready_for_review",
+        "is_reviewable": True,
+        "manual_review_required": True,
+    }
+
+
+def test_profile_readiness_matches_complete_safe_contract(officer_scope):
+    result = execute_officer_tool_result(
+        "get_profile_readiness", {}, officer_scope, request_id="request-1"
+    )
+
+    assert result["success"] is True
+    readiness = json.loads(result["result"])
+    assert readiness["personal"]["completion_percentage"] == 70
+    assert readiness["business"]["missing_fields"] == [
+        {"code": "business.business_type", "label": "Business type"}
+    ]
+    assert readiness["alternative"]["risk_status"] == "calculated"
+    assert readiness["alternative"]["risk_score_status"] == "calculated"
+    assert readiness["alternative"]["manual_review_required"] is True
+    assert readiness["alternative"]["manual_review_flags"] == ["risk_score"]
+
+
+def test_document_review_status_matches_complete_safe_contract(officer_scope):
+    result = execute_officer_tool_result(
+        "get_document_review_status", {}, officer_scope, request_id="request-1"
+    )
+
+    assert result["success"] is True
+    review = json.loads(result["result"])
+    assert review["required_document_types"] == [
+        {"code": "valid_id", "label": "Valid Government ID"}
+    ]
+    assert review["documents"] == [
+        {
+            "type": "Valid Government ID",
+            "status": "approved",
+            "verified": True,
+            "verification_status": "verified",
+        }
+    ]
+
+
+def test_repayment_summary_matches_complete_safe_contract(officer_scope):
+    settings.MONGODB["repayment_schedules"].update_one(
+        {"loan_id": officer_scope.application_id},
+        {
+            "$set": {
+                "term_months": 2,
+                "total_amount": 2000,
+                "monthly_payment": 1000,
+            }
+        },
+    )
+
+    result = execute_officer_tool_result(
+        "get_repayment_summary", {}, officer_scope, request_id="request-1"
+    )
+
+    assert result["success"] is True
+    summary = json.loads(result["result"])
+    assert summary["schedule_progress"] == {
+        "paid_count": 1,
+        "installment_count": 2,
+        "completed_percentage": 50,
+    }
+    assert summary["next_due_date"] == "2026-02-01T00:00:00"
+    assert summary["payment_status_summaries"] == [
+        {"status": "paid", "count": 1},
+        {"status": "pending", "count": 1},
+    ]
+    assert summary["remaining_balance"] == 2000
+    assert "reference" not in result["result"]
+    assert "wallet" not in result["result"]
+
+
 def test_officer_tool_rejects_scope_after_reassignment(officer_scope):
     _reassign(officer_scope.application_id, "another-officer")
 
@@ -355,8 +464,8 @@ def test_profile_readiness_omits_unrecognized_or_identifier_missing_field_codes(
 
     assert result["success"] is True
     readiness = json.loads(result["result"])
-    assert "missing_fields" not in readiness["personal"]
-    assert "missing_fields" not in readiness["business"]
+    assert readiness["personal"]["missing_fields"] == []
+    assert readiness["business"]["missing_fields"] == []
     serialized = result["result"].lower()
     for unsafe_value in (
         "mobile_number",

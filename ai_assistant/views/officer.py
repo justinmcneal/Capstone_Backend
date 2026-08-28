@@ -36,6 +36,14 @@ from ai_assistant.services.officer_tools import (
     execute_officer_tool_result,
 )
 from ai_assistant.services.request_limits import resolve_request_id
+from ai_assistant.metrics import (
+    AI_PROVIDER_LATENCY,
+    AI_PROVIDER_REQUESTS,
+    AI_TOKENS,
+    increment,
+    observe,
+)
+from ai_assistant.views.chat_views import AIRequestMetricsMixin
 
 logger = logging.getLogger("ai_assistant")
 
@@ -58,6 +66,7 @@ SAFE_CONTROLLED_ERROR_CODES = frozenset(
         "AI_OFFICER_TOOL_VALIDATION_FAILED",
     }
 )
+SAFE_METRIC_PROVIDERS = frozenset({"groq", "ollama"})
 
 
 def _consent_required_response():
@@ -90,6 +99,31 @@ def _safe_controlled_error_code(value):
     except Exception:
         return "AI_PROVIDER_ERROR"
     return code if code in SAFE_CONTROLLED_ERROR_CODES else "AI_PROVIDER_ERROR"
+
+
+def _safe_metric_provider(value):
+    provider = str(value or "unknown").strip().lower()
+    return provider if provider in SAFE_METRIC_PROVIDERS else "other"
+
+
+def _record_provider_metrics(
+    llm, *, outcome, started, operation, tokens_used=0, provider=None
+):
+    provider_name = _safe_metric_provider(
+        provider or getattr(llm, "provider", "unknown")
+    )
+    increment(AI_PROVIDER_REQUESTS, provider=provider_name, outcome=outcome)
+    observe(
+        AI_PROVIDER_LATENCY,
+        max(0, time.monotonic() - started),
+        provider=provider_name,
+        operation=operation,
+    )
+    try:
+        tokens = max(0, int(tokens_used or 0))
+    except (TypeError, ValueError):
+        tokens = 0
+    increment(AI_TOKENS, amount=tokens, provider=provider_name)
 
 
 def _bound_executor(scope, request_id):
@@ -189,10 +223,11 @@ class OfficerSuggestionsView(APIView):
         )
 
 
-class OfficerChatView(APIView):
+class OfficerChatView(AIRequestMetricsMixin, APIView):
     authentication_classes = (CustomJWTAuthentication,)
     permission_classes = (IsAuthenticated,)
     throttle_classes = (ChatRateThrottle,)
+    metrics_endpoint = "officer_chat"
 
     def post(self, request):
         role_response = _require_officer(request)
@@ -240,6 +275,12 @@ class OfficerChatView(APIView):
             llm = get_llm_service(use_case="chat")
             provider_available = llm.is_available()
         except Exception:
+            _record_provider_metrics(
+                None,
+                outcome="error",
+                started=started,
+                operation="chat",
+            )
             record_officer_ai_result(
                 scope,
                 request_id,
@@ -257,6 +298,12 @@ class OfficerChatView(APIView):
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
         if not provider_available:
+            _record_provider_metrics(
+                llm,
+                outcome="unavailable",
+                started=started,
+                operation="chat",
+            )
             record_officer_ai_result(
                 scope,
                 request_id,
@@ -282,6 +329,12 @@ class OfficerChatView(APIView):
                 request_id=request_id,
             )
         except Exception:
+            _record_provider_metrics(
+                llm,
+                outcome="error",
+                started=started,
+                operation="chat",
+            )
             record_officer_ai_result(
                 scope,
                 request_id,
@@ -308,6 +361,13 @@ class OfficerChatView(APIView):
         tool_names = _safe_tool_names(result.get("tools_called"))
         if not result.get("success"):
             outcome = _safe_controlled_error_code(result.get("code"))
+            _record_provider_metrics(
+                llm,
+                outcome="error",
+                started=started,
+                operation="chat",
+                provider=result.get("provider"),
+            )
             record_officer_ai_result(
                 scope,
                 request_id,
@@ -326,6 +386,13 @@ class OfficerChatView(APIView):
             escape_llm_output(result.get("response", ""))
         )
         if not ai_response:
+            _record_provider_metrics(
+                llm,
+                outcome="empty",
+                started=started,
+                operation="chat",
+                provider=result.get("provider"),
+            )
             record_officer_ai_result(
                 scope,
                 request_id,
@@ -347,6 +414,14 @@ class OfficerChatView(APIView):
             tool_names=tool_names,
             duration_ms=duration_ms,
         )
+        _record_provider_metrics(
+            llm,
+            outcome="success",
+            started=started,
+            operation="chat",
+            tokens_used=result.get("tokens_used"),
+            provider=result.get("provider"),
+        )
         return success_response(
             data={
                 "response": ai_response,
@@ -360,13 +435,14 @@ class OfficerChatView(APIView):
         )
 
 
-class OfficerStreamingChatView(APIView):
+class OfficerStreamingChatView(AIRequestMetricsMixin, APIView):
     authentication_classes = (CustomJWTAuthentication,)
     permission_classes = (IsAuthenticated,)
     throttle_classes = (ChatRateThrottle,)
     # Preflight failures are normal API responses. The actual generator is
     # returned as a StreamingHttpResponse with its own event-stream content type.
     renderer_classes = (JSONRenderer,)
+    metrics_endpoint = "officer_chat_stream"
 
     def perform_content_negotiation(self, request, force=False):
         """Keep SSE negotiation local while rendering preflight errors as JSON."""
@@ -419,6 +495,12 @@ class OfficerStreamingChatView(APIView):
             llm = get_llm_service(use_case="chat")
             provider_available = llm.is_available()
         except Exception:
+            _record_provider_metrics(
+                None,
+                outcome="error",
+                started=time.monotonic(),
+                operation="stream",
+            )
             record_officer_ai_result(
                 scope,
                 request_id,
@@ -436,6 +518,12 @@ class OfficerStreamingChatView(APIView):
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
         if not provider_available:
+            _record_provider_metrics(
+                llm,
+                outcome="unavailable",
+                started=time.monotonic(),
+                operation="stream",
+            )
             record_officer_ai_result(
                 scope,
                 request_id,
@@ -526,6 +614,13 @@ class OfficerStreamingChatView(APIView):
                             record_result(
                                 "AI_EMPTY_RESPONSE", duration_ms=duration_ms
                             )
+                            _record_provider_metrics(
+                                llm,
+                                outcome="empty",
+                                started=started,
+                                operation="stream",
+                                provider=chunk.get("provider"),
+                            )
                             terminal_emitted = True
                             yield terminal_event
                         else:
@@ -543,6 +638,14 @@ class OfficerStreamingChatView(APIView):
                                 },
                             )
                             record_result("success", duration_ms=duration_ms)
+                            _record_provider_metrics(
+                                llm,
+                                outcome="success",
+                                started=started,
+                                operation="stream",
+                                tokens_used=chunk.get("tokens_used"),
+                                provider=chunk.get("provider"),
+                            )
                             terminal_emitted = True
                             yield terminal_event
                         break
@@ -550,6 +653,13 @@ class OfficerStreamingChatView(APIView):
                         outcome = _safe_controlled_error_code(chunk.get("code"))
                         terminal_emitted = True
                         record_result(outcome)
+                        _record_provider_metrics(
+                            llm,
+                            outcome="error",
+                            started=started,
+                            operation="stream",
+                            provider=chunk.get("provider"),
+                        )
                         yield self._event(
                             "error",
                             {
@@ -563,6 +673,12 @@ class OfficerStreamingChatView(APIView):
                 if not terminal_emitted:
                     terminal_emitted = True
                     record_result("AI_STREAM_INCOMPLETE")
+                    _record_provider_metrics(
+                        llm,
+                        outcome="incomplete",
+                        started=started,
+                        operation="stream",
+                    )
                     yield self._event(
                         "error",
                         {
@@ -579,6 +695,12 @@ class OfficerStreamingChatView(APIView):
                 if not terminal_emitted:
                     terminal_emitted = True
                     record_result("AI_STREAM_ERROR")
+                    _record_provider_metrics(
+                        llm,
+                        outcome="error",
+                        started=started,
+                        operation="stream",
+                    )
                     logger.error(
                         "Officer AI stream failed",
                         extra={"request_id": request_id},
@@ -594,7 +716,13 @@ class OfficerStreamingChatView(APIView):
             finally:
                 close_stream = getattr(provider_stream, "close", None)
                 if callable(close_stream):
-                    close_stream()
+                    try:
+                        close_stream()
+                    except Exception:
+                        logger.warning(
+                            "Officer AI provider stream cleanup failed",
+                            extra={"request_id": request_id},
+                        )
 
         return self._streaming_response(event_stream())
 
