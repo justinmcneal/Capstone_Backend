@@ -125,7 +125,40 @@ def test_staff_cookie_connection_uses_live_session(staff_session):
         response = await communicator.receive_json_from()
         assert response == {
             "type": "connection_established",
-            "data": {"unread_count": 0},
+            "data": {
+                "unread_count": 0,
+                "sync_required": True,
+                "contract_version": 2,
+            },
+        }
+        await communicator.disconnect()
+
+    async_to_sync(exercise)()
+
+
+def test_connected_socket_closes_after_session_revocation(staff_session):
+    admin, tokens = staff_session
+    session_id = str(AccessToken(tokens["access"])["session_id"])
+
+    async def exercise():
+        communicator = WebsocketCommunicator(
+            application,
+            "/ws/notifications/",
+            headers=_cookie_headers(tokens["access"]),
+        )
+        connected, _ = await communicator.connect()
+        assert connected
+        await communicator.receive_json_from()
+
+        await sync_to_async(TokenUtils.revoke_session)(
+            admin.id,
+            "admin",
+            session_id,
+        )
+        await communicator.send_json_to({"action": "ping"})
+        assert await communicator.receive_output() == {
+            "type": "websocket.close",
+            "code": 4002,
         }
         await communicator.disconnect()
 

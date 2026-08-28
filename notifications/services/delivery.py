@@ -4,6 +4,12 @@ import logging
 
 from django.conf import settings
 
+from notifications.metrics import (
+    NOTIFICATION_CHANNEL_OUTCOMES,
+    NOTIFICATION_DELIVERY_OUTCOMES,
+    NOTIFICATION_TOKEN_INVALIDATIONS,
+    increment,
+)
 from notifications.models.delivery import NotificationDelivery
 from notifications.models.device_token import DeviceToken
 from notifications.models.notification import Notification
@@ -64,6 +70,11 @@ def _ensure_inbox(delivery):
     notification, created = Notification.create_idempotent(
         notification, f"shared-delivery:{delivery.id}"
     )
+    increment(
+        NOTIFICATION_CHANNEL_OUTCOMES,
+        channel="in_app",
+        outcome="created" if created else "replayed",
+    )
     if created:
         broadcast_notification_to_user(
             delivery.recipient_user_id,
@@ -90,6 +101,7 @@ def _deliver_email(delivery):
     )
     if not decision["allowed"]:
         delivery.checkpoint(email_status="suppressed")
+        increment(NOTIFICATION_CHANNEL_OUTCOMES, channel="email", outcome="suppressed")
         return True
 
     from notifications.services.email_sender import EmailSender
@@ -104,8 +116,10 @@ def _deliver_email(delivery):
         None,
     )
     if not sent:
+        increment(NOTIFICATION_CHANNEL_OUTCOMES, channel="email", outcome="retryable")
         return False
     delivery.checkpoint(email_status="delivered")
+    increment(NOTIFICATION_CHANNEL_OUTCOMES, channel="email", outcome="delivered")
     return True
 
 
@@ -158,6 +172,14 @@ def _deliver_push(delivery, notification):
         push_permanent_hashes=permanent,
         push_status="delivered" if completed else "retry_wait",
     )
+    if outcome["permanent_failure_hashes"]:
+        for _token_hash in outcome["permanent_failure_hashes"]:
+            increment(NOTIFICATION_TOKEN_INVALIDATIONS)
+    increment(
+        NOTIFICATION_CHANNEL_OUTCOMES,
+        channel="push",
+        outcome="delivered" if completed else "retryable",
+    )
     return completed
 
 
@@ -167,6 +189,7 @@ def deliver_notification(delivery_id):
         delivery_id, lease_seconds=options["lease_seconds"]
     )
     if not delivery:
+        increment(NOTIFICATION_DELIVERY_OUTCOMES, outcome="not_due")
         return "not_due"
     try:
         notification = None
@@ -186,15 +209,19 @@ def deliver_notification(delivery_id):
                 max_attempts=options["max_attempts"],
                 backoff_seconds=options["backoff_seconds"],
             )
-            return (
+            outcome = (
                 "failed"
                 if delivery.attempt_count >= options["max_attempts"]
                 else "retry_wait"
             )
+            increment(NOTIFICATION_DELIVERY_OUTCOMES, outcome=outcome)
+            return outcome
         if delivery.channels == ["email"] and delivery.email_status == "suppressed":
             delivery.mark_suppressed()
+            increment(NOTIFICATION_DELIVERY_OUTCOMES, outcome="suppressed")
             return "suppressed"
         delivery.mark_delivered()
+        increment(NOTIFICATION_DELIVERY_OUTCOMES, outcome="delivered")
         return "delivered"
     except Exception:
         logger.exception("Notification delivery failed: delivery=%s", delivery.id)
@@ -203,11 +230,13 @@ def deliver_notification(delivery_id):
             max_attempts=options["max_attempts"],
             backoff_seconds=options["backoff_seconds"],
         )
-        return (
+        outcome = (
             "failed"
             if delivery.attempt_count >= options["max_attempts"]
             else "retry_wait"
         )
+        increment(NOTIFICATION_DELIVERY_OUTCOMES, outcome=outcome)
+        return outcome
 
 
 def reconcile_notification_deliveries(limit=100):

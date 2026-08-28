@@ -55,10 +55,33 @@ class HealthCheckView(APIView):
 
                 analytics_health = analytics_health_summary(settings.MONGODB)
                 health["services"]["analytics"] = analytics_health
-                if not getattr(settings, "DEBUG", False) and not analytics_health["ready"]:
+                if (
+                    not getattr(settings, "DEBUG", False)
+                    and not analytics_health["ready"]
+                ):
                     health["status"] = "degraded"
             except Exception:
                 health["services"]["analytics"] = {
+                    "ready": False,
+                    "status": "unavailable",
+                }
+                if not getattr(settings, "DEBUG", False):
+                    health["status"] = "degraded"
+
+            try:
+                from notifications.services.operations import (
+                    notification_health_summary,
+                )
+
+                notifications_health = notification_health_summary(settings.MONGODB)
+                health["services"]["notifications"] = notifications_health
+                if (
+                    not getattr(settings, "DEBUG", False)
+                    and not notifications_health["ready"]
+                ):
+                    health["status"] = "degraded"
+            except Exception:
+                health["services"]["notifications"] = {
                     "ready": False,
                     "status": "unavailable",
                 }
@@ -84,10 +107,9 @@ class HealthCheckView(APIView):
 
             document_ai = get_document_model_health()
             health["services"]["document_ai"] = document_ai
-            if (
-                getattr(settings, "DOCUMENT_UPLOAD_AI_ANALYSIS", True)
-                and not document_ai.get("ready", False)
-            ):
+            if getattr(
+                settings, "DOCUMENT_UPLOAD_AI_ANALYSIS", True
+            ) and not document_ai.get("ready", False):
                 health["status"] = "degraded"
         except Exception:
             health["services"]["document_ai"] = {"status": "unavailable"}

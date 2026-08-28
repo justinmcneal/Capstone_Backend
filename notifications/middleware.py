@@ -1,4 +1,5 @@
 import logging
+from time import monotonic
 from urllib.parse import parse_qs
 
 from channels.db import database_sync_to_async
@@ -10,6 +11,12 @@ from rest_framework.exceptions import APIException
 from rest_framework_simplejwt.exceptions import TokenError
 
 from accounts.authentication import CustomJWTAuthentication
+from notifications.metrics import (
+    NOTIFICATION_REQUEST_LATENCY,
+    NOTIFICATION_REQUESTS,
+    increment,
+    observe,
+)
 
 logger = logging.getLogger("notifications")
 
@@ -21,9 +28,10 @@ class JWTAuthMiddleware(BaseMiddleware):
 
         # Query/subprotocol tokens are retained only for the customer mobile app.
         # Staff browser sessions must use the HttpOnly access cookie.
-        if transport in {"query", "subprotocol"} and getattr(
-            user, "role", None
-        ) != "customer":
+        if (
+            transport in {"query", "subprotocol"}
+            and getattr(user, "role", None) != "customer"
+        ):
             user = AnonymousUser()
 
         scope["user"] = user
@@ -103,10 +111,49 @@ class JWTAuthMiddleware(BaseMiddleware):
 
         try:
             authentication = CustomJWTAuthentication()
-            user, _ = authentication.authenticate_raw_token(token)
+            user, validated_token = authentication.authenticate_raw_token(token)
             authentication.enforce_password_change(user)
+            user.access_token_expires_at = int(validated_token.get("exp") or 0)
             return user
         except (APIException, TokenError):
             logger.warning("WebSocket authentication failed")
 
         return AnonymousUser()
+
+
+class NotificationRequestMetricsMiddleware:
+    """Record low-cardinality outcomes for Notifications REST requests."""
+
+    def __init__(self, get_response):
+        self.get_response = get_response
+
+    def __call__(self, request):
+        if not str(request.path).startswith("/api/notifications/"):
+            return self.get_response(request)
+        started = monotonic()
+        try:
+            response = self.get_response(request)
+        except Exception:
+            increment(
+                NOTIFICATION_REQUESTS,
+                method=request.method,
+                outcome="exception",
+            )
+            observe(
+                NOTIFICATION_REQUEST_LATENCY,
+                monotonic() - started,
+                method=request.method,
+            )
+            raise
+        outcome = (
+            "success"
+            if response.status_code < 400
+            else "client_error" if response.status_code < 500 else "server_error"
+        )
+        increment(NOTIFICATION_REQUESTS, method=request.method, outcome=outcome)
+        observe(
+            NOTIFICATION_REQUEST_LATENCY,
+            monotonic() - started,
+            method=request.method,
+        )
+        return response

@@ -97,6 +97,7 @@ MIDDLEWARE = [
     'django.middleware.common.CommonMiddleware',
     'config.middleware.NoSQLInjectionGuardMiddleware',
     'loans.middleware.LoanRequestMetricsMiddleware',
+    'notifications.middleware.NotificationRequestMetricsMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
     'config.middleware.CSRFSameSiteTokenMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
@@ -173,6 +174,24 @@ NOTIFICATIONS_ACCOUNT_EXPORT_MAX_ROWS = int(
 NOTIFICATIONS_WS_ACTIONS_PER_MINUTE = int(
     os.getenv("NOTIFICATIONS_WS_ACTIONS_PER_MINUTE", "120")
 )
+NOTIFICATIONS_WS_REVALIDATE_SECONDS = int(
+    os.getenv("NOTIFICATIONS_WS_REVALIDATE_SECONDS", "30")
+)
+NOTIFICATIONS_WS_IDLE_TIMEOUT_SECONDS = int(
+    os.getenv("NOTIFICATIONS_WS_IDLE_TIMEOUT_SECONDS", "300")
+)
+NOTIFICATIONS_WS_MAX_MESSAGE_BYTES = int(
+    os.getenv("NOTIFICATIONS_WS_MAX_MESSAGE_BYTES", "16384")
+)
+NOTIFICATIONS_WS_MAX_CONNECTIONS_PER_USER = int(
+    os.getenv("NOTIFICATIONS_WS_MAX_CONNECTIONS_PER_USER", "5")
+)
+NOTIFICATIONS_HEALTH_FAILED_DELIVERY_LIMIT = int(
+    os.getenv("NOTIFICATIONS_HEALTH_FAILED_DELIVERY_LIMIT", "0")
+)
+NOTIFICATIONS_HEALTH_OLDEST_PENDING_SECONDS = int(
+    os.getenv("NOTIFICATIONS_HEALTH_OLDEST_PENDING_SECONDS", "900")
+)
 if not 0 <= NOTIFICATIONS_MAX_OFFSET <= 1_000_000:
     raise ImproperlyConfigured(
         "NOTIFICATIONS_MAX_OFFSET must be between 0 and 1000000"
@@ -184,6 +203,30 @@ if not 1 <= NOTIFICATIONS_BULK_MUTATION_LIMIT <= 10_000:
 if not 1 <= NOTIFICATIONS_WS_ACTIONS_PER_MINUTE <= 10_000:
     raise ImproperlyConfigured(
         "NOTIFICATIONS_WS_ACTIONS_PER_MINUTE must be between 1 and 10000"
+    )
+if not 5 <= NOTIFICATIONS_WS_REVALIDATE_SECONDS <= 300:
+    raise ImproperlyConfigured(
+        "NOTIFICATIONS_WS_REVALIDATE_SECONDS must be between 5 and 300"
+    )
+if not 30 <= NOTIFICATIONS_WS_IDLE_TIMEOUT_SECONDS <= 86_400:
+    raise ImproperlyConfigured(
+        "NOTIFICATIONS_WS_IDLE_TIMEOUT_SECONDS must be between 30 and 86400"
+    )
+if not 1024 <= NOTIFICATIONS_WS_MAX_MESSAGE_BYTES <= 1_048_576:
+    raise ImproperlyConfigured(
+        "NOTIFICATIONS_WS_MAX_MESSAGE_BYTES must be between 1024 and 1048576"
+    )
+if not 1 <= NOTIFICATIONS_WS_MAX_CONNECTIONS_PER_USER <= 100:
+    raise ImproperlyConfigured(
+        "NOTIFICATIONS_WS_MAX_CONNECTIONS_PER_USER must be between 1 and 100"
+    )
+if not 0 <= NOTIFICATIONS_HEALTH_FAILED_DELIVERY_LIMIT <= 1_000_000:
+    raise ImproperlyConfigured(
+        "NOTIFICATIONS_HEALTH_FAILED_DELIVERY_LIMIT must be between 0 and 1000000"
+    )
+if not 60 <= NOTIFICATIONS_HEALTH_OLDEST_PENDING_SECONDS <= 604_800:
+    raise ImproperlyConfigured(
+        "NOTIFICATIONS_HEALTH_OLDEST_PENDING_SECONDS must be between 60 and 604800"
     )
 if not 1 <= NOTIFICATIONS_DEVICE_TOKEN_TTL_DAYS <= 3650:
     raise ImproperlyConfigured(
@@ -935,6 +978,7 @@ CELERY_TASK_ROUTES = {
     'notifications.deliver': {'queue': 'notifications'},
     'notifications.reconcile_deliveries': {'queue': 'notifications'},
     'notifications.enforce_retention': {'queue': 'notifications'},
+    'notifications.collect_operational_metrics': {'queue': 'notifications'},
 }
 
 # MongoDB-backed leases coordinate the single configured blockchain sender.
@@ -1030,6 +1074,7 @@ CELERY_TASK_ANNOTATIONS.update(
             "notifications.deliver",
             "notifications.reconcile_deliveries",
             "notifications.enforce_retention",
+            "notifications.collect_operational_metrics",
         )
     }
 )

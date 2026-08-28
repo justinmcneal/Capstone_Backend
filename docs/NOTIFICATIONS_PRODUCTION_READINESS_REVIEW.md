@@ -90,32 +90,33 @@ The current code does not yet provide a coherent production delivery system:
    encrypted-field rotation coverage, bounded retention, and an opt-in isolated
    real-Mongo suite now exist. The inventory/backfill and real-Mongo suite have
    not been run against an approved external target in this stage.
-9. **WebSocket production controls are partial.** Handshake authentication,
-   origin checking, and per-connection action throttling are present, but an
-   already-connected socket is not
-   revalidated after logout, session revocation, account suspension, security-
-   version change, or access-token expiry. Message-size and connection limits
-   are not defined, and REST mutations are not synchronized
-   to a user's other connected devices.
-10. **Operations evidence is insufficient.** The obsolete standalone task and
-    its isolated counters were removed, but there are no notification
-    request/delivery/backlog/push/WebSocket
-    metrics, Prometheus rules, Grafana dashboard, health readiness, release
-    checker, real-Mongo suite, or deployed SMTP/FCM/Redis/WSS recovery probes.
-    The root README also lists two nonexistent synchronous-email counters and
-    an `EMAIL_SENDER_THREADPOOL_MAX_WORKERS` setting/thread pool that the code
-    does not implement.
+9. **Stage 5 implements WebSocket resilience locally.** Active sockets recheck
+   token expiry, live account state, forced-password state, security version,
+   and session membership on every action and on a bounded timer. Idle,
+   oversized/binary, over-rate, and per-process over-connection cases are
+   bounded. REST and socket mutations publish owner-group `inbox_state` events;
+   reconnect explicitly requires an authoritative REST refresh.
+10. **Stage 5 implements Notifications observability locally.**
+    Low-cardinality REST, delivery/channel, retry/failure/backlog, token,
+    WebSocket, broadcast, and collector-freshness metrics feed an
+    identifier-free health component, scheduled collector, Prometheus rules,
+    rule test, smoke configuration, and Grafana dashboard. Real Redis
+    multi-process behavior, proxy limits, provider outcomes, scrape traffic,
+    and delivered alerts remain deployment evidence. The release checker is
+    intentionally Stage 6.
 
 Current local automated evidence:
 
 - Stage 3 focused delivery selection: **12 passed** on 2026-08-28.
 - Stage 4 privacy/persistence selection: **8 passed and 1 opt-in real-Mongo test
   skipped** on 2026-08-28.
+- Stage 5 resilience/observability selection: **7 passed** on 2026-08-28.
 - Notifications plus account-lifecycle regression selection: **121 passed and
   1 opt-in test skipped** on 2026-08-28.
 - Notifications and affected cross-domain regression selection: **129 passed**
   on 2026-08-28.
-- Core Notifications-focused selection: **82 passed** on 2026-08-28.
+- Core Notifications-focused selection after Stage 5: **88 passed** on
+  2026-08-28.
 - Stage 1 focused contract/security selection: **78 passed**.
 - Stage 2 provider/token lifecycle selection: **14 passed**.
 - Routed tests cover missing/revoked JWTs, customer/officer/admin role-qualified
@@ -124,7 +125,7 @@ Current local automated evidence:
   action throttling.
 - Broader notification/WebSocket/email-template selection: **131 passed and
   1,245 deselected**.
-- Full repository: **1,350 passed and 47 opt-in integration tests skipped** on
+- Full repository: **1,357 passed and 47 opt-in integration tests skipped** on
   2026-08-28.
 - Mocked FCM success, batching, partial/permanent/transient failure behavior,
   encryption, ownership, deduplication, expiry, unregister, logout/session,
@@ -137,7 +138,7 @@ Current local automated evidence:
 | Area | Status | Summary |
 | --- | --- | --- |
 | REST inbox | Complete locally | Eight routed authenticated method operations have strict role-qualified ownership, independent read/delivery state, atomic replay-safe read mutation, strict query validation, bounded offset/bulk work, and dedicated throttles. |
-| WebSocket inbox | Partial | Secure handshake, owner groups, ping, replay-safe mark-read, broadcasts, and per-connection action throttling exist; live-session revalidation, frame/connection limits, and cross-device state events remain. |
+| WebSocket inbox | Complete locally; deployment-gated | Secure handshake plus timed/per-action live authorization, token-expiry closure, action/frame/idle/per-process connection limits, state broadcasts, and explicit reconnect reconciliation are implemented. Cross-process limit/proxy/Redis behavior remains deployment evidence. |
 | Template email | Implemented locally; deployment-gated | Templates and sender helpers work inside durable domain/shared workers and enforce the recorded email policy; uncertain SMTP acceptance can still result in an at-least-once retry. |
 | Shared Celery delivery | Implemented locally | Canonical registered/routed tasks, encrypted durable intent, idempotency, leases, checkpoints, bounded retry/backoff, and reconciliation cover producers without a domain outbox. |
 | Loan/document delivery | Implemented in owning modules | Their domain outboxes provide leases, retries, and reconciliation; those guarantees do not cover all Notifications producers. |
@@ -146,7 +147,7 @@ Current local automated evidence:
 | Preferences | Implemented locally | Optional customer email categories are evaluated against Profiles settings and record a versioned decision; mandatory security, staff, and receipt messages are not suppressible. |
 | Privacy lifecycle | Implemented locally; policy/deployment-gated | Core sensitive fields and idempotency material are protected, logs are sanitized, export is bounded/explicit, retention is scheduled, account deletion erases credentials/data, and legal holds are retained through pseudonymization. Final retention/policy approval remains. |
 | MongoDB schema/indexes | Implemented locally; real-Mongo proof pending | Strict validators, compounds, inventory/backfill/encryption commands, fail-closed installation, and an isolated opt-in query-plan suite exist. They have not been executed against an approved real target. |
-| Observability | Incomplete | No end-to-end channel outcomes, backlog/age gauges, rules, dashboard, readiness, or alert evidence exists. |
+| Observability | Implemented locally; deployment-gated | Low-cardinality REST, delivery/channel, backlog/age, token, WebSocket, broadcast, and freshness metrics plus health, tested rules, smoke config, dashboard, and runbook exist. Live scrape/dashboard/alert delivery remains. |
 | Production deployment | Not ready | SMTP, Firebase, Redis/Channels, workers, HTTPS/WSS, backup/restore, monitoring, and release gates remain unproven. |
 
 ## Module Responsibilities and Boundaries
@@ -194,11 +195,12 @@ WebSocket route: `GET /ws/notifications/` upgrades through
 
 | Frame/action | Current behavior | Status |
 | --- | --- | --- |
-| `connection_established` | Returns unread count after joining owner group | Implemented |
+| `connection_established` | Returns unread count, `sync_required: true`, and contract version after joining owner group | Implemented |
 | client `ping` / server `pong` | Liveness timestamp | Implemented with per-connection action rate limit |
 | client `mark_read` | Atomic owner-qualified update and response | Implemented; idempotent replay reports success plus `replayed: true` |
 | server `notification` | Best-effort owner-group broadcast | Implemented; inbox REST is recovery source |
-| mark-all/delete/unread refresh | REST only | Acceptable baseline if clients use REST; cross-device synchronization remains a gap |
+| server `inbox_state` | Owner-group mark-one/mark-all/delete/clear mutation signal | Implemented; clients reconcile through REST |
+| mark-all/delete/unread refresh | Mutation remains REST; state changes are broadcast | Implemented with authoritative REST refresh on reconnect/focus |
 
 ## Verified Implemented Foundations
 
@@ -214,6 +216,9 @@ WebSocket route: `GET /ws/notifications/` upgrades through
   blacklist, live account, session, security version, and forced-password
   enforcement.
 - Missing or rejected credentials close with code `4001`.
+- Post-connect security invalidation closes with `4002`, idle timeout with
+  `4003`, per-process owner connection limit with `4004`, and unsupported
+  binary/oversized frames with `4005`.
 - `AllowedHostsOriginValidator` protects browser cookie handshakes.
 
 ### Inbox contract
@@ -345,32 +350,40 @@ cardinality.
 
 ### 6. WebSocket lifecycle and client consistency
 
-**Status: Partial**
+**Status: Complete locally; deployment validation pending**
 
-The connection handshake is well protected, but security must remain current
-after connection. Close or revalidate sockets on token expiry, logout/session
-revocation, password/security-version changes, forced-password state, account
-suspension/deactivation, and account deletion. Define message-size, action-rate,
-connection-count, idle/heartbeat, backpressure, and Redis outage behavior.
-Broadcast read/delete/count changes to the owner's other devices or document a
-client reconciliation contract using REST on reconnect/focus.
+The handshake and active connection both enforce the security lifecycle.
+Per-action and timed checks close expired, revoked, suspended, deleted,
+unverified, forced-password, or security-version-stale sessions. Application
+limits cover action rate, frame size/type, idle time, and connections per owner
+inside each ASGI process. Owner-group `inbox_state` events synchronize
+mark-one, mark-all, delete, and clear operations, while
+`connection_established.sync_required: true` makes REST refresh authoritative
+after reconnect or missed best-effort delivery.
+
+The selected proxy must impose an aggregate connection/frame ceiling across
+ASGI workers; the application connection counter is intentionally process-local.
+Stage 6 must prove Redis fan-out, backpressure, proxy timeout/size alignment,
+and reconnect behavior with multiple deployed processes.
 
 Migrate customer mobile away from query-string JWTs when the client can use a
 safer transport; never broaden query/subprotocol support to staff browsers.
 
 ### 7. Observability and release operations
 
-**Status: Incomplete**
+**Status: Implemented locally; deployment validation pending**
 
-Replace the two isolated task counters with low-cardinality metrics for event
-creation, per-channel outcomes/latency, retries, terminal failures, pending and
-oldest-age backlogs, active sockets, rejected handshakes/actions, Redis/SMTP/FCM
-availability, token invalidation, and reconciliation freshness. Add tested
-Prometheus rules, Grafana dashboard/provisioning, health readiness, sanitized
-structured logs, and a read-only `notifications_release_check`.
+Stage 5 adds low-cardinality REST outcomes/latency, durable and per-channel
+outcomes, retries/terminal failures, backlog/oldest age, token invalidation,
+active/attempted sockets, rejected actions, broadcasts, and collector freshness.
+The minute collector updates identifier-free health and Prometheus gauges.
+Rules, a rule test, smoke scrape configuration, Grafana dashboard, and the
+Notifications runbook are repository assets. The root README no longer claims
+nonexistent synchronous-email counters or a thread pool.
 
-Remove or correct the root README's nonexistent synchronous counters and email
-thread-pool setting as part of this stage.
+Provider availability and acceptance are represented by durable/channel
+outcomes without recipient/provider-body labels. A fail-closed read-only
+`notifications_release_check` and deployment probes remain Stage 6 work.
 
 Deployment evidence must prove real Redis fan-out across ASGI workers, at least
 two notification workers, SMTP and Firebase sandbox behavior, HTTPS/WSS proxy
@@ -447,12 +460,17 @@ active delivery credential.
 
 ### Stage 5 — WebSocket resilience and observability
 
-**Status: Not started**
+**Status: Complete locally (2026-08-28)**
 
-- Enforce post-connect security lifecycle and connection/action limits.
-- Add cross-device state synchronization and reconnect reconciliation.
-- Add end-to-end channel/backlog/security metrics, health, alerts, dashboard,
-  and operator runbooks.
+- [x] Enforce post-connect expiry/account/session/security lifecycle.
+- [x] Bound action rate, frame size/type, idle lifetime, and per-process owner
+  connections.
+- [x] Add owner-group state synchronization and explicit REST reconciliation on
+  connect/reconnect.
+- [x] Add delivery/channel/backlog/security metrics, identifier-free health,
+  scheduled collection, rules/rule tests, dashboard, and operator guidance.
+- [ ] Prove aggregate proxy limits, Redis multi-process fan-out, scrape series,
+  dashboard panels, and alert delivery in the selected topology.
 
 **Exit condition:** operators and clients can detect/recover missed real-time
 events without privacy leakage, and revoked users cannot retain live sockets.
@@ -570,8 +588,10 @@ Do not classify Notifications as production-ready until:
    deployed encryption/export/deletion behavior is proven;
 5. the reviewed inventory/backfill/schema install and opt-in real-Mongo plans
    pass against approved targets;
-6. WebSocket post-connect authorization and abuse limits are implemented;
-7. monitoring assets, health, alerts, and a release checker are implemented;
+6. implemented WebSocket post-connect authorization and abuse limits pass in
+   the selected proxy/Redis topology;
+7. monitoring assets and health pass locally, and the Stage 6 release checker,
+   deployed scrape, dashboard, and alert route all pass;
 8. Redis/Celery, SMTP, FCM, HTTPS/WSS, load, backup/restore, key rotation,
    incident response, and rollback are proven in the selected topology; and
 9. the final focused/full suites and customer/staff smoke flows pass.

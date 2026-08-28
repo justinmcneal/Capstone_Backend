@@ -87,11 +87,12 @@ Focused module command:
   tests/test_notifications_email_sender.py \
   tests/test_notifications_stage3_delivery.py \
   tests/test_notifications_stage4_privacy_persistence.py \
+  tests/test_notifications_stage5_resilience_observability.py \
   tests/test_assignment_notifications.py \
   tests/test_notification_timestamps.py
 ```
 
-Result after Stage 4 on 2026-08-28: **82 passed**.
+Result after Stage 5 on 2026-08-28: **89 passed**.
 
 Stage 1 routed contract command:
 
@@ -151,6 +152,18 @@ This covers encrypted core fields, digest-only lookup material, bounded export,
 account cleanup and legal-hold pseudonymization, retention, sanitized email
 logging, dry-run backfill, indexes/validators declarations, and task routing.
 
+Stage 5 resilience/observability command:
+
+```bash
+.venv/bin/pytest -q \
+  tests/test_notifications_stage5_resilience_observability.py
+```
+
+Local Stage 5 result on 2026-08-28: **7 passed** across the dedicated suite and
+live routed session-revocation case. It covers live-session closure,
+frame and connection bounds, reconnect metadata, cross-device state events,
+identifier-free backlog health, task scheduling, and monitoring assets.
+
 Broader cross-domain selection:
 
 ```bash
@@ -159,7 +172,7 @@ Broader cross-domain selection:
 ```
 
 Result after Stage 2 on 2026-08-27: **131 passed, 1,245 deselected**. The latest
-full repository result after Stage 4 on 2026-08-28 is **1,350 passed, 47
+full repository result after Stage 5 on 2026-08-28 is **1,357 passed, 47
 skipped**.
 
 Evidence limits:
@@ -171,10 +184,10 @@ Evidence limits:
 - Email tests mock rendering/transport. No SMTP message is sent.
 - Stage 2 has mocked installed-API FCM and routed device-lifecycle evidence;
   live Firebase receipt remains deployment-only evidence.
-- Stage 3 worker/broker and Stage 4 privacy/schema cases are deterministic local
-  tests. The isolated real-Mongo suite now exists but was not opted in; no
-  multi-worker Redis/Celery, HTTPS/WSS, load,
-  backup/restore, monitoring, or deployment probe exists yet.
+- Stage 3 worker/broker, Stage 4 privacy/schema, and Stage 5 socket/monitoring
+  cases are deterministic local tests. The isolated real-Mongo suite now exists
+  but was not opted in; no multi-worker Redis/Celery, HTTPS/WSS, load,
+  backup/restore, live monitoring/alert-delivery, or deployment probe has run.
 
 ### Stage validation map
 
@@ -184,7 +197,7 @@ Evidence limits:
 | Stage 2 — Secure working push | Installed Firebase API, role-qualified token ownership, validation, revoke/cleanup, provider batching | Complete locally; 14 focused tests pass |
 | Stage 3 — Durable preference-aware delivery | Registered/routed tasks, leases/retries, broker/worker/provider recovery, preference policy | Complete locally; 12 focused tests pass |
 | Stage 4 — Privacy and MongoDB correctness | Encryption/log safety, lifecycle/export, validators/indexes, inventory/backfill, real-Mongo plans | Complete locally; 8 tests pass, isolated real-Mongo execution pending |
-| Stage 5 — WebSocket resilience/observability | Post-connect revocation/expiry, limits, cross-device sync, metrics/rules/dashboard/health | Not started |
+| Stage 5 — WebSocket resilience/observability | Post-connect revocation/expiry, limits, cross-device sync, metrics/rules/dashboard/health | Complete locally; 7 focused tests pass, deployment proof pending |
 | Stage 6 — Deployment validation | Real MongoDB/Redis/Celery/SMTP/FCM/HTTPS/WSS/load/recovery and release checker | Not started |
 
 Do not turn a missing external-service test into a passing mock. Add each stage's
@@ -742,11 +755,12 @@ Assignment notifications:
 
 ## Prometheus Metrics
 
-The obsolete standalone email-task counters were removed with the unregistered
-task. Stage 3 establishes the durable state that Stage 5 metrics will observe,
-but does not yet advertise Notifications-specific delivery counters or backlog
-gauges. Do not configure alerts against nonexistent
-`notifications_email_*` series.
+Stage 5 exports Notifications REST outcome/latency, durable and per-channel
+delivery outcomes, terminal/retry state, backlog/oldest age, provider token
+invalidations, WebSocket connections/actions/broadcasts, active-process sockets,
+and collector freshness. Labels contain only bounded method, action, channel,
+kind, state, and outcome values—never owner IDs, addresses, tokens, messages, or
+provider bodies.
 
 **Toggle command:**
 ```bash
@@ -759,9 +773,31 @@ The resolved private metrics URL is printed by `--url`; follow the root
 `README.md` sidecar instructions rather than assuming `/metrics/` is served by
 the public application port.
 
-Stage 5 must add request, per-channel outcome/latency, retry, terminal failure,
-backlog/oldest-age, token invalidation, WebSocket connection/rejection, and job-
-freshness metrics plus tested Prometheus rules and a Grafana dashboard.
+Validate the repository assets locally:
+
+```bash
+promtool check rules monitoring/notifications/prometheus-rules.yml
+promtool test rules monitoring/notifications/prometheus-rules.test.yml
+promtool check config monitoring/notifications/prometheus-smoke.yml
+```
+
+Run Prometheus with `monitoring/notifications/prometheus-smoke.yml` after
+enabling the private metrics sidecar. Import
+`monitoring/notifications/grafana-dashboard.json` into the same protected
+Grafana used for the other domain dashboards.
+
+### Notifications operations runbook
+
+1. For an old/retryable backlog, confirm the Notifications worker consumes the
+   `notifications` queue and Beat is scheduling reconciliation and collection.
+2. For terminal failures, inspect sanitized stable error codes, provider
+   availability, preference policy, and retry exhaustion without exposing PII.
+3. For missing metrics, check the private metrics sidecar, minute collector,
+   Prometheus target, and Celery Beat/worker health.
+4. For authorization-closure spikes, check logout/security events and possible
+   stale or hostile clients; do not weaken live-session validation.
+5. REST is authoritative after Redis/WebSocket disruption. Clients refresh the
+   list and unread count on every connection with `sync_required: true`.
 
 ---
 
@@ -1019,8 +1055,8 @@ Redis fan-out, metrics scrape, dashboard series, and alert firing/resolution.
       retention tests pass locally.
 - [ ] Stage 4 isolated real-Mongo test passes against an explicitly approved
       target and reviewed inventory/backfill/schema work is complete.
-- [ ] Stage 5 post-connect WebSocket security, limits, synchronization,
-      monitoring assets, and alert tests pass.
+- [x] Stage 5 post-connect WebSocket security, limits, synchronization,
+      monitoring assets, and alert tests pass locally.
 - [ ] Stage 6 deployment probes and `notifications_release_check` pass.
 - [ ] Final full suite and customer/officer/admin end-to-end smoke flows pass on
       the release revision.

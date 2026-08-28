@@ -47,6 +47,7 @@ from notifications.services.inbox import (
     mark_notification_read,
     with_unread_state,
 )
+from notifications.services.websocket_service import broadcast_inbox_state_to_user
 from notifications.throttles import (
     NotificationDeviceTokenRateThrottle,
     NotificationReadRateThrottle,
@@ -257,6 +258,14 @@ class NotificationMarkReadView(AccessControlMixin, APIView):
             )
 
         logger.info(f"Notification {notification_id} marked as read")
+        user_id, user_type = notification_owner_identity(request.user)
+        broadcast_inbox_state_to_user(
+            user_id,
+            user_type,
+            "mark_read",
+            notification_id=notification_id,
+            replayed=outcome["replayed"],
+        )
 
         return success_response(
             data={
@@ -315,6 +324,13 @@ class NotificationMarkAllReadView(AccessControlMixin, APIView):
         )
 
         logger.info(f"Marked {result.modified_count} notifications as read")
+        user_id, user_type = notification_owner_identity(request.user)
+        broadcast_inbox_state_to_user(
+            user_id,
+            user_type,
+            "mark_all_read",
+            changed_count=result.modified_count,
+        )
 
         return success_response(
             data={"marked_count": result.modified_count},
@@ -406,6 +422,13 @@ class NotificationDeleteView(AccessControlMixin, APIView):
             )
 
         logger.info(f"Notification {notification_id} deleted")
+        user_id, user_type = notification_owner_identity(request.user)
+        broadcast_inbox_state_to_user(
+            user_id,
+            user_type,
+            "delete",
+            notification_id=notification_id,
+        )
 
         return success_response(
             data={"notification_id": notification_id, "status": "deleted"},
@@ -460,6 +483,14 @@ class NotificationClearAllView(AccessControlMixin, APIView):
         retained_count = collection.count_documents({**owner_query, "legal_hold": True})
 
         logger.info(f"Deleted {result.deleted_count} notifications")
+        user_id, user_type = notification_owner_identity(request.user)
+        broadcast_inbox_state_to_user(
+            user_id,
+            user_type,
+            "clear_all",
+            changed_count=result.deleted_count,
+            retained_count=retained_count,
+        )
 
         return success_response(
             data={

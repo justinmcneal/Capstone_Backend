@@ -494,12 +494,11 @@ rm -rf /tmp/capstone-grafana-data /tmp/capstone-grafana-logs
 
 Analytics metrics include request outcomes, duration, response size, audit-write
 failures, replay outcomes, recovery backlog/age, and integrity findings.
-Notification counters include:
-
-- `notifications_email_send_success_total`
-- `notifications_email_send_failure_total`
-- `notifications_email_task_success_total`
-- `notifications_email_task_failure_total`
+Notifications metrics cover REST outcomes/latency, durable and per-channel
+delivery outcomes, retry/terminal backlog and oldest age, token invalidation,
+WebSocket connections/actions/broadcasts, and metrics-collector freshness. Use
+the assets under `monitoring/notifications/` and the operator commands in
+[`docs/NOTIFICATIONS_TESTING_GUIDE.md`](docs/NOTIFICATIONS_TESTING_GUIDE.md).
 
 Profiles metrics cover scoring outcomes/backlogs, duplicate records, encryption
 coverage, audit recovery, review queues, and denied access. See
@@ -511,8 +510,8 @@ and a tested Alertmanager or Grafana contact point. See
 [`docs/ANALYTICS_TESTING_GUIDE.md`](docs/ANALYTICS_TESTING_GUIDE.md) for release
 checks and production-topology boundaries.
 
-`EMAIL_SENDER_THREADPOOL_MAX_WORKERS` controls the internal notification email
-thread pool and defaults to `4`. Tune it only after observing workload and CPU.
+Notification email and push work runs through the dedicated Celery queue; there
+is no in-process notification email thread pool.
 
 ## Documentation
 

@@ -111,6 +111,10 @@ app.conf.beat_schedule = {
         "task": "notifications.enforce_retention",
         "schedule": crontab(hour=3, minute=30),
     },
+    "collect-notification-operational-metrics": {
+        "task": "notifications.collect_operational_metrics",
+        "schedule": crontab(minute="*"),
+    },
     "enforce-loan-retention-daily": {
         "task": "loans.enforce_retention",
         "schedule": crontab(hour=4, minute=0),

@@ -16,6 +16,7 @@ import pytest
 # Lightweight stubs
 # ---------------------------------------------------------------------------
 
+
 class _FakeUser:
     is_authenticated = True
 
@@ -43,9 +44,11 @@ try:
 
     def _make_app():
         """Build ASGI app with InMemoryChannelLayer substituted for Redis."""
-        app = URLRouter([
-            re_path(r"ws/notifications/$", NotificationConsumer.as_asgi()),
-        ])
+        app = URLRouter(
+            [
+                re_path(r"ws/notifications/$", NotificationConsumer.as_asgi()),
+            ]
+        )
         return app
 
 except ImportError:
@@ -213,10 +216,12 @@ class TestNotificationConsumerWebSocket:
             assert connected
             await communicator.receive_json_from()  # consume connection_established
 
-            await communicator.send_json_to({
-                "action": "mark_read",
-                "notification_id": "64a1b2c3d4e5f6789abcdef0",
-            })
+            await communicator.send_json_to(
+                {
+                    "action": "mark_read",
+                    "notification_id": "64a1b2c3d4e5f6789abcdef0",
+                }
+            )
             response = await communicator.receive_json_from()
             assert response["type"] == "mark_read_response"
             assert response["data"] == {
