@@ -179,6 +179,45 @@ def test_indexes_include_history_and_exchange_idempotency(settings):
     assert indexes['ai_exchange_idempotency']['unique'] is True
 
 
+def test_legacy_conversation_index_reconciliation_is_dry_run_first(settings):
+    collection = settings.MONGODB['ai_interactions']
+    collection.create_index(list(AIInteraction.conversation_index_keys))
+
+    result = AIInteraction.reconcile_legacy_conversation_index()
+
+    assert result == {'status': 'legacy', 'changed': False}
+    assert AIInteraction.legacy_conversation_index_name in collection.index_information()
+    assert AIInteraction.conversation_index_name not in collection.index_information()
+
+
+def test_legacy_conversation_index_reconciliation_replaces_exact_index(settings):
+    collection = settings.MONGODB['ai_interactions']
+    collection.create_index(list(AIInteraction.conversation_index_keys))
+
+    result = AIInteraction.reconcile_legacy_conversation_index(apply=True)
+
+    assert result == {'status': 'reconciled', 'changed': True}
+    indexes = collection.index_information()
+    assert AIInteraction.legacy_conversation_index_name not in indexes
+    assert indexes[AIInteraction.conversation_index_name]['key'] == list(
+        AIInteraction.conversation_index_keys
+    )
+
+
+def test_legacy_conversation_index_reconciliation_refuses_options(settings):
+    collection = settings.MONGODB['ai_interactions']
+    collection.create_index(
+        list(AIInteraction.conversation_index_keys),
+        name=AIInteraction.legacy_conversation_index_name,
+        sparse=True,
+    )
+
+    with pytest.raises(RuntimeError, match='unexpected options: sparse'):
+        AIInteraction.reconcile_legacy_conversation_index(apply=True)
+
+    assert AIInteraction.legacy_conversation_index_name in collection.index_information()
+
+
 def test_legacy_backfill_canonicalizes_object_id_owner(settings):
     settings.FIELD_ENCRYPTION_KEY = ''
     owner = ObjectId()

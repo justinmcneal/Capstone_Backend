@@ -228,6 +228,11 @@ def create_indexes():
         raise
     except OperationFailure as e:
         print(f"✗ AIInteraction validator/index error: {e}")
+        if getattr(e, "code", None) == 85:
+            print(
+                "  → Run `python manage.py reconcile_ai_indexes` first, "
+                "then review and apply its guarded reconciliation."
+            )
         raise
     except Exception as e:
         print(f"✗ AIInteraction error: {e}")

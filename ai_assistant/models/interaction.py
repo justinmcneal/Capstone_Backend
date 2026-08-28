@@ -27,6 +27,13 @@ class AIInteraction:
     """
     collection_name = 'ai_interactions'
     encrypted_fields = ('message', 'response', 'legal_hold_reason')
+    legacy_conversation_index_name = 'customer_id_1_conversation_id_1_timestamp_1'
+    conversation_index_name = 'ai_conversation_by_customer'
+    conversation_index_keys = (
+        ('customer_id', ASCENDING),
+        ('conversation_id', ASCENDING),
+        ('timestamp', ASCENDING),
+    )
     
     def __init__(self, **kwargs):
         self._id = kwargs.get('_id')
@@ -484,6 +491,60 @@ class AIInteraction:
         return int(deleted.deleted_count) + int(hidden.modified_count)
     
     @classmethod
+    def reconcile_legacy_conversation_index(cls, *, apply=False):
+        """Safely replace the legacy auto-named conversation index."""
+        collection = get_db()[cls.collection_name]
+        indexes = collection.index_information()
+        legacy = indexes.get(cls.legacy_conversation_index_name)
+        canonical = indexes.get(cls.conversation_index_name)
+        expected_keys = list(cls.conversation_index_keys)
+
+        if canonical is not None:
+            if list(canonical.get('key', ())) != expected_keys:
+                raise RuntimeError(
+                    f'{cls.conversation_index_name} exists with unexpected keys'
+                )
+            return {'status': 'canonical', 'changed': False}
+
+        if legacy is None:
+            return {'status': 'missing', 'changed': False}
+
+        if list(legacy.get('key', ())) != expected_keys:
+            raise RuntimeError(
+                f'{cls.legacy_conversation_index_name} exists with unexpected keys'
+            )
+
+        semantic_options = {
+            'unique', 'sparse', 'partialFilterExpression', 'expireAfterSeconds',
+            'collation', 'hidden', 'wildcardProjection',
+        }
+        unexpected_options = sorted(semantic_options.intersection(legacy))
+        if unexpected_options:
+            raise RuntimeError(
+                f'{cls.legacy_conversation_index_name} has unexpected options: '
+                + ', '.join(unexpected_options)
+            )
+
+        if not apply:
+            return {'status': 'legacy', 'changed': False}
+
+        collection.drop_index(cls.legacy_conversation_index_name)
+        try:
+            collection.create_index(
+                expected_keys,
+                name=cls.conversation_index_name,
+            )
+        except Exception:
+            # Best-effort restoration preserves the query path if rebuilding the
+            # canonical index fails after the legacy index has been removed.
+            collection.create_index(
+                expected_keys,
+                name=cls.legacy_conversation_index_name,
+            )
+            raise
+        return {'status': 'reconciled', 'changed': True}
+
+    @classmethod
     def create_indexes(cls):
         db = get_db()
         collection = db[cls.collection_name]
@@ -495,8 +556,8 @@ class AIInteraction:
             name='ai_history_by_customer',
         )
         collection.create_index(
-            [('customer_id', ASCENDING), ('conversation_id', ASCENDING), ('timestamp', ASCENDING)],
-            name='ai_conversation_by_customer',
+            list(cls.conversation_index_keys),
+            name=cls.conversation_index_name,
         )
         collection.create_index(
             [('legal_hold', ASCENDING), ('retention_expires_at', ASCENDING)],

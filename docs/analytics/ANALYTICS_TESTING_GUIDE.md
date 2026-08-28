@@ -1,14 +1,11 @@
 # Analytics API Testing Guide
 
-> **Readiness notice (2026-08-13):** This guide documents the current API for
-> development and release testing. Analytics application code is complete and
-> ready for production-environment validation. Stages 1-6 (query correctness,
-> privacy, protected audit persistence,
-> integrity/lifecycle, officer scope, and metric consistency) are complete at
-> code/test level, including bounded queries and operational signals. Isolated
-> query-plan/load evidence is complete; production-topology execution remains. See
-> `docs/ANALYTICS_PRODUCTION_READINESS_REVIEW.md` for the evidence and staged
-> remediation plan.
+> **Status notice (2026-08-28):** This guide documents the current API and its
+> development, integration, and release-validation procedures. Analytics
+> application code is complete for the reviewed scope and is awaiting final
+> production-topology validation. See
+> `docs/ANALYTICS_PRODUCTION_READINESS_REVIEW.md` for the module contract,
+> current status, operational evidence, and remaining release conditions.
 
 ## Scope
 
@@ -568,10 +565,9 @@ pytest -q tests/test_analytics_api.py \
   tests/test_analytics_deployment_integrations.py
 ```
 
-Latest local Stage 6 result on 2026-08-13: Analytics Stage 1-6 suites passed
-**88 tests** and skipped **7 opt-in deployment tests**. The complete-project
-suite passed **1,122 tests**, skipped **28 opt-in integration tests**, and
-reported one third-party WebSocket deprecation warning.
+Latest local result on 2026-08-28: the focused Analytics suites passed
+**87 tests** and skipped **7 opt-in deployment tests**. The complete-project
+suite passed **1,367 tests** and skipped **55 opt-in integration tests**.
 
 Most API characterization cases use `mongomock` and direct view calls. Stage 6
 also exercises URL routing, issued JWT validation, persisted active sessions,

@@ -77,6 +77,16 @@ class Command(BaseCommand):
             action="store_true",
             help="Fail unless every populated supported field decrypts with the primary key.",
         )
+        parser.add_argument(
+            "--collection",
+            action="append",
+            dest="collection_names",
+            choices=tuple(FIELD_MAP),
+            help=(
+                "Limit work to a supported collection. Repeat this option to "
+                "select multiple collections."
+            ),
+        )
 
     def handle(self, *args, **options):
         if not getattr(settings, "FIELD_ENCRYPTION_KEY", ""):
@@ -104,7 +114,13 @@ class Command(BaseCommand):
             "failures": 0,
         }
 
-        for collection_name, fields in FIELD_MAP.items():
+        selected_names = options.get("collection_names") or tuple(FIELD_MAP)
+        selected_fields = {
+            collection_name: FIELD_MAP[collection_name]
+            for collection_name in selected_names
+        }
+
+        for collection_name, fields in selected_fields.items():
             counts = {key: 0 for key in totals}
             projection = {field: 1 for field in fields}
             for document in settings.MONGODB[collection_name].find({}, projection):

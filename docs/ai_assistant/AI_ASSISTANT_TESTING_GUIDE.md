@@ -1,6 +1,6 @@
 # AI Assistant Testing Guide
 
-Last reviewed: 2026-08-15
+Last reviewed: 2026-08-28
 
 API prefix: `/api/ai/`
 
@@ -10,22 +10,21 @@ This guide covers the AI Assistant's API, consent and customer isolation,
 context/tool safety, chat persistence, SSE behavior, provider integration,
 privacy lifecycle, observability, and deployment validation.
 
-The focused Stage 1–6 AI test files passed during the review:
+The current focused AI test command passed during the review:
 
 ```text
-143 passed, 7 skipped
+226 passed
 ```
 
-The seven default skips are two isolated-real-Mongo cases and five Stage 6
-deployment probes. The ordinary suite verifies offline behavior; separately
-recorded opt-in results cover the owner-designated deployment MongoDB, local
-Redis/Ollama, and local monitoring. They do not replace future deployed proxy,
-worker, load, recovery, and alert-route gates.
+The focused command is an offline regression set. Real MongoDB and the
+deployment probes are separately opt-in; recorded exercises cover the owner-
+designated database, local Redis/Ollama, and local monitoring. They do not
+replace future deployed proxy, worker, load, recovery, and alert-route gates.
 
 The complete local repository suite also passed after Stage 6:
 
 ```text
-1205 passed, 35 skipped
+1363 passed, 55 skipped
 ```
 
 ## Safety Rules
@@ -758,9 +757,10 @@ encryption, concurrency, or provider privacy.
 
 ## Release Evidence Checklist
 
-- [x] Focused AI files pass locally after Stage 6 (143 passed, 7 opt-in skips
-  on 2026-08-14).
-- [x] Full local repository suite passes after Stage 6 (1205 passed, 35 skipped).
+- [x] Current focused AI regression command passes locally (226 passed on
+  2026-08-28).
+- [x] Latest full local repository suite passes (1363 passed, 55 opt-in skips
+  on 2026-08-28).
 - [x] AI conversation encryption and shared key-rotation tests pass locally.
 - [x] Retention, legal hold, export, account-deletion, and retry tests pass locally.
 - [x] Stage 2 request/provider boundary tests pass locally.
@@ -821,10 +821,10 @@ encryption, concurrency, or provider privacy.
 
 ## Review Boundary
 
-The 2026-08-15 hardened-model review ran the focused and full local
-suites with offline test settings. Later explicitly approved exercises loaded
-configured secrets without printing them, inspected/applied the pre-user
-deployment-database AI inventory, created and removed isolated MongoDB test collections, called
-Ollama with synthetic prompts, ran a temporary-key Redis atomicity probe, and
-completed an encrypted isolated restore/key-rotation rehearsal. No production
-database, deployed proxy, deployed workers, or deployed load test was used.
+The hardened-model review and the 2026-08-28 regression runs used offline test
+settings. Earlier explicitly approved exercises loaded configured secrets
+without printing them, inspected/applied the pre-user deployment-database AI
+inventory, created and removed isolated MongoDB test collections, called Ollama
+with synthetic prompts, ran a temporary-key Redis atomicity probe, and completed
+an encrypted isolated restore/key-rotation rehearsal. No production database,
+deployed proxy, deployed workers, or deployed load test was used.

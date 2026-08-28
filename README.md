@@ -12,10 +12,17 @@ uses Redis and Celery for real-time and background work.
   account lifecycle, and administrative account management.
 - Profiles: personal/business/alternative data, completion policy, asynchronous
   informational risk scoring, profile export/history, and manual review requests.
-- Loans and payments: applications, qualification, schedules, disbursement, and
-  repayment workflows.
+- Loans and payments: products, qualification, applications, assignment/review,
+  cash/check settlement, centavo-based schedules/payments, payoff, and optional
+  feature-gated wallet synchronization.
 - Documents: uploads, storage, review, and AI-assisted processing.
-- AI assistant, notifications, analytics, Prometheus metrics, and WebSockets.
+- AI Assistant: consent-gated English/Tagalog chat and SSE streaming,
+  customer-owned history, read-only customer context tools, controlled guidance,
+  and provider safety/quality boundaries.
+- Analytics: role-scoped dashboards, protected cross-domain audit events,
+  integrity/lifecycle controls, recovery, health, Prometheus metrics, and a
+  Grafana operations dashboard.
+- Notifications and authenticated WebSockets.
 
 This project uses PyMongo directly. Django ORM migration commands are not the
 database initialization mechanism.
@@ -27,6 +34,10 @@ database initialization mechanism.
 - Profiles: implementation, local tests, real-Mongo concurrency/index tests, and
   development inventories complete. Only deployment-target inventories and
   infrastructure validation remain for release.
+- Loans: application implementation is complete for the approved cash/check
+  baseline. Real-Mongo atomicity/query plans, production Redis/Celery,
+  HTTPS/load, monitoring/alerts, recovery, policy approval, and optional
+  blockchain evidence remain deployment gates.
 - Documents: Stages 1–7 are complete at code and local-test level. Representative
   isolated MongoDB/S3/Redis/Celery/ClamAV/restore/monitoring evidence remains a
   deployment release gate. The production baseline disables document CNN/AI,
@@ -37,6 +48,10 @@ database initialization mechanism.
   Celery, Prometheus, and a provisioned Grafana dashboard. Restricted production
   database credentials, HTTPS proxy validation, production monitoring/on-call
   delivery, and the final production-mode release check remain deployment gates.
+- AI Assistant: implementation and controlled bilingual quality validation are
+  complete. Final target-database inventory, deployed multi-worker Redis,
+  HTTPS/SSE load, monitoring/alerts, recovery, and release smoke evidence remain
+  deployment gates.
 
 ## Development Quick Start
 
@@ -291,6 +306,156 @@ It validates public-access blocking, encryption, object ownership, CORS, URL
 expiry, versioning, and quarantine lifecycle. IAM policy and backup/restore
 evidence require separate operator review.
 
+### Loans Commands
+
+#### Inventory and backfill loan persistence
+
+```bash
+# Read-only count inventory; increase the limit if any collection is truncated
+python manage.py loan_data_inventory --limit 10000
+
+# Dry-run encryption, centavo, search, scope, timing, and lifecycle backfill
+python manage.py backfill_loan_data --limit 10000
+
+# Apply only after duplicate review, backup/restore, and dry-run approval
+python manage.py backfill_loan_data --limit 10000 --apply
+```
+
+The applied backfill is compare-and-set protected and refuses invalid,
+conflicting, or truncated runs. Repeat the inventory until clean before running
+the state-changing database bootstrap against an existing target.
+
+#### Manage a loan legal hold
+
+```bash
+# Preview only
+python manage.py manage_loan_legal_hold APPLICATION_ID set \
+  --reason "CASE_REFERENCE" --actor "ADMIN_ID"
+
+# Apply an approved hold or release
+python manage.py manage_loan_legal_hold APPLICATION_ID set \
+  --reason "CASE_REFERENCE" --actor "ADMIN_ID" --apply
+python manage.py manage_loan_legal_hold APPLICATION_ID release \
+  --actor "ADMIN_ID" --apply
+```
+
+Do not place customer or financial data in a legal-hold reason.
+
+#### Run the final read-only Loans release gate
+
+```bash
+python manage.py loan_release_check
+python manage.py loan_release_check --json
+```
+
+The release command intentionally fails until the selected baseline and its
+MongoDB, workers, HTTPS/load, monitoring, recovery, policy, and smoke evidence
+are configured. Blockchain evidence is not required when
+`BLOCKCHAIN_ENABLED=False` and clients expose cash/check only.
+
+### Analytics Commands
+
+#### Inventory and backfill protected audit events
+
+```bash
+# Read-only integrity, encryption, and retention inventory
+python manage.py audit_integrity_inventory --limit 10000
+
+# Dry-run legacy audit protection backfill
+python manage.py backfill_audit_events --limit 10000
+
+# Apply only after reviewing the target, backup, and dry-run output
+python manage.py backfill_audit_events --limit 10000 --apply
+```
+
+The applied backfill encrypts eligible sensitive fields and adds the current
+schema, retention, blind-subject, and integrity protection. It refuses invalid
+existing signatures, unregistered actions, and update conflicts for operator
+review.
+
+#### Manage an audit-event legal hold
+
+```bash
+# Preview only
+python manage.py manage_audit_legal_hold EVENT_ID --action set \
+  --actor "ADMIN_ID" --reason "CASE_REFERENCE"
+
+# Apply an approved hold or release
+python manage.py manage_audit_legal_hold EVENT_ID --action set \
+  --actor "ADMIN_ID" --reason "CASE_REFERENCE" --apply
+python manage.py manage_audit_legal_hold EVENT_ID --action release \
+  --actor "ADMIN_ID" --apply
+```
+
+#### Run the final read-only Analytics release gate
+
+```bash
+python manage.py analytics_release_check
+python manage.py analytics_release_check --json
+```
+
+The release command intentionally fails until production-mode configuration,
+MongoDB bootstrap/integrity, shared cache, proxy, and monitoring evidence are
+available. It should not be bypassed merely because the current environment is
+development.
+
+### AI Assistant Commands
+
+#### Inventory and backfill protected interaction history
+
+```bash
+# Read-only privacy/lifecycle inventory
+python manage.py ai_interaction_inventory
+
+# Dry-run encryption and lifecycle backfill
+python manage.py backfill_ai_interactions
+
+# Apply only after reviewing the target, backup, and dry-run output
+python manage.py backfill_ai_interactions --apply
+```
+
+The backfill requires `FIELD_ENCRYPTION_KEY`. Keep previous encryption keys
+available until rotation, blind-search rebuilding, verification, and rollback
+windows are complete.
+
+#### Reconcile stale chat requests
+
+```bash
+# Dry run; never fabricates missing assistant content
+python manage.py reconcile_ai_chat_requests
+
+# Apply reviewed lease-state repairs
+python manage.py reconcile_ai_chat_requests --apply
+```
+
+Partial exchanges remain an operator-review condition.
+
+#### Manage an AI interaction legal hold
+
+```bash
+# Preview a hold
+python manage.py manage_ai_legal_hold INTERACTION_ID set \
+  --reason "CASE_REFERENCE" --operator "ADMIN_ID"
+
+# Apply an approved hold or release
+python manage.py manage_ai_legal_hold INTERACTION_ID set \
+  --reason "CASE_REFERENCE" --operator "ADMIN_ID" --apply
+python manage.py manage_ai_legal_hold INTERACTION_ID release \
+  --operator "ADMIN_ID" --apply
+```
+
+#### Run the final read-only AI release gate
+
+```bash
+python manage.py ai_release_check
+python manage.py ai_release_check --json
+```
+
+The release check intentionally fails until the controlled quality artifact and
+required deployment-environment evidence flags are configured and verified.
+Provider response collection and quality scoring commands are documented in
+[`docs/ai_assistant/AI_ASSISTANT_TESTING_GUIDE.md`](docs/ai_assistant/AI_ASSISTANT_TESTING_GUIDE.md).
+
 ## Testing and Static Validation
 
 ```bash
@@ -305,6 +470,35 @@ pytest -q tests/test_documents*.py tests/test_s3*.py
 
 # Accounts-focused suites
 pytest -q accounts/tests tests/test_accounts*.py
+
+# Loans/blockchain-focused selection (external integrations skip by default)
+pytest -q tests \
+  -k 'loan or blockchain or qualification or wallet_disbursement or repayment'
+
+# Analytics-focused suite (real-environment probes skip without opt-in flags)
+pytest -q \
+  tests/test_analytics_api.py \
+  tests/test_analytics_stage3_integrity_lifecycle.py \
+  tests/test_analytics_stage4_scope_metrics.py \
+  tests/test_analytics_stage5_scalability_operations.py \
+  tests/test_analytics_stage6_request_auth.py \
+  tests/test_analytics_monitoring_assets.py \
+  tests/test_analytics_real_mongo.py \
+  tests/test_analytics_deployment_integrations.py
+
+# AI Assistant-focused suite
+pytest -q \
+  tests/test_ai_stage*.py \
+  tests/test_ai_model_methods.py \
+  tests/test_ai_streaming.py \
+  tests/test_chatbot_api.py \
+  tests/test_ai_context_builder.py \
+  tests/test_ai_knowledge.py \
+  tests/test_ai_tool_safety_integration.py \
+  tests/test_tool_safety.py \
+  tests/test_context_builder.py \
+  tests/test_documents_ai_consent.py \
+  accounts/tests/test_field_encryption_lifecycle.py
 
 # Static checks
 ruff check .
@@ -506,6 +700,20 @@ The final read-only Notifications gate is intentionally fail-closed:
 .venv/bin/python manage.py notifications_release_check --json
 ```
 
+AI Assistant metrics cover API/provider/tool outcomes and latency, token usage,
+active streams, budget rejection, and audit/persistence failures. Prometheus
+rules, a smoke configuration, and an importable Grafana dashboard are under
+`monitoring/ai_assistant/`. Generate authenticated chat or streaming traffic to
+populate the AI series, and use the testing guide for the deployment validation
+sequence.
+
+Loans metrics cover API/lifecycle/settlement outcomes and latency, delivery
+outcomes, worker/job freshness, integrity findings, and critical backlog counts
+and age. Prometheus rules, rule tests, a smoke configuration, and the Grafana
+dashboard are under `monitoring/loans/`. If blockchain is disabled, wallet/chain
+panels are expected to remain inactive while cash/check monitoring remains
+required.
+
 Profiles metrics cover scoring outcomes/backlogs, duplicate records, encryption
 coverage, audit recovery, review queues, and denied access. See
 [`docs/profiles/PROFILES_PRODUCTION_READINESS_REVIEW.md`](docs/profiles/PROFILES_PRODUCTION_READINESS_REVIEW.md).
@@ -513,7 +721,7 @@ coverage, audit recovery, review queues, and denied access. See
 For production monitoring, use private service discovery, persistent protected
 storage, a non-default Grafana administrator credential, authentication/TLS,
 and a tested Alertmanager or Grafana contact point. See
-[`docs/ANALYTICS_TESTING_GUIDE.md`](docs/ANALYTICS_TESTING_GUIDE.md) for release
+[`docs/analytics/ANALYTICS_TESTING_GUIDE.md`](docs/analytics/ANALYTICS_TESTING_GUIDE.md) for release
 checks and production-topology boundaries.
 
 Notification email and push work runs through the dedicated Celery queue; there
@@ -527,7 +735,11 @@ is no in-process notification email thread pool.
 - [Profiles testing guide](docs/profiles/PROFILES_TESTING_GUIDE.md)
 - [Documents production readiness](docs/documents/DOCUMENTS_PRODUCTION_READINESS_REVIEW.md)
 - [Documents testing guide](docs/documents/DOCUMENTS_TESTING_GUIDE.md)
-- [Analytics production readiness](docs/ANALYTICS_PRODUCTION_READINESS_REVIEW.md)
-- [Analytics testing guide](docs/ANALYTICS_TESTING_GUIDE.md)
+- [Loans module status](docs/LOANS_PRODUCTION_READINESS_REVIEW.md)
+- [Loans testing guide](docs/LOANS_TESTING_GUIDE.md)
+- [Analytics module status](docs/analytics/ANALYTICS_PRODUCTION_READINESS_REVIEW.md)
+- [Analytics testing guide](docs/analytics/ANALYTICS_TESTING_GUIDE.md)
+- [AI Assistant module status](docs/ai_assistant/AI_ASSISTANT_PRODUCTION_READINESS_REVIEW.md)
+- [AI Assistant testing guide](docs/ai_assistant/AI_ASSISTANT_TESTING_GUIDE.md)
 - [API reference](docs/feats/API_REFERENCE.md)
 - [Deployment and operations](docs/feats/DEPLOYMENT_AND_OPERATIONS_GUIDE.md)

@@ -215,6 +215,29 @@ def test_inventory_and_backfill_are_dry_run_first(settings):
     assert delivery["event_key"] == Notification.fingerprint("legacy-event-key")
 
 
+def test_encryption_backfill_can_be_scoped_to_notification_collection(settings):
+    _enable_encryption(settings)
+    raw_id = settings.MONGODB[Notification.collection_name].insert_one(
+        {
+            "user_id": "legacy-customer",
+            "message": "legacy plaintext",
+        }
+    ).inserted_id
+
+    output = StringIO()
+    call_command(
+        "encrypt_sensitive_fields",
+        apply=True,
+        collection_names=[Notification.collection_name],
+        stdout=output,
+    )
+
+    stored = settings.MONGODB[Notification.collection_name].find_one({"_id": raw_id})
+    assert is_encrypted_value(stored["message"])
+    assert "notifications:" in output.getvalue()
+    assert "customer:" not in output.getvalue()
+
+
 def test_indexes_validators_and_retention_task_are_declared(settings):
     Notification.create_indexes()
     DeviceToken.create_indexes()

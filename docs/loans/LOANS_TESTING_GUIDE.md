@@ -1,6 +1,6 @@
 # Loans Testing Guide
 
-Last updated: 2026-08-27
+Last updated: 2026-08-28
 
 Scope: local automated tests, authenticated API checks, MongoDB persistence,
 Redis/Celery work, and optional blockchain validation for the Loans module.
@@ -26,15 +26,15 @@ release conditions are tracked in `LOANS_PRODUCTION_READINESS_REVIEW.md`.
 
 ## Current Automated Baseline
 
-The following repository selection passed on 2026-08-27:
+The following repository selection passed on 2026-08-28:
 
 ```bash
 .venv/bin/pytest -q tests \
   -k 'loan or blockchain or qualification or wallet_disbursement or repayment'
 ```
 
-Current result after the Loans closure validation: **527 passed, 20 skipped,
-720 deselected**. Nine skips require Ganache/RPC, six are the
+Current result after the Loans documentation validation: **533 passed, 20
+skipped, 790 deselected**. Nine skips require Ganache/RPC, six are the
 explicitly opt-in Stage 2 real-Mongo suite, one is the opt-in Stage 4 real-Mongo
 suite, and four are the new Stage 6 deployment probes.
 
@@ -48,7 +48,7 @@ Result: **17 passed**. These cases cover cross-officer concealment, role-safe
 blockchain payloads, strict administrator queries, stable public failures, and
 disbursement/recovery response minimization.
 
-The full repository regression result on 2026-08-27 is **1,301 passed and 46
+The full repository regression result on 2026-08-28 is **1,368 passed and 55
 skipped**. The skips remain explicitly opt-in external-service suites; they are
 not counted as deployment evidence.
 
