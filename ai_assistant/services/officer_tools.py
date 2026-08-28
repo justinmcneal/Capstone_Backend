@@ -360,7 +360,7 @@ def _get_application_summary(scope):
     return {
         "status": status,
         "product": product,
-        "product_assigned": bool(product_id) and isinstance(product_id, (str, ObjectId)),
+        "product_assigned": product is not None,
         "requested_amount": _safe_money(application_model.requested_amount),
         "recommended_amount": _safe_money(application_model.recommended_amount),
         "approved_amount": _safe_money(application_model.approved_amount),
@@ -465,15 +465,16 @@ def _get_document_review_status(scope):
     if not product_data:
         raise LookupError("Bound application product is unavailable")
     raw_required_documents = product_data.get("required_documents")
-    if raw_required_documents is not None:
-        if not isinstance(raw_required_documents, list):
-            raise LookupError("Bound application product requirements are invalid")
-        if any(
-            not isinstance(raw_type, str)
-            or canonicalize_document_type(raw_type) is None
-            for raw_type in raw_required_documents
-        ):
-            raise LookupError("Bound application product requirements are invalid")
+    if "required_documents" in product_data and raw_required_documents is None:
+        raise LookupError("Bound application product requirements are unavailable")
+    if raw_required_documents is not None and not isinstance(raw_required_documents, list):
+        raise LookupError("Bound application product requirements are invalid")
+    if raw_required_documents is not None and any(
+        not isinstance(raw_type, str)
+        or canonicalize_document_type(raw_type) is None
+        for raw_type in raw_required_documents
+    ):
+        raise LookupError("Bound application product requirements are invalid")
     product = LoanProduct.from_dict(product_data)
     required_types = resolve_required_document_types(product)
     projection = {"document_type": 1, "status": 1, "verified": 1}

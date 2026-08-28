@@ -60,6 +60,37 @@ _OFFICER_CONTEXT_UNICODE_NAME = re.compile(
 _OFFICER_CONTEXT_LATIN_NAME = re.compile(
     r"(?<!\w)[A-Z][a-zÀ-ÖØ-öø-ÿ'’-]{1,30}\s+[A-Z][a-zÀ-ÖØ-öø-ÿ'’-]{1,30}(?!\w)"
 )
+_OFFICER_CONTEXT_BARE_NAME = re.compile(
+    r"(?<!\w)([^\W\d_][\w'’-]{1,30})\s+"
+    r"([^\W\d_][\w'’-]{1,30})(?!\w)",
+    re.IGNORECASE,
+)
+_OFFICER_CONTEXT_SAFE_WORD_PAIRS = frozenset(
+    {
+        "application summary",
+        "document review",
+        "explain current",
+        "earlier question",
+        "loan application",
+        "missing documents",
+        "payment status",
+        "profile readiness",
+        "repayment status",
+        "review readiness",
+        "review summary",
+        "what status",
+    }
+)
+_OFFICER_CONTEXT_STOP_WORDS = frozenset(
+    {
+        "about", "and", "application", "are", "call", "contact", "current",
+        "document", "documents", "earlier", "explain", "for", "incomplete",
+        "information", "is", "loan", "missing", "next", "payment", "please",
+        "profile", "question", "readiness", "repayment", "required", "review",
+        "show", "still", "status", "statuses", "summary", "summarize", "tell",
+        "the", "this", "what", "with",
+    }
+)
 _OFFICER_CONTEXT_ERROR = "This request cannot be processed"
 
 
@@ -71,11 +102,24 @@ def _validate_officer_context(value):
     ).strip()
     if normalized in _OFFICER_CONTEXT_SAFE_PROMPTS:
         return
+    if any(
+        unicodedata.category(character).startswith("L")
+        and "LATIN" not in unicodedata.name(character, "")
+        for character in normalized
+    ):
+        raise serializers.ValidationError(_OFFICER_CONTEXT_ERROR)
+    bare_name = any(
+        f"{first} {second}" not in _OFFICER_CONTEXT_SAFE_WORD_PAIRS
+        and first not in _OFFICER_CONTEXT_STOP_WORDS
+        and second not in _OFFICER_CONTEXT_STOP_WORDS
+        for first, second in _OFFICER_CONTEXT_BARE_NAME.findall(normalized)
+    )
     if (
         any(pattern.search(normalized) for pattern in _OFFICER_CONTEXT_RESTRICTED_PATTERNS)
         or _OFFICER_CONTEXT_NAME_AFTER_CONTEXT.search(normalized)
         or _OFFICER_CONTEXT_UNICODE_NAME.search(normalized)
         or _OFFICER_CONTEXT_LATIN_NAME.search(str(value or ""))
+        or bare_name
         or re.search(r"(?<!\w)(?:\d[\s()./+-]*){7,}(?!\w)", normalized)
     ):
         raise serializers.ValidationError(_OFFICER_CONTEXT_ERROR)

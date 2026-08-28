@@ -31,6 +31,7 @@ from ai_assistant.services.officer_prompt import (
 )
 from ai_assistant.services.officer_scope import (
     has_current_ai_consent,
+    revalidate_officer_scope,
     resolve_officer_scope,
 )
 from ai_assistant.services.officer_tools import (
@@ -183,6 +184,20 @@ def _bound_executor(scope, request_id):
         )
 
     return execute
+
+
+def _authorization_error(scope):
+    try:
+        if not revalidate_officer_scope(scope):
+            return "AI_OFFICER_SCOPE_CHANGED"
+    except Exception:
+        return "AI_OFFICER_SCOPE_CHANGED"
+    try:
+        if not has_current_ai_consent(scope):
+            return "AI_OFFICER_CONSENT_CHANGED"
+    except Exception:
+        return "AI_OFFICER_CONSENT_CHANGED"
+    return None
 
 
 class OfficerAIStatusView(AccessControlMixin, APIView):
@@ -450,6 +465,23 @@ class OfficerChatView(AIRequestMetricsMixin, APIView):
                 code="AI_EMPTY_RESPONSE",
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
+        authorization_error = _authorization_error(scope)
+        if authorization_error:
+            record_officer_ai_result(
+                scope,
+                request_id,
+                data["language"],
+                outcome=authorization_error,
+                tool_names=tool_names,
+                duration_ms=duration_ms,
+            )
+            return error_response(
+                message="Officer access to this application is no longer available."
+                if authorization_error == "AI_OFFICER_SCOPE_CHANGED"
+                else "Customer AI consent is no longer available.",
+                code=authorization_error,
+                status_code=status.HTTP_403_FORBIDDEN,
+            )
         record_officer_ai_result(
             scope,
             request_id,
@@ -619,6 +651,27 @@ class OfficerStreamingChatView(AIRequestMetricsMixin, APIView):
                     request_id=request_id,
                 )
                 for chunk in provider_stream:
+                    authorization_error = _authorization_error(scope)
+                    if authorization_error:
+                        terminal_emitted = True
+                        record_result(authorization_error)
+                        _record_provider_metrics(
+                            llm,
+                            outcome=authorization_error,
+                            started=started,
+                            operation="stream",
+                        )
+                        yield self._event(
+                            "error",
+                            {
+                                "content": "Officer access to this application is no longer available."
+                                if authorization_error == "AI_OFFICER_SCOPE_CHANGED"
+                                else "Customer AI consent is no longer available.",
+                                "code": authorization_error,
+                                "request_id": request_id,
+                            },
+                        )
+                        break
                     chunk_type = chunk.get("type")
                     name = str(chunk.get("name") or "")
 
