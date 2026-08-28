@@ -173,9 +173,7 @@ class CustomerDetailView(ManageUsersRequiredMixin, APIView):
                 "ai_cleanup_status": getattr(customer, "ai_cleanup_status", None),
                 "ai_cleanup_counts": getattr(customer, "ai_cleanup_counts", {}),
                 "ai_cleanup_attempts": getattr(customer, "ai_cleanup_attempts", 0),
-                "ai_cleanup_last_error": getattr(
-                    customer, "ai_cleanup_last_error", ""
-                ),
+                "ai_cleanup_last_error": getattr(customer, "ai_cleanup_last_error", ""),
                 "ai_cleanup_last_attempt_at": (
                     customer.ai_cleanup_last_attempt_at.isoformat()
                     if getattr(customer, "ai_cleanup_last_attempt_at", None)
@@ -189,7 +187,21 @@ class CustomerDetailView(ManageUsersRequiredMixin, APIView):
                 "loan_cleanup_status": getattr(customer, "loan_cleanup_status", None),
                 "loan_cleanup_counts": getattr(customer, "loan_cleanup_counts", {}),
                 "loan_cleanup_attempts": getattr(customer, "loan_cleanup_attempts", 0),
-                "loan_cleanup_last_error": getattr(customer, "loan_cleanup_last_error", ""),
+                "loan_cleanup_last_error": getattr(
+                    customer, "loan_cleanup_last_error", ""
+                ),
+                "notification_cleanup_status": getattr(
+                    customer, "notification_cleanup_status", None
+                ),
+                "notification_cleanup_counts": getattr(
+                    customer, "notification_cleanup_counts", {}
+                ),
+                "notification_cleanup_attempts": getattr(
+                    customer, "notification_cleanup_attempts", 0
+                ),
+                "notification_cleanup_last_error": getattr(
+                    customer, "notification_cleanup_last_error", ""
+                ),
             },
             message="Customer retrieved successfully",
         )

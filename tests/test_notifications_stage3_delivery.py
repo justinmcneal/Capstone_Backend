@@ -177,7 +177,9 @@ def test_inbox_replay_repairs_missing_push_publication(monkeypatch, settings):
     assert second.id == first.id
     assert settings.MONGODB[Notification.collection_name].count_documents({}) == 1
     delivery = settings.MONGODB[NotificationDelivery.collection_name].find_one()
-    assert delivery["event_key"] == f"notification-push:{first.id}"
+    assert delivery["event_key"] == Notification.fingerprint(
+        f"notification-push:{first.id}"
+    )
     assert delivery["status"] == "pending"
     assert delay.call_count == 2
 

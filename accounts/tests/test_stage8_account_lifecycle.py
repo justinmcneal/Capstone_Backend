@@ -181,7 +181,9 @@ def test_first_new_device_login_emits_security_event():
     WEBSOCKET_ENABLED=False,
     ACCOUNT_DELETION_RETENTION_DAYS=0,
 )
-def test_deletion_can_be_cancelled_with_credentials_and_finalized_after_retention(settings):
+def test_deletion_can_be_cancelled_with_credentials_and_finalized_after_retention(
+    settings,
+):
     customer = _customer("deletion-stage8@example.com")
     client, tokens = _customer_client(customer)
     device_token = DeviceToken.register(
@@ -234,9 +236,12 @@ def test_deletion_can_be_cancelled_with_credentials_and_finalized_after_retentio
     assert deleted.active is False
     assert deleted.password == ""
     assert deleted.email.endswith("@deleted.local")
-    assert settings.MONGODB[DeviceToken.collection_name].find_one(
-        {"_id": device_token._id}
-    )["is_active"] is False
+    assert (
+        settings.MONGODB[DeviceToken.collection_name].find_one(
+            {"_id": device_token._id}
+        )
+        is None
+    )
 
     cleanup_status = admin_client.get(
         reverse("accounts:admin-customer-detail", kwargs={"customer_id": customer.id})
@@ -245,6 +250,7 @@ def test_deletion_can_be_cancelled_with_credentials_and_finalized_after_retentio
     assert cleanup_status.json()["data"]["profile_cleanup_status"] == "complete"
     assert cleanup_status.json()["data"]["profile_cleanup_attempts"] == 1
     assert cleanup_status.json()["data"]["profile_cleanup_last_error"] == ""
+    assert cleanup_status.json()["data"]["notification_cleanup_status"] == "complete"
 
 
 @override_settings(SECURE_SSL_REDIRECT=False, WEBSOCKET_ENABLED=False)

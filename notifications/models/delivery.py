@@ -25,6 +25,8 @@ class NotificationDelivery:
 
     def __init__(self, **kwargs):
         self._id = kwargs.get("_id")
+        # Only the deterministic digest is retained; raw producer keys may
+        # contain loan, account, or transition identifiers.
         self.event_key = str(kwargs.get("event_key", ""))
         self.event_type = str(kwargs.get("event_type", ""))
         self.recipient_key = str(kwargs.get("recipient_key", ""))
@@ -126,9 +128,13 @@ class NotificationDelivery:
 
         now = datetime.now(timezone.utc)
         recipient_key = cls.recipient_fingerprint(user_type, user_id)
-        query = {"event_key": normalized_key, "recipient_key": recipient_key}
+        event_key_hash = hashlib.sha256(normalized_key.encode("utf-8")).hexdigest()
+        query = {
+            "event_key": {"$in": [event_key_hash, normalized_key]},
+            "recipient_key": recipient_key,
+        }
         record = cls(
-            event_key=normalized_key,
+            event_key=event_key_hash,
             event_type=normalized_event,
             recipient_key=recipient_key,
             recipient_user_id=user_id,
@@ -282,4 +288,8 @@ class NotificationDelivery:
         collection.create_index(
             [("recipient_user_id", 1), ("recipient_user_type", 1), ("created_at", -1)],
             name="notification_delivery_owner_history",
+        )
+        collection.create_index(
+            [("status", 1), ("updated_at", 1), ("_id", 1)],
+            name="notification_delivery_retention",
         )

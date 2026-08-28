@@ -71,7 +71,10 @@ class EmailSender:
             # Send
             email.send(fail_silently=False)
 
-            logger.info(f"Email sent: {subject} to {to_email}")
+            logger.info(
+                "Notification email accepted by backend: notification=%s",
+                getattr(notification, "id", None),
+            )
 
             if notification:
                 notification.mark_sent()
@@ -79,10 +82,10 @@ class EmailSender:
             return True
 
         except Exception as exc:  # noqa: BLE001
-            logger.error("Email send failed: %s", exc)
+            logger.error("Notification email failed: error_type=%s", type(exc).__name__)
 
             if notification:
-                notification.mark_failed(str(exc))
+                notification.mark_failed("email_delivery_failed")
 
             return False
 

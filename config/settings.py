@@ -160,6 +160,16 @@ NOTIFICATIONS_DELIVERY_LEASE_SECONDS = int(
 NOTIFICATIONS_PREFERENCE_POLICY_VERSION = os.getenv(
     "NOTIFICATIONS_PREFERENCE_POLICY_VERSION", "2026-08-28-v1"
 ).strip()
+NOTIFICATIONS_RETENTION_DAYS = int(os.getenv("NOTIFICATIONS_RETENTION_DAYS", "365"))
+NOTIFICATIONS_DELIVERY_RETENTION_DAYS = int(
+    os.getenv("NOTIFICATIONS_DELIVERY_RETENTION_DAYS", "90")
+)
+NOTIFICATIONS_INACTIVE_TOKEN_RETENTION_DAYS = int(
+    os.getenv("NOTIFICATIONS_INACTIVE_TOKEN_RETENTION_DAYS", "30")
+)
+NOTIFICATIONS_ACCOUNT_EXPORT_MAX_ROWS = int(
+    os.getenv("NOTIFICATIONS_ACCOUNT_EXPORT_MAX_ROWS", "1000")
+)
 NOTIFICATIONS_WS_ACTIONS_PER_MINUTE = int(
     os.getenv("NOTIFICATIONS_WS_ACTIONS_PER_MINUTE", "120")
 )
@@ -202,6 +212,19 @@ if not 30 <= NOTIFICATIONS_DELIVERY_LEASE_SECONDS <= 3600:
 if not NOTIFICATIONS_PREFERENCE_POLICY_VERSION:
     raise ImproperlyConfigured(
         "NOTIFICATIONS_PREFERENCE_POLICY_VERSION must not be blank"
+    )
+for _notification_retention_name in (
+    "NOTIFICATIONS_RETENTION_DAYS",
+    "NOTIFICATIONS_DELIVERY_RETENTION_DAYS",
+    "NOTIFICATIONS_INACTIVE_TOKEN_RETENTION_DAYS",
+):
+    if not 1 <= globals()[_notification_retention_name] <= 3650:
+        raise ImproperlyConfigured(
+            f"{_notification_retention_name} must be between 1 and 3650"
+        )
+if not 1 <= NOTIFICATIONS_ACCOUNT_EXPORT_MAX_ROWS <= 10000:
+    raise ImproperlyConfigured(
+        "NOTIFICATIONS_ACCOUNT_EXPORT_MAX_ROWS must be between 1 and 10000"
     )
 
 # Channel Layers Configuration
@@ -911,6 +934,7 @@ CELERY_TASK_ROUTES = {
     'loans.collect_operational_metrics': {'queue': 'loans'},
     'notifications.deliver': {'queue': 'notifications'},
     'notifications.reconcile_deliveries': {'queue': 'notifications'},
+    'notifications.enforce_retention': {'queue': 'notifications'},
 }
 
 # MongoDB-backed leases coordinate the single configured blockchain sender.
@@ -1005,6 +1029,7 @@ CELERY_TASK_ANNOTATIONS.update(
         for task_name in (
             "notifications.deliver",
             "notifications.reconcile_deliveries",
+            "notifications.enforce_retention",
         )
     }
 )

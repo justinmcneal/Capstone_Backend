@@ -171,9 +171,9 @@ def publish_assignment_notifications(
             )
         except Exception:
             logger.exception(
-                "Failed to create %s notification for %s",
+                "Failed to create assignment notification: event=%s role=%s",
                 event_type,
-                recipient["id"],
+                recipient["user_type"],
             )
 
     return created

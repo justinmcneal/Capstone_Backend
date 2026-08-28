@@ -46,9 +46,8 @@ class NotificationConsumer(AsyncWebsocketConsumer):
 
         await self.accept()
         logger.info(
-            "WebSocket connected: user_type=%s user=%s",
+            "Notification WebSocket connected: user_type=%s",
             self.user_type,
-            self.user_id,
         )
 
         unread_count = await self.get_unread_count(user)
@@ -65,9 +64,8 @@ class NotificationConsumer(AsyncWebsocketConsumer):
         if hasattr(self, "user_group"):
             await self.channel_layer.group_discard(self.user_group, self.channel_name)
             logger.info(
-                "WebSocket disconnected: user_type=%s user=%s code=%s",
+                "Notification WebSocket disconnected: user_type=%s code=%s",
                 self.user_type,
-                self.user_id,
                 close_code,
             )
 
@@ -186,5 +184,8 @@ class NotificationConsumer(AsyncWebsocketConsumer):
                 "replayed": bool(outcome.get("replayed")),
             }
         except Exception as exc:  # noqa: BLE001
-            logger.error("Error marking notification read: %s", exc)
+            logger.error(
+                "Error marking notification read: error_type=%s",
+                type(exc).__name__,
+            )
             return {"success": False, "replayed": False}

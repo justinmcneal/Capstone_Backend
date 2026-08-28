@@ -15,3 +15,10 @@ def reconcile_notification_deliveries_task(limit=100):
     from notifications.services.delivery import reconcile_notification_deliveries
 
     return reconcile_notification_deliveries(limit=max(1, min(int(limit), 1000)))
+
+
+@shared_task(name="notifications.enforce_retention")
+def enforce_notification_retention_task(limit=1000):
+    from notifications.services.lifecycle import enforce_notification_retention
+
+    return enforce_notification_retention(limit=max(1, min(int(limit), 10_000)))

@@ -15,6 +15,7 @@ os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings")
 django.setup()
 
 from django.conf import settings  # noqa: E402
+from django.core.management import call_command  # noqa: E402
 from pymongo.errors import DuplicateKeyError, OperationFailure  # noqa: E402
 
 from accounts.models import (  # noqa: E402
@@ -51,8 +52,6 @@ from loans.models import (  # noqa: E402
     RepaymentSchedule,
 )
 from loans.services.persistence import install_loan_validators  # noqa: E402
-from notifications.models import Notification, NotificationDelivery  # noqa: E402
-from notifications.models.device_token import DeviceToken  # noqa: E402
 from profiles.models import (  # noqa: E402
     AlternativeData,
     BusinessProfile,
@@ -349,33 +348,12 @@ def create_indexes():
     except Exception as e:
         print(f"✗ DocumentStorageCleanup error: {e}")
 
-    # Notification indexes
-    try:
-        print("Creating indexes for Notification collection...")
-        Notification.create_indexes()
-        print("✓ Notification indexes created")
-    except (DuplicateKeyError, OperationFailure):
-        print("⚠ Notification indexes already exist, skipping")
-    except Exception as e:
-        print(f"✗ Notification error: {e}")
-
-    try:
-        print("Creating indexes for DeviceToken collection...")
-        DeviceToken.create_indexes()
-        print("✓ DeviceToken indexes created")
-    except (DuplicateKeyError, OperationFailure):
-        print("⚠ DeviceToken indexes already exist, skipping")
-    except Exception as e:
-        print(f"✗ DeviceToken error: {e}")
-
-    try:
-        print("Creating indexes for NotificationDelivery collection...")
-        NotificationDelivery.create_indexes()
-        print("✓ NotificationDelivery indexes created")
-    except (DuplicateKeyError, OperationFailure):
-        print("⚠ NotificationDelivery indexes already exist, skipping")
-    except Exception as e:
-        print(f"✗ NotificationDelivery error: {e}")
+    # Notifications schema installation is deliberately fail-closed. Existing
+    # targets must pass the dry-run inventory/backfill/encryption workflow
+    # before indexes or validators are changed.
+    print("Installing validated Notifications schema...")
+    call_command("install_notification_schema", apply=True)
+    print("✓ Notifications schema installed")
 
     try:
         print("Creating indexes for ActiveSession collection...")

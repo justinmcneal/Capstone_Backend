@@ -289,3 +289,10 @@ class DeviceToken:
         collection.create_index(
             [("user_id", 1), ("user_type", 1), ("session_id", 1), ("is_active", 1)]
         )
+        collection.create_index(
+            [("expires_at", 1), ("_id", 1)], name="device_token_expiry_cleanup"
+        )
+        collection.create_index(
+            [("is_active", 1), ("updated_at", 1), ("_id", 1)],
+            name="device_token_inactive_cleanup",
+        )

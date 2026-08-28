@@ -12,6 +12,8 @@ This guide documents the **Notifications service** under `/api/notifications/` f
 - FCM push notifications and device-token registration
 - Assignment-lifecycle event notifications
 - Shared delivery reconciliation and planned operational monitoring
+- Encrypted inbox persistence, bounded export/account cleanup/retention, and
+  MongoDB inventory/backfill/schema validation
 
 **Important distinction:** Email **preference settings** (`email_loan_updates`,
 etc.) live under **`/api/profile/notifications/`** (Profiles module), not this
@@ -31,6 +33,9 @@ Notifications combines multiple channels with explicit durable owners:
 - **FCM Push**: installed-version multicast delivery with bounded batching and
   partial-result checkpointing through the shared asynchronous outbox
 - **Assignment/Security Events**: structured, durable shared delivery intent
+- **Privacy lifecycle**: encrypted sensitive inbox fields, hashed idempotency/
+  event lookup material, bounded export, account erasure/pseudonymization, legal
+  holds, and scheduled retention
 
 Depending on the producer, the system can:
 1. Persist an in-app record
@@ -81,11 +86,12 @@ Focused module command:
   tests/test_websocket_notifications.py \
   tests/test_notifications_email_sender.py \
   tests/test_notifications_stage3_delivery.py \
+  tests/test_notifications_stage4_privacy_persistence.py \
   tests/test_assignment_notifications.py \
   tests/test_notification_timestamps.py
 ```
 
-Result after Stage 3 on 2026-08-28: **72 passed**.
+Result after Stage 4 on 2026-08-28: **82 passed**.
 
 Stage 1 routed contract command:
 
@@ -132,6 +138,19 @@ assignment/security publication.
 Affected Notifications/cross-domain regression result on 2026-08-28:
 **129 passed**.
 
+Stage 4 privacy/persistence command:
+
+```bash
+.venv/bin/pytest -q \
+  tests/test_notifications_stage4_privacy_persistence.py \
+  tests/test_notifications_stage4_real_mongo.py
+```
+
+Local result on 2026-08-28: **8 passed and 1 opt-in real-Mongo test skipped**.
+This covers encrypted core fields, digest-only lookup material, bounded export,
+account cleanup and legal-hold pseudonymization, retention, sanitized email
+logging, dry-run backfill, indexes/validators declarations, and task routing.
+
 Broader cross-domain selection:
 
 ```bash
@@ -140,7 +159,7 @@ Broader cross-domain selection:
 ```
 
 Result after Stage 2 on 2026-08-27: **131 passed, 1,245 deselected**. The latest
-full repository result after Stage 3 on 2026-08-28 is **1,340 passed, 46
+full repository result after Stage 4 on 2026-08-28 is **1,350 passed, 47
 skipped**.
 
 Evidence limits:
@@ -152,8 +171,9 @@ Evidence limits:
 - Email tests mock rendering/transport. No SMTP message is sent.
 - Stage 2 has mocked installed-API FCM and routed device-lifecycle evidence;
   live Firebase receipt remains deployment-only evidence.
-- Stage 3 worker/broker cases are deterministic local tests; no Notifications-
-  specific real-Mongo, multi-worker Redis/Celery, HTTPS/WSS, load,
+- Stage 3 worker/broker and Stage 4 privacy/schema cases are deterministic local
+  tests. The isolated real-Mongo suite now exists but was not opted in; no
+  multi-worker Redis/Celery, HTTPS/WSS, load,
   backup/restore, monitoring, or deployment probe exists yet.
 
 ### Stage validation map
@@ -163,7 +183,7 @@ Evidence limits:
 | Stage 1 — Contract and owner-safe inbox | Routed auth/role/owner tests, independent read/delivery state, atomic replay, bounds/throttles | Complete locally; 78 focused tests pass |
 | Stage 2 — Secure working push | Installed Firebase API, role-qualified token ownership, validation, revoke/cleanup, provider batching | Complete locally; 14 focused tests pass |
 | Stage 3 — Durable preference-aware delivery | Registered/routed tasks, leases/retries, broker/worker/provider recovery, preference policy | Complete locally; 12 focused tests pass |
-| Stage 4 — Privacy and MongoDB correctness | Encryption/log safety, lifecycle/export, validators/indexes, inventory/backfill, real-Mongo plans | Not started |
+| Stage 4 — Privacy and MongoDB correctness | Encryption/log safety, lifecycle/export, validators/indexes, inventory/backfill, real-Mongo plans | Complete locally; 8 tests pass, isolated real-Mongo execution pending |
 | Stage 5 — WebSocket resilience/observability | Post-connect revocation/expiry, limits, cross-device sync, metrics/rules/dashboard/health | Not started |
 | Stage 6 — Deployment validation | Real MongoDB/Redis/Celery/SMTP/FCM/HTTPS/WSS/load/recovery and release checker | Not started |
 
@@ -294,29 +314,32 @@ Full fields in `notifications` collection (not all exposed in list API):
 | `_id` | ObjectId | Primary key (exposed as `id` in API) |
 | `user_id` | string | Owner user ID |
 | `user_type` | string | `customer`, `loan_officer`, `admin` |
-| `recipient_email` | string | Email address |
-| `recipient_name` | string | Display name |
+| `recipient_email` | encrypted string | Email address; never exposed by inbox API |
+| `recipient_name` | encrypted string | Display name; never exposed by inbox API |
 | `notification_type` | string | See Reference Values |
-| `subject` | string | Short subject line |
-| `message` | string | Body text (often empty for email-channel records) |
+| `subject` | encrypted string | Short subject line; transparently decrypted by the model |
+| `message` | encrypted string | Body text; transparently decrypted by the model |
 | `related_type` | string | `loan`, `document`, etc. |
-| `related_id` | string | Linked entity ID |
-| `metadata` | object | Optional structured event context (participants, entity, audience, and occurrence time) |
-| `idempotency_key` | string/null | Optional unique producer key; not exposed by the inbox API |
+| `related_id` | encrypted string | Linked entity ID |
+| `metadata` | encrypted string | Encrypted structured event context |
+| `idempotency_key` | encrypted string/null | Optional raw producer key; never queried or exposed |
+| `idempotency_key_hash` | string/null | SHA-256 lookup/unique digest for idempotent replay |
 | `channel` | string | `email` or `in_app` |
 | `status` | string | Delivery compatibility alias: `pending`, `sent`, `failed`, `unknown` |
 | `delivery_status` | string | Explicit delivery state matching `status` |
 | `is_read` | boolean | Authoritative inbox read state |
-| `error_message` | string | Set when `status` = `failed` |
+| `error_message` | encrypted string | Stable non-provider failure code |
 | `created_at` | datetime | Record creation time; API/WebSocket responses use an explicit UTC ISO 8601 value (for example, `2026-07-23T02:15:00Z`) |
 | `sent_at` | datetime | When email was sent; API responses use an explicit UTC ISO 8601 value when present |
 | `read_at` | datetime/null | Set once when marked read via API |
+| `retention_expires_at` | datetime | Configured retention deadline |
+| `legal_hold` | boolean | Prevents inbox deletion and scheduled retention |
+| `legal_hold_reason` | encrypted string | Approved operational hold rationale |
 
-Recipient identity, message content, metadata, and errors are currently
-plaintext in the core `notifications` collection; device-token values and
-shared-delivery recipient/payload fields are encrypted. No MongoDB validator
-yet enforces this table, the declared type list, channel/status values, role
-values, or timestamp shapes.
+Core sensitive fields, device-token values, and shared-delivery recipient/
+payload fields use the shared field-encryption key lifecycle. User/role,
+status, timestamps, channel, and digest fields remain queryable. Strict MongoDB
+validators enforce the operational shape after the fail-closed schema workflow.
 
 ---
 
@@ -467,6 +490,7 @@ Delete a single owned notification.
 **Behavior:**
 - Removes the notification record from MongoDB
 - Returns `404` if the notification does not exist or is not owned by the current user
+- Returns `409 NOTIFICATION_LEGAL_HOLD` when an owned row is retained by policy
 
 **Response fields (`data`):**
 
@@ -484,12 +508,13 @@ DELETE /api/notifications/674a1b2c3d4e5f6789abcdef/
 
 ### 6. `DELETE /clear-all/`
 
-Delete all owned notifications for the current user.
+Delete all eligible owned notifications for the current user. Legally held rows
+remain and are reported in `retained_count`.
 
 **Auth:** customer, loan_officer, admin, super_admin
 
 **Behavior:**
-- Removes all records matching the owner query
+- Removes all non-held records matching the owner query
 - Cannot affect other users' notifications
 
 **Response fields (`data`):**
@@ -497,6 +522,7 @@ Delete all owned notifications for the current user.
 | Field | Type | Description |
 |-------|------|-------------|
 | `deleted_count` | int | Number of records removed |
+| `retained_count` | int | Number of owned rows preserved by legal hold |
 
 **Example:**
 ```
@@ -892,10 +918,43 @@ Templates are rendered by `notifications/services/email_sender.py` using Django'
 
 ---
 
+## Stage 4 Inventory and Schema Commands
+
+Run these only after confirming the intended MongoDB target. The first command
+and every command without `--apply` are read-only:
+
+```bash
+python manage.py notification_data_inventory
+python manage.py backfill_notification_data
+python manage.py backfill_notification_data --apply
+python manage.py encrypt_sensitive_fields
+python manage.py encrypt_sensitive_fields --apply
+python manage.py encrypt_sensitive_fields --verify
+python manage.py install_notification_schema
+python manage.py install_notification_schema --apply
+```
+
+Review and back up the target before each applied operation. Backfill repairs
+safe deterministic legacy fields with conditional updates; encryption handles
+plaintext/old-key fields separately. Schema installation refuses to drop the
+obsolete raw-idempotency index or create indexes/validators while any inventory
+blocker remains.
+
+Opt-in isolated real-Mongo proof:
+
+```bash
+RUN_NOTIFICATIONS_STAGE4_REAL_MONGO_TESTS=1 \
+REAL_MONGO_TEST_URI='<isolated MongoDB URI>' \
+.venv/bin/pytest -q tests/test_notifications_stage4_real_mongo.py
+```
+
+The fixture creates and drops only its uniquely named `_isolated` database.
+Do not point it at production.
+
 ## Required Future Integration Evidence
 
-The following suites do not exist yet. Implement them with the corresponding
-readiness stage; keep external/state-changing cases explicitly opt-in.
+The following deployment evidence remains external or opt-in. Keep
+state-changing cases explicitly gated.
 
 ### Routed REST security suite
 
@@ -907,8 +966,11 @@ parameters, bounds/throttle, and stable public errors.
 
 ### Isolated real-Mongo suite
 
-Use a uniquely named temporary database ending in `_isolated` and remove only
-that database in fixture cleanup. After explicit target approval, prove:
+`tests/test_notifications_stage4_real_mongo.py` now creates a uniquely named
+temporary database ending in `_isolated` and removes only that database in
+fixture cleanup. After explicit target approval, it proves validator rejection,
+idempotency uniqueness, and the representative owner/date query plan. Extend
+the deployment evidence where needed to prove:
 
 1. all notification/device validators reject invalid shapes;
 2. role-qualified token and event uniqueness under concurrency;
@@ -918,7 +980,7 @@ that database in fixture cleanup. After explicit target approval, prove:
    active-token query plans use approved indexes; and
 6. representative inbox, bulk-operation, and delivery-backlog bounds.
 
-Never point this future suite at production.
+Never point this suite at production.
 
 ### Redis/Channels/Celery suite
 
@@ -953,8 +1015,10 @@ Redis fan-out, metrics scrape, dashboard series, and alert firing/resolution.
 - [x] Stage 2 FCM/device-token security and lifecycle tests pass locally.
 - [x] Stage 3 durable/preference-aware broker/worker/provider recovery passes
       under deterministic local tests.
-- [ ] Stage 4 privacy lifecycle, validator/index, inventory/backfill, and real-
-      Mongo tests pass.
+- [x] Stage 4 privacy lifecycle, validator/index, inventory/backfill, and
+      retention tests pass locally.
+- [ ] Stage 4 isolated real-Mongo test passes against an explicitly approved
+      target and reviewed inventory/backfill/schema work is complete.
 - [ ] Stage 5 post-connect WebSocket security, limits, synchronization,
       monitoring assets, and alert tests pass.
 - [ ] Stage 6 deployment probes and `notifications_release_check` pass.
@@ -980,6 +1044,11 @@ Redis fan-out, metrics scrape, dashboard series, and alert firing/resolution.
 | Shared delivery service | `notifications/services/delivery.py` |
 | Preference policy | `notifications/services/preference_policy.py` |
 | Canonical Celery tasks | `notifications/tasks.py` |
+| Privacy export/cleanup/retention | `notifications/services/lifecycle.py` |
+| Validators/inventory/backfill | `notifications/services/persistence.py` |
+| Inventory command | `notifications/management/commands/notification_data_inventory.py` |
+| Backfill command | `notifications/management/commands/backfill_notification_data.py` |
+| Fail-closed schema command | `notifications/management/commands/install_notification_schema.py` |
 | WebSocket broadcast service | `notifications/services/websocket_service.py` |
 | Notification creator + FCM | `notifications/services/notification_creator.py` |
 | Assignment triggers | `notifications/services/assignment_events.py` |
@@ -1016,3 +1085,9 @@ Redis fan-out, metrics scrape, dashboard series, and alert firing/resolution.
 14. Test that logs and public payloads never contain email addresses, FCM
     tokens, provider exception bodies, credentials, or internal idempotency
     values.
+15. Raw MongoDB content fields are ciphertext when field encryption is enabled;
+    load them through `Notification.from_dict()` in trusted tests.
+16. A held notification returns `NOTIFICATION_LEGAL_HOLD` for single delete;
+    clear-all reports held rows in `retained_count`.
+17. Account export adds `notification_export` completeness metadata while
+    preserving the historical `notifications` list.

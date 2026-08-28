@@ -53,8 +53,9 @@ The current code does not yet provide a coherent production delivery system:
    use encrypted token values, deterministic fingerprints, role-qualified
    ownership, session binding, strict token/platform validation, active-device
    limits, expiry, refresh/deduplication, explicit unregister, session/logout
-   cleanup, and account-deletion cleanup. Stage 4 must inventory/backfill legacy
-   rows before production index work.
+   cleanup, and account-deletion cleanup. Stage 4 now provides the required
+   inventory/backfill; it must be executed and reviewed before production index
+   work.
 3. **Stage 3 replaced the dead standalone email task with a canonical shared
    delivery path.** `notifications/tasks.py` registers routed delivery and
    reconciliation tasks with late acknowledgement, worker-loss rejection,
@@ -76,19 +77,19 @@ The current code does not yet provide a coherent production delivery system:
    explicit policy keys. Payment receipts, staff workflow mail, and security
    notices remain mandatory. Each decision records its policy version; email
    opt-out does not suppress the in-app inbox record.
-7. **Privacy lifecycle is incomplete.** Device-token values are encrypted and
-   token delivery logs contain only non-sensitive error types. Recipient
-   email/name, message, metadata, and errors remain plaintext, while email
-   addresses, subjects, user IDs, and other exception details can enter logs.
-   Customer export is limited to the latest 200 notifications without explicit
-   truncation. Account deletion does not remove or pseudonymize core
-   notifications, although it now deactivates device tokens.
-8. **Persistence and scale controls are incomplete.** Stage 1 added strict
-   query parameters, a maximum offset, bounded bulk mutations, and REST/WS
-   action throttles. MongoDB validators, inventory/backfill tooling,
-   query-specific notification indexes and legacy inventory/backfill remain.
-   Current device-token lookup, per-owner registrations, and FCM fan-out are
-   bounded.
+7. **Stage 4 implements the privacy lifecycle locally.** Core recipient/content,
+   metadata, related IDs, errors, legal-hold reasons, and raw idempotency keys
+   use the shared field-encryption lifecycle; operational lookup uses only a
+   digest. Logs no longer include recipient IDs, addresses, subjects, provider
+   bodies, or raw device tokens. Customer export is bounded with explicit
+   total/returned/truncated metadata. Account deletion erases inbox/outbox/token
+   data and pseudonymizes legally held rows.
+8. **Stage 4 implements MongoDB correctness tooling locally.** Query-specific
+   owner/read/channel/retention indexes, strict validators, a read-only
+   inventory, dry-run-first conditional backfill, fail-closed schema installer,
+   encrypted-field rotation coverage, bounded retention, and an opt-in isolated
+   real-Mongo suite now exist. The inventory/backfill and real-Mongo suite have
+   not been run against an approved external target in this stage.
 9. **WebSocket production controls are partial.** Handshake authentication,
    origin checking, and per-connection action throttling are present, but an
    already-connected socket is not
@@ -108,18 +109,22 @@ The current code does not yet provide a coherent production delivery system:
 Current local automated evidence:
 
 - Stage 3 focused delivery selection: **12 passed** on 2026-08-28.
+- Stage 4 privacy/persistence selection: **8 passed and 1 opt-in real-Mongo test
+  skipped** on 2026-08-28.
+- Notifications plus account-lifecycle regression selection: **121 passed and
+  1 opt-in test skipped** on 2026-08-28.
 - Notifications and affected cross-domain regression selection: **129 passed**
   on 2026-08-28.
-- Core Notifications-focused selection: **72 passed** on 2026-08-28.
+- Core Notifications-focused selection: **82 passed** on 2026-08-28.
 - Stage 1 focused contract/security selection: **78 passed**.
 - Stage 2 provider/token lifecycle selection: **14 passed**.
 - Routed tests cover missing/revoked JWTs, customer/officer/admin role-qualified
-  isolation, all seven REST operations, cross-owner concealment, independent
+  isolation, all eight REST method operations, cross-owner concealment, independent
   read/delivery state, replay, strict bounds, REST throttles, and WebSocket
   action throttling.
 - Broader notification/WebSocket/email-template selection: **131 passed and
   1,245 deselected**.
-- Full repository: **1,340 passed and 46 opt-in integration tests skipped** on
+- Full repository: **1,350 passed and 47 opt-in integration tests skipped** on
   2026-08-28.
 - Mocked FCM success, batching, partial/permanent/transient failure behavior,
   encryption, ownership, deduplication, expiry, unregister, logout/session,
@@ -131,7 +136,7 @@ Current local automated evidence:
 
 | Area | Status | Summary |
 | --- | --- | --- |
-| REST inbox | Complete locally | Seven routed authenticated operations have strict role-qualified ownership, independent read/delivery state, atomic replay-safe read mutation, strict query validation, bounded offset/bulk work, and dedicated throttles. |
+| REST inbox | Complete locally | Eight routed authenticated method operations have strict role-qualified ownership, independent read/delivery state, atomic replay-safe read mutation, strict query validation, bounded offset/bulk work, and dedicated throttles. |
 | WebSocket inbox | Partial | Secure handshake, owner groups, ping, replay-safe mark-read, broadcasts, and per-connection action throttling exist; live-session revalidation, frame/connection limits, and cross-device state events remain. |
 | Template email | Implemented locally; deployment-gated | Templates and sender helpers work inside durable domain/shared workers and enforce the recorded email policy; uncertain SMTP acceptance can still result in an at-least-once retry. |
 | Shared Celery delivery | Implemented locally | Canonical registered/routed tasks, encrypted durable intent, idempotency, leases, checkpoints, bounded retry/backoff, and reconciliation cover producers without a domain outbox. |
@@ -139,8 +144,8 @@ Current local automated evidence:
 | Assignment/security events | Implemented locally | Both publish durable shared-delivery intent; assignment remains in-app and security events can request in-app plus push. |
 | FCM push | Implemented locally; deployment-gated | Push is asynchronous and recoverable, known successes are checkpointed, and installed-version batching, partial results, permanent-token cleanup, encrypted role/session-qualified registrations, expiry, unregister, and cleanup are covered. Live Firebase proof remains. |
 | Preferences | Implemented locally | Optional customer email categories are evaluated against Profiles settings and record a versioned decision; mandatory security, staff, and receipt messages are not suppressible. |
-| Privacy lifecycle | Incomplete | Device tokens are encrypted and lifecycle-bound; notification content/recipient fields, broader log safety, retention, and complete export/deletion remain. |
-| MongoDB schema/indexes | Partial | Basic indexes are bootstrapped; no validator, compound query indexes, inventory/backfill, or real-Mongo proof exists. |
+| Privacy lifecycle | Implemented locally; policy/deployment-gated | Core sensitive fields and idempotency material are protected, logs are sanitized, export is bounded/explicit, retention is scheduled, account deletion erases credentials/data, and legal holds are retained through pseudonymization. Final retention/policy approval remains. |
+| MongoDB schema/indexes | Implemented locally; real-Mongo proof pending | Strict validators, compounds, inventory/backfill/encryption commands, fail-closed installation, and an isolated opt-in query-plan suite exist. They have not been executed against an approved real target. |
 | Observability | Incomplete | No end-to-end channel outcomes, backlog/age gauges, rules, dashboard, readiness, or alert evidence exists. |
 | Production deployment | Not ready | SMTP, Firebase, Redis/Channels, workers, HTTPS/WSS, backup/restore, monitoring, and release gates remain unproven. |
 
@@ -152,6 +157,8 @@ The Notifications module currently owns:
 - role-qualified inbox REST queries and mutations;
 - device-token registration and FCM dispatch;
 - encrypted, leased shared delivery intent and reconciliation;
+- notification privacy export, account cleanup, retention, legal-hold handling,
+  inventory/backfill, and schema installation;
 - notification WebSocket authentication, groups, frames, and broadcasts;
 - reusable email templates/sender helpers;
 - assignment event formatting; and
@@ -241,11 +248,14 @@ WebSocket route: `GET /ws/notifications/` upgrades through
 
 ### Persistence bootstrap
 
-- `init_db.py` calls `Notification.create_indexes()`,
-  `DeviceToken.create_indexes()`, and `NotificationDelivery.create_indexes()`.
-- Notification idempotency keys and device tokens have unique indexes.
-- These bootstrap blocks currently catch errors and continue; there is no
-  Notifications validator or fail-closed release verification.
+- `init_db.py` invokes the fail-closed `install_notification_schema` workflow.
+- Schema installation refuses writes while legacy, plaintext, duplicate,
+  invalid-owner/platform/timestamp, or missing required-field blockers remain.
+- Notification idempotency and delivery event keys use SHA-256 lookup digests;
+  device-token uniqueness continues to use a non-reversible fingerprint.
+- Strict validators cover `notifications`, `device_tokens`, and
+  `notification_deliveries`; compound indexes match inbox, reconciliation,
+  retention, token-owner, and cleanup queries.
 
 ## Implemented Controls and Remaining Release Conditions
 
@@ -291,22 +301,25 @@ remain at-least-once when acceptance occurs before the checkpoint is persisted.
 - [x] Batch multicast requests at the configured maximum of 500.
 - [x] Stage 3 makes push durable, asynchronous, bounded-retry, and recoverable;
   successful/permanent token outcomes are checkpointed before later retries.
-- [ ] Stage 4 must inventory/backfill legacy rows and prove indexes/validators
-  against isolated real MongoDB.
+- [x] Stage 4 provides inventory/backfill/schema tooling and an isolated
+  real-Mongo validator/index/query-plan suite.
+- [ ] Run that workflow against an explicitly approved isolated/deployment
+  target before production schema work.
 
 ### 4. Preferences, privacy, and lifecycle
 
-**Status: Partial; Stage 3 preference policy complete**
+**Status: Complete locally; final policy/deployment validation pending**
 
 Mandatory transactional/security events are separated from configurable
 loan/payment/promotional messages. Profiles preferences are enforced before
-optional email delivery and the decision/version is stored. Stage 4 must add
-bounded, role-qualified customer export with total/truncation metadata. On account
-deletion, delete or approvedly pseudonymize notification records and deactivate
-tokens. Classify and protect recipient identity, content, metadata, provider
-errors, and tokens with the shared encryption/key-rotation lifecycle. Sanitize
-logs so they do not contain email addresses, full device tokens, free-form
-subjects/messages, customer/loan details, or provider exception bodies.
+optional email delivery and the decision/version is stored. Customer export is
+role-qualified and bounded with explicit completeness metadata. Account deletion
+erases inbox/shared-delivery/device-token data; legally held notification rows
+are pseudonymized and cannot be deleted through inbox clear/delete operations.
+Recipient identity/content, related IDs, metadata, errors, legal-hold reasons,
+and raw idempotency keys use field encryption; lookup keys use non-reversible
+digests. Notification email/push/WebSocket logs expose stable types/counts rather
+than recipient/provider content. Daily bounded retention respects legal holds.
 
 An authorized privacy/product decision is still required for retention,
 mandatory security notices, preference defaults, and which event types may be
@@ -314,16 +327,17 @@ deleted by the user.
 
 ### 5. MongoDB scalability and schema integrity
 
-**Status: Incomplete**
+**Status: Complete locally; approved real-Mongo execution pending**
 
-Add strict validators for notification/event/channel/read/delivery shapes and
-device-token ownership/platform/state. Add inventory and dry-run-first backfill
-for legacy user types, status separation, missing metadata, duplicate tokens,
-plaintext/old-key fields, and invalid timestamps. Replace single-field indexes
-with query-specific compounds for owner/type/date pages, owner/read counts,
-channel filters, retention/reconciliation, and role-qualified active tokens.
-Keep the Stage 1 inbox bounds under load evidence and add bounds for export,
-token fan-out, and recovery jobs.
+Strict validators define notification/read/delivery, device ownership/platform,
+and shared-delivery shapes. `notification_data_inventory` is read-only;
+`backfill_notification_data` is dry-run-first and uses conditional writes;
+`encrypt_sensitive_fields` backfills/verifies/rotates ciphertext; and
+`install_notification_schema` refuses schema writes until blockers are zero.
+Query-specific compound indexes cover owner/date, owner/read, owner/channel,
+retention, delivery reconciliation/history, active/session tokens, expiry, and
+inactive cleanup. Export, retention, fan-out, reconciliation, and inbox work are
+bounded.
 
 Release evidence must include isolated real-Mongo invalid-write, unique-key,
 atomic ownership, inventory/backfill, and `explain()` tests with representative
@@ -378,7 +392,8 @@ for the currently identified work.
 - [x] Make owner-scoped mutations atomic and replay-consistent.
 - [x] Bound/validate queries and bulk operations and add notification throttles.
 - [x] Correct the shadowed `register-token/` URL discovered by routed tests.
-- [x] Add routed JWT/session/role/ownership tests for all seven REST operations.
+- [x] Add routed JWT/session/role/ownership tests for all eight REST method
+  operations.
 
 **Exit condition:** every inbox operation has a stable, role-qualified,
 bounded, request-level-tested contract and cannot corrupt delivery evidence.
@@ -415,14 +430,16 @@ mutation.
 
 ### Stage 4 — Privacy lifecycle and MongoDB correctness
 
-**Status: Not started**
+**Status: Complete locally (2026-08-28)**
 
-- Encrypt/minimize sensitive notification/token fields and sanitize logs.
-- Implement bounded export, retention, deletion/pseudonymization, token cleanup,
+- [x] Encrypt/minimize sensitive notification/token fields and sanitize logs.
+- [x] Implement bounded export, retention, deletion/pseudonymization, token cleanup,
   inventory, backfill, and key rotation.
-- Add strict validators and query-specific compound indexes.
-- Add isolated real-Mongo validator, uniqueness, atomicity, and query-plan
+- [x] Add strict validators and query-specific compound indexes.
+- [x] Add isolated real-Mongo validator, uniqueness, and query-plan
   tests.
+- [ ] Execute the opt-in real-Mongo suite and reviewed inventory/backfill against
+  explicitly approved targets before production index work.
 
 **Exit condition:** legacy/current data has a reviewed lifecycle, invalid writes
 fail, critical queries use approved indexes, and account deletion leaves no
@@ -484,6 +501,12 @@ topology and all approved policy/evidence records are retained.
 - Registration may return HTTP 409 if a token is actively owned by another
   account or the account has reached its active-device limit. Clients must not
   silently substitute or transfer token ownership.
+- Deleting one notification under an active legal hold returns HTTP 409 with
+  `NOTIFICATION_LEGAL_HOLD`. Clear-all deletes eligible rows and returns both
+  `deleted_count` and `retained_count`.
+- Account export preserves the `notifications` item list and adds
+  `notification_export` metadata containing `total`, `returned`, `limit`, and
+  `truncated`.
 - Profiles preference toggles now control optional email only:
   `email_loan_updates` covers loan/document status updates,
   `email_payment_reminders` covers reminders, and `email_promotions` covers
@@ -509,6 +532,15 @@ topology and all approved policy/evidence records are retained.
   every ASGI process.
 - `init_db.py` is state-changing and may install notification indexes only after
   duplicate inventory, backup, and explicit target approval.
+- Required pre-schema order for an approved target is:
+  `notification_data_inventory`, dry-run then applied
+  `backfill_notification_data`, dry-run/applied/verified
+  `encrypt_sensitive_fields`, another inventory review, then dry-run/applied
+  `install_notification_schema`. Never use `--apply` before reviewing the
+  target, backup, and dry-run counts.
+- Daily `notifications.enforce_retention` deletes only due, non-held inbox rows,
+  old terminal shared deliveries, and expired/old inactive token registrations
+  in bounded batches.
 - Email/push provider acceptance is not guaranteed user receipt; define channel
   outcome terminology accordingly.
 
@@ -534,8 +566,10 @@ Do not classify Notifications as production-ready until:
 1. the installed-version FCM path works and device ownership/lifecycle is safe;
 2. read state is independent from channel delivery state;
 3. required producers have durable, preference-aware, retryable delivery;
-4. sensitive fields/tokens/logs and account export/deletion/retention are fixed;
-5. validators, compound indexes, inventory/backfill, and real-Mongo plans pass;
+4. the implemented privacy policy/retention defaults are approved and the
+   deployed encryption/export/deletion behavior is proven;
+5. the reviewed inventory/backfill/schema install and opt-in real-Mongo plans
+   pass against approved targets;
 6. WebSocket post-connect authorization and abuse limits are implemented;
 7. monitoring assets, health, alerts, and a release checker are implemented;
 8. Redis/Celery, SMTP, FCM, HTTPS/WSS, load, backup/restore, key rotation,

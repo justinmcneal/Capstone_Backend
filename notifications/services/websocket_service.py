@@ -19,23 +19,21 @@ def broadcast_notification_to_user(user_id, user_type, notification_data):
         user_group = notification_group_name(user_id, user_type)
         if not user_group:
             logger.error(
-                "Cannot broadcast notification without a valid owner: %s/%s",
+                "Cannot broadcast notification without a valid owner: role=%s",
                 user_type,
-                user_id,
             )
             return
 
         async_to_sync(channel_layer.group_send)(
-            user_group,
-            {
-                "type": "notification_message",
-                "data": notification_data
-            }
+            user_group, {"type": "notification_message", "data": notification_data}
         )
 
-        logger.info("Notification broadcast to user %s via WebSocket", user_id)
+        logger.info("Notification broadcast via WebSocket: role=%s", user_type)
     except Exception as exc:  # noqa: BLE001
-        logger.error("Failed to broadcast notification via WebSocket: %s", exc)
+        logger.error(
+            "Failed to broadcast notification via WebSocket: error_type=%s",
+            type(exc).__name__,
+        )
 
 
 def serialize_notification_for_ws(notification):

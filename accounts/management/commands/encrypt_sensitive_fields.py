@@ -15,6 +15,7 @@ from documents.models import Document
 from loans.models import LoanApplication, LoanPayment, LoanProduct, RepaymentSchedule
 from notifications.models.delivery import NotificationDelivery
 from notifications.models.device_token import DeviceToken
+from notifications.models.notification import Notification
 from profiles.models import (
     AlternativeData,
     BusinessProfile,
@@ -37,6 +38,7 @@ ENCRYPTED_MODELS = (
     RepaymentSchedule,
     AIInteraction,
     DeviceToken,
+    Notification,
     NotificationDelivery,
 )
 

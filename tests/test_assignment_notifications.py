@@ -40,7 +40,10 @@ def test_reassignment_creates_distinct_notifications(monkeypatch):
         related_id="loan-1",
     )
 
-    documents = list(database[Notification.collection_name].find())
+    documents = [
+        Notification.from_dict(row).to_plain_dict()
+        for row in database[Notification.collection_name].find()
+    ]
     assert len(documents) == 3
     assert {document["user_id"] for document in documents} == {
         "admin-1",
@@ -86,7 +89,10 @@ def test_initial_assignment_does_not_create_previous_assignee_notification(
         related_id="loan-1",
     )
 
-    documents = list(database[Notification.collection_name].find())
+    documents = [
+        Notification.from_dict(row).to_plain_dict()
+        for row in database[Notification.collection_name].find()
+    ]
     assert len(documents) == 2
     assert {document["notification_type"] for document in documents} == {
         "application_assigned"
@@ -113,7 +119,10 @@ def test_unassignment_template_notifies_admin_and_previous_officer(monkeypatch):
         related_id="loan-1",
     )
 
-    documents = list(database[Notification.collection_name].find())
+    documents = [
+        Notification.from_dict(row).to_plain_dict()
+        for row in database[Notification.collection_name].find()
+    ]
     assert len(documents) == 2
     assert {document["notification_type"] for document in documents} == {
         "application_unassigned"
