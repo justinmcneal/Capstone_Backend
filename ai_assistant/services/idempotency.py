@@ -1,6 +1,7 @@
 """Lease-backed idempotency for costly AI chat requests."""
 
 import hashlib
+import json
 from datetime import datetime, timedelta, timezone
 
 from django.conf import settings
@@ -73,8 +74,20 @@ def create_validator():
     )
 
 
-def request_fingerprint(message, conversation_id, language):
-    payload = '\x1f'.join((str(message), str(conversation_id), str(language)))
+def request_fingerprint(
+    message,
+    conversation_id,
+    language,
+    *,
+    history=None,
+    scope_key=None,
+):
+    parts = [str(message), str(conversation_id), str(language)]
+    if history is not None:
+        parts.append(json.dumps(history, sort_keys=True, separators=(',', ':')))
+    if scope_key is not None:
+        parts.append(str(scope_key))
+    payload = '\x1f'.join(parts)
     return hashlib.sha256(payload.encode('utf-8')).hexdigest()
 
 
@@ -83,7 +96,14 @@ def claim(customer_id, request_id, *, fingerprint='', lease_seconds=None):
     customer_id = str(customer_id)
     request_id = str(request_id)
     key = {'customer_id': customer_id, 'request_id': request_id}
-    current = _collection().find_one(key, {'request_fingerprint': 1})
+    current = _collection().find_one(
+        key,
+        {
+            'request_fingerprint': 1,
+            'status': 1,
+            'lease_expires_at': 1,
+        },
+    )
     if (
         current
         and fingerprint
@@ -136,6 +156,7 @@ def claim(customer_id, request_id, *, fingerprint='', lease_seconds=None):
         interactions = AIInteraction.find_by_request_id(customer_id, request_id)
         if len(interactions) == 2:
             return {'state': 'replay', 'interactions': interactions}
+        return {'state': 'complete'}
     if before.get('status') == 'failed' or _aware(before.get('lease_expires_at', now)) <= now:
         return {'state': 'owned'}
     return {'state': 'in_progress'}

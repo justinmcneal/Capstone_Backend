@@ -98,6 +98,47 @@ def test_active_idempotency_lease_returns_in_progress():
     assert idempotency.claim(customer_id, request_id)['state'] == 'in_progress'
 
 
+def test_completed_idempotency_lease_without_exchange_is_not_reclaimed(settings):
+    idempotency.create_indexes()
+    request_id = str(uuid.uuid4())
+    customer_id = str(ObjectId())
+    assert idempotency.claim(customer_id, request_id)['state'] == 'owned'
+    idempotency.mark_complete(customer_id, request_id)
+
+    assert idempotency.claim(customer_id, request_id)['state'] == 'complete'
+
+
+def test_request_fingerprint_binds_history_and_officer_scope():
+    base = {
+        'message': 'Summarize review readiness',
+        'conversation_id': str(uuid.uuid4()),
+        'language': 'en',
+        'history': [],
+    }
+    fingerprint = idempotency.request_fingerprint(
+        base['message'],
+        base['conversation_id'],
+        base['language'],
+        history=base['history'],
+        scope_key='officer:officer-1:application-1',
+    )
+
+    assert fingerprint != idempotency.request_fingerprint(
+        base['message'],
+        base['conversation_id'],
+        base['language'],
+        history=[{'role': 'user', 'content': 'Earlier question'}],
+        scope_key='officer:officer-1:application-1',
+    )
+    assert fingerprint != idempotency.request_fingerprint(
+        base['message'],
+        base['conversation_id'],
+        base['language'],
+        history=base['history'],
+        scope_key='officer:officer-2:application-1',
+    )
+
+
 def test_expired_or_failed_idempotency_lease_can_be_reclaimed(settings):
     idempotency.create_indexes()
     request_id = str(uuid.uuid4())

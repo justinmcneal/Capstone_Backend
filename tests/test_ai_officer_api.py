@@ -1,7 +1,6 @@
 import json
 import time
 import uuid
-from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
@@ -13,19 +12,20 @@ from rest_framework.test import APIRequestFactory, force_authenticate
 
 from accounts.authentication import AuthenticatedUser
 from accounts.models import LoanOfficer
-from analytics.models import AuditLog
 from ai_assistant.models import AIInteraction
-from ai_assistant.services.officer_tools import OFFICER_TOOL_SCHEMAS
+from ai_assistant.services import idempotency
 from ai_assistant.services.officer_prompt import (
     build_officer_system_prompt,
     officer_suggestions,
 )
+from ai_assistant.services.officer_tools import OFFICER_TOOL_SCHEMAS
 from ai_assistant.views.officer import (
     OfficerAIStatusView,
     OfficerChatView,
     OfficerStreamingChatView,
     OfficerSuggestionsView,
 )
+from analytics.models import AuditLog
 from loans.models import LoanApplication
 
 
@@ -1232,6 +1232,7 @@ def test_officer_stream_emits_safe_named_events_and_one_done_terminal(monkeypatc
 def test_officer_stream_revalidates_before_done_terminal(monkeypatch):
     officer = _officer()
     application = _application(officer.id)
+    request_id = str(uuid.uuid4())
     provider_stream = CloseAwareStream(
         [
             {"type": "token", "content": "partial"},
@@ -1265,6 +1266,7 @@ def test_officer_stream_revalidates_before_done_terminal(monkeypatch):
                 "/api/ai/officer/chat/stream/",
                 officer.id,
                 data={"message": "Stream", "application_id": str(application.id)},
+                headers={"HTTP_IDEMPOTENCY_KEY": request_id},
             )
         )
     )
@@ -1273,6 +1275,10 @@ def test_officer_stream_revalidates_before_done_terminal(monkeypatch):
     assert frames[-1][1]["code"] == "AI_OFFICER_SCOPE_CHANGED"
     assert provider_stream.closed is True
     assert _audit_events()[-1].details["outcome"] == "AI_OFFICER_SCOPE_CHANGED"
+    request_record = settings.MONGODB[idempotency.COLLECTION].find_one(
+        {"request_id": request_id}
+    )
+    assert request_record["status"] == "failed"
 
 
 def test_officer_stream_accepts_event_stream_negotiation_for_successful_sse(
@@ -1760,3 +1766,230 @@ def test_officer_stream_kill_switch_stops_before_provider(monkeypatch):
     assert response.status_code == 503
     assert response.data["code"] == "AI_ASSISTANT_DISABLED"
     provider.assert_not_called()
+
+
+def test_officer_chat_returns_in_progress_for_an_active_duplicate_lease(monkeypatch):
+    idempotency.create_indexes()
+    officer = _officer()
+    application = _application(officer.id)
+    conversation_id = str(uuid.uuid4())
+    request_id = str(uuid.uuid4())
+    message = "Summarize review readiness"
+    fingerprint = idempotency.request_fingerprint(
+        message,
+        conversation_id,
+        "en",
+        history=[],
+        scope_key=f"officer:{officer.id}:{application.id}",
+    )
+    idempotency.claim(
+        application.customer_id,
+        request_id,
+        fingerprint=fingerprint,
+        lease_seconds=120,
+    )
+    assert idempotency.claim(
+        application.customer_id,
+        request_id,
+        fingerprint=fingerprint,
+        lease_seconds=120,
+    )["state"] == "in_progress"
+    provider = Mock()
+    monkeypatch.setattr("ai_assistant.views.officer.get_llm_service", provider)
+    monkeypatch.setattr(
+        "ai_assistant.views.officer.has_current_ai_consent", lambda scope: True
+    )
+
+    response = OfficerChatView.as_view()(
+        _request(
+            "POST",
+            "/api/ai/officer/chat/",
+            officer.id,
+            data={
+                "message": message,
+                "application_id": str(application.id),
+                "conversation_id": conversation_id,
+            },
+            headers={"HTTP_IDEMPOTENCY_KEY": request_id},
+        )
+    )
+
+    assert response.status_code == 409
+    assert response.data["code"] == "AI_REQUEST_IN_PROGRESS"
+    provider.assert_not_called()
+
+
+def test_officer_chat_does_not_invoke_provider_again_after_completion(monkeypatch):
+    idempotency.create_indexes()
+    officer = _officer()
+    application = _application(officer.id)
+    request_id = str(uuid.uuid4())
+    conversation_id = str(uuid.uuid4())
+    llm = JsonLLM()
+    llm.chat_with_tools = Mock(return_value=llm.result)
+    monkeypatch.setattr("ai_assistant.views.officer.get_llm_service", lambda **kwargs: llm)
+    monkeypatch.setattr(
+        "ai_assistant.views.officer.has_current_ai_consent", lambda scope: True
+    )
+
+    def make_request():
+        return _request(
+            "POST",
+            "/api/ai/officer/chat/",
+            officer.id,
+            data={
+                "message": "Summarize review readiness",
+                "application_id": str(application.id),
+                "conversation_id": conversation_id,
+            },
+            headers={"HTTP_IDEMPOTENCY_KEY": request_id},
+        )
+
+    first = OfficerChatView.as_view()(make_request())
+    second = OfficerChatView.as_view()(make_request())
+
+    assert first.status_code == 200
+    assert second.status_code == 409
+    assert second.data["code"] == "AI_REQUEST_ALREADY_COMPLETED"
+    assert llm.chat_with_tools.call_count == 1
+
+
+def test_officer_chat_rejects_a_key_bound_to_a_different_assignment_scope(monkeypatch):
+    idempotency.create_indexes()
+    first_officer = _officer()
+    second_officer = _officer()
+    application = _application(first_officer.id)
+    request_id = str(uuid.uuid4())
+    conversation_id = str(uuid.uuid4())
+    fingerprint = idempotency.request_fingerprint(
+        "Summarize review readiness",
+        conversation_id,
+        "en",
+        history=[],
+        scope_key=f"officer:{first_officer.id}:{application.id}",
+    )
+    idempotency.claim(
+        application.customer_id,
+        request_id,
+        fingerprint=fingerprint,
+        lease_seconds=120,
+    )
+    application.assigned_officer = str(second_officer.id)
+    application.save()
+    provider = Mock()
+    monkeypatch.setattr("ai_assistant.views.officer.get_llm_service", provider)
+    monkeypatch.setattr(
+        "ai_assistant.views.officer.has_current_ai_consent", lambda scope: True
+    )
+
+    response = OfficerChatView.as_view()(
+        _request(
+            "POST",
+            "/api/ai/officer/chat/",
+            second_officer.id,
+            data={
+                "message": "Summarize review readiness",
+                "application_id": str(application.id),
+                "conversation_id": conversation_id,
+            },
+            headers={"HTTP_IDEMPOTENCY_KEY": request_id},
+        )
+    )
+
+    assert response.status_code == 409
+    assert response.data["code"] == "AI_IDEMPOTENCY_KEY_REUSED"
+    provider.assert_not_called()
+
+
+def test_officer_stream_returns_in_progress_for_an_active_duplicate_lease(monkeypatch):
+    idempotency.create_indexes()
+    officer = _officer()
+    application = _application(officer.id)
+    conversation_id = str(uuid.uuid4())
+    request_id = str(uuid.uuid4())
+    message = "Summarize review readiness"
+    fingerprint = idempotency.request_fingerprint(
+        message,
+        conversation_id,
+        "en",
+        history=[],
+        scope_key=f"officer:{officer.id}:{application.id}",
+    )
+    idempotency.claim(
+        application.customer_id,
+        request_id,
+        fingerprint=fingerprint,
+        lease_seconds=120,
+    )
+    provider = Mock()
+    monkeypatch.setattr("ai_assistant.views.officer.get_llm_service", provider)
+    monkeypatch.setattr(
+        "ai_assistant.views.officer.has_current_ai_consent", lambda scope: True
+    )
+
+    response = OfficerStreamingChatView.as_view()(
+        _request(
+            "POST",
+            "/api/ai/officer/chat/stream/",
+            officer.id,
+            data={
+                "message": message,
+                "application_id": str(application.id),
+                "conversation_id": conversation_id,
+            },
+            headers={"HTTP_IDEMPOTENCY_KEY": request_id},
+        )
+    )
+
+    assert response.status_code == 409
+    assert response.data["code"] == "AI_REQUEST_IN_PROGRESS"
+    provider.assert_not_called()
+
+
+def test_officer_stream_disconnect_releases_its_idempotency_lease(monkeypatch):
+    idempotency.create_indexes()
+    officer = _officer()
+    application = _application(officer.id)
+    request_id = str(uuid.uuid4())
+    conversation_id = str(uuid.uuid4())
+    message = "Stream"
+    provider_stream = EndlessCloseAwareStream()
+    llm = StreamLLM(provider_stream)
+    monkeypatch.setattr("ai_assistant.views.officer.get_llm_service", lambda **kwargs: llm)
+    monkeypatch.setattr(
+        "ai_assistant.views.officer.has_current_ai_consent", lambda scope: True
+    )
+
+    response = OfficerStreamingChatView.as_view()(
+        _request(
+            "POST",
+            "/api/ai/officer/chat/stream/",
+            officer.id,
+            data={
+                "message": message,
+                "application_id": str(application.id),
+                "conversation_id": conversation_id,
+            },
+            headers={"HTTP_IDEMPOTENCY_KEY": request_id},
+        )
+    )
+    iterator = iter(response.streaming_content)
+    assert b"event: tool_call" in next(iterator)
+    response.close()
+
+    request_record = settings.MONGODB[idempotency.COLLECTION].find_one(
+        {"request_id": request_id}
+    )
+    assert provider_stream.closed is True
+    assert request_record["status"] == "failed"
+    assert idempotency.claim(
+        application.customer_id,
+        request_id,
+        fingerprint=idempotency.request_fingerprint(
+            message,
+            conversation_id,
+            "en",
+            history=[],
+            scope_key=f"officer:{officer.id}:{application.id}",
+        ),
+    )["state"] == "owned"

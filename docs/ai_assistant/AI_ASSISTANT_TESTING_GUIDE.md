@@ -153,6 +153,20 @@ successful `done` includes `conversation_id`, `request_id`,
 `response_time_ms`, `tokens_used`, and allowlisted `tools_called`. Clients must
 not treat HTTP 200 alone as stream success.
 
+Officer chat requests use a short-lived, application- and officer-bound lease
+for retry protection. The web client creates one UUID `Idempotency-Key` per
+logical attempt and reuses it, together with the same conversation and
+history, when retrying after a disconnect. An active duplicate returns
+`AI_REQUEST_IN_PROGRESS` (409); a completed ephemeral officer request returns
+`AI_REQUEST_ALREADY_COMPLETED` (409) and never invokes the provider again. A
+key reused with different message, history, conversation, assignment, or
+officer scope returns `AI_IDEMPOTENCY_KEY_REUSED` (409). Provider failures,
+disconnects before successful terminal completion, and stream-limit
+cancellations release the lease for a safe retry. Assignment or consent
+changes are revalidated independently and fail closed before provider work.
+Officer idempotency records contain only request metadata and are not an
+officer conversation history store.
+
 ### `POST /api/ai/chat/`
 
 Request:

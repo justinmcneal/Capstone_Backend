@@ -9,9 +9,10 @@ from typing import Any, cast
 
 from django.conf import settings
 from django.http import StreamingHttpResponse
+from pymongo.errors import PyMongoError
 from rest_framework import status
-from rest_framework.renderers import JSONRenderer
 from rest_framework.permissions import IsAuthenticated
+from rest_framework.renderers import JSONRenderer
 from rest_framework.views import APIView
 
 from accounts.authentication import CustomJWTAuthentication
@@ -19,8 +20,24 @@ from accounts.utils.access_control import AccessControlMixin
 from accounts.utils.response_helpers import error_response, success_response
 from accounts.utils.throttles import ChatRateThrottle
 from accounts.utils.validation_utils import escape_llm_output, sanitize_multiline_text
+from ai_assistant.metrics import (
+    AI_ACTIVE_STREAMS,
+    AI_PROVIDER_LATENCY,
+    AI_PROVIDER_REQUESTS,
+    AI_STREAM_LIMIT_CANCELLATIONS,
+    AI_TOKENS,
+    decrement,
+    increment,
+    observe,
+)
 from ai_assistant.serializers.officer import OfficerChatRequestSerializer
 from ai_assistant.services import get_llm_service
+from ai_assistant.services.idempotency import (
+    claim,
+    mark_complete,
+    mark_failed,
+    request_fingerprint,
+)
 from ai_assistant.services.officer_audit import (
     OfficerAIAuditUnavailable,
     record_officer_ai_access,
@@ -41,16 +58,6 @@ from ai_assistant.services.officer_tools import (
     execute_officer_tool_result,
 )
 from ai_assistant.services.request_limits import resolve_request_id
-from ai_assistant.metrics import (
-    AI_ACTIVE_STREAMS,
-    AI_PROVIDER_LATENCY,
-    AI_PROVIDER_REQUESTS,
-    AI_STREAM_LIMIT_CANCELLATIONS,
-    AI_TOKENS,
-    decrement,
-    increment,
-    observe,
-)
 from ai_assistant.views.chat_views import AIRequestMetricsMixin
 
 logger = logging.getLogger("ai_assistant")
@@ -81,6 +88,10 @@ SAFE_METRIC_PROVIDERS = frozenset({"groq", "ollama"})
 SAFE_MODEL_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}\Z")
 MAX_SAFE_PROVIDER_TOKENS = 1_000_000
 MAX_SAFE_DURATION_MS = 86_400_000
+OFFICER_IDEMPOTENCY_LEASE_SECONDS = min(
+    int(getattr(settings, "AI_ASSISTANT_IDEMPOTENCY_LEASE_SECONDS", 900)),
+    300,
+)
 
 
 def _consent_required_response():
@@ -89,6 +100,58 @@ def _consent_required_response():
         code="CONSENT_REQUIRED",
         status_code=status.HTTP_403_FORBIDDEN,
     )
+
+
+def _officer_request_fingerprint(scope, data):
+    return request_fingerprint(
+        data["message"],
+        data["conversation_id"],
+        data["language"],
+        history=data.get("history", []),
+        scope_key=f"officer:{scope.officer_id}:{scope.application_id}",
+    )
+
+
+def _claim_officer_request(scope, request_id, data):
+    return claim(
+        scope.customer_id,
+        request_id,
+        fingerprint=_officer_request_fingerprint(scope, data),
+        lease_seconds=OFFICER_IDEMPOTENCY_LEASE_SECONDS,
+    )
+
+
+def _officer_idempotency_response(request_claim):
+    state = request_claim.get("state")
+    if state == "conflict":
+        return error_response(
+            message="Idempotency-Key was already used for a different request",
+            code="AI_IDEMPOTENCY_KEY_REUSED",
+            status_code=status.HTTP_409_CONFLICT,
+        )
+    if state == "in_progress":
+        return error_response(
+            message="An identical AI request is already processing",
+            code="AI_REQUEST_IN_PROGRESS",
+            status_code=status.HTTP_409_CONFLICT,
+        )
+    if state == "complete":
+        return error_response(
+            message="This AI request has already completed",
+            code="AI_REQUEST_ALREADY_COMPLETED",
+            status_code=status.HTTP_409_CONFLICT,
+        )
+    return None
+
+
+def _release_officer_request(scope, request_id):
+    try:
+        mark_failed(scope.customer_id, request_id)
+    except PyMongoError:
+        logger.warning(
+            "Officer AI idempotency lease release failed",
+            extra={"request_id": request_id},
+        )
 
 
 def _require_officer(request):
@@ -331,9 +394,14 @@ class OfficerChatView(AIRequestMetricsMixin, APIView):
         request_id, validation_error = resolve_request_id(request)
         if validation_error:
             return validation_error
+        request_claim = _claim_officer_request(scope, request_id, data)
+        duplicate_response = _officer_idempotency_response(request_claim)
+        if duplicate_response is not None:
+            return duplicate_response
         try:
             record_officer_ai_access(scope, request_id, data["language"])
         except OfficerAIAuditUnavailable:
+            _release_officer_request(scope, request_id)
             return error_response(
                 message="AI access audit is temporarily unavailable",
                 code="AI_AUDIT_UNAVAILABLE",
@@ -345,6 +413,7 @@ class OfficerChatView(AIRequestMetricsMixin, APIView):
             llm = get_llm_service(use_case="chat")
             provider_available = llm.is_available()
         except Exception:
+            _release_officer_request(scope, request_id)
             _record_provider_metrics(
                 None,
                 outcome="error",
@@ -368,6 +437,7 @@ class OfficerChatView(AIRequestMetricsMixin, APIView):
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
         if not provider_available:
+            _release_officer_request(scope, request_id)
             _record_provider_metrics(
                 llm,
                 outcome="unavailable",
@@ -389,6 +459,7 @@ class OfficerChatView(AIRequestMetricsMixin, APIView):
 
         authorization_error = _authorization_error(scope)
         if authorization_error:
+            _release_officer_request(scope, request_id)
             record_officer_ai_result(
                 scope,
                 request_id,
@@ -416,6 +487,7 @@ class OfficerChatView(AIRequestMetricsMixin, APIView):
                 request_id=request_id,
             )
         except Exception:
+            _release_officer_request(scope, request_id)
             _record_provider_metrics(
                 llm,
                 outcome="error",
@@ -442,6 +514,7 @@ class OfficerChatView(AIRequestMetricsMixin, APIView):
             result = {}
         raw_tool_names = result.get("tools_called")
         if raw_tool_names is not None and not isinstance(raw_tool_names, (list, tuple)):
+            _release_officer_request(scope, request_id)
             _record_provider_metrics(
                 llm,
                 outcome="error",
@@ -470,6 +543,7 @@ class OfficerChatView(AIRequestMetricsMixin, APIView):
         )
         tool_names = _safe_tool_names(result.get("tools_called"))
         if not result.get("success"):
+            _release_officer_request(scope, request_id)
             outcome = _safe_controlled_error_code(result.get("code"))
             _record_provider_metrics(
                 llm,
@@ -496,6 +570,7 @@ class OfficerChatView(AIRequestMetricsMixin, APIView):
             escape_llm_output(result.get("response", ""))
         )
         if not ai_response:
+            _release_officer_request(scope, request_id)
             _record_provider_metrics(
                 llm,
                 outcome="empty",
@@ -518,6 +593,7 @@ class OfficerChatView(AIRequestMetricsMixin, APIView):
             )
         authorization_error = _authorization_error(scope)
         if authorization_error:
+            _release_officer_request(scope, request_id)
             record_officer_ai_result(
                 scope,
                 request_id,
@@ -541,6 +617,7 @@ class OfficerChatView(AIRequestMetricsMixin, APIView):
             tool_names=tool_names,
             duration_ms=duration_ms,
         )
+        mark_complete(scope.customer_id, request_id)
         _record_provider_metrics(
             llm,
             outcome="success",
@@ -609,9 +686,14 @@ class OfficerStreamingChatView(AIRequestMetricsMixin, APIView):
         request_id, validation_error = resolve_request_id(request)
         if validation_error:
             return validation_error
+        request_claim = _claim_officer_request(scope, request_id, data)
+        duplicate_response = _officer_idempotency_response(request_claim)
+        if duplicate_response is not None:
+            return duplicate_response
         try:
             record_officer_ai_access(scope, request_id, data["language"])
         except OfficerAIAuditUnavailable:
+            _release_officer_request(scope, request_id)
             return error_response(
                 message="AI access audit is temporarily unavailable",
                 code="AI_AUDIT_UNAVAILABLE",
@@ -622,6 +704,7 @@ class OfficerStreamingChatView(AIRequestMetricsMixin, APIView):
             llm = get_llm_service(use_case="chat")
             provider_available = llm.is_available()
         except Exception:
+            _release_officer_request(scope, request_id)
             _record_provider_metrics(
                 None,
                 outcome="error",
@@ -645,6 +728,7 @@ class OfficerStreamingChatView(AIRequestMetricsMixin, APIView):
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
         if not provider_available:
+            _release_officer_request(scope, request_id)
             _record_provider_metrics(
                 llm,
                 outcome="unavailable",
@@ -670,6 +754,7 @@ class OfficerStreamingChatView(AIRequestMetricsMixin, APIView):
             provider_stream = None
             terminal_emitted = False
             result_recorded = False
+            lease_finalized = False
             response_parts = []
             response_chars = 0
             response_bytes = 0
@@ -702,7 +787,20 @@ class OfficerStreamingChatView(AIRequestMetricsMixin, APIView):
                     duration_ms=elapsed_ms() if duration_ms is None else duration_ms,
                 )
 
+            def complete_lease():
+                nonlocal lease_finalized
+                if not lease_finalized:
+                    mark_complete(scope.customer_id, request_id)
+                    lease_finalized = True
+
+            def release_lease():
+                nonlocal lease_finalized
+                if not lease_finalized:
+                    _release_officer_request(scope, request_id)
+                    lease_finalized = True
+
             def stream_limit_event(limit):
+                release_lease()
                 code = (
                     "AI_PROVIDER_STREAM_DURATION_LIMIT"
                     if limit == "duration"
@@ -916,6 +1014,7 @@ class OfficerStreamingChatView(AIRequestMetricsMixin, APIView):
                                 },
                             )
                             record_result("success", duration_ms=duration_ms)
+                            complete_lease()
                             _record_provider_metrics(
                                 llm,
                                 outcome="success",
@@ -1021,6 +1120,7 @@ class OfficerStreamingChatView(AIRequestMetricsMixin, APIView):
                         },
                     )
             finally:
+                release_lease()
                 close_stream = getattr(provider_stream, "close", None)
                 if callable(close_stream):
                     try:
