@@ -41,6 +41,12 @@ from ai_assistant.services.provider_boundary import (
     ProviderConcurrencyExceeded,
     provider_session,
 )
+from ai_assistant.services.officer_policy import (
+    OFFICER_UNSUPPORTED_RESPONSE,
+    officer_policy_response,
+    validate_officer_response,
+)
+from ai_assistant.services.officer_privacy import officer_provider_input_violations
 from ai_assistant.services.response_controls import (
     controlled_guidance_response,
     validate_provider_response,
@@ -93,6 +99,53 @@ def _controlled_result(message, *, language, model, provider, request_id=None):
         'tokens_used': 0,
         'tools_called': [],
         'controlled_response': True,
+    }
+    if request_id:
+        result['request_id'] = request_id
+    return result
+
+
+def _officer_policy_result(message, *, model, provider, request_id=None):
+    response = officer_policy_response(message)
+    if not response:
+        return None
+    result = {
+        'success': True,
+        'response': response,
+        'model': model,
+        'provider': provider,
+        'response_time_ms': 0,
+        'tokens_used': 0,
+        'tools_called': [],
+        'policy_intercepted': True,
+    }
+    if request_id:
+        result['request_id'] = request_id
+    return result
+
+
+def _officer_privacy_result(
+    message,
+    *,
+    conversation_history=None,
+    model,
+    provider,
+    request_id=None,
+):
+    violations = officer_provider_input_violations(message, conversation_history)
+    if not violations:
+        return None
+    result = {
+        'success': True,
+        'response': OFFICER_UNSUPPORTED_RESPONSE,
+        'model': model,
+        'provider': provider,
+        'response_time_ms': 0,
+        'tokens_used': 0,
+        'tools_called': [],
+        'policy_intercepted': True,
+        'privacy_blocked': True,
+        'privacy_violations': list(violations),
     }
     if request_id:
         result['request_id'] = request_id
@@ -659,6 +712,7 @@ class GroqService:
         max_tool_rounds=3,
         request_id=None,
         tool_executor=None,
+        officer_mode=False,
     ):
         """
         Send a message with function calling support.
@@ -684,23 +738,42 @@ class GroqService:
         executor = tool_executor or execute_tool_result
 
         max_tokens, max_tool_rounds = self._bounded_limits(max_tokens, max_tool_rounds)
-        policy_result = _policy_result(
-            message,
-            model=self.model,
-            provider=self.provider,
-            request_id=request_id,
-        )
-        if policy_result:
-            return policy_result
-        controlled_result = _controlled_result(
-            message,
-            language=language,
-            model=self.model,
-            provider=self.provider,
-            request_id=request_id,
-        )
-        if controlled_result:
-            return controlled_result
+        if officer_mode:
+            privacy_result = _officer_privacy_result(
+                message,
+                conversation_history=conversation_history,
+                model=self.model,
+                provider=self.provider,
+                request_id=request_id,
+            )
+            if privacy_result:
+                return privacy_result
+            policy_result = _officer_policy_result(
+                message,
+                model=self.model,
+                provider=self.provider,
+                request_id=request_id,
+            )
+            if policy_result:
+                return policy_result
+        else:
+            policy_result = _policy_result(
+                message,
+                model=self.model,
+                provider=self.provider,
+                request_id=request_id,
+            )
+            if policy_result:
+                return policy_result
+            controlled_result = _controlled_result(
+                message,
+                language=language,
+                model=self.model,
+                provider=self.provider,
+                request_id=request_id,
+            )
+            if controlled_result:
+                return controlled_result
         if not self.api_key:
             return self._provider_failure(request_id=request_id)
 
@@ -844,7 +917,12 @@ class GroqService:
                     continue
                 else:
                     elapsed_ms = int((time.time() - start_time) * 1000)
-                    provider_text, violations = validate_provider_response(
+                    validator = (
+                        validate_officer_response
+                        if officer_mode
+                        else validate_provider_response
+                    )
+                    provider_text, violations = validator(
                         assistant_message.get('content', ''),
                         message=message,
                         language=language,
@@ -994,6 +1072,7 @@ class GroqService:
         max_tool_rounds=3,
         request_id=None,
         tool_executor=None,
+        officer_mode=False,
     ):
         """
         Stream chat with function calling support.
@@ -1013,41 +1092,79 @@ class GroqService:
         executor = tool_executor or execute_tool_result
 
         max_tokens, max_tool_rounds = self._bounded_limits(max_tokens, max_tool_rounds)
-        policy_result = _policy_result(
-            message,
-            model=self.model,
-            provider=self.provider,
-            request_id=request_id,
-        )
-        if policy_result:
-            yield {'type': 'token', 'content': policy_result['response']}
-            yield {
-                'type': 'done',
-                'model': self.model,
-                'provider': self.provider,
-                'tokens_used': 0,
-                'tools_called': [],
-                'policy_intercepted': True,
-            }
-            return
-        controlled_result = _controlled_result(
-            message,
-            language=language,
-            model=self.model,
-            provider=self.provider,
-            request_id=request_id,
-        )
-        if controlled_result:
-            yield {'type': 'token', 'content': controlled_result['response']}
-            yield {
-                'type': 'done',
-                'model': self.model,
-                'provider': self.provider,
-                'tokens_used': 0,
-                'tools_called': [],
-                'controlled_response': True,
-            }
-            return
+        if officer_mode:
+            privacy_result = _officer_privacy_result(
+                message,
+                conversation_history=conversation_history,
+                model=self.model,
+                provider=self.provider,
+                request_id=request_id,
+            )
+            if privacy_result:
+                yield {'type': 'token', 'content': privacy_result['response']}
+                yield {
+                    'type': 'done',
+                    'model': self.model,
+                    'provider': self.provider,
+                    'tokens_used': 0,
+                    'tools_called': [],
+                    'policy_intercepted': True,
+                    'privacy_blocked': True,
+                }
+                return
+            policy_result = _officer_policy_result(
+                message,
+                model=self.model,
+                provider=self.provider,
+                request_id=request_id,
+            )
+            if policy_result:
+                yield {'type': 'token', 'content': policy_result['response']}
+                yield {
+                    'type': 'done',
+                    'model': self.model,
+                    'provider': self.provider,
+                    'tokens_used': 0,
+                    'tools_called': [],
+                    'policy_intercepted': True,
+                }
+                return
+        else:
+            policy_result = _policy_result(
+                message,
+                model=self.model,
+                provider=self.provider,
+                request_id=request_id,
+            )
+            if policy_result:
+                yield {'type': 'token', 'content': policy_result['response']}
+                yield {
+                    'type': 'done',
+                    'model': self.model,
+                    'provider': self.provider,
+                    'tokens_used': 0,
+                    'tools_called': [],
+                    'policy_intercepted': True,
+                }
+                return
+            controlled_result = _controlled_result(
+                message,
+                language=language,
+                model=self.model,
+                provider=self.provider,
+                request_id=request_id,
+            )
+            if controlled_result:
+                yield {'type': 'token', 'content': controlled_result['response']}
+                yield {
+                    'type': 'done',
+                    'model': self.model,
+                    'provider': self.provider,
+                    'tokens_used': 0,
+                    'tools_called': [],
+                    'controlled_response': True,
+                }
+                return
         if not self.api_key:
             yield {'type': 'error', 'content': PUBLIC_PROVIDER_ERROR, 'code': 'AI_PROVIDER_ERROR'}
             return
