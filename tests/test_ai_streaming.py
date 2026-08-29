@@ -34,6 +34,40 @@ DEFAULT_USER = AuthenticatedUser(
 )
 
 
+def test_chat_stream_accepts_non_empty_conversation_history():
+    """Legacy streaming must reach the provider when history is supplied."""
+    from ai_assistant.services.llm_service import GroqService
+
+    provider_response = MagicMock(status_code=200)
+    provider_response.iter_lines.return_value = [
+        b'data: {"choices":[{"delta":{"content":"history ok"}}]}',
+        b"data: [DONE]",
+    ]
+
+    history = [
+        {"role": "user", "content": "Earlier synthetic question"},
+        {"role": "assistant", "content": "Earlier synthetic answer"},
+    ]
+    with patch(
+        "ai_assistant.services.llm_service._session.post",
+        return_value=provider_response,
+    ) as provider_post:
+        events = list(
+            GroqService(
+                api_key="synthetic-key",
+                model="synthetic-model",
+                provider="groq",
+            ).chat_stream(
+                "Current synthetic question",
+                conversation_history=history,
+            )
+        )
+
+    assert events[0] == {"type": "token", "content": "history ok"}
+    assert events[-1]["type"] == "done"
+    assert provider_post.call_args.kwargs["json"]["messages"][-3:-1] == history
+
+
 def _make_fake_request(data=None, user=None):
     return SimpleNamespace(
         data=data or {},
