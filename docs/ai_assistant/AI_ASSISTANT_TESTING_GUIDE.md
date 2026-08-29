@@ -763,6 +763,46 @@ AI_ASSISTANT_DEPLOYMENT_LOAD_CONCURRENCY=2 \
   tests/test_ai_stage6_deployment_integrations.py::test_representative_deployed_chat_load
 ```
 
+The officer proxy suite uses cookie transport and the real CSRF double-submit
+pair. It requires a disposable, pre-provisioned synthetic officer and
+customer; the customer must own the assigned application's current consent.
+The unassigned application must belong to a different officer. The suite
+restores customer AI consent after the revocation test and never prints the
+configured credentials or response bodies:
+
+```bash
+RUN_AI_OFFICER_PROXY_DEPLOYMENT_TESTS=1 \
+AI_ASSISTANT_DEPLOYMENT_OFFICER_BASE_URL='https://backend.example' \
+AI_ASSISTANT_DEPLOYMENT_OFFICER_EMAIL='<synthetic officer email>' \
+AI_ASSISTANT_DEPLOYMENT_OFFICER_PASSWORD='<synthetic officer password>' \
+AI_ASSISTANT_DEPLOYMENT_OFFICER_APPLICATION_ID='<assigned synthetic application id>' \
+AI_ASSISTANT_DEPLOYMENT_OFFICER_UNASSIGNED_APPLICATION_ID='<unassigned application id>' \
+AI_ASSISTANT_DEPLOYMENT_CUSTOMER_EMAIL='<synthetic customer email>' \
+AI_ASSISTANT_DEPLOYMENT_CUSTOMER_PASSWORD='<synthetic customer password>' \
+AI_ASSISTANT_DEPLOYMENT_RAW_TOKEN_CANARY='<synthetic customer identifier>' \
+  .venv/bin/pytest -q -m deployment_integration \
+  tests/test_ai_stage6_deployment_integrations.py -k real_officer_proxy
+```
+
+This exercises successful officer SSE, one terminal event, no raw canary in
+the proxied stream, assignment denial, consent revocation during a stream, and
+cancellation cleanup. The browser journey uses the same synthetic account and
+actual backend origin; set `VITE_API_URL` to the proxy origin and disable
+notifications for this isolated run:
+
+```bash
+RUN_AI_OFFICER_BROWSER_E2E=1 \
+VITE_API_URL='https://backend.example' \
+VITE_WS_URL='wss://backend.example' \
+VITE_ENABLE_REALTIME=false \
+AI_ASSISTANT_DEPLOYMENT_OFFICER_EMAIL='<synthetic officer email>' \
+AI_ASSISTANT_DEPLOYMENT_OFFICER_PASSWORD='<synthetic officer password>' \
+AI_ASSISTANT_DEPLOYMENT_OFFICER_APPLICATION_ID='<assigned synthetic application id>' \
+AI_ASSISTANT_DEPLOYMENT_OFFICER_UNASSIGNED_APPLICATION_ID='<unassigned application id>' \
+AI_ASSISTANT_DEPLOYMENT_RAW_TOKEN_CANARY='<synthetic customer identifier>' \
+  npm run test:e2e -- e2e/loan-officer-ai-assistant-real-proxy.spec.ts
+```
+
 The proxy synthetic customer must be verified, have current data/AI consent,
 and contain reviewed synthetic document fixtures so the probe can prove the
 tool-call, tool-result, token, and single-terminal-event contract. Review
