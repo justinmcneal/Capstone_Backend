@@ -68,6 +68,67 @@ def test_chat_stream_accepts_non_empty_conversation_history():
     assert provider_post.call_args.kwargs["json"]["messages"][-3:-1] == history
 
 
+def test_json_and_streaming_tool_transports_send_same_six_complete_turns():
+    """JSON and streaming tool calls must send the same twelve history entries."""
+    from ai_assistant.services.llm_service import GroqService
+
+    history = [
+        {
+            "role": "user" if index % 2 == 0 else "assistant",
+            "content": f"Synthetic history entry {index}",
+        }
+        for index in range(14)
+    ]
+    expected_history = history[-12:]
+    service = GroqService(
+        api_key="synthetic-key",
+        model="synthetic-model",
+        provider="groq",
+    )
+
+    json_response = MagicMock(status_code=200)
+    json_response.json.return_value = {
+        "choices": [{"message": {"content": "Synthetic JSON response"}}],
+    }
+    with patch(
+        "ai_assistant.services.llm_service._session.post",
+        return_value=json_response,
+    ) as json_post:
+        service.chat_with_tools(
+            message="Current synthetic question",
+            customer_id="synthetic-customer",
+            conversation_history=history,
+            tools=[],
+        )
+    json_history = json_post.call_args.kwargs["json"]["messages"][1:-1]
+
+    phase_response = MagicMock(status_code=200)
+    phase_response.json.return_value = {
+        "choices": [{"message": {"content": "Synthetic phase response"}}],
+    }
+    stream_response = MagicMock(status_code=200)
+    stream_response.iter_lines.return_value = [
+        b'data: {"choices":[{"delta":{"content":"Synthetic stream response"}}]}',
+        b"data: [DONE]",
+    ]
+    with patch(
+        "ai_assistant.services.llm_service._session.post",
+        side_effect=[phase_response, stream_response],
+    ) as stream_post:
+        list(
+            service.chat_with_tools_stream(
+                message="Current synthetic question",
+                customer_id="synthetic-customer",
+                conversation_history=history,
+                tools=[],
+            )
+        )
+    stream_history = stream_post.call_args_list[-1].kwargs["json"]["messages"][1:-1]
+
+    assert json_history == expected_history
+    assert stream_history == expected_history
+
+
 def _make_fake_request(data=None, user=None):
     return SimpleNamespace(
         data=data or {},

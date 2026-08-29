@@ -4,7 +4,10 @@ import uuid
 
 from rest_framework import serializers
 
-from ai_assistant.services.request_limits import validate_chat_message
+from ai_assistant.services.request_limits import (
+    AI_ASSISTANT_HISTORY_MAX_MESSAGES,
+    validate_chat_message,
+)
 
 
 _OFFICER_CONTEXT_RESTRICTED_PATTERNS = tuple(
@@ -234,7 +237,7 @@ class OfficerChatRequestSerializer(serializers.Serializer):
             _validate_officer_context(cleaned_content)
             normalized.append({"role": role, "content": cleaned_content})
 
-        return normalized[-6:]
+        return normalized[-AI_ASSISTANT_HISTORY_MAX_MESSAGES:]
 
     def validate(self, attrs):
         attrs.setdefault("conversation_id", str(uuid.uuid4()))

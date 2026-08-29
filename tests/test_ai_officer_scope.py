@@ -60,22 +60,28 @@ def test_officer_chat_serializer_rejects_tool_roles_and_bounds_history():
     assert "history" in serializer.errors
 
 
-def test_officer_chat_serializer_keeps_only_last_six_user_and_assistant_entries():
+def test_officer_chat_serializer_keeps_only_last_six_complete_turns():
     serializer = OfficerChatRequestSerializer(
         data={
             "message": "Review this application",
             "application_id": "app-1",
             "history": [
-                {"role": "user", "content": f"message-{index}"}
-                for index in range(8)
+                {
+                    "role": "user" if index % 2 == 0 else "assistant",
+                    "content": f"message-{index}",
+                }
+                for index in range(14)
             ],
         }
     )
 
     assert serializer.is_valid(), serializer.errors
     assert serializer.validated_data["history"] == [
-        {"role": "user", "content": f"message-{index}"}
-        for index in range(2, 8)
+        {
+            "role": "user" if index % 2 == 0 else "assistant",
+            "content": f"message-{index}",
+        }
+        for index in range(2, 14)
     ]
 
 

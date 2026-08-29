@@ -51,6 +51,7 @@ from ai_assistant.services.response_controls import (
     controlled_guidance_response,
     validate_provider_response,
 )
+from ai_assistant.services.request_limits import bounded_conversation_history
 
 logger = logging.getLogger('ai_assistant')
 
@@ -519,7 +520,7 @@ class GroqService:
         
         # Add previous conversation messages for context (last 6 for efficiency)
         if conversation_history:
-            for hist in conversation_history[-6:]:
+            for hist in bounded_conversation_history(conversation_history):
                 messages.append({
                     "role": hist.get('role', 'user'),
                     "content": hist.get('content', '')
@@ -790,7 +791,7 @@ class GroqService:
         messages = [{"role": "system", "content": active_system_prompt}]
 
         if conversation_history:
-            for hist in conversation_history[-6:]:
+            for hist in bounded_conversation_history(conversation_history):
                 messages.append({
                     "role": hist.get('role', 'user'),
                     "content": hist.get('content', '')
@@ -1019,7 +1020,7 @@ class GroqService:
         messages = [{"role": "system", "content": active_system_prompt}]
 
         if conversation_history:
-            for hist in conversation_history[-6:]:
+            for hist in bounded_conversation_history(conversation_history):
                 messages.append({
                     "role": hist.get('role', 'user'),
                     "content": hist.get('content', '')
@@ -1179,7 +1180,7 @@ class GroqService:
         messages = [{"role": "system", "content": active_system_prompt}]
 
         if conversation_history:
-            for hist in conversation_history[-6:]:
+            for hist in bounded_conversation_history(conversation_history):
                 messages.append({
                     "role": hist.get('role', 'user'),
                     "content": hist.get('content', '')

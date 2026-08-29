@@ -43,6 +43,7 @@ from ai_assistant.services.idempotency import (
 from ai_assistant.services.knowledge_base import check_prohibited_content
 from ai_assistant.services.llm_service import SYSTEM_PROMPT, needs_user_context
 from ai_assistant.services.request_limits import (
+    AI_ASSISTANT_HISTORY_MAX_MESSAGES,
     resolve_request_id,
     validate_chat_message,
 )
@@ -214,10 +215,11 @@ class ChatView(AIRequestMetricsMixin, ConsentRequiredMixin, APIView):
             history = AIInteraction.find_by_conversation(
                 conversation_id=conversation_id,
                 customer_id=customer_id,
+                limit=AI_ASSISTANT_HISTORY_MAX_MESSAGES,
             )
             conversation_history = [
                 {'role': h.role, 'content': h.message if h.role == 'user' else h.response}
-                for h in history[-10:]
+                for h in history
             ]
             
             is_prohibited, redirect_response = check_prohibited_content(message)

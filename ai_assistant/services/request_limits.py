@@ -8,6 +8,13 @@ from rest_framework import status
 from accounts.utils.response_helpers import error_response
 from accounts.utils.validation_utils import sanitize_text
 
+AI_ASSISTANT_HISTORY_MAX_MESSAGES = 12
+
+
+def bounded_conversation_history(history):
+    """Keep the last six complete user/assistant turns for provider context."""
+    return list(history or [])[-AI_ASSISTANT_HISTORY_MAX_MESSAGES:]
+
 
 def validate_chat_message(raw_message, request=None):
     content_length = 0
