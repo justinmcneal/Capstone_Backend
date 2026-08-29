@@ -112,9 +112,15 @@ class ProviderSession:
             raise ProviderConcurrencyExceeded('AI provider concurrency limit reached')
 
         stream = bool(kwargs.get('stream'))
+        read_timeout = settings.AI_ASSISTANT_READ_TIMEOUT_SECONDS
+        if stream:
+            read_timeout = min(
+                read_timeout,
+                settings.AI_ASSISTANT_STREAM_MAX_DURATION_SECONDS,
+            )
         kwargs['timeout'] = (
             settings.AI_ASSISTANT_CONNECT_TIMEOUT_SECONDS,
-            settings.AI_ASSISTANT_READ_TIMEOUT_SECONDS,
+            read_timeout,
         )
         # Retrying paid/non-idempotent POSTs could duplicate usage. Only safe
         # readiness GETs receive bounded retries.

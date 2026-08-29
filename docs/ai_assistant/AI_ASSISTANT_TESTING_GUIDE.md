@@ -92,6 +92,9 @@ capacity recommendations:
 | `AI_ASSISTANT_HISTORY_MAX_PAGE` | `200` | Maximum legacy offset page; new clients should use signed cursors. |
 | `AI_ASSISTANT_IDEMPOTENCY_LEASE_SECONDS` | `900` | Active-request lease; must exceed the longest provider/stream execution. |
 | `AI_ASSISTANT_MAX_OUTPUT_TOKENS` | `512` | Hard output cap supplied to the provider. |
+| `AI_ASSISTANT_STREAM_MAX_CHARS` | `32768` | Cumulative server-side stream character cap. |
+| `AI_ASSISTANT_STREAM_MAX_BYTES` | `131072` | Cumulative server-side UTF-8 stream byte cap. |
+| `AI_ASSISTANT_STREAM_MAX_DURATION_SECONDS` | `120` | Monotonic total stream duration cap. |
 | `AI_ASSISTANT_MAX_TOOL_ROUNDS` | `3` | Maximum tool-selection iterations. |
 | `AI_ASSISTANT_MAX_TOOL_CALLS_PER_REQUEST` | `6` | Maximum aggregate tool calls in one request. |
 | `AI_ASSISTANT_TOOL_COST_PER_MINUTE` | `30` | Shared weighted tool-attempt budget per customer/minute. |

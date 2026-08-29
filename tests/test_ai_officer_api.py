@@ -1,4 +1,5 @@
 import json
+import time
 import uuid
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -1343,6 +1344,78 @@ def test_officer_stream_bounds_provider_model_and_tokens(monkeypatch):
     assert frames[-1][1]["model"] == "officer-model"
     assert frames[-1][1]["tokens_used"] == 0
     assert "attacker-model" not in json.dumps(frames)
+
+
+@override_settings(
+    AI_ASSISTANT_STREAM_MAX_CHARS=5,
+    AI_ASSISTANT_STREAM_MAX_BYTES=100,
+)
+def test_officer_stream_enforces_output_budget_and_audits_cancellation(monkeypatch):
+    officer = _officer()
+    application = _application(officer.id)
+    provider_stream = CloseAwareStream(
+        [
+            {"type": "token", "content": "12345"},
+            {"type": "token", "content": "6"},
+            {"type": "done", "model": "officer-model", "tokens_used": 1},
+        ]
+    )
+    llm = StreamLLM(provider_stream)
+    monkeypatch.setattr("ai_assistant.views.officer.get_llm_service", lambda **kwargs: llm)
+    monkeypatch.setattr(
+        "ai_assistant.views.officer.has_current_ai_consent", lambda scope: True
+    )
+
+    frames = _stream_frames(
+        OfficerStreamingChatView.as_view()(
+            _request(
+                "POST",
+                "/api/ai/officer/chat/stream/",
+                officer.id,
+                data={"message": "Stream", "application_id": str(application.id)},
+            )
+        )
+    )
+
+    assert [event for event, _payload in frames] == ["error"]
+    assert frames[0][1]["code"] == "AI_PROVIDER_STREAM_OUTPUT_LIMIT"
+    assert provider_stream.closed is True
+    assert _audit_events()[-1].details["outcome"] == "AI_PROVIDER_STREAM_OUTPUT_LIMIT"
+
+
+@override_settings(AI_ASSISTANT_STREAM_MAX_DURATION_SECONDS=0.1)
+def test_officer_stream_enforces_duration_budget_and_audits_cancellation(monkeypatch):
+    officer = _officer()
+    application = _application(officer.id)
+
+    def delayed_chunks():
+        time.sleep(0.2)
+        yield {"type": "token", "content": "late"}
+
+    provider_stream = CloseAwareStream(
+        delayed_chunks()
+    )
+    llm = StreamLLM(provider_stream)
+    monkeypatch.setattr("ai_assistant.views.officer.get_llm_service", lambda **kwargs: llm)
+    monkeypatch.setattr(
+        "ai_assistant.views.officer.has_current_ai_consent", lambda scope: True
+    )
+
+    frames = _stream_frames(
+        OfficerStreamingChatView.as_view()(
+            _request(
+                "POST",
+                "/api/ai/officer/chat/stream/",
+                officer.id,
+                data={"message": "Stream", "application_id": str(application.id)},
+            )
+        )
+    )
+
+    assert [event for event, _payload in frames] == ["error"]
+    assert frames[0][1]["code"] == "AI_PROVIDER_STREAM_DURATION_LIMIT"
+    assert provider_stream.closed is True
+    assert _audit_events()[-1].details["outcome"] == "AI_PROVIDER_STREAM_DURATION_LIMIT"
 
 
 def test_officer_stream_without_terminal_emits_incomplete_error_and_audits(monkeypatch):

@@ -77,6 +77,25 @@ def test_safe_readiness_get_retries_and_uses_configured_timeout(monkeypatch):
     AI_ASSISTANT_MAX_CONCURRENT_REQUESTS=2,
     AI_ASSISTANT_CONNECT_TIMEOUT_SECONDS=3,
     AI_ASSISTANT_READ_TIMEOUT_SECONDS=9,
+    AI_ASSISTANT_STREAM_MAX_DURATION_SECONDS=4,
+    AI_ASSISTANT_PROVIDER_RETRY_ATTEMPTS=1,
+    AI_ASSISTANT_PROVIDER_RETRY_BACKOFF_SECONDS=0,
+)
+def test_stream_read_timeout_does_not_exceed_total_stream_duration(monkeypatch):
+    boundary = ProviderSession()
+    response = Mock(status_code=200)
+    request = Mock(return_value=response)
+    monkeypatch.setattr(boundary._session, 'request', request)
+
+    boundary.post('https://provider.example/chat', stream=True).close()
+
+    assert request.call_args.kwargs['timeout'] == (3, 4)
+
+
+@override_settings(
+    AI_ASSISTANT_MAX_CONCURRENT_REQUESTS=2,
+    AI_ASSISTANT_CONNECT_TIMEOUT_SECONDS=3,
+    AI_ASSISTANT_READ_TIMEOUT_SECONDS=9,
     AI_ASSISTANT_PROVIDER_RETRY_ATTEMPTS=4,
     AI_ASSISTANT_PROVIDER_RETRY_BACKOFF_SECONDS=0,
     AI_ASSISTANT_CIRCUIT_FAILURE_THRESHOLD=5,

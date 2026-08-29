@@ -23,6 +23,7 @@ from ai_assistant.metrics import (
     AI_PROVIDER_LATENCY,
     AI_PROVIDER_REQUESTS,
     AI_REQUESTS,
+    AI_STREAM_LIMIT_CANCELLATIONS,
     AI_TOKENS,
     decrement,
     increment,
@@ -215,13 +216,45 @@ class StreamingChatView(AIRequestMetricsMixin, ConsentRequiredMixin, APIView):
 
         def event_stream():
             """Generator that yields SSE formatted events"""
-            start_time = time.time()
+            start_time = time.monotonic()
             full_response = []
+            full_response_chars = 0
+            full_response_bytes = 0
+            max_stream_chars = max(1, int(settings.AI_ASSISTANT_STREAM_MAX_CHARS))
+            max_stream_bytes = max(1, int(settings.AI_ASSISTANT_STREAM_MAX_BYTES))
+            max_stream_duration = max(
+                0.1,
+                float(settings.AI_ASSISTANT_STREAM_MAX_DURATION_SECONDS),
+            )
             model_used = ''
             tokens_used = 0
             tools_called = []
             terminal_emitted = False
             provider_stream = None
+
+            def stream_limit_event(limit):
+                code = (
+                    'AI_PROVIDER_STREAM_DURATION_LIMIT'
+                    if limit == 'duration'
+                    else 'AI_PROVIDER_STREAM_OUTPUT_LIMIT'
+                )
+                mark_failed(customer_id, request_id)
+                increment(
+                    AI_STREAM_LIMIT_CANCELLATIONS,
+                    provider=str(getattr(llm, 'provider', 'unknown')),
+                    limit=limit,
+                )
+                increment(
+                    AI_PROVIDER_REQUESTS,
+                    provider=str(getattr(llm, 'provider', 'unknown')),
+                    outcome='limit',
+                )
+                increment(
+                    AI_REQUESTS,
+                    endpoint='chat_stream_completion',
+                    outcome='limit',
+                )
+                return f"event: error\ndata: {json.dumps({'content': escape_llm_output('AI service is temporarily unavailable'), 'code': code, 'request_id': request_id})}\n\n"
             
             try:
                 provider_stream = llm.chat_with_tools_stream(
@@ -234,6 +267,10 @@ class StreamingChatView(AIRequestMetricsMixin, ConsentRequiredMixin, APIView):
                     request_id=request_id,
                 )
                 for chunk in provider_stream:
+                    if time.monotonic() - start_time >= max_stream_duration:
+                        terminal_emitted = True
+                        yield stream_limit_event('duration')
+                        return
                     chunk_type = chunk.get('type')
                     
                     if chunk_type == 'tool_call':
@@ -245,6 +282,20 @@ class StreamingChatView(AIRequestMetricsMixin, ConsentRequiredMixin, APIView):
                     
                     elif chunk_type == 'token':
                         raw_content = str(chunk.get('content', '') or '')
+                        next_chars = full_response_chars + len(raw_content)
+                        next_bytes = full_response_bytes + len(
+                            raw_content.encode('utf-8')
+                        )
+                        if next_chars > max_stream_chars:
+                            terminal_emitted = True
+                            yield stream_limit_event('characters')
+                            return
+                        if next_bytes > max_stream_bytes:
+                            terminal_emitted = True
+                            yield stream_limit_event('bytes')
+                            return
+                        full_response_chars = next_chars
+                        full_response_bytes = next_bytes
                         full_response.append(raw_content)
                         safe_content = escape_llm_output(raw_content)
                         yield f"event: token\ndata: {json.dumps({'content': safe_content})}\n\n"
@@ -252,7 +303,7 @@ class StreamingChatView(AIRequestMetricsMixin, ConsentRequiredMixin, APIView):
                     elif chunk_type == 'done':
                         model_used = chunk.get('model', '')
                         tokens_used = chunk.get('tokens_used', 0)
-                        elapsed_ms = int((time.time() - start_time) * 1000)
+                        elapsed_ms = int((time.monotonic() - start_time) * 1000)
                         
                         ai_response = escape_llm_output(
                             sanitize_multiline_text(''.join(full_response))

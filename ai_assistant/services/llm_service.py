@@ -52,6 +52,7 @@ from ai_assistant.services.response_controls import (
     validate_provider_response,
 )
 from ai_assistant.services.request_limits import bounded_conversation_history
+from ai_assistant.metrics import AI_STREAM_LIMIT_CANCELLATIONS, increment
 
 logger = logging.getLogger('ai_assistant')
 
@@ -348,8 +349,43 @@ class GroqService:
         """Parse one provider SSE response and close it on every exit path."""
         total_tokens = 0
         saw_done = False
+        output_chars = 0
+        output_bytes = 0
+        started = time.monotonic()
+        max_chars = max(1, int(settings.AI_ASSISTANT_STREAM_MAX_CHARS))
+        max_bytes = max(1, int(settings.AI_ASSISTANT_STREAM_MAX_BYTES))
+        max_duration = max(
+            0.1,
+            float(settings.AI_ASSISTANT_STREAM_MAX_DURATION_SECONDS),
+        )
+
+        def limit_error(limit):
+            code = (
+                'AI_PROVIDER_STREAM_DURATION_LIMIT'
+                if limit == 'duration'
+                else 'AI_PROVIDER_STREAM_OUTPUT_LIMIT'
+            )
+            increment(
+                AI_STREAM_LIMIT_CANCELLATIONS,
+                provider=str(self.provider),
+                limit=limit,
+            )
+            logger.warning(
+                'AI provider stream cancelled by %s limit',
+                limit,
+                extra={'request_id': request_id},
+            )
+            return {
+                'type': 'error',
+                'content': PUBLIC_PROVIDER_ERROR,
+                'code': code,
+            }
+
         try:
             for line in response.iter_lines():
+                if time.monotonic() - started >= max_duration:
+                    yield limit_error('duration')
+                    return
                 if not line:
                     continue
                 try:
@@ -428,8 +464,22 @@ class GroqService:
                     return
                 content = delta.get('content', '')
                 if content:
-                    yield {'type': 'token', 'content': str(content)}
+                    content = str(content)
+                    next_chars = output_chars + len(content)
+                    next_bytes = output_bytes + len(content.encode('utf-8'))
+                    if next_chars > max_chars:
+                        yield limit_error('characters')
+                        return
+                    if next_bytes > max_bytes:
+                        yield limit_error('bytes')
+                        return
+                    output_chars = next_chars
+                    output_bytes = next_bytes
+                    yield {'type': 'token', 'content': content}
 
+            if time.monotonic() - started >= max_duration:
+                yield limit_error('duration')
+                return
             if not saw_done:
                 logger.warning(
                     'AI provider stream ended without a terminal marker',
@@ -448,6 +498,11 @@ class GroqService:
                 'provider': self.provider,
                 'tokens_used': total_tokens,
             }
+        except requests.Timeout:
+            if time.monotonic() - started >= max_duration:
+                yield limit_error('duration')
+                return
+            raise
         finally:
             response.close()
 

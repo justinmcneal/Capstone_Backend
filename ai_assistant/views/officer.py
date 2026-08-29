@@ -45,6 +45,7 @@ from ai_assistant.metrics import (
     AI_ACTIVE_STREAMS,
     AI_PROVIDER_LATENCY,
     AI_PROVIDER_REQUESTS,
+    AI_STREAM_LIMIT_CANCELLATIONS,
     AI_TOKENS,
     decrement,
     increment,
@@ -65,6 +66,7 @@ SAFE_CONTROLLED_ERROR_CODES = frozenset(
         "AI_PROVIDER_ERROR",
         "AI_PROVIDER_STREAM_MALFORMED",
         "AI_PROVIDER_STREAM_OUTPUT_LIMIT",
+        "AI_PROVIDER_STREAM_DURATION_LIMIT",
         "AI_PROVIDER_STREAM_TRUNCATED",
         "AI_PROVIDER_TIMEOUT",
         "AI_PROVIDER_UNAVAILABLE",
@@ -669,7 +671,19 @@ class OfficerStreamingChatView(AIRequestMetricsMixin, APIView):
             terminal_emitted = False
             result_recorded = False
             response_parts = []
+            response_chars = 0
+            response_bytes = 0
             tool_names = []
+            max_stream_chars = max(
+                1, int(settings.AI_ASSISTANT_STREAM_MAX_CHARS)
+            )
+            max_stream_bytes = max(
+                1, int(settings.AI_ASSISTANT_STREAM_MAX_BYTES)
+            )
+            max_stream_duration = max(
+                0.1,
+                float(settings.AI_ASSISTANT_STREAM_MAX_DURATION_SECONDS),
+            )
 
             def elapsed_ms():
                 return max(0, int((time.monotonic() - started) * 1000))
@@ -686,6 +700,35 @@ class OfficerStreamingChatView(AIRequestMetricsMixin, APIView):
                     outcome=outcome,
                     tool_names=tool_names,
                     duration_ms=elapsed_ms() if duration_ms is None else duration_ms,
+                )
+
+            def stream_limit_event(limit):
+                code = (
+                    "AI_PROVIDER_STREAM_DURATION_LIMIT"
+                    if limit == "duration"
+                    else "AI_PROVIDER_STREAM_OUTPUT_LIMIT"
+                )
+                record_result(code)
+                _record_provider_metrics(
+                    llm,
+                    outcome="limit",
+                    started=started,
+                    operation="stream",
+                )
+                increment(
+                    AI_STREAM_LIMIT_CANCELLATIONS,
+                    provider=_safe_metric_provider(
+                        getattr(llm, "provider", "unknown")
+                    ),
+                    limit=limit,
+                )
+                return self._event(
+                    "error",
+                    {
+                        "content": "AI service is temporarily unavailable",
+                        "code": code,
+                        "request_id": request_id,
+                    },
                 )
 
             try:
@@ -722,6 +765,10 @@ class OfficerStreamingChatView(AIRequestMetricsMixin, APIView):
                     officer_mode=True,
                 )
                 for chunk in provider_stream:
+                    if time.monotonic() - started >= max_stream_duration:
+                        terminal_emitted = True
+                        yield stream_limit_event("duration")
+                        return
                     authorization_error = _authorization_error(scope)
                     if authorization_error:
                         terminal_emitted = True
@@ -759,6 +806,20 @@ class OfficerStreamingChatView(AIRequestMetricsMixin, APIView):
                             )
                     elif chunk_type == "token":
                         raw_content = str(chunk.get("content") or "")
+                        next_chars = response_chars + len(raw_content)
+                        next_bytes = response_bytes + len(
+                            raw_content.encode("utf-8")
+                        )
+                        if next_chars > max_stream_chars:
+                            terminal_emitted = True
+                            yield stream_limit_event("characters")
+                            return
+                        if next_bytes > max_stream_bytes:
+                            terminal_emitted = True
+                            yield stream_limit_event("bytes")
+                            return
+                        response_chars = next_chars
+                        response_bytes = next_bytes
                         response_parts.append(raw_content)
                     elif chunk_type == "done":
                         authorization_error = _authorization_error(scope)
@@ -799,6 +860,16 @@ class OfficerStreamingChatView(AIRequestMetricsMixin, APIView):
                             if response_parts
                             else chunk.get("response", "")
                         )
+                        terminal_content = str(terminal_content or "")
+                        if not response_parts:
+                            if len(terminal_content) > max_stream_chars:
+                                terminal_emitted = True
+                                yield stream_limit_event("characters")
+                                return
+                            if len(terminal_content.encode("utf-8")) > max_stream_bytes:
+                                terminal_emitted = True
+                                yield stream_limit_event("bytes")
+                                return
                         safe_response, _response_violations = validate_officer_response(
                             terminal_content,
                             message=data["message"],

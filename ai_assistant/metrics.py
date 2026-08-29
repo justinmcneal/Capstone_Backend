@@ -56,6 +56,11 @@ try:
         "End-to-end AI provider interaction latency",
         ("provider", "operation"),
     )
+    AI_STREAM_LIMIT_CANCELLATIONS = Counter(
+        "ai_assistant_stream_limit_cancellations_total",
+        "AI streams cancelled by an output or duration limit",
+        ("provider", "limit"),
+    )
 except (ImportError, ValueError):
     AI_REQUESTS = None
     AI_REQUEST_LATENCY = None
@@ -68,6 +73,7 @@ except (ImportError, ValueError):
     AI_ACTIVE_STREAMS = None
     AI_PROVIDER_REQUESTS = None
     AI_PROVIDER_LATENCY = None
+    AI_STREAM_LIMIT_CANCELLATIONS = None
 
 
 def increment(metric, amount=1, **labels):

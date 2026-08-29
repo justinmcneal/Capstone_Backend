@@ -4,6 +4,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from django.conf import settings
+from django.test import override_settings
 
 from accounts.authentication import AuthenticatedUser
 from accounts.utils.access_control import AccessControlMixin
@@ -120,6 +121,71 @@ def test_provider_stream_rejects_malformed_json_and_closes_response():
         "content": "AI service is temporarily unavailable. Please try again later.",
         "code": "AI_PROVIDER_STREAM_MALFORMED",
     }]
+    assert response.closed is True
+
+
+@override_settings(
+    AI_ASSISTANT_STREAM_MAX_CHARS=100,
+    AI_ASSISTANT_STREAM_MAX_BYTES=5,
+)
+def test_provider_stream_enforces_cumulative_output_bytes_and_closes_response():
+    response = FakeProviderResponse([
+        'data: {"choices":[{"delta":{"content":"éé"}}]}'.encode('utf-8'),
+        'data: {"choices":[{"delta":{"content":"é"}}]}'.encode('utf-8'),
+        b"data: [DONE]",
+    ])
+
+    chunks = list(_service()._provider_stream_chunks(response))
+
+    assert chunks == [
+        {"type": "token", "content": "éé"},
+        {
+            "type": "error",
+            "content": "AI service is temporarily unavailable. Please try again later.",
+            "code": "AI_PROVIDER_STREAM_OUTPUT_LIMIT",
+        },
+    ]
+    assert response.closed is True
+
+
+@override_settings(
+    AI_ASSISTANT_STREAM_MAX_CHARS=5,
+    AI_ASSISTANT_STREAM_MAX_BYTES=100,
+)
+def test_provider_stream_enforces_cumulative_output_characters():
+    response = FakeProviderResponse([
+        b'data: {"choices":[{"delta":{"content":"12345"}}]}',
+        b'data: {"choices":[{"delta":{"content":"6"}}]}',
+        b"data: [DONE]",
+    ])
+
+    chunks = list(_service()._provider_stream_chunks(response))
+
+    assert chunks[-1]["code"] == "AI_PROVIDER_STREAM_OUTPUT_LIMIT"
+    assert chunks[-1]["type"] == "error"
+    assert response.closed is True
+
+
+@override_settings(AI_ASSISTANT_STREAM_MAX_DURATION_SECONDS=1)
+def test_provider_stream_enforces_total_duration_and_closes_response():
+    response = FakeProviderResponse([
+        b'data: {"choices":[{"delta":{"content":"late"}}]}',
+        b"data: [DONE]",
+    ])
+
+    with patch(
+        "ai_assistant.services.llm_service.time.monotonic",
+        side_effect=[0, 2],
+    ):
+        chunks = list(_service()._provider_stream_chunks(response))
+
+    assert chunks == [
+        {
+            "type": "error",
+            "content": "AI service is temporarily unavailable. Please try again later.",
+            "code": "AI_PROVIDER_STREAM_DURATION_LIMIT",
+        },
+    ]
     assert response.closed is True
 
 
