@@ -5,6 +5,7 @@ import logging
 import re
 import time
 from decimal import Decimal, InvalidOperation
+from typing import Any, cast
 
 from django.conf import settings
 from django.http import StreamingHttpResponse
@@ -25,6 +26,7 @@ from ai_assistant.services.officer_audit import (
     record_officer_ai_access,
     record_officer_ai_result,
 )
+from ai_assistant.services.officer_policy import validate_officer_response
 from ai_assistant.services.officer_prompt import (
     OFFICER_SYSTEM_PROMPT,
     officer_suggestions,
@@ -52,8 +54,9 @@ from ai_assistant.views.chat_views import AIRequestMetricsMixin
 
 logger = logging.getLogger("ai_assistant")
 
+_OFFICER_TOOL_SCHEMAS = cast(list[dict[str, Any]], OFFICER_TOOL_SCHEMAS)
 ALLOWED_TOOL_NAMES = frozenset(
-    schema["function"]["name"] for schema in OFFICER_TOOL_SCHEMAS
+    schema["function"]["name"] for schema in _OFFICER_TOOL_SCHEMAS
 )
 SAFE_CONTROLLED_ERROR_CODES = frozenset(
     {
@@ -61,6 +64,7 @@ SAFE_CONTROLLED_ERROR_CODES = frozenset(
         "AI_PROVIDER_CIRCUIT_OPEN",
         "AI_PROVIDER_ERROR",
         "AI_PROVIDER_STREAM_MALFORMED",
+        "AI_PROVIDER_STREAM_OUTPUT_LIMIT",
         "AI_PROVIDER_STREAM_TRUNCATED",
         "AI_PROVIDER_TIMEOUT",
         "AI_PROVIDER_UNAVAILABLE",
@@ -715,6 +719,7 @@ class OfficerStreamingChatView(AIRequestMetricsMixin, APIView):
                     tools=OFFICER_TOOL_SCHEMAS,
                     tool_executor=_bound_executor(scope, request_id),
                     request_id=request_id,
+                    officer_mode=True,
                 )
                 for chunk in provider_stream:
                     authorization_error = _authorization_error(scope)
@@ -755,9 +760,6 @@ class OfficerStreamingChatView(AIRequestMetricsMixin, APIView):
                     elif chunk_type == "token":
                         raw_content = str(chunk.get("content") or "")
                         response_parts.append(raw_content)
-                        yield self._event(
-                            "token", {"content": escape_llm_output(raw_content)}
-                        )
                     elif chunk_type == "done":
                         authorization_error = _authorization_error(scope)
                         if authorization_error:
@@ -792,8 +794,19 @@ class OfficerStreamingChatView(AIRequestMetricsMixin, APIView):
                             [*tool_names, *(chunk.get("tools_called") or [])]
                         )
                         duration_ms = elapsed_ms()
+                        terminal_content = (
+                            "".join(response_parts)
+                            if response_parts
+                            else chunk.get("response", "")
+                        )
+                        safe_response, _response_violations = validate_officer_response(
+                            terminal_content,
+                            message=data["message"],
+                            language=data["language"],
+                            tools_called=tool_names,
+                        )
                         safe_response = sanitize_multiline_text(
-                            escape_llm_output("".join(response_parts))
+                            safe_response
                         )
                         if not safe_response:
                             terminal_event = self._event(
@@ -826,6 +839,7 @@ class OfficerStreamingChatView(AIRequestMetricsMixin, APIView):
                                     ),
                                     "response_time_ms": duration_ms,
                                     "conversation_id": data["conversation_id"],
+                                    "response": safe_response,
                                     "tools_called": tool_names,
                                     "request_id": request_id,
                                 },

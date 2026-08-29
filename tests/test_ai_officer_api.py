@@ -170,7 +170,7 @@ class EndlessCloseAwareStream:
     def __next__(self):
         if not self.sent:
             self.sent = True
-            return {"type": "token", "content": "partial"}
+            return {"type": "tool_call", "name": "get_application_summary"}
         return {"type": "token", "content": "later"}
 
     def close(self):
@@ -1205,15 +1205,14 @@ def test_officer_stream_emits_safe_named_events_and_one_done_terminal(monkeypatc
     assert [event for event, _payload in frames] == [
         "tool_call",
         "tool_result",
-        "token",
         "done",
     ]
-    assert frames[2] == ("token", {"content": "A &amp; &lt;summary&gt;"})
     assert frames[-1][1] == {
         "model": "officer-model",
         "tokens_used": 4,
         "response_time_ms": frames[-1][1]["response_time_ms"],
         "conversation_id": conversation_id,
+        "response": "A &",
         "tools_called": ["get_application_summary"],
         "request_id": request_id,
     }
@@ -1269,7 +1268,7 @@ def test_officer_stream_revalidates_before_done_terminal(monkeypatch):
         )
     )
 
-    assert [event for event, _payload in frames] == ["token", "error"]
+    assert [event for event, _payload in frames] == ["error"]
     assert frames[-1][1]["code"] == "AI_OFFICER_SCOPE_CHANGED"
     assert provider_stream.closed is True
     assert _audit_events()[-1].details["outcome"] == "AI_OFFICER_SCOPE_CHANGED"
@@ -1282,7 +1281,7 @@ def test_officer_stream_accepts_event_stream_negotiation_for_successful_sse(
     application = _application(officer.id)
     provider_stream = CloseAwareStream(
         [
-            {"type": "token", "content": "summary"},
+            {"type": "token", "content": "The applicant is Alice Santos."},
             {"type": "done", "model": "officer-model", "tokens_used": 1},
         ]
     )
@@ -1304,10 +1303,10 @@ def test_officer_stream_accepts_event_stream_negotiation_for_successful_sse(
 
     assert response.status_code == 200
     assert response["Content-Type"].startswith("text/event-stream")
-    assert [event for event, _payload in _stream_frames(response)] == [
-        "token",
-        "done",
-    ]
+    frames = _stream_frames(response)
+    assert [event for event, _payload in frames] == ["done"]
+    assert "Alice" not in json.dumps(frames)
+    assert "Santos" not in json.dumps(frames)
     assert provider_stream.closed is True
 
 
@@ -1366,7 +1365,7 @@ def test_officer_stream_without_terminal_emits_incomplete_error_and_audits(monke
     )
     frames = _stream_frames(response)
 
-    assert [event for event, _payload in frames] == ["token", "error"]
+    assert [event for event, _payload in frames] == ["error"]
     assert frames[-1][1]["code"] == "AI_STREAM_INCOMPLETE"
     assert provider_stream.closed is True
     result_event = _audit_events()[-1]
@@ -1567,7 +1566,7 @@ def test_officer_stream_malformed_done_metadata_emits_one_safe_terminal_error(
         )
     )
 
-    assert [event for event, _payload in frames] == ["token", "error"]
+    assert [event for event, _payload in frames] == ["error"]
     assert frames[-1][1]["code"] == "AI_STREAM_ERROR"
     assert sum(event in {"done", "error"} for event, _payload in frames) == 1
     assert provider_stream.closed is True
@@ -1602,7 +1601,7 @@ def test_officer_stream_close_failure_cannot_escape_after_terminal_frame(
         )
     )
 
-    assert [event for event, _payload in frames] == ["token", "done"]
+    assert [event for event, _payload in frames] == ["done"]
     assert sum(event in {"done", "error"} for event, _payload in frames) == 1
     assert provider_stream.closed is True
     assert _audit_events()[-1].details["outcome"] == "success"
@@ -1657,7 +1656,7 @@ def test_officer_stream_disconnect_closes_provider_and_records_result(monkeypatc
     )
 
     iterator = iter(response.streaming_content)
-    assert b"event: token" in next(iterator)
+    assert b"event: tool_call" in next(iterator)
     response.close()
 
     assert provider_stream.closed is True

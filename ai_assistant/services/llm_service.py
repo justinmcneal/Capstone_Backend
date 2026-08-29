@@ -66,6 +66,11 @@ PUBLIC_PROVIDER_ERROR = "AI service is temporarily unavailable. Please try again
 INVALID_TOOL_ARGUMENTS = {"__invalid_tool_arguments__": True}
 
 
+def _officer_stream_buffer_limit():
+    """Return a finite response buffer bound derived from the output policy."""
+    return max(1, int(settings.AI_ASSISTANT_MAX_OUTPUT_TOKENS)) * 8
+
+
 def _policy_result(message, *, model, provider, request_id=None):
     """Apply the deterministic safety boundary before any provider or tool call."""
     prohibited, response = check_prohibited_content(str(message or ""))
@@ -1101,7 +1106,6 @@ class GroqService:
                 request_id=request_id,
             )
             if privacy_result:
-                yield {'type': 'token', 'content': privacy_result['response']}
                 yield {
                     'type': 'done',
                     'model': self.model,
@@ -1110,6 +1114,7 @@ class GroqService:
                     'tools_called': [],
                     'policy_intercepted': True,
                     'privacy_blocked': True,
+                    'response': privacy_result['response'],
                 }
                 return
             policy_result = _officer_policy_result(
@@ -1119,7 +1124,6 @@ class GroqService:
                 request_id=request_id,
             )
             if policy_result:
-                yield {'type': 'token', 'content': policy_result['response']}
                 yield {
                     'type': 'done',
                     'model': self.model,
@@ -1127,6 +1131,7 @@ class GroqService:
                     'tokens_used': 0,
                     'tools_called': [],
                     'policy_intercepted': True,
+                    'response': policy_result['response'],
                 }
                 return
         else:
@@ -1357,13 +1362,48 @@ class GroqService:
                 yield {'type': 'error', 'content': PUBLIC_PROVIDER_ERROR, 'code': 'AI_PROVIDER_ERROR'}
                 return
 
-            for chunk in self._provider_stream_chunks(
-                response,
-                request_id=request_id,
-            ):
-                if chunk.get('type') == 'done':
-                    chunk['tools_called'] = tools_called
-                yield chunk
+            if officer_mode:
+                buffered_parts = []
+                buffered_chars = 0
+                buffer_limit = _officer_stream_buffer_limit()
+                for chunk in self._provider_stream_chunks(
+                    response,
+                    request_id=request_id,
+                ):
+                    chunk_type = chunk.get('type')
+                    if chunk_type == 'token':
+                        content = str(chunk.get('content') or '')
+                        buffered_chars += len(content)
+                        if buffered_chars > buffer_limit:
+                            yield {
+                                'type': 'error',
+                                'content': PUBLIC_PROVIDER_ERROR,
+                                'code': 'AI_PROVIDER_STREAM_OUTPUT_LIMIT',
+                            }
+                            return
+                        buffered_parts.append(content)
+                        continue
+                    if chunk_type == 'done':
+                        safe_response, violations = validate_officer_response(
+                            ''.join(buffered_parts),
+                            message=message,
+                            language=language,
+                            tools_called=tools_called,
+                        )
+                        chunk['tools_called'] = tools_called
+                        chunk['response_validation_violations'] = violations
+                        chunk['response'] = safe_response
+                        yield chunk
+                        continue
+                    yield chunk
+            else:
+                for chunk in self._provider_stream_chunks(
+                    response,
+                    request_id=request_id,
+                ):
+                    if chunk.get('type') == 'done':
+                        chunk['tools_called'] = tools_called
+                    yield chunk
 
         except requests.Timeout:
             yield {'type': 'error', 'content': PUBLIC_PROVIDER_ERROR, 'code': 'AI_PROVIDER_TIMEOUT'}
