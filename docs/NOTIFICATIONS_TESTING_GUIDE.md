@@ -71,9 +71,10 @@ Content-Type: application/json
 
 ## Current Implementation and Test Baseline
 
-The inbox and WebSocket foundations are usable locally, but Notifications is
-not production-ready. Confirmed blockers and the remediation stages are tracked
-in `NOTIFICATIONS_PRODUCTION_READINESS_REVIEW.md`.
+Notifications application code is complete for the reviewed repository
+baseline and is awaiting production-environment validation. Current contracts,
+release conditions, and evidence boundaries are documented in
+`NOTIFICATIONS_PRODUCTION_READINESS_REVIEW.md`.
 
 Focused module command:
 
@@ -93,7 +94,7 @@ Focused module command:
   tests/test_notification_timestamps.py
 ```
 
-Result after Stage 5 on 2026-08-28: **89 passed**.
+Current result on 2026-08-29: **90 passed**.
 
 Stage 1 routed contract command:
 
@@ -173,8 +174,11 @@ Broader cross-domain selection:
 ```
 
 Result after Stage 2 on 2026-08-27: **131 passed, 1,245 deselected**. The latest
-full repository result after the final Notifications audit on 2026-08-28 is
-**1,363 passed, 55 skipped**.
+green full repository result after the final Notifications audit on 2026-08-28
+is **1,363 passed, 55 skipped**. A 2026-08-29 rerun reached **1,364 passed and
+55 skipped**, with four unrelated Documents tests failing because the local
+ClamAV scanner refused the connection. Repeat the full suite after ClamAV is
+available before recording new green full-suite evidence.
 
 Evidence limits:
 

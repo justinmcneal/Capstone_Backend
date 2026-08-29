@@ -1,633 +1,534 @@
-# Notifications Production Readiness Review
+# Notifications Module Documentation and Status
 
-Last updated: 2026-08-28
+Last updated: 2026-08-29
 
-Scope: `notifications/`, `/api/notifications/`, `/ws/notifications/`, the
-`notifications` and `device_tokens` MongoDB collections, template email,
-Firebase Cloud Messaging (FCM), Channels/Redis broadcasting, the shared
-notification delivery outbox, notification preferences, account lifecycle
-integration, cross-domain producers, persistence bootstrap, and notification-
-related automated tests and documentation.
+## Overview
 
-## Purpose and Status Definitions
+The Notifications module provides the role-scoped inbox, unread/read state,
+device-token lifecycle, Firebase Cloud Messaging (FCM), template-email helpers,
+durable shared channel delivery, and authenticated real-time notification
+service for MSME Pathways.
 
-This document records what the Notifications module currently implements, the
-evidence for those claims, and the remediation required before production
-approval. It distinguishes an inbox record from durable delivery: storing a
-notification does not prove that email, push, or a WebSocket frame reached the
-recipient.
+Seven REST paths expose eight HTTP method operations under
+`/api/notifications/`. An authenticated Channels WebSocket is available at
+`/ws/notifications/` for real-time notification and inbox-state events. The
+module supports customer, loan-officer, administrator, and super-administrator
+accounts; super administrators normalize to the stored `admin` owner type.
 
-- **Complete**: implemented and covered by proportionate automated evidence.
-- **Partial**: useful behavior exists, but an important correctness, security,
-  privacy, durability, scalability, or operational requirement remains.
-- **Not implemented**: no production implementation was found.
-- **Deployment validation**: repository implementation exists but still needs
-  evidence from real MongoDB, Redis/Channels, Celery, SMTP, Firebase, HTTPS/WSS,
-  monitoring, backup, and recovery environments.
+The module defines 36 notification types and supports in-app, email, and push
+channels. Storing an inbox record does not prove that an email, push message, or
+WebSocket frame reached the user. Durable delivery state, provider acceptance,
+best-effort real-time fan-out, and user receipt are distinct concepts throughout
+the implementation and this document.
 
-The project uses PyMongo directly. Django ORM migrations are not part of the
-Notifications persistence model. `mongomock`, in-memory Channels, direct view
-calls, and mocked email tests do not prove real indexes, validators, query
-plans, multi-worker behavior, SMTP acceptance, FCM delivery, proxy security, or
-client receipt.
+This project uses PyMongo directly. Django ORM migrations are not part of the
+Notifications persistence lifecycle; MongoDB inventory, backfill, indexes, and
+validators are handled by module commands and the project bootstrap.
 
-## Executive Summary
+## Current Status
 
 **Module implementation status: Complete for the reviewed repository baseline**
 
 **Production deployment status: Ready for production-environment validation**
 
-Eight REST method operations provide an owner-scoped inbox, unread counts, read
-mutations, deletion, clear-all, and device-token registration/unregistration.
-An authenticated WebSocket provides connection state, ping/pong, owner-scoped
-mark-read, cross-device state events, and real-time broadcasts. Role-qualified
-ownership prevents customers, officers, and administrators with the same raw
-ID from sharing inbox rows or Channels groups. Thirty-six notification types
-and eleven HTML/text template pairs are present, including the temporary-
-password pair.
-
-The six implementation stages now provide a coherent local production
-baseline. The remaining conditions below require approved policy or evidence
-from the selected deployment topology rather than additional application
-features:
-
-1. **FCM and current device-token lifecycle are implemented locally.** Stage 2
-   uses the installed `send_each_for_multicast` API, batches at no more than
-   500 tokens, processes partial results, and deactivates permanently invalid
-   registrations without logging credentials. Live Firebase acceptance still
-   requires deployment validation.
-2. **Device tokens are now protected and owner-safe.** Current registrations
-   use encrypted token values, deterministic fingerprints, role-qualified
-   ownership, session binding, strict token/platform validation, active-device
-   limits, expiry, refresh/deduplication, explicit unregister, session/logout
-   cleanup, and account-deletion cleanup. Stage 4 now provides the required
-   inventory/backfill; it must be executed and reviewed before production index
-   work.
-3. **Stage 3 replaced the dead standalone email task with a canonical shared
-   delivery path.** `notifications/tasks.py` registers routed delivery and
-   reconciliation tasks with late acknowledgement, worker-loss rejection,
-   leases, bounded attempts, backoff, and stable error codes. The encrypted
-   shared outbox stores intent before broker publication, so a broker outage or
-   stale worker lease leaves recoverable work rather than losing the event.
-4. **The inbox contract and channel progress are independent.** Stage 1
-   separated `is_read/read_at` from inbox delivery compatibility state. Stage 3
-   adds per-channel progress to `notification_deliveries`, checkpoints the
-   inbox ID and successful/permanently rejected push token fingerprints, and
-   makes replay idempotent without repeating the business mutation.
-5. **Required producers now have a durable owner.** Loans and Documents retain
-   their domain outboxes. Assignment and account-security events use the shared
-   outbox, and every notification-creator push is published through it. SMTP or
-   FCM acceptance followed by a lost acknowledgement can still produce an
-   at-least-once external attempt; provider acceptance is not user receipt.
-6. **Saved customer email preferences are now enforced.** Loan/document update
-   categories use `email_loan_updates`; payment reminders and promotions have
-   explicit policy keys. Payment receipts, staff workflow mail, and security
-   notices remain mandatory. Each decision records its policy version; email
-   opt-out does not suppress the in-app inbox record.
-7. **Stage 4 implements the privacy lifecycle locally.** Core recipient/content,
-   metadata, related IDs, errors, legal-hold reasons, and raw idempotency keys
-   use the shared field-encryption lifecycle; operational lookup uses only a
-   digest. Logs no longer include recipient IDs, addresses, subjects, provider
-   bodies, or raw device tokens. Customer export is bounded with explicit
-   total/returned/truncated metadata. Account deletion erases inbox/outbox/token
-   data and pseudonymizes legally held rows.
-8. **Stage 4 implements MongoDB correctness tooling locally.** Query-specific
-   owner/read/channel/retention indexes, strict validators, a read-only
-   inventory, dry-run-first conditional backfill, fail-closed schema installer,
-   encrypted-field rotation coverage, bounded retention, and an opt-in isolated
-   real-Mongo suite now exist. The inventory/backfill and real-Mongo suite have
-   not been run against an approved external target in this stage.
-9. **Stage 5 implements WebSocket resilience locally.** Active sockets recheck
-   token expiry, live account state, forced-password state, security version,
-   and session membership on every action and on a bounded timer. Idle,
-   oversized/binary, over-rate, and per-process over-connection cases are
-   bounded. REST and socket mutations publish owner-group `inbox_state` events;
-   reconnect explicitly requires an authoritative REST refresh.
-10. **Stage 5 implements Notifications observability locally.**
-    Low-cardinality REST, delivery/channel, retry/failure/backlog, token,
-    WebSocket, broadcast, and collector-freshness metrics feed an
-    identifier-free health component, scheduled collector, Prometheus rules,
-    rule test, smoke configuration, and Grafana dashboard. Real Redis
-    multi-process behavior, proxy limits, provider outcomes, scrape traffic,
-    and delivered alerts remain deployment evidence. Stage 6 now provides a
-    fail-closed release checker and explicitly gated synthetic probes.
-
-Current local automated evidence:
-
-- Stage 3 focused delivery selection: **12 passed** on 2026-08-28.
-- Stage 4 privacy/persistence selection: **8 passed and 1 opt-in real-Mongo test
-  skipped** on 2026-08-28.
-- Stage 5 resilience/observability selection: **7 passed** on 2026-08-28.
-- Stage 6 release-gate selection: **6 passed and 8 opt-in deployment probes
-  skipped** on 2026-08-28.
-- Notifications plus account-lifecycle regression selection: **121 passed and
-  1 opt-in test skipped** on 2026-08-28.
-- Notifications and affected cross-domain regression selection: **129 passed**
-  on 2026-08-28.
-- Core Notifications-focused selection after Stage 5: **88 passed** on
-  2026-08-28.
-- Stage 1 focused contract/security selection: **78 passed**.
-- Stage 2 provider/token lifecycle selection: **14 passed**.
-- Routed tests cover missing/revoked JWTs, customer/officer/admin role-qualified
-  isolation, all eight REST method operations, cross-owner concealment, independent
-  read/delivery state, replay, strict bounds, REST throttles, and WebSocket
-  action throttling.
-- Broader notification/WebSocket/email-template selection: **131 passed and
-  1,245 deselected**.
-- Full repository: **1,363 passed and 55 opt-in integration tests skipped** on
-  2026-08-28.
-- Mocked FCM success, batching, partial/permanent/transient failure behavior,
-  encryption, ownership, deduplication, expiry, unregister, logout/session,
-  and account cleanup are covered. Opt-in Firebase/SMTP, real-Mongo,
-  Redis/Celery, HTTPS/WSS/load, and metrics deployment tests now exist, but none
-  has been executed against a final target.
-
-## Current Status
+The REST inbox, WebSocket protocol, role-qualified ownership, durable shared
+delivery, email-preference enforcement, FCM token lifecycle, encryption,
+retention, account lifecycle, MongoDB tooling, metrics, dashboards, and
+fail-closed release tooling are implemented and locally tested. Production
+approval remains conditional on policy approval and evidence from the selected
+MongoDB, Redis/Channels, Celery, SMTP, Firebase, proxy, monitoring, and recovery
+topology.
 
 | Area | Status | Summary |
 | --- | --- | --- |
-| REST inbox | Complete locally | Eight routed authenticated method operations have strict role-qualified ownership, independent read/delivery state, atomic replay-safe read mutation, strict query validation, bounded offset/bulk work, and dedicated throttles. |
-| WebSocket inbox | Complete locally; deployment-gated | Secure handshake plus timed/per-action live authorization, token-expiry closure, action/frame/idle/per-process connection limits, state broadcasts, and explicit reconnect reconciliation are implemented. Cross-process limit/proxy/Redis behavior remains deployment evidence. |
-| Template email | Implemented locally; deployment-gated | Templates and sender helpers work inside durable domain/shared workers and enforce the recorded email policy; uncertain SMTP acceptance can still result in an at-least-once retry. |
-| Shared Celery delivery | Implemented locally | Canonical registered/routed tasks, encrypted durable intent, idempotency, leases, checkpoints, bounded retry/backoff, and reconciliation cover producers without a domain outbox. |
-| Loan/document delivery | Implemented in owning modules | Their domain outboxes provide leases, retries, and reconciliation; those guarantees do not cover all Notifications producers. |
-| Assignment/security events | Implemented locally | Both publish durable shared-delivery intent; assignment remains in-app and security events can request in-app plus push. |
-| FCM push | Implemented locally; deployment-gated | Push is asynchronous and recoverable, known successes are checkpointed, and installed-version batching, partial results, permanent-token cleanup, encrypted role/session-qualified registrations, expiry, unregister, and cleanup are covered. Live Firebase proof remains. |
-| Preferences | Implemented locally | Optional customer email categories are evaluated against Profiles settings and record a versioned decision; mandatory security, staff, and receipt messages are not suppressible. |
-| Privacy lifecycle | Implemented locally; policy/deployment-gated | Core sensitive fields and idempotency material are protected, logs are sanitized, export is bounded/explicit, retention is scheduled, account deletion erases credentials/data, and legal holds are retained through pseudonymization. Final retention/policy approval remains. |
-| MongoDB schema/indexes | Implemented locally; real-Mongo proof pending | Strict validators, compounds, inventory/backfill/encryption commands, fail-closed installation, and an isolated opt-in query-plan suite exist. They have not been executed against an approved real target. |
-| Observability | Implemented locally; deployment-gated | Low-cardinality REST, delivery/channel, backlog/age, token, WebSocket, broadcast, and freshness metrics plus health, tested rules, smoke config, dashboard, and runbook exist. Live scrape/dashboard/alert delivery remains. |
-| Production deployment | Validation tooling implemented; not approved | A read-only fail-closed release checker and opt-in synthetic MongoDB, Redis/Celery, HTTPS/WSS/load, SMTP, Firebase, and metrics probes exist. Target evidence, recovery rehearsals, and authorized approvals remain. |
+| REST inbox | Implemented | Eight authenticated operations provide bounded listing/counting, atomic read mutations, deletion/clear, and device registration. |
+| WebSocket inbox | Implemented; deployment-gated | Authenticated connection, ping/pong, mark-read, notification/state events, live revalidation, and abuse bounds are locally covered. |
+| Shared delivery | Implemented | Encrypted intent, idempotency, leases, per-channel checkpoints, retries, reconciliation, and worker-loss handling protect shared producers. |
+| Loan/document delivery | Implemented in owning modules | Their domain outboxes own loan/document retry and reconciliation guarantees. |
+| Email | Implemented; deployment-gated | Template rendering, mandatory/optional policy, suppression, bounded retry, and durable worker execution are available. |
+| FCM push | Implemented; deployment-gated | Encrypted role/session-qualified tokens, batching, partial-result handling, invalid-token cleanup, and retry checkpoints are available. |
+| Privacy lifecycle | Implemented; policy-gated | Encryption, safe lookup digests, bounded export, retention, legal holds, deletion, and held-row pseudonymization are integrated. |
+| MongoDB schema/indexes | Implemented; real-Mongo proof pending | Inventory, dry-run backfill, strict validators, compound indexes, fail-closed installation, and an opt-in suite exist. |
+| Observability | Implemented; deployment proof pending | Low-cardinality metrics, health, Prometheus rules/tests, a smoke config, Grafana dashboard, and release checker are present. |
+| Local automated validation | Passing | Current focused Notifications suite: 90 passed on 2026-08-29. |
+| Deployment validation | Pending | Real MongoDB, Redis/Channels/Celery, SMTP, Firebase, HTTPS/WSS/load, monitoring/alerts, backup, and recovery evidence remain. |
 
-## Module Responsibilities and Boundaries
+## Module Responsibilities
 
-The Notifications module currently owns:
+### Role-qualified inbox
 
-- inbox record persistence and serialization;
-- role-qualified inbox REST queries and mutations;
-- device-token registration and FCM dispatch;
-- encrypted, leased shared delivery intent and reconciliation;
-- notification privacy export, account cleanup, retention, legal-hold handling,
-  inventory/backfill, and schema installation;
-- notification WebSocket authentication, groups, frames, and broadcasts;
-- reusable email templates/sender helpers;
-- assignment event formatting; and
-- a local wrapper for the shared Prometheus runtime toggle.
+- Persist notification content, channel/delivery compatibility state, and an
+  independent authoritative `is_read/read_at` state.
+- List and count only rows belonging to the authenticated `(user_type,
+  user_id)` pair.
+- Atomically mark one notification read and report idempotent replay.
+- Mark all unread notifications in a bounded snapshot.
+- Delete one eligible notification or clear a bounded owner snapshot while
+  preserving legally held rows.
+- Publish owner-group state events after REST or WebSocket mutations.
+- Keep REST retrieval authoritative after reconnect, missed real-time frames,
+  process restart, or mobile app focus.
 
-Profiles owns customer notification preferences. Loans and Documents own their
-durable delivery outboxes and retry policies. Accounts owns JWT/session state,
-account export/deletion, and security-event production. Redis/Channels owns
-real-time fan-out, Celery owns background task execution, SMTP owns email
-acceptance, and Firebase owns push delivery. Production readiness requires
-explicit contracts between these owners rather than assuming a successful
-function call proves delivery.
+### Durable multi-channel delivery
+
+- Persist shared notification intent in `notification_deliveries` before broker
+  publication for producers that do not own a domain-specific outbox.
+- Bind each event/recipient operation to stable idempotency material stored as a
+  safe lookup digest.
+- Claim work with a lease and execute through a late-acknowledged dedicated
+  Celery task with worker-loss rejection.
+- Track in-app, email, and push progress independently.
+- Checkpoint the inbox record and successful/permanently rejected push-token
+  fingerprints so retry does not resend known outcomes.
+- Apply bounded attempts and backoff, then expose terminal/retryable state to
+  reconciliation and monitoring.
+- Reconcile stale or due deliveries without repeating the business-domain
+  mutation that created the notification.
+
+Loans and Documents retain their own durable delivery outboxes because their
+delivery intent is coupled to financial/document lifecycle mutations. The
+shared Notifications outbox owns assignment, account-security, and other
+notification-creator channel work not protected by those domain outboxes.
+
+### Device tokens and push
+
+- Register or refresh Android, iOS, and web FCM tokens for the authenticated
+  owner and current session.
+- Encrypt token values and use non-reversible fingerprints for uniqueness and
+  delivery checkpointing.
+- Reject active cross-owner token claims and enforce per-account active-device
+  limits.
+- Validate token shape/length and platform before storage.
+- Expire registrations, update last-used state, deduplicate refreshes, and
+  deactivate tokens on explicit unregister, logout/session invalidation, or
+  account deletion.
+- Batch FCM multicast work at no more than 500 tokens.
+- Process per-token success, permanent invalidation, and transient failures
+  without logging raw tokens, credentials, or provider response bodies.
+
+### Email and preference policy
+
+- Render approved HTML/text template pairs through the canonical email sender.
+- Send email asynchronously through durable domain/shared delivery workers.
+- Consult Profiles-owned notification preferences before optional customer
+  email delivery.
+- Apply `email_loan_updates` to loan/document status updates,
+  `email_payment_reminders` to reminders, and `email_promotions` to promotional
+  messages.
+- Keep payment receipts, staff workflow messages, and account-security notices
+  mandatory.
+- Record the preference decision and policy version without suppressing the
+  in-app inbox record.
+
+### Authenticated real-time delivery
+
+- Authenticate the WebSocket through the shared JWT/session/account security
+  boundary.
+- Join role-qualified groups using `notifications_<role>_<id>` so identical raw
+  IDs in different account domains cannot share events.
+- Emit `connection_established`, `pong`, `notification`, and `inbox_state`
+  frames and support only client `ping` and `mark_read` actions.
+- Revalidate token expiry, live account status, forced-password state, security
+  version, and session membership for every action and on a bounded timer.
+- Close idle, oversized, binary, over-rate, over-connection, or security-stale
+  connections with stable close codes.
+
+### Privacy and account lifecycle
+
+- Encrypt recipient/content, metadata, related identifiers, provider/error
+  details, legal-hold reasons, raw delivery keys, and device-token values using
+  the shared field-encryption lifecycle.
+- Use digests/fingerprints for operational lookup and uniqueness.
+- Export a bounded owner-qualified notification list with explicit total,
+  returned, limit, and truncation metadata.
+- Delete inbox, shared-delivery, and token data during account cleanup.
+- Preserve legally held inbox evidence through pseudonymization rather than
+  leaving an active customer link.
+- Enforce bounded retention for inbox records, terminal delivery work, expired
+  tokens, and old inactive registrations.
+
+### Operational visibility
+
+- Export low-cardinality REST outcomes/latency, delivery/channel outcomes,
+  retries/terminal failures, backlog/oldest age, token invalidation, WebSocket
+  connections/actions, active sockets, broadcasts, and collector freshness.
+- Report identifier-free Notifications health through the shared health API.
+- Provide Prometheus recording/alert rules, rule tests, a smoke configuration,
+  and an importable Grafana dashboard under `monitoring/notifications/`.
+- Provide bounded scheduled collection and a read-only fail-closed deployment
+  release check.
 
 ## API Status
 
-All REST routes are under `/api/notifications/` and declare
-`CustomJWTAuthentication` plus `IsAuthenticated`. Allowed roles are customer,
-loan officer, admin, and super admin; super admin normalizes to stored `admin`.
+All REST endpoints use `CustomJWTAuthentication`, require `IsAuthenticated`,
+and accept customer, loan-officer, administrator, and super-administrator roles.
 
-| Method and route | Current behavior | Status |
+### REST API
+
+| Method and path | Status | Contract |
 | --- | --- | --- |
-| `GET /` | Owner-scoped page, optional unread/channel filter, total and unread count | Implemented; strict query allowlist, page-size and offset bounds |
-| `GET unread-count/` | Count owner rows whose independent read state is unread | Implemented with legacy-row compatibility |
-| `POST mark-all-read/` | Mark a bounded snapshot of owner unread rows read | Implemented; returns 409 when synchronous bound is exceeded |
-| `POST <notification_id>/read/` | Atomic owner-scoped read mutation | Implemented; idempotent replay is explicit in REST and WS |
-| `DELETE <notification_id>/` | Delete one owned row | Implemented |
-| `DELETE clear-all/` | Delete a bounded snapshot of owned rows | Implemented; returns 409 when synchronous bound is exceeded |
-| `POST register-token/` | Validate and register/refresh an encrypted token for the authenticated role/session | Implemented with ownership conflict and active-device bounds |
-| `DELETE register-token/` | Deactivate one token owned by the authenticated account | Implemented; cross-owner requests are concealed |
+| `GET /api/notifications/` | Implemented | Owner-scoped page with optional unread/channel filters, pagination totals, and unread count. |
+| `GET /api/notifications/unread-count/` | Implemented | Counts owner rows whose independent read state is unread. |
+| `POST /api/notifications/mark-all-read/` | Implemented | Marks a bounded owner snapshot read and broadcasts state. |
+| `POST /api/notifications/<notification_id>/read/` | Implemented | Atomic owner-qualified mark-read with explicit replay metadata. |
+| `DELETE /api/notifications/<notification_id>/` | Implemented | Deletes one owned non-held row; inaccessible rows are concealed. |
+| `DELETE /api/notifications/clear-all/` | Implemented | Deletes a bounded owner snapshot and reports deleted/retained counts. |
+| `POST /api/notifications/register-token/` | Implemented | Registers or refreshes an encrypted token for the authenticated owner/session. |
+| `DELETE /api/notifications/register-token/` | Implemented | Deactivates the caller-owned matching token. |
 
-WebSocket route: `GET /ws/notifications/` upgrades through
-`AllowedHostsOriginValidator` and `JWTAuthMiddleware`.
+List queries accept only `page`, `page_size`, `unread`, and `channel`.
+`page_size` must be between 1 and 100; excessive offsets return HTTP 400 rather
+than issuing an unbounded query. Mark-all and clear-all return HTTP 409 when the
+configured synchronous bound would be exceeded.
 
-| Frame/action | Current behavior | Status |
-| --- | --- | --- |
-| `connection_established` | Returns unread count, `sync_required: true`, and contract version after joining owner group | Implemented |
-| client `ping` / server `pong` | Liveness timestamp | Implemented with per-connection action rate limit |
-| client `mark_read` | Atomic owner-qualified update and response | Implemented; idempotent replay reports success plus `replayed: true` |
-| server `notification` | Best-effort owner-group broadcast | Implemented; inbox REST is recovery source |
-| server `inbox_state` | Owner-group mark-one/mark-all/delete/clear mutation signal | Implemented; clients reconcile through REST |
-| mark-all/delete/unread refresh | Mutation remains REST; state changes are broadcast | Implemented with authoritative REST refresh on reconnect/focus |
+Mark-read responses expose `notification_id`, `is_read`, `read_at`,
+`delivery_status`, and `replayed`. The stored/public `status` field remains a
+delivery-state compatibility field; clients must use `is_read` for read state.
+Legacy rows using `status: read` remain readable until backfilled.
 
-## Verified Implemented Foundations
+Common response behavior includes:
 
-### Authentication and ownership
+- HTTP 400 for invalid IDs, filters, booleans, pagination, token data, or
+  unsupported platforms;
+- HTTP 401 for missing, invalid, revoked, or inactive authentication;
+- HTTP 403 for unsupported account roles;
+- HTTP 404 for missing or cross-owner notification/token operations;
+- HTTP 409 for bulk limits, concurrent read-state conflicts, legal holds,
+  active cross-owner token claims, or active-device limits; and
+- HTTP 429 for the dedicated read, write, or device-token throttle.
 
-- HTTP queries require both normalized `user_id` and `user_type`.
-- WebSocket groups use `notifications_<role>_<id>` and are role-qualified.
-- Staff WebSockets accept the HttpOnly access cookie and reject staff query or
-  subprotocol tokens.
-- Customer query/subprotocol access tokens remain temporarily supported for
-  the mobile client.
-- The handshake uses the shared JWT boundary for token purpose/signature,
-  blacklist, live account, session, security version, and forced-password
-  enforcement.
-- Missing or rejected credentials close with code `4001`.
-- Post-connect security invalidation closes with `4002`, idle timeout with
-  `4003`, per-process owner connection limit with `4004`, and unsupported
-  binary/oversized frames with `4005`.
-- `AllowedHostsOriginValidator` protects browser cookie handshakes.
+### WebSocket API
 
-### Inbox contract
+`GET /ws/notifications/` upgrades through `AllowedHostsOriginValidator` and
+`JWTAuthMiddleware`.
 
-- Read state is stored in `is_read/read_at`; `status` and `delivery_status`
-  preserve `pending/sent/failed/unknown` delivery evidence. Legacy
-  `status: read` rows remain readable during later backfill work.
-- List queries accept only `page`, `page_size`, `unread`, and `channel`;
-  page size is strictly 1–100 and deep offsets are rejected.
-- Mark-one is atomic, owner-qualified, and replay-consistent across REST/WS.
-- Mark-all and clear-all operate only within the configured synchronous bound.
-- Read, write, token-registration, and WebSocket actions have separate limits.
-- Out-of-scope notification IDs return 404.
-- MongoDB datetimes serialize with an explicit UTC designator.
-- API/WebSocket payloads omit recipient email, recipient name, idempotency key,
-  and stored error text.
-- Single delete and role-qualified bulk mutations are implemented.
+| Frame or action | Direction | Status | Contract |
+| --- | --- | --- | --- |
+| `connection_established` | Server | Implemented | Includes unread count, contract version, and `sync_required: true`. |
+| `ping` / `pong` | Client/server | Implemented | Liveness action/timestamp under the socket action limit. |
+| `mark_read` | Client/server | Implemented | Atomic role-qualified mutation with `replayed` response. |
+| `notification` | Server | Implemented | Best-effort owner-group event; REST remains the recovery source. |
+| `inbox_state` | Server | Implemented | Cross-device mark-one, mark-all, delete, or clear state signal. |
 
-### Cross-domain production
+Missing/rejected credentials close with `4001`; post-connect security
+invalidation closes with `4002`; idle timeout with `4003`; the per-process
+owner connection limit with `4004`; and binary/oversized frames with `4005`.
 
-- Loan submission/review/disbursement/payment and document review outcomes use
-  shared sender helpers.
-- Loans and Documents persist their delivery intent before broker publication,
-  claim work with leases, retry failures, and reconcile due records.
-- Assignment events create per-audience structured metadata, deduplicate a
-  recipient within one publication, and can use transition-based idempotency
-  keys.
-- Account security events create durable in-app/push intent through the shared
-  delivery outbox.
-- Optional customer email helpers evaluate Profiles preferences before SMTP;
-  denied email is recorded as suppressed without removing in-app delivery.
+Staff browsers authenticate with the HttpOnly access cookie and must not send
+staff tokens through a query string or subprotocol. Customer query/subprotocol
+access-token support remains a temporary mobile compatibility path.
 
-### Persistence bootstrap
+## Delivery Semantics
 
-- `init_db.py` invokes the fail-closed `install_notification_schema` workflow.
-- Schema installation refuses writes while legacy, plaintext, duplicate,
-  invalid-owner/platform/timestamp, or missing required-field blockers remain.
-- Notification idempotency and delivery event keys use SHA-256 lookup digests;
-  device-token uniqueness continues to use a non-reversible fingerprint.
-- Strict validators cover `notifications`, `device_tokens`, and
-  `notification_deliveries`; compound indexes match inbox, reconciliation,
-  retention, token-owner, and cleanup queries.
-- `notification_data_inventory` and the release gate expose a bounded
-  completeness marker; an incomplete scan cannot pass the final gate.
+Inbox, channel attempt, provider acceptance, broadcast publication, and user
+receipt have separate meanings:
 
-## Implemented Controls and Remaining Release Conditions
+- An inbox write proves that the backend stored a retrievable record.
+- A `delivered` email/push channel state means the provider accepted the attempt
+  according to its API; it does not prove that a person read it.
+- WebSocket broadcast publication is best effort; clients can disconnect or
+  miss frames after publication.
+- If SMTP/FCM accepts a request but the worker loses its acknowledgement before
+  checkpointing, a retry may repeat the external attempt. External channel
+  delivery is therefore at-least-once under that uncertainty.
+- Idempotency and per-channel checkpoints prevent repeat business mutations,
+  duplicate inbox rows, and known completed push-token sends.
+- REST refresh after connect/reconnect or app focus is the authoritative
+  consistency mechanism.
 
-### 1. Inbox contract, authentication, and ownership
+## Security and Privacy Features
 
-**Status: Complete locally**
+### Authentication, authorization, and ownership
 
-Role-qualified list, count, mark, delete, bounded clear, WebSocket group, and
-WebSocket mark-read behavior is implemented and locally tested through routed
-JWT/session/role cases. REST and WebSocket replay contracts are aligned, owner
-matching is atomic, unknown/deep queries are rejected, and separate authenticated
-throttles protect reads, writes, token registration, and socket actions.
+- REST uses custom JWT authentication, active-session checks, account state,
+  and role allowlisting.
+- WebSocket authentication enforces token purpose/signature, blacklist, live
+  account, session, security version, and forced-password state at connect and
+  after connect.
+- Queries, mutations, token ownership, and Channels groups use both normalized
+  owner type and owner ID.
+- Cross-owner notification/token operations are concealed.
+- Browser cookie handshakes are protected by allowed-host/origin validation.
+- Staff tokens are prohibited from JavaScript-readable WebSocket transports.
 
-### 2. Delivery state, idempotency, and durable processing
+### Input, abuse, and resource bounds
 
-**Status: Complete locally; deployment validation pending**
-
-The encrypted `notification_deliveries` outbox owns events not already covered
-by Loans/Documents. It uses event/recipient idempotency, late-acknowledged routed
-tasks, worker-loss rejection, atomic leases, per-channel checkpoints, bounded
-attempts/backoff, stable failure codes, and periodic reconciliation. Assignment,
-account-security, and notification-creator push publication persist intent before
-broker dispatch. Tests cover broker publication failure, stale leases, replay,
-preference suppression, email retry, and partial push retry without resending
-known successes.
-
-Deployment evidence must still cover actual broker outage, worker termination
-before/after provider acceptance, and provider timeout. External SMTP/FCM calls
-remain at-least-once when acceptance occurs before the checkpoint is persisted.
-
-### 3. Device tokens and FCM
-
-**Status: Implemented locally; deployment and legacy-data validation pending**
-
-- [x] Use the supported installed-version Firebase API and test complete and
-  partial results.
-- [x] Scope tokens by user ID and role and reject active cross-owner claims.
-- [x] Validate token length/shape and approved `android`/`ios`/`web` platforms.
-- [x] Implement explicit unregister, session/logout and account cleanup,
-  expiry, refresh, active-device bounds, and last-used maintenance.
-- [x] Encrypt token values, use non-reversible fingerprints for identity, and
-  include the model in field-encryption rotation/verification tooling.
-- [x] Batch multicast requests at the configured maximum of 500.
-- [x] Stage 3 makes push durable, asynchronous, bounded-retry, and recoverable;
-  successful/permanent token outcomes are checkpointed before later retries.
-- [x] Stage 4 provides inventory/backfill/schema tooling and an isolated
-  real-Mongo validator/index/query-plan suite.
-- [ ] Run that workflow against an explicitly approved isolated/deployment
-  target before production schema work.
-
-### 4. Preferences, privacy, and lifecycle
-
-**Status: Complete locally; final policy/deployment validation pending**
-
-Mandatory transactional/security events are separated from configurable
-loan/payment/promotional messages. Profiles preferences are enforced before
-optional email delivery and the decision/version is stored. Customer export is
-role-qualified and bounded with explicit completeness metadata. Account deletion
-erases inbox/shared-delivery/device-token data; legally held notification rows
-are pseudonymized and cannot be deleted through inbox clear/delete operations.
-Recipient identity/content, related IDs, metadata, errors, legal-hold reasons,
-and raw idempotency keys use field encryption; lookup keys use non-reversible
-digests. Notification email/push/WebSocket logs expose stable types/counts rather
-than recipient/provider content. Daily bounded retention respects legal holds.
-
-An authorized privacy/product decision is still required for retention,
-mandatory security notices, preference defaults, and which event types may be
-deleted by the user.
-
-### 5. MongoDB scalability and schema integrity
-
-**Status: Complete locally; approved real-Mongo execution pending**
-
-Strict validators define notification/read/delivery, device ownership/platform,
-and shared-delivery shapes. `notification_data_inventory` is read-only;
-`backfill_notification_data` is dry-run-first and uses conditional writes;
-`encrypt_sensitive_fields` backfills/verifies/rotates ciphertext; and
-`install_notification_schema` refuses schema writes until blockers are zero.
-Query-specific compound indexes cover owner/date, owner/read, owner/channel,
-retention, delivery reconciliation/history, active/session tokens, expiry, and
-inactive cleanup. Export, retention, fan-out, reconciliation, and inbox work are
-bounded.
-
-Release evidence must include isolated real-Mongo invalid-write, unique-key,
-atomic ownership, inventory/backfill, and `explain()` tests with representative
-cardinality.
-
-### 6. WebSocket lifecycle and client consistency
-
-**Status: Complete locally; deployment validation pending**
-
-The handshake and active connection both enforce the security lifecycle.
-Per-action and timed checks close expired, revoked, suspended, deleted,
-unverified, forced-password, or security-version-stale sessions. Application
-limits cover action rate, frame size/type, idle time, and connections per owner
-inside each ASGI process. Owner-group `inbox_state` events synchronize
-mark-one, mark-all, delete, and clear operations, while
-`connection_established.sync_required: true` makes REST refresh authoritative
-after reconnect or missed best-effort delivery.
-
-The selected proxy must impose an aggregate connection/frame ceiling across
-ASGI workers; the application connection counter is intentionally process-local.
-Stage 6 must prove Redis fan-out, backpressure, proxy timeout/size alignment,
-and reconnect behavior with multiple deployed processes.
-
-Migrate customer mobile away from query-string JWTs when the client can use a
-safer transport; never broaden query/subprotocol support to staff browsers.
-
-### 7. Observability and release operations
-
-**Status: Implemented locally; deployment validation pending**
-
-Stage 5 adds low-cardinality REST outcomes/latency, durable and per-channel
-outcomes, retries/terminal failures, backlog/oldest age, token invalidation,
-active/attempted sockets, rejected actions, broadcasts, and collector freshness.
-The minute collector updates identifier-free health and Prometheus gauges.
-Rules, a rule test, smoke scrape configuration, Grafana dashboard, and the
-Notifications runbook are repository assets. The root README no longer claims
-nonexistent synchronous-email counters or a thread pool.
-
-Provider availability and acceptance are represented by durable/channel
-outcomes without recipient/provider-body labels. A fail-closed read-only
-`notifications_release_check` now binds configuration, MongoDB
-indexes/validators/inventory, health, task routing, monitoring assets, and
-explicit deployment-evidence flags. Opt-in probes cover selected real services
-without making ordinary local tests contact them.
-
-Deployment evidence must prove real Redis fan-out across ASGI workers, at least
-two notification workers, SMTP and Firebase sandbox behavior, HTTPS/WSS proxy
-headers/origins/cookies, provider and broker failure recovery, dashboard
-traffic, delivered alerts, backup/restore, key rotation, incident response, and
-rollback.
-
-## Remediation Plan
-
-These stages follow risk and technical dependencies; six stages are sufficient
-for the currently identified work.
-
-### Stage 1 — Contract and owner-safe inbox operations
-
-**Status: Complete locally (2026-08-27)**
-
-- [x] Separate read state from delivery status in the public and stored contract.
-- [x] Preserve compatible reads for legacy records whose `status` is `read`.
-- [x] Make owner-scoped mutations atomic and replay-consistent.
-- [x] Bound/validate queries and bulk operations and add notification throttles.
-- [x] Correct the shadowed `register-token/` URL discovered by routed tests.
-- [x] Add routed JWT/session/role/ownership tests for all eight REST method
+- Strict query allowlists, boolean parsing, page size, maximum offset, and bulk
+  mutation ceilings bound REST work.
+- Separate authenticated throttles protect reads, writes, and device-token
   operations.
+- WebSocket actions, message bytes/types, idle lifetime, and per-process
+  connections per owner are bounded.
+- FCM batches never exceed the provider's 500-token maximum.
+- Delivery attempts, backoff, lease duration, export size, retention work, and
+  reconciliation batches are bounded.
 
-**Exit condition:** every inbox operation has a stable, role-qualified,
-bounded, request-level-tested contract and cannot corrupt delivery evidence.
+### Data protection and minimization
 
-### Stage 2 — Secure and working push notifications
+- Sensitive notification, delivery, token, error, related-resource, and hold
+  fields use versioned application-level encryption.
+- Device identity and idempotency uniqueness use non-reversible
+  fingerprints/digests rather than raw secrets.
+- API/WebSocket payloads omit recipient address/name, delivery keys, stored
+  errors, provider bodies, and encrypted internal material.
+- Logs record stable event type/outcome/count metadata rather than recipient
+  IDs, email addresses, subject/message text, provider bodies, or raw tokens.
+- Prometheus labels omit customer IDs, recipient data, messages, tokens, and
+  provider response contents.
 
-**Status: Complete locally (2026-08-27)**
+### Privacy lifecycle
 
-- [x] Replace the incompatible Firebase API call and add
-  success/partial/permanent/transient failure tests.
-- [x] Add role-qualified ownership, validation, deduplication, active-device
-  bounds, expiry, explicit revoke, logout/session, and account-deletion behavior.
-- [x] Encrypt tokens, fingerprint lookups, sanitize provider logs, and batch
-  requests to the Firebase maximum.
+- Export is bounded and explicitly reports whether results were truncated.
+- Legal holds prevent single deletion and retention expiry.
+- Clear-all removes eligible records while reporting the held records retained.
+- Account cleanup deletes active delivery credentials and pseudonymizes held
+  evidence.
+- Retention policy and mandatory-versus-optional message categories are
+  versioned and require deployment-owner approval.
 
-**Exit condition:** no caller can claim another account's token, the installed
-Firebase version passes mocked contract tests, and token lifecycle is complete.
+## Persistence and Data Model
 
-### Stage 3 — Durable, preference-aware channel delivery
+The module owns three MongoDB collections:
 
-**Status: Complete locally (2026-08-28)**
+| Collection | Responsibility |
+| --- | --- |
+| `notifications` | Owner inbox content, read state, delivery compatibility state, related context, retention, and legal hold. |
+| `device_tokens` | Encrypted role/session-qualified FCM registrations, fingerprints, expiry, activity, and invalidation. |
+| `notification_deliveries` | Encrypted shared delivery intent, idempotency digest, lease/retry state, and per-channel checkpoints/outcomes. |
 
-- [x] Register and route Notifications tasks correctly.
-- [x] Add a leased/retryable notification-wide delivery model for producers not
-  already protected by a domain outbox.
-- [x] Make email/push asynchronous, preference/policy-aware, idempotent, and
-  recoverable from broker/worker/provider uncertainty.
-- [x] Route assignment, account-security, and notification-creator push intent
-  through the shared outbox while preserving Loans/Documents domain outboxes.
+Strict JSON-schema validators cover all three collections. Compound indexes
+support owner/date pages, owner/read and owner/channel filters, retention,
+delivery reconciliation/history, active/session tokens, expiry, and inactive
+cleanup. Notification and delivery idempotency use SHA-256 lookup digests;
+device-token uniqueness uses a non-reversible fingerprint.
 
-**Exit condition:** required notification intent survives process/broker loss,
-preferences are enforced, and retry never repeats the underlying business
-mutation.
-
-### Stage 4 — Privacy lifecycle and MongoDB correctness
-
-**Status: Complete locally (2026-08-28)**
-
-- [x] Encrypt/minimize sensitive notification/token fields and sanitize logs.
-- [x] Implement bounded export, retention, deletion/pseudonymization, token cleanup,
-  inventory, backfill, and key rotation.
-- [x] Add strict validators and query-specific compound indexes.
-- [x] Add isolated real-Mongo validator, uniqueness, and query-plan
-  tests.
-- [ ] Execute the opt-in real-Mongo suite and reviewed inventory/backfill against
-  explicitly approved targets before production index work.
-
-**Exit condition:** legacy/current data has a reviewed lifecycle, invalid writes
-fail, critical queries use approved indexes, and account deletion leaves no
-active delivery credential.
-
-### Stage 5 — WebSocket resilience and observability
-
-**Status: Complete locally (2026-08-28)**
-
-- [x] Enforce post-connect expiry/account/session/security lifecycle.
-- [x] Bound action rate, frame size/type, idle lifetime, and per-process owner
-  connections.
-- [x] Add owner-group state synchronization and explicit REST reconciliation on
-  connect/reconnect.
-- [x] Add delivery/channel/backlog/security metrics, identifier-free health,
-  scheduled collection, rules/rule tests, dashboard, and operator guidance.
-- [ ] Prove aggregate proxy limits, Redis multi-process fan-out, scrape series,
-  dashboard panels, and alert delivery in the selected topology.
-
-**Exit condition:** operators and clients can detect/recover missed real-time
-events without privacy leakage, and revoked users cannot retain live sockets.
-
-### Stage 6 — Real-environment release validation
-
-**Status: Tooling and local fail-closed evidence complete (2026-08-28); target
-execution pending**
-
-- [x] Add a fail-closed read-only release checker binding safe configuration,
-  task recovery, monitoring assets, health, indexes, validators, and bounded
-  clean inventory.
-- [x] Add explicitly opted-in synthetic probes for Redis sharing, multiple
-  Notifications workers, authenticated HTTPS/WSS, bounded load, metrics, SMTP,
-  and Firebase.
-- [x] Keep every real-service probe skipped unless its target and explicit run
-  flag are supplied.
-- [ ] Run the Stage 4 real-Mongo and Stage 6 deployment probes against approved
-  isolated/final targets.
-- [ ] Rehearse backup/restore, key rotation, provider/broker outage, incident
-  response, and rollback in the selected topology.
-- [ ] Run final customer/staff smoke flows, verify dashboard/alert delivery, set
-  only evidence-backed flags, and require `notifications_release_check` PASS.
-
-**Exit condition:** every applicable release check passes in the selected
-topology and all approved policy/evidence records are retained.
-
-## API and Client Impact Notes
-
-- Existing REST paths remain stable. List items now expose authoritative
-  `is_read/read_at`; `status` remains a delivery-state compatibility field and
-  `delivery_status` makes that meaning explicit. Clients must no longer infer
-  read state from `status == "read"`.
-- `page_size > 100`, unknown query parameters, and requests past the configured
-  offset return HTTP 400. Oversized synchronous mark-all/clear-all operations
-  return HTTP 409 instead of starting unbounded work.
-- Mark-read responses expose `notification_id`, `is_read`, `read_at`,
-  `delivery_status`, and `replayed`. WebSocket mark-read responses also expose
-  `replayed`.
-- Clients must use `pagination.total_pages == 0` for an empty inbox under the
-  current contract.
-- REST remains authoritative after missed WebSocket delivery. Clients should
-  refresh inbox/count on reconnect and app focus until explicit synchronization
-  events are implemented.
-- Staff browsers must continue using HttpOnly cookie authentication. Do not put
-  staff access tokens in URLs, WebSocket subprotocol lists, browser storage, or
-  JavaScript.
-- Customer mobile query/subprotocol compatibility is temporary and requires a
-  coordinated client migration before removal.
-- Clients must register or refresh their token after login using
-  `POST register-token/`, including an approved platform. Use
-  `DELETE register-token/` with the token during explicit device unregister;
-  normal logout also deactivates registrations bound to that session.
-- Registration may return HTTP 409 if a token is actively owned by another
-  account or the account has reached its active-device limit. Clients must not
-  silently substitute or transfer token ownership.
-- Deleting one notification under an active legal hold returns HTTP 409 with
-  `NOTIFICATION_LEGAL_HOLD`. Clear-all deletes eligible rows and returns both
-  `deleted_count` and `retained_count`.
-- Account export preserves the `notifications` item list and adds
-  `notification_export` metadata containing `total`, `returned`, `limit`, and
-  `truncated`.
-- Profiles preference toggles now control optional email only:
-  `email_loan_updates` covers loan/document status updates,
-  `email_payment_reminders` covers reminders, and `email_promotions` covers
-  promotional mail. In-app notifications, payment receipts, staff workflow
-  messages, and security notices remain enabled as mandatory communications.
-- The WebSocket supports only `ping` and `mark_read`. REST fallback is an
-  acceptable baseline for other actions; this narrow action set is not itself a
-  blocker.
+`init_db.py` invokes the fail-closed schema installer. Installation refuses to
+change indexes or validators while bounded inventory is incomplete or detects
+legacy read state, missing/invalid ownership, missing retention, plaintext,
+invalid timestamps/platforms, missing token/session/expiry data, or duplicate
+unique keys.
 
 ## Operational Notes
 
-- A persisted inbox row is not proof of email/push/WebSocket delivery.
-- Monitor Loans, Documents, and shared Notifications outboxes separately; each
-  owns different event sources.
-- A worker consuming the dedicated queue is required, for example
-  `celery -A config worker -Q notifications --loglevel=info`; Celery Beat must
-  run the minute reconciliation schedule. Use the deployment's approved worker
-  topology rather than assuming a default-queue worker consumes this queue.
-- Do not log or expose SMTP credentials, Firebase credentials, FCM tokens,
-  access tokens, recipient PII, free-form messages, or provider exception bodies.
-- Production WebSockets require `wss://`, exact hosts/origins, trusted proxy
-  forwarding, cookie coverage for `/ws/notifications/`, and Redis available to
-  every ASGI process.
-- `init_db.py` is state-changing and may install notification indexes only after
-  duplicate inventory, backup, and explicit target approval.
-- Required pre-schema order for an approved target is:
-  `notification_data_inventory`, dry-run then applied
-  `backfill_notification_data`, dry-run/applied/verified
-  `encrypt_sensitive_fields`, another inventory review, then dry-run/applied
-  `install_notification_schema`. Never use `--apply` before reviewing the
-  target, backup, and dry-run counts.
-- Daily `notifications.enforce_retention` deletes only due, non-held inbox rows,
-  old terminal shared deliveries, and expired/old inactive token registrations
-  in bounded batches.
-- Email/push provider acceptance is not guaranteed user receipt; define channel
-  outcome terminology accordingly.
+### Management commands
+
+| Command | Purpose |
+| --- | --- |
+| `notification_data_inventory` | Read-only bounded inventory of inbox, shared-delivery, and token legacy/privacy/schema blockers. |
+| `backfill_notification_data` | Dry-run-first conditional repair of safe deterministic legacy shapes. |
+| `encrypt_sensitive_fields` | Shared inventory, encryption, rotation, and verification for declared Notifications fields. |
+| `install_notification_schema` | Dry-run-first fail-closed index/validator installation after clean inventory. |
+| `notifications_release_check` | Read-only, fail-closed configuration, persistence, task, health, monitoring, and evidence summary. |
+| `toggle_prometheus` | Local wrapper for enabling/disabling the shared Prometheus runtime configuration. |
+
+For an approved existing MongoDB target, use this order:
+
+1. Run `notification_data_inventory --limit 10000` and increase the limit if
+   any collection is incomplete.
+2. Take and restore-test an encrypted backup.
+3. Run `backfill_notification_data` without `--apply`; review the counts, then
+   apply only with explicit authorization.
+4. Run `encrypt_sensitive_fields`, apply reviewed encryption/rotation, and use
+   `--verify` after completion.
+5. Repeat notification inventory until complete and clean.
+6. Run `install_notification_schema` without `--apply`, review blockers, then
+   apply the schema only after approval.
+7. Repeat inventory and verify representative query plans.
+
+Do not run `init_db.py`, a backfill/encryption `--apply`, or schema installation
+against a shared/production database without reviewed inventory, backup,
+explicit target approval, and a rollback plan. Keep previous field keys until
+all relevant ciphertext has been rotated and verified.
+
+### Background tasks
+
+| Celery task | Responsibility |
+| --- | --- |
+| `notifications.deliver` | Claim and execute one shared multi-channel delivery. |
+| `notifications.reconcile_deliveries` | Requeue due/stale shared delivery work in bounded batches. |
+| `notifications.enforce_retention` | Delete due non-held inbox rows, old terminal deliveries, and expired/inactive tokens. |
+| `notifications.collect_operational_metrics` | Refresh identifier-free backlog, age, failure, and health state. |
+
+A worker must explicitly consume the dedicated `notifications` queue, and
+Celery Beat must run the reconciliation, retention, and metrics schedules.
+Loans and Documents also require their own domain outbox workers/reconcilers.
+
+### Runtime defaults
+
+| Setting | Default | Purpose |
+| --- | ---: | --- |
+| `NOTIFICATIONS_MAX_OFFSET` | `10000` | Deep-pagination bound. |
+| `NOTIFICATIONS_BULK_MUTATION_LIMIT` | `1000` | Synchronous mark-all/clear ceiling. |
+| `NOTIFICATIONS_READ_RATE` | `600/hour` | Per-authenticated-owner read rate. |
+| `NOTIFICATIONS_WRITE_RATE` | `300/hour` | Inbox mutation rate. |
+| `NOTIFICATIONS_DEVICE_TOKEN_RATE` | `60/hour` | Device registration/unregistration rate. |
+| `NOTIFICATIONS_DEVICE_TOKEN_TTL_DAYS` | `180` | Registration expiry. |
+| `NOTIFICATIONS_MAX_ACTIVE_DEVICE_TOKENS` | `20` | Active registrations per owner. |
+| `NOTIFICATIONS_FCM_BATCH_SIZE` | `500` | Maximum provider multicast batch. |
+| `NOTIFICATIONS_DELIVERY_MAX_ATTEMPTS` | `5` | Shared delivery attempt ceiling. |
+| `NOTIFICATIONS_DELIVERY_LEASE_SECONDS` | `300` | Shared worker lease. |
+| `NOTIFICATIONS_RETENTION_DAYS` | `365` | Inbox retention. |
+| `NOTIFICATIONS_DELIVERY_RETENTION_DAYS` | `90` | Terminal delivery retention. |
+| `NOTIFICATIONS_INACTIVE_TOKEN_RETENTION_DAYS` | `30` | Inactive token retention. |
+| `NOTIFICATIONS_WS_ACTIONS_PER_MINUTE` | `120` | Per-socket action limit. |
+| `NOTIFICATIONS_WS_REVALIDATE_SECONDS` | `30` | Active security recheck interval. |
+| `NOTIFICATIONS_WS_IDLE_TIMEOUT_SECONDS` | `300` | Idle connection timeout. |
+| `NOTIFICATIONS_WS_MAX_MESSAGE_BYTES` | `16384` | Maximum client frame payload. |
+| `NOTIFICATIONS_WS_MAX_CONNECTIONS_PER_USER` | `5` | Per-process owner connection limit. |
+
+Deployment owners must approve retention, preferences, rate/capacity limits,
+provider quotas, connection bounds, health thresholds, and alert thresholds.
+
+### Monitoring and incident handling
+
+- Import `monitoring/notifications/prometheus-rules.yml` and
+  `monitoring/notifications/grafana-dashboard.json`; checked-in thresholds are
+  starting points, not approved service-level objectives.
+- Monitor each domain/shared outbox separately because they own different event
+  sources and recovery paths.
+- Diagnose delivery using durable status, channel outcomes, attempt count,
+  backlog age, and collector freshness—not inbox count alone.
+- On broker/provider failure, preserve delivery IDs, leases, and channel
+  checkpoints; do not manually reset encrypted payloads or successful-token
+  fingerprints.
+- Keep metrics, SMTP, Firebase, and Redis endpoints private and keep credentials
+  in the deployment secret store.
+- Define provider acceptance and user receipt separately in runbooks and support
+  communications.
+
+## Client Notes
+
+- Customer mobile, loan-officer web, and administrator web clients use the same
+  owner-scoped REST contract; the backend derives role-qualified ownership.
+- Use `is_read` and `read_at` as the read-state contract. Do not infer read state
+  from `status`; `delivery_status` describes inbox/channel compatibility state.
+- For an empty inbox, `pagination.total_pages` is `0`.
+- Refresh inbox and unread count after WebSocket connect/reconnect, application
+  focus, or a suspected missed event. `sync_required: true` explicitly requests
+  that refresh.
+- Handle WebSocket `notification` and `inbox_state` as best-effort hints, not as
+  the sole source of persisted inbox truth.
+- The WebSocket accepts only `ping` and `mark_read`; use REST for mark-all,
+  deletion, clear-all, listing, and token lifecycle.
+- Staff web clients must use the HttpOnly access cookie. Never place staff JWTs
+  in URLs, subprotocols, JavaScript storage, or client logs.
+- Customer mobile query/subprotocol JWT support is temporary; plan a coordinated
+  migration to a safer transport before removing compatibility.
+- Register/refresh a token after login with the approved platform and unregister
+  it during explicit device removal. Normal logout also deactivates tokens
+  bound to the session.
+- Do not silently transfer a token after HTTP 409 ownership or device-limit
+  errors.
+- Mark-all/clear may return HTTP 409 when the synchronous limit is exceeded;
+  clients should narrow the action or use the future asynchronous contract if
+  one is introduced.
+- Single deletion of a legally held notification returns
+  `NOTIFICATION_LEGAL_HOLD`; clear-all returns both `deleted_count` and
+  `retained_count`.
+- Optional email preference changes do not remove in-app notifications or
+  mandatory security, receipt, and staff messages.
+- Account export keeps the `notifications` list and adds
+  `notification_export` completeness metadata.
+
+## Validation Evidence
+
+Current repository evidence:
+
+- Focused Notifications suite: **90 passed** on 2026-08-29.
+- The focused command covers routed inbox behavior, owner isolation, REST and
+  WebSocket state, template sender behavior, durable delivery, privacy,
+  persistence declarations, resilience, observability, assignment events, and
+  timestamp serialization.
+- Release-tooling selection: **6 passed and 8 real-service probes skipped** on
+  2026-08-29; the probes correctly remain opt-in without approved targets.
+- Mocked installed-version FCM tests cover success, batching, partial results,
+  permanent/transient failures, encryption, ownership, deduplication, expiry,
+  unregister, logout/session revocation, and account cleanup.
+- Local WebSocket tests use real ASGI routing/token/session behavior but an
+  in-memory channel layer; email tests mock transport.
+
+The opt-in isolated real-Mongo and deployment probes exist but have not been
+executed against a final target. Passing mocks are not evidence of real
+MongoDB, Redis, Celery, SMTP, Firebase, HTTPS/WSS, monitoring, or load behavior.
+
+The latest full repository attempt on 2026-08-29 completed with **1,364 passed,
+55 opt-in tests skipped, and 4 failed**. All four failures were in Documents
+upload/finalization tests because the configured local ClamAV service refused
+the connection. They do not indicate a Notifications regression, but the full
+repository release gate must be repeated after the scanner is available.
+
+## Remaining Gaps and Release Conditions
+
+No known application-code stage remains for the reviewed Notifications
+baseline. The following conditions remain for production certification:
+
+1. Against a reviewed deployment copy, run a complete notification inventory,
+   backfill and encryption dry runs, reconcile duplicates/blockers, take and
+   restore-test an encrypted backup, apply approved changes, install validators
+   and indexes, and repeat inventory.
+2. Run the isolated real-Mongo suite to prove invalid-write rejection,
+   uniqueness, role-qualified token ownership, atomic mutations, retention, and
+   indexed query plans at representative cardinality.
+3. Prove Redis Channels fan-out across multiple ASGI processes and shared
+   connection/rate behavior through the selected aggregate proxy controls.
+4. Prove at least two deployed Notifications workers consume the dedicated
+   queue and safely recover broker outages, stale leases, worker termination,
+   Beat overlap, and provider timeout before/after acceptance.
+5. Validate SMTP and Firebase using approved synthetic recipients/tokens;
+   exercise success, rejection, partial failure, invalid-token cleanup, retry,
+   and credential isolation.
+6. Test exact host/origin, cookie, HTTPS/WSS, frame, timeout, backpressure,
+   reconnect, and representative load behavior through the deployed proxy.
+7. Generate representative REST/WebSocket/delivery traffic, inspect Prometheus
+   and Grafana series, calibrate thresholds, and prove alert delivery/recovery.
+8. Obtain authorized product/privacy/security approval for retention periods,
+   preference defaults, mandatory security notices, and user deletion policy.
+9. Rehearse deployed backup/restore, field-key rotation, provider/broker outage,
+   incident response, and rollback with named owners and retained evidence.
+10. Run final customer/officer/admin inbox and channel smoke flows plus the full
+    suite on the release revision, then require every check and `overall` from
+    `notifications_release_check` to pass.
+
+Until these conditions pass, the accurate status is **application-complete and
+awaiting production-environment validation**, not a certified production
+deployment.
 
 ## Review Boundaries
 
-This review inspected repository code/documentation and ran local automated
-tests. It did not directly read `.env`, customer data, device-token records,
-Firebase/cloud credentials, logs, backups, `dump.rdb`, or production data. It
-did not initialize/mutate MongoDB, start workers, send email/push messages, or
-connect to external providers.
+This document verifies repository implementation, API contracts, local
+automated behavior, and the listed local evidence. It does not certify live
+MongoDB indexes/query plans, Redis/Channels/Celery topology, SMTP deliverability,
+Firebase acceptance, browser/mobile push receipt, reverse-proxy policy,
+production load, monitoring delivery, secret-manager operation, backup
+restorability, live customer data, or provider availability.
 
-The review confirms the installed-version Firebase API and canonical Celery
-task registration through mocked local contracts. It does not certify
-SMTP/Firebase terms, deliverability, privacy policy, retention periods,
-notification wording, or
-on-call procedures; those require authorized product, privacy, security, and
-operations review.
+It does not approve provider terms, retention periods, preference defaults,
+mandatory-message classifications, notification wording, marketing consent,
+support procedures, on-call ownership, or service-level objectives. Those
+require authorized product, privacy, legal/compliance, security, and operations
+review for the deployment jurisdiction.
 
-## Release Gate
+Accounts owns JWT/session/account lifecycle and security-event production.
+Profiles owns customer notification preferences. Loans and Documents own their
+domain outboxes. Analytics owns protected audit storage. Notifications owns its
+inbox, token, shared-delivery, channel, and real-time contracts and must not
+represent a provider API response as guaranteed human receipt.
 
-Do not classify Notifications as production-ready until:
-
-1. the installed-version FCM path works and device ownership/lifecycle is safe;
-2. read state is independent from channel delivery state;
-3. required producers have durable, preference-aware, retryable delivery;
-4. the implemented privacy policy/retention defaults are approved and the
-   deployed encryption/export/deletion behavior is proven;
-5. the reviewed inventory/backfill/schema install and opt-in real-Mongo plans
-   pass against approved targets;
-6. implemented WebSocket post-connect authorization and abuse limits pass in
-   the selected proxy/Redis topology;
-7. monitoring assets and health pass locally, and the Stage 6 release checker,
-   deployed scrape, dashboard, and alert route all pass;
-8. Redis/Celery, SMTP, FCM, HTTPS/WSS, load, backup/restore, key rotation,
-   incident response, and rollback are proven in the selected topology; and
-9. the final focused/full suites and customer/staff smoke flows pass.
+This document describes backend behavior. Customer-mobile and staff-web
+presentation, accessibility, offline handling, operating-system push behavior,
+and end-to-end usability require separate client validation.
 
 ## Related Documentation
 
-- `docs/NOTIFICATIONS_TESTING_GUIDE.md` — current contracts, accurate test
-  baseline, known gaps, and future validation commands
-- `docs/accounts/ACCOUNTS_PRODUCTION_READINESS_REVIEW.md` — JWT/session and
-  account lifecycle boundary
-- `docs/profiles/PROFILES_PRODUCTION_READINESS_REVIEW.md` — customer preference
-  storage and account data integration
+- `docs/NOTIFICATIONS_TESTING_GUIDE.md` — endpoint examples, test commands,
+  WebSocket/FCM/email behavior, deployment probes, and runbook.
+- `docs/accounts/ACCOUNTS_PRODUCTION_READINESS_REVIEW.md` — JWT/session,
+  account lifecycle, security events, and shared encryption contracts.
+- `docs/profiles/PROFILES_PRODUCTION_READINESS_REVIEW.md` — customer preferences
+  and account-data integration.
 - `docs/documents/DOCUMENTS_PRODUCTION_READINESS_REVIEW.md` — document delivery
-  outbox behavior
+  outbox and lifecycle behavior.
 - `docs/LOANS_PRODUCTION_READINESS_REVIEW.md` — loan delivery outbox and
-  assignment producers
-- `docs/ANALYTICS_PRODUCTION_READINESS_REVIEW.md` — audit/monitoring conventions
+  assignment producers.
+- `docs/analytics/ANALYTICS_PRODUCTION_READINESS_REVIEW.md` — audit and
+  monitoring conventions.

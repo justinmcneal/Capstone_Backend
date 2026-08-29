@@ -22,7 +22,9 @@ uses Redis and Celery for real-time and background work.
 - Analytics: role-scoped dashboards, protected cross-domain audit events,
   integrity/lifecycle controls, recovery, health, Prometheus metrics, and a
   Grafana operations dashboard.
-- Notifications and authenticated WebSockets.
+- Notifications: role-scoped inboxes, authenticated WebSockets, encrypted
+  device tokens, durable email/push delivery, preference enforcement, privacy
+  lifecycle, and delivery monitoring.
 
 This project uses PyMongo directly. Django ORM migration commands are not the
 database initialization mechanism.
@@ -52,6 +54,10 @@ database initialization mechanism.
   complete. Final target-database inventory, deployed multi-worker Redis,
   HTTPS/SSE load, monitoring/alerts, recovery, and release smoke evidence remain
   deployment gates.
+- Notifications: REST, WebSocket, durable shared delivery, email preferences,
+  FCM token lifecycle, privacy, and monitoring implementation are complete.
+  Real MongoDB, Redis/Channels/Celery, SMTP, Firebase, HTTPS/WSS/load,
+  monitoring/alerts, policy, and recovery evidence remain deployment gates.
 
 ## Development Quick Start
 
@@ -353,6 +359,47 @@ MongoDB, workers, HTTPS/load, monitoring, recovery, policy, and smoke evidence
 are configured. Blockchain evidence is not required when
 `BLOCKCHAIN_ENABLED=False` and clients expose cash/check only.
 
+### Notifications Commands
+
+#### Inventory, backfill, encrypt, and install notification schemas
+
+```bash
+# Read-only bounded inventory
+python manage.py notification_data_inventory --limit 10000
+
+# Dry-run deterministic legacy-shape backfill
+python manage.py backfill_notification_data
+
+# Apply only after reviewing the target, backup, and dry-run counts
+python manage.py backfill_notification_data --apply
+
+# Shared sensitive-field inventory and verification
+python manage.py encrypt_sensitive_fields
+python manage.py encrypt_sensitive_fields --verify
+
+# Preview schema/index installation after the inventory is clean
+python manage.py install_notification_schema
+
+# Apply only to the explicitly approved target
+python manage.py install_notification_schema --apply
+```
+
+The schema installer fails closed when inventory is incomplete or detects
+legacy, plaintext, invalid-owner/platform/timestamp, missing lifecycle, or
+duplicate-key blockers. Encryption/backfill `--apply` and schema installation
+change MongoDB and require reviewed backup and target approval.
+
+#### Run the final read-only Notifications release gate
+
+```bash
+python manage.py notifications_release_check
+python manage.py notifications_release_check --json
+```
+
+The gate intentionally fails until production-safe configuration, clean
+MongoDB indexes/validators/inventory, task routing, health, monitoring assets,
+and the required deployment evidence are verified.
+
 ### Analytics Commands
 
 #### Inventory and backfill protected audit events
@@ -474,6 +521,21 @@ pytest -q accounts/tests tests/test_accounts*.py
 # Loans/blockchain-focused selection (external integrations skip by default)
 pytest -q tests \
   -k 'loan or blockchain or qualification or wallet_disbursement or repayment'
+
+# Notifications-focused suite
+pytest -q \
+  tests/test_notifications_api.py \
+  tests/test_notifications_views.py \
+  tests/test_notifications_mark_read.py \
+  tests/test_notification_isolation.py \
+  tests/test_notifications_websocket.py \
+  tests/test_websocket_notifications.py \
+  tests/test_notifications_email_sender.py \
+  tests/test_notifications_stage3_delivery.py \
+  tests/test_notifications_stage4_privacy_persistence.py \
+  tests/test_notifications_stage5_resilience_observability.py \
+  tests/test_assignment_notifications.py \
+  tests/test_notification_timestamps.py
 
 # Analytics-focused suite (real-environment probes skip without opt-in flags)
 pytest -q \
@@ -700,6 +762,11 @@ The final read-only Notifications gate is intentionally fail-closed:
 .venv/bin/python manage.py notifications_release_check --json
 ```
 
+Prometheus rules, rule tests, a smoke configuration, and the Notifications
+Grafana dashboard are under `monitoring/notifications/`. Generate authenticated
+REST/WebSocket traffic and synthetic delivery outcomes before concluding that
+an empty panel is a monitoring failure.
+
 AI Assistant metrics cover API/provider/tool outcomes and latency, token usage,
 active streams, budget rejection, and audit/persistence failures. Prometheus
 rules, a smoke configuration, and an importable Grafana dashboard are under
@@ -737,6 +804,8 @@ is no in-process notification email thread pool.
 - [Documents testing guide](docs/documents/DOCUMENTS_TESTING_GUIDE.md)
 - [Loans module status](docs/LOANS_PRODUCTION_READINESS_REVIEW.md)
 - [Loans testing guide](docs/LOANS_TESTING_GUIDE.md)
+- [Notifications module status](docs/NOTIFICATIONS_PRODUCTION_READINESS_REVIEW.md)
+- [Notifications testing guide](docs/NOTIFICATIONS_TESTING_GUIDE.md)
 - [Analytics module status](docs/analytics/ANALYTICS_PRODUCTION_READINESS_REVIEW.md)
 - [Analytics testing guide](docs/analytics/ANALYTICS_TESTING_GUIDE.md)
 - [AI Assistant module status](docs/ai_assistant/AI_ASSISTANT_PRODUCTION_READINESS_REVIEW.md)
