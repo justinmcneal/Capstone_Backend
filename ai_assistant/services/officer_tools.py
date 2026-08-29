@@ -379,7 +379,7 @@ def _get_application_summary(scope):
         "review_readiness": {
             "status": (
                 "ready_for_review"
-                if status == "under_review"
+                if status in {"submitted", "under_review"}
                 else "not_ready_for_review"
             ),
             "is_reviewable": status in {"submitted", "under_review"},

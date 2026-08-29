@@ -254,6 +254,35 @@ def test_application_summary_matches_complete_safe_contract(officer_scope):
     }
 
 
+@pytest.mark.parametrize(
+    ("application_status", "expected_readiness", "expected_reviewable"),
+    [
+        ("submitted", "ready_for_review", True),
+        ("under_review", "ready_for_review", True),
+        ("approved", "not_ready_for_review", False),
+    ],
+)
+def test_application_summary_review_readiness_matches_lifecycle_status(
+    officer_scope, application_status, expected_readiness, expected_reviewable
+):
+    settings.MONGODB[LoanApplication.collection_name].update_one(
+        {"_id": ObjectId(officer_scope.application_id)},
+        {"$set": {"status": application_status}},
+    )
+
+    result = execute_officer_tool_result(
+        "get_application_summary", {}, officer_scope, request_id="request-1"
+    )
+
+    assert result["success"] is True
+    summary = json.loads(result["result"])
+    assert summary["review_readiness"] == {
+        "status": expected_readiness,
+        "is_reviewable": expected_reviewable,
+        "manual_review_required": application_status == "under_review",
+    }
+
+
 def test_application_summary_omits_hostile_purpose_product_and_status_text(
     officer_scope,
 ):
