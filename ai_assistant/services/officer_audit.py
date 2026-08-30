@@ -4,11 +4,13 @@ import logging
 
 from analytics.models import AuditLog
 from analytics.services.audit_writer import normalize_audit_payload, queue_audit_failure
+from ai_assistant.services.officer_review_brief import validate_review_brief
 
 logger = logging.getLogger("ai_assistant")
 
 AUDIT_DOMAIN = "ai_assistant"
 SCOPE_POLICY_VERSION = "event-time-assignment-v1"
+NARRATION_VERSION = "review-brief-v1"
 
 
 class OfficerAIAuditUnavailable(RuntimeError):
@@ -119,4 +121,28 @@ def record_officer_ai_result(
             details,
         ),
         required=False,
+    )
+
+
+def record_officer_review_brief(scope, request_id, language, *, brief):
+    """Persist the exact public facts shown to an officer, or fail closed."""
+    validated = validate_review_brief(brief)
+    details = {
+        "application_id": scope.application_id,
+        "request_id": request_id,
+        "language": language,
+        "review_state": validated["review_state"],
+        "reasons": validated["reasons"],
+        "sources": validated["sources"],
+        "narration_version": NARRATION_VERSION,
+    }
+    return _write_or_queue(
+        _payload(
+            "ai_officer_review_brief_viewed",
+            scope,
+            request_id,
+            language,
+            details,
+        ),
+        required=True,
     )

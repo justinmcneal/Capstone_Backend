@@ -42,12 +42,19 @@ from ai_assistant.services.officer_audit import (
     OfficerAIAuditUnavailable,
     record_officer_ai_access,
     record_officer_ai_result,
+    record_officer_review_brief,
 )
 from ai_assistant.services.officer_history import sign_officer_assistant_history
 from ai_assistant.services.officer_policy import validate_officer_response
 from ai_assistant.services.officer_prompt import (
+    OFFICER_NARRATION_SYSTEM_PROMPT,
     OFFICER_SYSTEM_PROMPT,
     officer_suggestions,
+)
+from ai_assistant.services.officer_review_brief import (
+    build_review_brief,
+    build_unavailable_review_brief,
+    render_review_brief,
 )
 from ai_assistant.services.officer_scope import (
     has_current_ai_consent,
@@ -246,18 +253,56 @@ def _record_provider_metrics(
     increment(AI_TOKENS, amount=tokens, provider=provider_name)
 
 
-def _bound_executor(scope, request_id):
+def _bound_executor(scope, request_id, evidence=None):
     captured_request_id = request_id
 
     def execute(tool_name, tool_args, _customer_id, request_id=None):
-        return execute_officer_tool_result(
+        execution = execute_officer_tool_result(
             tool_name,
             tool_args,
             scope,
             request_id=request_id or captured_request_id,
         )
+        if evidence is not None:
+            evidence.append(
+                {
+                    "tool_name": tool_name,
+                    "success": execution.get("success") is True,
+                    **(
+                        {"result": execution.get("result")}
+                        if execution.get("success") is True
+                        else {"code": execution.get("code")}
+                    ),
+                }
+            )
+        return execution
 
     return execute
+
+
+def _narrated_review_brief(llm, evidence, data, request_id):
+    brief = build_review_brief(
+        evidence,
+        language=data["language"],
+        message=data["message"],
+    )
+    try:
+        narration_result = llm.narrate_review_brief(
+            brief,
+            system_prompt=OFFICER_NARRATION_SYSTEM_PROMPT,
+            request_id=request_id,
+        )
+    except Exception:
+        narration_result = {"success": False}
+    narration = (
+        narration_result.get("response")
+        if isinstance(narration_result, dict) and narration_result.get("success")
+        else None
+    )
+    if not narration:
+        brief = build_unavailable_review_brief(data["language"])
+        narration = render_review_brief(brief)
+    return {**brief, "narration": narration}, narration_result
 
 
 def _authorization_error(scope):
@@ -476,6 +521,7 @@ class OfficerChatView(AIRequestMetricsMixin, APIView):
                 status_code=status.HTTP_403_FORBIDDEN,
             )
 
+        evidence = []
         try:
             result = llm.chat_with_tools(
                 message=data["message"],
@@ -484,8 +530,9 @@ class OfficerChatView(AIRequestMetricsMixin, APIView):
                 language=data["language"],
                 system_prompt=OFFICER_SYSTEM_PROMPT,
                 tools=OFFICER_TOOL_SCHEMAS,
-                tool_executor=_bound_executor(scope, request_id),
+                tool_executor=_bound_executor(scope, request_id, evidence),
                 request_id=request_id,
+                officer_mode=True,
             )
         except Exception:
             _release_officer_request(scope, request_id)
@@ -567,31 +614,21 @@ class OfficerChatView(AIRequestMetricsMixin, APIView):
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             )
 
-        ai_response = sanitize_multiline_text(
-            escape_llm_output(result.get("response", ""))
+        review_brief, narration_result = _narrated_review_brief(
+            llm, evidence, data, request_id
         )
-        if not ai_response:
-            _release_officer_request(scope, request_id)
-            _record_provider_metrics(
-                llm,
-                outcome="empty",
-                started=started,
-                operation="chat",
-                provider=result.get("provider"),
-            )
-            record_officer_ai_result(
-                scope,
-                request_id,
-                data["language"],
-                outcome="AI_EMPTY_RESPONSE",
-                tool_names=tool_names,
-                duration_ms=duration_ms,
-            )
-            return error_response(
-                message="AI returned an empty response",
-                code="AI_EMPTY_RESPONSE",
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            )
+        narration = sanitize_multiline_text(
+            escape_llm_output(review_brief["narration"])
+        )
+        review_brief["narration"] = narration
+        duration_ms = _safe_duration_ms(
+            (
+                narration_result.get("response_time_ms")
+                if isinstance(narration_result, dict)
+                else None
+            ),
+            (time.monotonic() - started) * 1000,
+        )
         authorization_error = _authorization_error(scope)
         if authorization_error:
             _release_officer_request(scope, request_id)
@@ -618,28 +655,52 @@ class OfficerChatView(AIRequestMetricsMixin, APIView):
             tool_names=tool_names,
             duration_ms=duration_ms,
         )
+        try:
+            record_officer_review_brief(
+                scope,
+                request_id,
+                data["language"],
+                brief={
+                    key: value
+                    for key, value in review_brief.items()
+                    if key != "narration"
+                },
+            )
+        except OfficerAIAuditUnavailable:
+            _release_officer_request(scope, request_id)
+            return error_response(
+                message="AI review audit is temporarily unavailable",
+                code="AI_AUDIT_UNAVAILABLE",
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
         mark_complete(scope.customer_id, request_id)
         _record_provider_metrics(
             llm,
             outcome="success",
             started=started,
             operation="chat",
-            tokens_used=result.get("tokens_used"),
-            provider=result.get("provider"),
+            tokens_used=(
+                narration_result.get("tokens_used", 0)
+                if isinstance(narration_result, dict)
+                else 0
+            ),
+            provider=(
+                narration_result.get("provider")
+                if isinstance(narration_result, dict)
+                else result.get("provider")
+            ),
         )
         return success_response(
             data={
-                "response": ai_response,
+                "review_brief": review_brief,
                 "history_signature": sign_officer_assistant_history(
                     officer_id=scope.officer_id,
                     application_id=scope.application_id,
-                    content=ai_response,
+                    content=narration,
                 ),
                 "conversation_id": data["conversation_id"],
-                "model": _safe_model_identifier(llm),
                 "response_time_ms": duration_ms,
                 "request_id": request_id,
-                "tools_called": tool_names,
             },
             message="Officer AI response generated successfully",
         )
@@ -765,6 +826,7 @@ class OfficerStreamingChatView(AIRequestMetricsMixin, APIView):
             response_chars = 0
             response_bytes = 0
             tool_names = []
+            evidence = []
             max_stream_chars = max(
                 1, int(settings.AI_ASSISTANT_STREAM_MAX_CHARS)
             )
@@ -864,7 +926,7 @@ class OfficerStreamingChatView(AIRequestMetricsMixin, APIView):
                     language=data["language"],
                     system_prompt=OFFICER_SYSTEM_PROMPT,
                     tools=OFFICER_TOOL_SCHEMAS,
-                    tool_executor=_bound_executor(scope, request_id),
+                    tool_executor=_bound_executor(scope, request_id, evidence),
                     request_id=request_id,
                     officer_mode=True,
                 )
@@ -899,15 +961,14 @@ class OfficerStreamingChatView(AIRequestMetricsMixin, APIView):
 
                     if chunk_type == "tool_call":
                         if name in ALLOWED_TOOL_NAMES:
-                            yield self._event("tool_call", {"name": name})
+                            # Keep the SSE connection observable without exposing
+                            # the private tool identifier or result contract.
+                            yield ": processing\n\n"
+                        continue
                     elif chunk_type == "tool_result":
                         if name in ALLOWED_TOOL_NAMES:
                             if name not in tool_names:
                                 tool_names.append(name)
-                            yield self._event(
-                                "tool_result",
-                                {"name": name, "success": bool(chunk.get("success"))},
-                            )
                     elif chunk_type == "token":
                         raw_content = str(chunk.get("content") or "")
                         next_chars = response_chars + len(raw_content)
@@ -959,85 +1020,78 @@ class OfficerStreamingChatView(AIRequestMetricsMixin, APIView):
                             [*tool_names, *(chunk.get("tools_called") or [])]
                         )
                         duration_ms = elapsed_ms()
-                        terminal_content = (
-                            "".join(response_parts)
-                            if response_parts
-                            else chunk.get("response", "")
+                        review_brief, narration_result = _narrated_review_brief(
+                            llm, evidence, data, request_id
                         )
-                        terminal_content = str(terminal_content or "")
-                        if not response_parts:
-                            if len(terminal_content) > max_stream_chars:
-                                terminal_emitted = True
-                                yield stream_limit_event("characters")
-                                return
-                            if len(terminal_content.encode("utf-8")) > max_stream_bytes:
-                                terminal_emitted = True
-                                yield stream_limit_event("bytes")
-                                return
-                        safe_response, _response_violations = validate_officer_response(
-                            terminal_content,
-                            message=data["message"],
-                            language=data["language"],
-                            tools_called=tool_names,
+                        narration = sanitize_multiline_text(
+                            escape_llm_output(review_brief["narration"])
                         )
-                        safe_response = sanitize_multiline_text(
-                            safe_response
-                        )
-                        if not safe_response:
-                            terminal_event = self._event(
+                        review_brief["narration"] = narration
+                        if (
+                            len(narration) > max_stream_chars
+                            or len(narration.encode("utf-8")) > max_stream_bytes
+                        ):
+                            terminal_emitted = True
+                            yield stream_limit_event("characters")
+                            return
+                        try:
+                            record_officer_review_brief(
+                                scope,
+                                request_id,
+                                data["language"],
+                                brief={
+                                    key: value
+                                    for key, value in review_brief.items()
+                                    if key != "narration"
+                                },
+                            )
+                        except OfficerAIAuditUnavailable:
+                            release_lease()
+                            record_result("AI_AUDIT_UNAVAILABLE")
+                            terminal_emitted = True
+                            yield self._event(
                                 "error",
                                 {
-                                    "content": "AI returned an empty response",
-                                    "code": "AI_EMPTY_RESPONSE",
+                                    "content": "AI review audit is temporarily unavailable",
+                                    "code": "AI_AUDIT_UNAVAILABLE",
                                     "request_id": request_id,
                                 },
                             )
-                            record_result(
-                                "AI_EMPTY_RESPONSE", duration_ms=duration_ms
-                            )
-                            _record_provider_metrics(
-                                llm,
-                                outcome="empty",
-                                started=started,
-                                operation="stream",
-                                provider=chunk.get("provider"),
-                            )
-                            terminal_emitted = True
-                            yield terminal_event
-                        else:
-                            terminal_event = self._event(
-                                "done",
-                                {
-                                    "model": _safe_model_identifier(llm),
-                                    "tokens_used": _safe_token_count(
-                                        chunk.get("tokens_used")
-                                    ),
-                                    "response_time_ms": duration_ms,
-                                    "conversation_id": data["conversation_id"],
-                                    "response": safe_response,
-                                    "history_signature": sign_officer_assistant_history(
-                                        officer_id=scope.officer_id,
-                                        application_id=scope.application_id,
-                                        content=safe_response,
-                                    ),
-                                    "tools_called": tool_names,
-                                    "request_id": request_id,
-                                },
-                            )
-                            record_result("success", duration_ms=duration_ms)
-                            complete_lease()
-                            _record_provider_metrics(
-                                llm,
-                                outcome="success",
-                                started=started,
-                                operation="stream",
-                                tokens_used=_safe_token_count(
-                                    chunk.get("tokens_used")
+                            return
+                        terminal_event = self._event(
+                            "done",
+                            {
+                                "response_time_ms": duration_ms,
+                                "conversation_id": data["conversation_id"],
+                                "review_brief": review_brief,
+                                "history_signature": sign_officer_assistant_history(
+                                    officer_id=scope.officer_id,
+                                    application_id=scope.application_id,
+                                    content=narration,
                                 ),
-                                provider=chunk.get("provider"),
-                            )
-                            terminal_emitted = True
-                            yield terminal_event
+                                "request_id": request_id,
+                            },
+                        )
+                        record_result("success", duration_ms=duration_ms)
+                        complete_lease()
+                        _record_provider_metrics(
+                            llm,
+                            outcome="success",
+                            started=started,
+                            operation="stream",
+                            tokens_used=(
+                                narration_result.get("tokens_used", 0)
+                                if isinstance(narration_result, dict)
+                                else 0
+                            ),
+                            provider=(
+                                narration_result.get("provider")
+                                if isinstance(narration_result, dict)
+                                else chunk.get("provider")
+                            ),
+                        )
+                        terminal_emitted = True
+                        yield terminal_event
                         break
                     elif chunk_type == "error":
                         outcome = _safe_controlled_error_code(chunk.get("code"))

@@ -504,6 +504,10 @@ def _get_document_review_status(scope):
         ],
         "documents": [
             {
+                "type_code": canonicalize_document_type(
+                    document.get("document_type")
+                )
+                or "other",
                 "type": document_type_label(document.get("document_type", "unknown")),
                 "status": _safe_enum(
                     document.get("status"), SAFE_DOCUMENT_STATUSES

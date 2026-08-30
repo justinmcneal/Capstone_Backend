@@ -19,6 +19,7 @@ from ai_assistant.services.officer_prompt import (
     build_officer_system_prompt,
     officer_suggestions,
 )
+from ai_assistant.services.officer_review_brief import render_review_brief
 from ai_assistant.services.officer_tools import OFFICER_TOOL_SCHEMAS
 from ai_assistant.views.officer import (
     OfficerAIStatusView,
@@ -192,6 +193,64 @@ class StreamLLM(JsonLLM):
         return self.stream
 
 
+class ReviewBriefLLM(JsonLLM):
+    def __init__(self):
+        super().__init__()
+        self.narration_brief = None
+
+    def chat_with_tools(self, **kwargs):
+        self.kwargs = kwargs
+        execution = kwargs["tool_executor"](
+            "get_application_summary",
+            {},
+            kwargs["customer_id"],
+            request_id=kwargs.get("request_id"),
+        )
+        assert execution["success"] is True
+        return {
+            "success": True,
+            "response": "ignored planner response",
+            "model": self.model,
+            "provider": self.provider,
+            "response_time_ms": 17,
+            "tokens_used": 8,
+            "tools_called": ["get_application_summary"],
+        }
+
+    def chat_with_tools_stream(self, **kwargs):
+        self.kwargs = kwargs
+        execution = kwargs["tool_executor"](
+            "get_application_summary",
+            {},
+            kwargs["customer_id"],
+            request_id=kwargs.get("request_id"),
+        )
+        assert execution["success"] is True
+        return iter(
+            [
+                {"type": "token", "content": "ignored planner response"},
+                {
+                    "type": "done",
+                    "model": self.model,
+                    "provider": self.provider,
+                    "tokens_used": 8,
+                    "tools_called": ["get_application_summary"],
+                },
+            ]
+        )
+
+    def narrate_review_brief(self, brief, **kwargs):
+        self.narration_brief = brief
+        return {
+            "success": True,
+            "response": render_review_brief(brief),
+            "model": self.model,
+            "provider": self.provider,
+            "response_time_ms": 5,
+            "tokens_used": 4,
+        }
+
+
 class ExplodingJsonLLM(JsonLLM):
     def chat_with_tools(self, **kwargs):
         self.kwargs = kwargs
@@ -217,6 +276,8 @@ def _stream_frames(response):
     frames = []
     for block in raw.strip().split("\n\n"):
         lines = block.splitlines()
+        if not any(line.startswith("event: ") for line in lines):
+            continue
         event = next(line[7:] for line in lines if line.startswith("event: "))
         payload = next(line[6:] for line in lines if line.startswith("data: "))
         frames.append((event, json.loads(payload)))
@@ -879,18 +940,16 @@ def test_officer_chat_audits_before_provider_and_returns_minimized_json(monkeypa
 
     assert response.status_code == 200, response.data
     assert set(response.data["data"]) == {
-        "response",
+        "review_brief",
         "history_signature",
         "conversation_id",
-        "model",
         "response_time_ms",
         "request_id",
-        "tools_called",
     }
-    assert response.data["data"]["response"] == "&lt;Review summary&gt;"
+    assert response.data["data"]["review_brief"]["review_state"] == "unavailable"
     assert response.data["data"]["history_signature"]
     assert response.data["data"]["request_id"] == request_id
-    assert response.data["data"]["tools_called"] == ["get_application_summary"]
+    assert "tools_called" not in response.data["data"]
     assert llm.kwargs["customer_id"] == "server-customer"
     assert llm.kwargs["conversation_history"] == [
         {"role": "user", "content": "Earlier question"}
@@ -906,8 +965,9 @@ def test_officer_chat_audits_before_provider_and_returns_minimized_json(monkeypa
     assert [event.action for event in events] == [
         "ai_officer_assistant_access",
         "ai_officer_assistant_result",
+        "ai_officer_review_brief_viewed",
     ]
-    allowed = {
+    assistant_allowed = {
         "application_id",
         "request_id",
         "language",
@@ -916,8 +976,21 @@ def test_officer_chat_audits_before_provider_and_returns_minimized_json(monkeypa
         "tool_count",
         "duration_ms",
     }
+    review_allowed = {
+        "application_id",
+        "request_id",
+        "language",
+        "review_state",
+        "reasons",
+        "sources",
+        "narration_version",
+    }
     for event in events:
-        assert set(event.details) <= allowed
+        assert set(event.details) <= (
+            review_allowed
+            if event.action == "ai_officer_review_brief_viewed"
+            else assistant_allowed
+        )
         serialized = json.dumps(event.details).lower()
         for forbidden in (
             "summarize",
@@ -928,6 +1001,127 @@ def test_officer_chat_audits_before_provider_and_returns_minimized_json(monkeypa
             "attacker-selected-customer",
         ):
             assert forbidden not in serialized
+
+
+def test_officer_chat_returns_only_public_review_brief_and_persists_view_audit(
+    monkeypatch,
+):
+    officer = _officer()
+    application = _application(officer.id, customer_id="server-customer")
+    request_id = str(uuid.uuid4())
+    llm = ReviewBriefLLM()
+    monkeypatch.setattr(
+        "ai_assistant.views.officer.get_llm_service", lambda **kwargs: llm
+    )
+    monkeypatch.setattr(
+        "ai_assistant.views.officer.has_current_ai_consent", lambda scope: True
+    )
+    monkeypatch.setattr(
+        "ai_assistant.services.officer_tools.has_current_ai_consent",
+        lambda scope: True,
+    )
+
+    response = OfficerChatView.as_view()(
+        _request(
+            "POST",
+            "/api/ai/officer/chat/",
+            officer.id,
+            data={
+                "message": "Summarize review readiness.",
+                "application_id": str(application.id),
+                "language": "en",
+            },
+            headers={"HTTP_IDEMPOTENCY_KEY": request_id},
+        )
+    )
+
+    assert response.status_code == 200, response.data
+    assert set(response.data["data"]) == {
+        "review_brief",
+        "history_signature",
+        "conversation_id",
+        "response_time_ms",
+        "request_id",
+    }
+    brief = response.data["data"]["review_brief"]
+    assert brief["review_state"] == "ready"
+    assert brief["headline"] == "Ready for review"
+    assert brief["sources"] == ["Application summary"]
+    assert brief["narration"] == render_review_brief(
+        {key: value for key, value in brief.items() if key != "narration"}
+    )
+    serialized = json.dumps(response.data)
+    for internal in (
+        "get_application_summary",
+        "ready_for_review",
+        "is_reviewable",
+        "tools_called",
+    ):
+        assert internal not in serialized
+
+    events = _audit_events()
+    assert [event.action for event in events] == [
+        "ai_officer_assistant_access",
+        "ai_officer_assistant_result",
+        "ai_officer_review_brief_viewed",
+    ]
+    viewed = events[-1]
+    assert viewed.details["review_state"] == "ready"
+    assert viewed.details["reasons"] == brief["reasons"]
+    assert viewed.details["sources"] == ["Application summary"]
+
+
+def test_officer_stream_never_emits_raw_tool_events_or_identifiers(monkeypatch):
+    officer = _officer()
+    application = _application(officer.id, customer_id="server-customer")
+    request_id = str(uuid.uuid4())
+    conversation_id = str(uuid.uuid4())
+    llm = ReviewBriefLLM()
+    monkeypatch.setattr(
+        "ai_assistant.views.officer.get_llm_service", lambda **kwargs: llm
+    )
+    monkeypatch.setattr(
+        "ai_assistant.views.officer.has_current_ai_consent", lambda scope: True
+    )
+    monkeypatch.setattr(
+        "ai_assistant.services.officer_tools.has_current_ai_consent",
+        lambda scope: True,
+    )
+
+    response = OfficerStreamingChatView.as_view()(
+        _request(
+            "POST",
+            "/api/ai/officer/chat/stream/",
+            officer.id,
+            data={
+                "message": "Summarize review readiness.",
+                "application_id": str(application.id),
+                "conversation_id": conversation_id,
+                "language": "en",
+            },
+            headers={"HTTP_IDEMPOTENCY_KEY": request_id},
+        )
+    )
+    frames = _stream_frames(response)
+
+    assert [event for event, _payload in frames] == ["done"]
+    payload = frames[0][1]
+    assert set(payload) == {
+        "review_brief",
+        "history_signature",
+        "response_time_ms",
+        "conversation_id",
+        "request_id",
+    }
+    assert payload["review_brief"]["sources"] == ["Application summary"]
+    serialized = json.dumps(payload)
+    for internal in (
+        "get_application_summary",
+        "ready_for_review",
+        "is_reviewable",
+        "tools_called",
+    ):
+        assert internal not in serialized
 
 
 def test_officer_chat_rejects_malformed_provider_tool_metadata(monkeypatch):
@@ -971,7 +1165,7 @@ def test_officer_ai_audit_documents_pseudonymize_officer_and_customer_identifier
 
     assert response.status_code == 200, response.data
     events = _audit_events()
-    assert len(events) == 2
+    assert len(events) == 3
     for event in events:
         assert event.user_id != str(officer.id)
         assert event.scope_officer_index == AuditLog.blind_index(str(officer.id))
@@ -1120,7 +1314,7 @@ def test_officer_chat_uses_trusted_model_and_normalizes_provider_tokens(monkeypa
     )
 
     assert response.status_code == 200
-    assert response.data["data"]["model"] == "officer-model"
+    assert "model" not in response.data["data"]
     token_calls = [
         call.kwargs for call in metric_calls.call_args_list if "amount" in call.kwargs
     ]
@@ -1229,10 +1423,11 @@ def test_officer_chat_may_continue_when_failed_access_audit_is_durably_queued(
     )
 
     assert response.status_code == 200, response.data
-    assert queued.call_count == 2
+    assert queued.call_count == 3
     assert [call.kwargs["payload"]["action"] for call in queued.call_args_list] == [
         "ai_officer_assistant_access",
         "ai_officer_assistant_result",
+        "ai_officer_review_brief_viewed",
     ]
     assert llm.kwargs is not None
 
@@ -1289,26 +1484,20 @@ def test_officer_stream_emits_safe_named_events_and_one_done_terminal(monkeypatc
     assert response["Content-Type"].startswith("text/event-stream")
     assert response["Cache-Control"] == "no-cache"
     assert response["X-Accel-Buffering"] == "no"
-    assert [event for event, _payload in frames] == [
-        "tool_call",
-        "tool_result",
-        "done",
-    ]
+    assert [event for event, _payload in frames] == ["done"]
     assert frames[-1][1] == {
-        "model": "officer-model",
-        "tokens_used": 4,
         "response_time_ms": frames[-1][1]["response_time_ms"],
         "conversation_id": conversation_id,
-        "response": "A &",
+        "review_brief": frames[-1][1]["review_brief"],
         "history_signature": frames[-1][1]["history_signature"],
-        "tools_called": ["get_application_summary"],
         "request_id": request_id,
     }
+    assert frames[-1][1]["review_brief"]["review_state"] == "unavailable"
     assert officer_history.verify_officer_assistant_history(
         frames[-1][1]["history_signature"],
         officer_id=officer.id,
         application_id=application.id,
-        content="A &",
+        content=frames[-1][1]["review_brief"]["narration"],
     )
     assert sum(event in {"done", "error"} for event, _payload in frames) == 1
     assert provider_stream.closed is True
@@ -1440,8 +1629,8 @@ def test_officer_stream_bounds_provider_model_and_tokens(monkeypatch):
     frames = _stream_frames(response)
 
     assert frames[-1][0] == "done"
-    assert frames[-1][1]["model"] == "officer-model"
-    assert frames[-1][1]["tokens_used"] == 0
+    assert "model" not in frames[-1][1]
+    assert "tokens_used" not in frames[-1][1]
     assert "attacker-model" not in json.dumps(frames)
 
 
@@ -1705,9 +1894,9 @@ def test_officer_stream_empty_done_becomes_error(monkeypatch):
         )
     )
 
-    assert [event for event, _payload in frames] == ["error"]
-    assert frames[0][1]["code"] == "AI_EMPTY_RESPONSE"
-    assert _audit_events()[-1].details["outcome"] == "AI_EMPTY_RESPONSE"
+    assert [event for event, _payload in frames] == ["done"]
+    assert frames[0][1]["review_brief"]["review_state"] == "unavailable"
+    assert _audit_events()[-1].details["outcome"] == "success"
 
 
 def test_officer_stream_malformed_done_metadata_emits_one_safe_terminal_error(
@@ -1828,7 +2017,7 @@ def test_officer_stream_disconnect_closes_provider_and_records_result(monkeypatc
     )
 
     iterator = iter(response.streaming_content)
-    assert b"event: tool_call" in next(iterator)
+    assert b": processing" in next(iterator)
     response.close()
 
     assert provider_stream.closed is True
@@ -2067,7 +2256,7 @@ def test_officer_stream_disconnect_releases_its_idempotency_lease(monkeypatch):
         )
     )
     iterator = iter(response.streaming_content)
-    assert b"event: tool_call" in next(iterator)
+    assert b": processing" in next(iterator)
     response.close()
 
     request_record = settings.MONGODB[idempotency.COLLECTION].find_one(

@@ -393,6 +393,7 @@ def test_document_review_status_matches_complete_safe_contract(officer_scope):
     ]
     assert review["documents"] == [
         {
+            "type_code": "valid_id",
             "type": "Valid Government ID",
             "status": "approved",
             "verified": True,
