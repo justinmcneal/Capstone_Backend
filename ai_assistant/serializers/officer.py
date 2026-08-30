@@ -96,6 +96,9 @@ _OFFICER_CONTEXT_STOP_WORDS = frozenset(
         "show", "still", "status", "statuses", "summary", "summarize", "tell",
         "explain", "stream",
         "the", "this", "what", "with",
+        # Common Tagalog function/context words must not look like a bare name
+        # when officers ask a normal bilingual application question.
+        "ano", "ang", "aplikasyon", "ito", "kulang", "na", "sa",
     }
 )
 _OFFICER_CONTEXT_ERROR = "This request cannot be processed"

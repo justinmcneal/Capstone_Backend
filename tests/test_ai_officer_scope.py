@@ -113,6 +113,20 @@ def test_officer_chat_serializer_normalizes_language_and_generates_uuid():
     assert uuid.UUID(serializer.validated_data["conversation_id"])
 
 
+def test_officer_chat_serializer_accepts_a_bilingual_context_question():
+    serializer = OfficerChatRequestSerializer(
+        data={
+            "message": "Ano ang kulang sa aplikasyon na ito?",
+            "application_id": "app-1",
+            "language": "tl",
+        }
+    )
+
+    assert serializer.is_valid(), serializer.errors
+    assert serializer.validated_data["message"] == "Ano ang kulang sa aplikasyon na ito?"
+    assert serializer.validated_data["language"] == "tl"
+
+
 def test_officer_chat_serializer_normalizes_supplied_conversation_uuid():
     conversation_id = uuid.uuid4()
     serializer = OfficerChatRequestSerializer(
