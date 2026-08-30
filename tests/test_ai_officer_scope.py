@@ -7,6 +7,7 @@ from django.test import override_settings
 from accounts.authentication import AuthenticatedUser
 from accounts.models import LoanOfficer
 from ai_assistant.serializers.officer import OfficerChatRequestSerializer
+from ai_assistant.services.officer_history import sign_officer_assistant_history
 from ai_assistant.services.officer_scope import (
     OfficerAssistantScope,
     has_current_ai_consent,
@@ -61,18 +62,35 @@ def test_officer_chat_serializer_rejects_tool_roles_and_bounds_history():
 
 
 def test_officer_chat_serializer_keeps_only_last_six_complete_turns():
+    history = []
+    for index in range(14):
+        role = "user" if index % 2 == 0 else "assistant"
+        content = f"message-{index}"
+        history.append(
+            {
+                "role": role,
+                "content": content,
+                **(
+                    {
+                        "history_signature": sign_officer_assistant_history(
+                            officer_id="officer-1",
+                            application_id="app-1",
+                            content=content,
+                        )
+                    }
+                    if role == "assistant"
+                    else {}
+                ),
+            }
+        )
+
     serializer = OfficerChatRequestSerializer(
         data={
             "message": "Review this application",
             "application_id": "app-1",
-            "history": [
-                {
-                    "role": "user" if index % 2 == 0 else "assistant",
-                    "content": f"message-{index}",
-                }
-                for index in range(14)
-            ],
-        }
+            "history": history,
+        },
+        context={"request": _officer_request("officer-1")},
     )
 
     assert serializer.is_valid(), serializer.errors

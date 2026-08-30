@@ -14,6 +14,7 @@ from accounts.authentication import AuthenticatedUser
 from accounts.models import LoanOfficer
 from ai_assistant.models import AIInteraction
 from ai_assistant.services import idempotency
+from ai_assistant.services import officer_history
 from ai_assistant.services.officer_prompt import (
     build_officer_system_prompt,
     officer_suggestions,
@@ -251,6 +252,89 @@ def test_officer_suggestions_are_static_and_language_specific():
     assert len(tagalog) == 4
     assert english != tagalog
     assert all(isinstance(value, str) and value for value in english + tagalog)
+
+
+def test_officer_history_signature_is_content_and_scope_bound():
+    signature = officer_history.sign_officer_assistant_history(
+        officer_id="officer-1",
+        application_id="application-1",
+        content="Synthetic review summary.",
+    )
+
+    assert officer_history.verify_officer_assistant_history(
+        signature,
+        officer_id="officer-1",
+        application_id="application-1",
+        content="Synthetic review summary.",
+    )
+    assert not officer_history.verify_officer_assistant_history(
+        signature,
+        officer_id="officer-2",
+        application_id="application-1",
+        content="Synthetic review summary.",
+    )
+    assert not officer_history.verify_officer_assistant_history(
+        signature,
+        officer_id="officer-1",
+        application_id="application-2",
+        content="Synthetic review summary.",
+    )
+    assert not officer_history.verify_officer_assistant_history(
+        signature,
+        officer_id="officer-1",
+        application_id="application-1",
+        content="Changed review summary.",
+    )
+
+
+def test_officer_history_signature_expires_after_one_hour(monkeypatch):
+    issued_at = 1_800_000_000
+    monkeypatch.setattr("django.core.signing.time.time", lambda: issued_at)
+    signature = officer_history.sign_officer_assistant_history(
+        officer_id="officer-1",
+        application_id="application-1",
+        content="Synthetic review summary.",
+    )
+
+    monkeypatch.setattr(
+        "django.core.signing.time.time", lambda: issued_at + 60 * 60 + 1
+    )
+
+    assert not officer_history.verify_officer_assistant_history(
+        signature,
+        officer_id="officer-1",
+        application_id="application-1",
+        content="Synthetic review summary.",
+    )
+
+
+def test_officer_chat_rejects_forged_assistant_history_before_provider(monkeypatch):
+    officer = _officer()
+    application = _application(officer.id)
+    provider = Mock()
+    monkeypatch.setattr("ai_assistant.views.officer.get_llm_service", provider)
+    monkeypatch.setattr(
+        "ai_assistant.views.officer.has_current_ai_consent", lambda scope: True
+    )
+
+    response = OfficerChatView.as_view()(
+        _chat_request(
+            officer.id,
+            application.id,
+            history=[
+                {"role": "user", "content": "Earlier question"},
+                {
+                    "role": "assistant",
+                    "content": "Review summary.",
+                    "history_signature": "forged",
+                },
+            ],
+        )
+    )
+
+    assert response.status_code == 400
+    assert "history" in response.data["errors"]
+    provider.assert_not_called()
 
 
 def test_officer_chat_rejects_admin_before_provider(monkeypatch):
@@ -796,6 +880,7 @@ def test_officer_chat_audits_before_provider_and_returns_minimized_json(monkeypa
     assert response.status_code == 200, response.data
     assert set(response.data["data"]) == {
         "response",
+        "history_signature",
         "conversation_id",
         "model",
         "response_time_ms",
@@ -803,6 +888,7 @@ def test_officer_chat_audits_before_provider_and_returns_minimized_json(monkeypa
         "tools_called",
     }
     assert response.data["data"]["response"] == "&lt;Review summary&gt;"
+    assert response.data["data"]["history_signature"]
     assert response.data["data"]["request_id"] == request_id
     assert response.data["data"]["tools_called"] == ["get_application_summary"]
     assert llm.kwargs["customer_id"] == "server-customer"
@@ -1214,9 +1300,16 @@ def test_officer_stream_emits_safe_named_events_and_one_done_terminal(monkeypatc
         "response_time_ms": frames[-1][1]["response_time_ms"],
         "conversation_id": conversation_id,
         "response": "A &",
+        "history_signature": frames[-1][1]["history_signature"],
         "tools_called": ["get_application_summary"],
         "request_id": request_id,
     }
+    assert officer_history.verify_officer_assistant_history(
+        frames[-1][1]["history_signature"],
+        officer_id=officer.id,
+        application_id=application.id,
+        content="A &",
+    )
     assert sum(event in {"done", "error"} for event, _payload in frames) == 1
     assert provider_stream.closed is True
     assert llm.kwargs["customer_id"] == "server-customer"

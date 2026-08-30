@@ -43,6 +43,7 @@ from ai_assistant.services.officer_audit import (
     record_officer_ai_access,
     record_officer_ai_result,
 )
+from ai_assistant.services.officer_history import sign_officer_assistant_history
 from ai_assistant.services.officer_policy import validate_officer_response
 from ai_assistant.services.officer_prompt import (
     OFFICER_SYSTEM_PROMPT,
@@ -629,6 +630,11 @@ class OfficerChatView(AIRequestMetricsMixin, APIView):
         return success_response(
             data={
                 "response": ai_response,
+                "history_signature": sign_officer_assistant_history(
+                    officer_id=scope.officer_id,
+                    application_id=scope.application_id,
+                    content=ai_response,
+                ),
                 "conversation_id": data["conversation_id"],
                 "model": _safe_model_identifier(llm),
                 "response_time_ms": duration_ms,
@@ -1009,6 +1015,11 @@ class OfficerStreamingChatView(AIRequestMetricsMixin, APIView):
                                     "response_time_ms": duration_ms,
                                     "conversation_id": data["conversation_id"],
                                     "response": safe_response,
+                                    "history_signature": sign_officer_assistant_history(
+                                        officer_id=scope.officer_id,
+                                        application_id=scope.application_id,
+                                        content=safe_response,
+                                    ),
                                     "tools_called": tool_names,
                                     "request_id": request_id,
                                 },

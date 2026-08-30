@@ -4,6 +4,7 @@ import uuid
 
 from rest_framework import serializers
 
+from ai_assistant.services.officer_history import verify_officer_assistant_history
 from ai_assistant.services.request_limits import (
     AI_ASSISTANT_HISTORY_MAX_MESSAGES,
     validate_chat_message,
@@ -211,6 +212,12 @@ class OfficerChatRequestSerializer(serializers.Serializer):
 
     def validate_history(self, value):
         normalized = []
+        request = self.context.get("request")
+        actor = getattr(request, "user", None)
+        officer_id = getattr(actor, "customer_id", None) or getattr(
+            actor, "id", None
+        )
+        application_id = self.initial_data.get("application_id")
         for index, entry in enumerate(value):
             if not isinstance(entry, dict):
                 raise serializers.ValidationError(
@@ -234,7 +241,18 @@ class OfficerChatRequestSerializer(serializers.Serializer):
                 raise serializers.ValidationError(
                     {str(index): {"content": self._message_error(error)}}
                 )
-            _validate_officer_context(cleaned_content)
+            if role == "assistant":
+                if not verify_officer_assistant_history(
+                    entry.get("history_signature"),
+                    officer_id=officer_id,
+                    application_id=application_id,
+                    content=content,
+                ):
+                    raise serializers.ValidationError(
+                        {str(index): {"content": _OFFICER_CONTEXT_ERROR}}
+                    )
+            else:
+                _validate_officer_context(cleaned_content)
             normalized.append({"role": role, "content": cleaned_content})
 
         return normalized[-AI_ASSISTANT_HISTORY_MAX_MESSAGES:]

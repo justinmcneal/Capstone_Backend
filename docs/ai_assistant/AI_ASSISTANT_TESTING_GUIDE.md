@@ -145,13 +145,18 @@ static suggestions after role, assignment, and consent checks.
 `POST /api/ai/officer/chat/` accepts the same bounded message/history shape as
 the client contract and returns the standard success/error envelope. Successful
 data contains response/request/conversation metadata and allowlisted tool
-names only.
+names only. Each successful response also includes `history_signature`; the
+client must return that signature on the matching assistant history entry.
+Signatures are bound to the officer, application, and exact response content,
+expire after one hour, and are rejected before provider invocation when they
+are missing, expired, altered, or replayed in another scope.
 
 `POST /api/ai/officer/chat/stream/` emits named `tool_call`, `tool_result`, and
 `token` events followed by exactly one terminal `done` or `error` event. A
 successful `done` includes `conversation_id`, `request_id`,
 `response_time_ms`, `tokens_used`, and allowlisted `tools_called`. Clients must
-not treat HTTP 200 alone as stream success.
+not treat HTTP 200 alone as stream success. A successful `done` event carries
+the same scoped `history_signature` contract as the JSON route.
 
 Officer chat requests use a short-lived, application- and officer-bound lease
 for retry protection. The web client creates one UUID `Idempotency-Key` per
