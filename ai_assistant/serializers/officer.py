@@ -38,19 +38,19 @@ _OFFICER_CONTEXT_RESTRICTED_PATTERNS = tuple(
 )
 _OFFICER_CONTEXT_SAFE_PROMPTS = frozenset(
     {
-        "summarize this application's review readiness.",
+        "summarize this application's review readiness",
         "summarize review readiness",
         "review summary",
         "review this application",
         "review missing documents and repayment status",
-        "what documents are present?",
-        "what profile information is still incomplete?",
-        "summarize the required document review statuses.",
-        "explain the current repayment summary.",
-        "ibuod ang kahandaan ng aplikasyon para sa pagsusuri.",
-        "ano pa ang kulang sa profile bago ang pagsusuri?",
-        "ibuod ang katayuan ng mga kinakailangang dokumento.",
-        "ipaliwanag ang kasalukuyang buod ng pagbabayad.",
+        "what documents are present",
+        "what profile information is still incomplete",
+        "summarize the required document review statuses",
+        "explain the current repayment summary",
+        "ibuod ang kahandaan ng aplikasyon para sa pagsusuri",
+        "ano pa ang kulang sa profile bago ang pagsusuri",
+        "ibuod ang katayuan ng mga kinakailangang dokumento",
+        "ipaliwanag ang kasalukuyang buod ng pagbabayad",
         "summarize what is still needed before review",
         "review missing documents",
     }

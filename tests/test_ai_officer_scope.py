@@ -8,6 +8,7 @@ from accounts.authentication import AuthenticatedUser
 from accounts.models import LoanOfficer
 from ai_assistant.serializers.officer import OfficerChatRequestSerializer
 from ai_assistant.services.officer_history import sign_officer_assistant_history
+from ai_assistant.services.officer_prompt import officer_suggestions
 from ai_assistant.services.officer_scope import (
     OfficerAssistantScope,
     has_current_ai_consent,
@@ -125,6 +126,24 @@ def test_officer_chat_serializer_accepts_a_bilingual_context_question():
     assert serializer.is_valid(), serializer.errors
     assert serializer.validated_data["message"] == "Ano ang kulang sa aplikasyon na ito?"
     assert serializer.validated_data["language"] == "tl"
+
+
+def test_officer_chat_serializer_accepts_all_static_bilingual_suggestions():
+    for language in ("en", "tl"):
+        for message in officer_suggestions(language):
+            serializer = OfficerChatRequestSerializer(
+                data={
+                    "message": message,
+                    "application_id": "app-1",
+                    "language": language,
+                }
+            )
+
+            assert serializer.is_valid(), {
+                "language": language,
+                "message": message,
+                "errors": serializer.errors,
+            }
 
 
 def test_officer_chat_serializer_normalizes_supplied_conversation_uuid():
