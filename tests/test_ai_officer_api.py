@@ -312,7 +312,19 @@ def test_officer_suggestions_are_static_and_language_specific():
     assert len(english) == 4
     assert len(tagalog) == 4
     assert english != tagalog
-    assert all(isinstance(value, str) and value for value in english + tagalog)
+    assert all(
+        isinstance(value, dict)
+        and set(value) == {"id", "label"}
+        and value["id"]
+        and value["label"]
+        for value in english + tagalog
+    )
+    assert [item["id"] for item in english] == [
+        "application_readiness",
+        "profile_readiness",
+        "document_status",
+        "repayment_summary",
+    ]
 
 
 def test_officer_history_signature_is_content_and_scope_bound():
@@ -882,6 +894,138 @@ def test_officer_suggestions_require_assignment_and_consent_without_provider(mon
     assert response.data["data"]["language"] == "tl"
     assert response.data["data"]["suggestions"] == officer_suggestions("tl")
     provider.assert_not_called()
+
+
+def test_officer_preset_intent_executes_without_provider(monkeypatch):
+    officer = _officer()
+    application = _application(officer.id)
+    provider = Mock(side_effect=AssertionError("preset must not call provider"))
+    monkeypatch.setattr("ai_assistant.views.officer.get_llm_service", provider)
+    monkeypatch.setattr(
+        "ai_assistant.views.officer.has_current_ai_consent", lambda scope: True
+    )
+    monkeypatch.setattr(
+        "ai_assistant.services.officer_tools.has_current_ai_consent",
+        lambda scope: True,
+    )
+
+    response = OfficerChatView.as_view()(
+        _request(
+            "POST",
+            "/api/ai/officer/chat/",
+            officer.id,
+            data={
+                "message": "Explain the current repayment summary.",
+                "application_id": str(application.id),
+                "language": "en",
+                "intent": "repayment_summary",
+            },
+        )
+    )
+
+    assert response.status_code == 200, response.data
+    assert response.data["data"]["review_brief"]["headline"] in {
+        "Repayment summary",
+        "Repayment summary unavailable",
+    }
+    provider.assert_not_called()
+
+
+def test_officer_stream_preset_intent_executes_without_provider(monkeypatch):
+    officer = _officer()
+    application = _application(officer.id)
+    provider = Mock(side_effect=AssertionError("preset must not call provider"))
+    monkeypatch.setattr("ai_assistant.views.officer.get_llm_service", provider)
+    monkeypatch.setattr(
+        "ai_assistant.views.officer.has_current_ai_consent", lambda scope: True
+    )
+    monkeypatch.setattr(
+        "ai_assistant.services.officer_tools.has_current_ai_consent",
+        lambda scope: True,
+    )
+
+    response = OfficerStreamingChatView.as_view()(
+        _request(
+            "POST",
+            "/api/ai/officer/chat/stream/",
+            officer.id,
+            data={
+                "message": "Summarize the required document review statuses.",
+                "application_id": str(application.id),
+                "language": "en",
+                "intent": "document_status",
+            },
+            headers={"HTTP_ACCEPT": "text/event-stream"},
+        )
+    )
+
+    assert response.status_code == 200
+    frames = _stream_frames(response)
+    assert [event for event, _payload in frames] == ["done"]
+    assert frames[0][1]["review_brief"]["headline"] == "Document summary unavailable"
+    assert frames[0][1]["review_brief"]["sources"] == []
+    provider.assert_not_called()
+
+
+def test_officer_out_of_scope_question_is_scope_limited_without_provider(monkeypatch):
+    officer = _officer()
+    application = _application(officer.id)
+    provider = Mock(side_effect=AssertionError("scope-limited request must not call provider"))
+    monkeypatch.setattr("ai_assistant.views.officer.get_llm_service", provider)
+    monkeypatch.setattr(
+        "ai_assistant.views.officer.has_current_ai_consent", lambda scope: True
+    )
+    monkeypatch.setattr(
+        "ai_assistant.services.officer_tools.has_current_ai_consent",
+        lambda scope: True,
+    )
+
+    response = OfficerChatView.as_view()(
+        _request(
+            "POST",
+            "/api/ai/officer/chat/",
+            officer.id,
+            data={
+                "message": "What are the approval odds?",
+                "application_id": str(application.id),
+                "language": "en",
+            },
+        )
+    )
+
+    assert response.status_code == 200, response.data
+    assert response.data["data"]["review_brief"]["review_state"] == "scope_limited"
+    provider.assert_not_called()
+
+
+def test_officer_chat_renders_deterministically_without_narration_provider(monkeypatch):
+    officer = _officer()
+    application = _application(officer.id)
+    llm = JsonLLM()
+    llm.narrate_review_brief = Mock(
+        side_effect=AssertionError("narration provider must not be called")
+    )
+    monkeypatch.setattr(
+        "ai_assistant.views.officer.get_llm_service", lambda **kwargs: llm
+    )
+    monkeypatch.setattr(
+        "ai_assistant.views.officer.has_current_ai_consent", lambda scope: True
+    )
+    monkeypatch.setattr(
+        "ai_assistant.services.officer_tools.has_current_ai_consent",
+        lambda scope: True,
+    )
+
+    response = OfficerChatView.as_view()(
+        _chat_request(officer.id, application.id)
+    )
+
+    assert response.status_code == 200, response.data
+    brief = response.data["data"]["review_brief"]
+    assert brief["narration"] == render_review_brief(
+        {key: value for key, value in brief.items() if key != "narration"}
+    )
+    llm.narrate_review_brief.assert_not_called()
 
 
 def test_officer_suggestions_reject_missing_consent_without_provider(monkeypatch):

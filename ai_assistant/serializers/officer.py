@@ -181,6 +181,7 @@ class OfficerChatRequestSerializer(serializers.Serializer):
     application_id = serializers.CharField(required=True, allow_blank=False)
     conversation_id = serializers.CharField(required=False, allow_blank=False)
     language = serializers.CharField(required=False, default="en", allow_blank=False)
+    intent = serializers.CharField(required=False, allow_blank=False)
     history = serializers.ListField(required=False, default=list, allow_empty=True)
 
     @staticmethod
@@ -212,6 +213,14 @@ class OfficerChatRequestSerializer(serializers.Serializer):
         if language not in {"en", "tl"}:
             raise serializers.ValidationError("Use one of: en, tl")
         return language
+
+    def validate_intent(self, value):
+        from ai_assistant.services.officer_prompt import OFFICER_SUGGESTION_INTENTS
+
+        intent = str(value).strip()
+        if intent not in OFFICER_SUGGESTION_INTENTS:
+            raise serializers.ValidationError("Use one of the supported suggestion intents")
+        return intent
 
     def validate_history(self, value):
         normalized = []

@@ -130,7 +130,8 @@ def test_officer_chat_serializer_accepts_a_bilingual_context_question():
 
 def test_officer_chat_serializer_accepts_all_static_bilingual_suggestions():
     for language in ("en", "tl"):
-        for message in officer_suggestions(language):
+        for suggestion in officer_suggestions(language):
+            message = suggestion["label"]
             serializer = OfficerChatRequestSerializer(
                 data={
                     "message": message,

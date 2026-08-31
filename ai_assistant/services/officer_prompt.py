@@ -35,17 +35,31 @@ Hard rules:
 """
 
 
+OFFICER_SUGGESTION_INTENTS = {
+    "application_readiness": "get_application_summary",
+    "profile_readiness": "get_profile_readiness",
+    "document_status": "get_document_review_status",
+    "repayment_summary": "get_repayment_summary",
+}
+
+
 def officer_suggestions(language):
-    if str(language or "en").lower() == "tl":
-        return [
+    labels = (
+        [
             "Ibuod ang kahandaan ng aplikasyon para sa pagsusuri.",
             "Ano pa ang kulang sa profile bago ang pagsusuri?",
             "Ibuod ang katayuan ng mga kinakailangang dokumento.",
             "Ipaliwanag ang kasalukuyang buod ng pagbabayad.",
         ]
+        if str(language or "en").lower() == "tl"
+        else [
+            "Summarize this application's review readiness.",
+            "What profile information is still incomplete?",
+            "Summarize the required document review statuses.",
+            "Explain the current repayment summary.",
+        ]
+    )
     return [
-        "Summarize this application's review readiness.",
-        "What profile information is still incomplete?",
-        "Summarize the required document review statuses.",
-        "Explain the current repayment summary.",
+        {"id": intent, "label": label}
+        for intent, label in zip(OFFICER_SUGGESTION_INTENTS, labels)
     ]

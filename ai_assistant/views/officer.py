@@ -47,8 +47,8 @@ from ai_assistant.services.officer_audit import (
 from ai_assistant.services.officer_history import sign_officer_assistant_history
 from ai_assistant.services.officer_policy import validate_officer_response
 from ai_assistant.services.officer_prompt import (
-    OFFICER_NARRATION_SYSTEM_PROMPT,
     OFFICER_SYSTEM_PROMPT,
+    OFFICER_SUGGESTION_INTENTS,
     officer_suggestions,
 )
 from ai_assistant.services.officer_review_brief import (
@@ -111,12 +111,15 @@ def _consent_required_response():
 
 
 def _officer_request_fingerprint(scope, data):
+    scope_key = f"officer:{scope.officer_id}:{scope.application_id}"
+    if data.get("intent"):
+        scope_key = f"{scope_key}:intent:{data['intent']}"
     return request_fingerprint(
         data["message"],
         data["conversation_id"],
         data["language"],
         history=data.get("history", []),
-        scope_key=f"officer:{scope.officer_id}:{scope.application_id}",
+        scope_key=scope_key,
     )
 
 
@@ -280,29 +283,33 @@ def _bound_executor(scope, request_id, evidence=None):
     return execute
 
 
-def _narrated_review_brief(llm, evidence, data, request_id):
+def _rendered_review_brief(evidence, data):
+    # A validated preset intent is the server-owned semantic request. Ignore
+    # any client-edited label when building the brief so a preset cannot be
+    # rerouted through free-text scope handling.
+    message = "" if data.get("intent") else data["message"]
     brief = build_review_brief(
         evidence,
         language=data["language"],
-        message=data["message"],
+        message=message,
     )
-    try:
-        narration_result = llm.narrate_review_brief(
-            brief,
-            system_prompt=OFFICER_NARRATION_SYSTEM_PROMPT,
-            request_id=request_id,
-        )
-    except Exception:
-        narration_result = {"success": False}
-    narration = (
-        narration_result.get("response")
-        if isinstance(narration_result, dict) and narration_result.get("success")
-        else None
+    return {
+        **brief,
+        "narration": render_review_brief(brief),
+    }, {
+        "success": True,
+        "provider": "deterministic",
+        "model": None,
+        "response_time_ms": 0,
+        "tokens_used": 0,
+    }
+
+
+def _is_scope_limited_request(data):
+    brief = build_review_brief(
+        [], language=data["language"], message=data["message"]
     )
-    if not narration:
-        brief = build_unavailable_review_brief(data["language"])
-        narration = render_review_brief(brief)
-    return {**brief, "narration": narration}, narration_result
+    return brief.get("review_state") == "scope_limited"
 
 
 def _authorization_error(scope):
@@ -317,6 +324,62 @@ def _authorization_error(scope):
     except Exception:
         return "AI_OFFICER_CONSENT_CHANGED"
     return None
+
+
+def _officer_provider_preflight(scope, request_id, language, started, *, stream=False):
+    """Load the planner provider only for free-form officer questions."""
+    try:
+        llm = get_llm_service(use_case="chat")
+        provider_available = llm.is_available()
+    except Exception:
+        _release_officer_request(scope, request_id)
+        _record_provider_metrics(
+            None,
+            outcome="error",
+            started=started,
+            operation="stream" if stream else "chat",
+        )
+        record_officer_ai_result(
+            scope,
+            request_id,
+            language,
+            outcome="AI_PROVIDER_ERROR",
+            duration_ms=int((time.monotonic() - started) * 1000),
+        )
+        logger.error(
+            "Officer AI provider setup failed",
+            extra={"request_id": request_id},
+        )
+        return None, error_response(
+            message=(
+                "Failed to process officer AI stream request"
+                if stream
+                else "Failed to process officer AI request"
+            ),
+            code="AI_PROVIDER_ERROR",
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        )
+    if not provider_available:
+        _release_officer_request(scope, request_id)
+        _record_provider_metrics(
+            llm,
+            outcome="unavailable",
+            started=started,
+            operation="stream" if stream else "chat",
+        )
+        record_officer_ai_result(
+            scope,
+            request_id,
+            language,
+            outcome="AI_PROVIDER_UNAVAILABLE",
+            duration_ms=int((time.monotonic() - started) * 1000),
+        )
+        return None, error_response(
+            message="AI service is currently unavailable",
+            code="AI_PROVIDER_UNAVAILABLE",
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        )
+    return llm, None
 
 
 class OfficerAIStatusView(AccessControlMixin, APIView):
@@ -455,53 +518,15 @@ class OfficerChatView(AIRequestMetricsMixin, APIView):
             )
 
         started = time.monotonic()
-        try:
-            llm = get_llm_service(use_case="chat")
-            provider_available = llm.is_available()
-        except Exception:
-            _release_officer_request(scope, request_id)
-            _record_provider_metrics(
-                None,
-                outcome="error",
-                started=started,
-                operation="chat",
+        scope_limited = _is_scope_limited_request(data)
+        if data.get("intent") or scope_limited:
+            llm = None
+        else:
+            llm, preflight_error = _officer_provider_preflight(
+                scope, request_id, data["language"], started
             )
-            record_officer_ai_result(
-                scope,
-                request_id,
-                data["language"],
-                outcome="AI_PROVIDER_ERROR",
-                duration_ms=int((time.monotonic() - started) * 1000),
-            )
-            logger.error(
-                "Officer AI provider setup failed",
-                extra={"request_id": request_id},
-            )
-            return error_response(
-                message="Failed to process officer AI request",
-                code="AI_PROVIDER_ERROR",
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            )
-        if not provider_available:
-            _release_officer_request(scope, request_id)
-            _record_provider_metrics(
-                llm,
-                outcome="unavailable",
-                started=started,
-                operation="chat",
-            )
-            record_officer_ai_result(
-                scope,
-                request_id,
-                data["language"],
-                outcome="AI_PROVIDER_UNAVAILABLE",
-                duration_ms=int((time.monotonic() - started) * 1000),
-            )
-            return error_response(
-                message="AI service is currently unavailable",
-                code="AI_PROVIDER_UNAVAILABLE",
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            )
+            if preflight_error is not None:
+                return preflight_error
 
         authorization_error = _authorization_error(scope)
         if authorization_error:
@@ -523,17 +548,44 @@ class OfficerChatView(AIRequestMetricsMixin, APIView):
 
         evidence = []
         try:
-            result = llm.chat_with_tools(
-                message=data["message"],
-                customer_id=scope.customer_id,
-                conversation_history=data["history"],
-                language=data["language"],
-                system_prompt=OFFICER_SYSTEM_PROMPT,
-                tools=OFFICER_TOOL_SCHEMAS,
-                tool_executor=_bound_executor(scope, request_id, evidence),
-                request_id=request_id,
-                officer_mode=True,
-            )
+            if data.get("intent"):
+                tool_name = OFFICER_SUGGESTION_INTENTS[data["intent"]]
+                execution = _bound_executor(scope, request_id, evidence)(
+                    tool_name,
+                    {},
+                    scope.customer_id,
+                    request_id=request_id,
+                )
+                result = {
+                    # A deterministic preset always returns a review brief,
+                    # including a topic-specific unavailable brief when its
+                    # read-only tool cannot load data.  Do not turn that
+                    # expected data failure into a generic provider error.
+                    "success": True,
+                    "code": execution.get("code"),
+                    "response_time_ms": 0,
+                    "tools_called": [tool_name]
+                    if execution.get("success") is True
+                    else [],
+                }
+            elif scope_limited:
+                result = {
+                    "success": True,
+                    "response_time_ms": 0,
+                    "tools_called": [],
+                }
+            else:
+                result = llm.chat_with_tools(
+                    message=data["message"],
+                    customer_id=scope.customer_id,
+                    conversation_history=data["history"],
+                    language=data["language"],
+                    system_prompt=OFFICER_SYSTEM_PROMPT,
+                    tools=OFFICER_TOOL_SCHEMAS,
+                    tool_executor=_bound_executor(scope, request_id, evidence),
+                    request_id=request_id,
+                    officer_mode=True,
+                )
         except Exception:
             _release_officer_request(scope, request_id)
             _record_provider_metrics(
@@ -614,9 +666,7 @@ class OfficerChatView(AIRequestMetricsMixin, APIView):
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             )
 
-        review_brief, narration_result = _narrated_review_brief(
-            llm, evidence, data, request_id
-        )
+        review_brief, narration_result = _rendered_review_brief(evidence, data)
         narration = sanitize_multiline_text(
             escape_llm_output(review_brief["narration"])
         )
@@ -685,9 +735,12 @@ class OfficerChatView(AIRequestMetricsMixin, APIView):
                 else 0
             ),
             provider=(
-                narration_result.get("provider")
-                if isinstance(narration_result, dict)
-                else result.get("provider")
+                result.get("provider")
+                or (
+                    narration_result.get("provider")
+                    if isinstance(narration_result, dict)
+                    else None
+                )
             ),
         )
         return success_response(
@@ -767,53 +820,15 @@ class OfficerStreamingChatView(AIRequestMetricsMixin, APIView):
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             )
 
-        try:
-            llm = get_llm_service(use_case="chat")
-            provider_available = llm.is_available()
-        except Exception:
-            _release_officer_request(scope, request_id)
-            _record_provider_metrics(
-                None,
-                outcome="error",
-                started=time.monotonic(),
-                operation="stream",
+        scope_limited = _is_scope_limited_request(data)
+        if data.get("intent") or scope_limited:
+            llm = None
+        else:
+            llm, preflight_error = _officer_provider_preflight(
+                scope, request_id, data["language"], time.monotonic(), stream=True
             )
-            record_officer_ai_result(
-                scope,
-                request_id,
-                data["language"],
-                outcome="AI_PROVIDER_ERROR",
-                duration_ms=0,
-            )
-            logger.error(
-                "Officer AI stream provider setup failed",
-                extra={"request_id": request_id},
-            )
-            return error_response(
-                message="Failed to process officer AI stream request",
-                code="AI_PROVIDER_ERROR",
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            )
-        if not provider_available:
-            _release_officer_request(scope, request_id)
-            _record_provider_metrics(
-                llm,
-                outcome="unavailable",
-                started=time.monotonic(),
-                operation="stream",
-            )
-            record_officer_ai_result(
-                scope,
-                request_id,
-                data["language"],
-                outcome="AI_PROVIDER_UNAVAILABLE",
-                duration_ms=0,
-            )
-            return error_response(
-                message="AI service is currently unavailable",
-                code="AI_PROVIDER_UNAVAILABLE",
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            )
+            if preflight_error is not None:
+                return preflight_error
 
         def event_stream():
             started = time.monotonic()
@@ -919,17 +934,33 @@ class OfficerStreamingChatView(AIRequestMetricsMixin, APIView):
                         },
                     )
                     return
-                provider_stream = llm.chat_with_tools_stream(
-                    message=data["message"],
-                    customer_id=scope.customer_id,
-                    conversation_history=data["history"],
-                    language=data["language"],
-                    system_prompt=OFFICER_SYSTEM_PROMPT,
-                    tools=OFFICER_TOOL_SCHEMAS,
-                    tool_executor=_bound_executor(scope, request_id, evidence),
-                    request_id=request_id,
-                    officer_mode=True,
-                )
+                if data.get("intent"):
+                    tool_name = OFFICER_SUGGESTION_INTENTS[data["intent"]]
+                    execution = _bound_executor(scope, request_id, evidence)(
+                        tool_name,
+                        {},
+                        scope.customer_id,
+                        request_id=request_id,
+                    )
+                    if execution.get("success") is True:
+                        tool_names.append(tool_name)
+                    # The renderer will produce a topic-specific unavailable
+                    # brief from the failed evidence entry when needed.
+                    provider_stream = iter([{"type": "done"}])
+                elif scope_limited:
+                    provider_stream = iter([{"type": "done"}])
+                else:
+                    provider_stream = llm.chat_with_tools_stream(
+                        message=data["message"],
+                        customer_id=scope.customer_id,
+                        conversation_history=data["history"],
+                        language=data["language"],
+                        system_prompt=OFFICER_SYSTEM_PROMPT,
+                        tools=OFFICER_TOOL_SCHEMAS,
+                        tool_executor=_bound_executor(scope, request_id, evidence),
+                        request_id=request_id,
+                        officer_mode=True,
+                    )
                 for chunk in provider_stream:
                     if time.monotonic() - started >= max_stream_duration:
                         terminal_emitted = True
@@ -1020,8 +1051,8 @@ class OfficerStreamingChatView(AIRequestMetricsMixin, APIView):
                             [*tool_names, *(chunk.get("tools_called") or [])]
                         )
                         duration_ms = elapsed_ms()
-                        review_brief, narration_result = _narrated_review_brief(
-                            llm, evidence, data, request_id
+                        review_brief, narration_result = _rendered_review_brief(
+                            evidence, data
                         )
                         narration = sanitize_multiline_text(
                             escape_llm_output(review_brief["narration"])
@@ -1085,9 +1116,13 @@ class OfficerStreamingChatView(AIRequestMetricsMixin, APIView):
                                 else 0
                             ),
                             provider=(
-                                narration_result.get("provider")
-                                if isinstance(narration_result, dict)
-                                else chunk.get("provider")
+                                chunk.get("provider")
+                                or getattr(llm, "provider", None)
+                                or (
+                                    narration_result.get("provider")
+                                    if isinstance(narration_result, dict)
+                                    else None
+                                )
                             ),
                         )
                         terminal_emitted = True
