@@ -1094,7 +1094,7 @@ def test_officer_out_of_scope_question_is_scope_limited_without_provider(monkeyp
             "/api/ai/officer/chat/",
             officer.id,
             data={
-                "message": "What are the approval odds?",
+                "message": "What are the approval odds for this application?",
                 "application_id": str(application.id),
                 "language": "en",
             },
