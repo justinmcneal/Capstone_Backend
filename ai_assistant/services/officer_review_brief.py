@@ -831,12 +831,3 @@ def render_review_brief(brief):
         lines.append(f'{text["sources_label"]}: {" · ".join(brief["sources"])}')
     lines.append(brief["disclaimer"])
     return "\n".join(lines)
-
-
-def validate_narration(narration, brief):
-    try:
-        expected = render_review_brief(brief)
-    except InvalidReviewBrief:
-        return None
-    normalized = str(narration or "").replace("\r\n", "\n").strip()
-    return expected if normalized == expected else None

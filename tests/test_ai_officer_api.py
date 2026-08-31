@@ -857,6 +857,9 @@ def test_officer_status_checks_role_and_provider_without_application_reads(monke
         "model_available": True,
         "state": "available",
         "circuit": "closed",
+        "preset_summaries_available": True,
+        "free_text_available": True,
+        "free_text_state": "available",
     }
 
 

@@ -47,11 +47,6 @@ from ai_assistant.services.officer_policy import (
     validate_officer_response,
 )
 from ai_assistant.services.officer_privacy import officer_provider_input_violations
-from ai_assistant.services.officer_review_brief import (
-    InvalidReviewBrief,
-    validate_narration,
-    validate_review_brief,
-)
 from ai_assistant.services.response_controls import (
     controlled_guidance_response,
     validate_provider_response,
@@ -1020,87 +1015,6 @@ class GroqService:
             'response_time_ms': elapsed_ms,
             'tools_called': tools_called,
         }
-
-    def narrate_review_brief(
-        self,
-        review_brief,
-        *,
-        system_prompt,
-        request_id=None,
-    ):
-        """Narrate one already-localized public brief without tool access."""
-        try:
-            validated_brief = validate_review_brief(review_brief)
-        except InvalidReviewBrief:
-            result = {
-                "success": False,
-                "error": PUBLIC_PROVIDER_ERROR,
-                "code": "AI_OFFICER_REVIEW_BRIEF_INVALID",
-            }
-            if request_id:
-                result["request_id"] = request_id
-            return result
-
-        if not self.api_key:
-            return self._provider_failure(request_id=request_id)
-
-        started = time.time()
-        payload = json.dumps(
-            {"review_brief": validated_brief},
-            ensure_ascii=False,
-            separators=(",", ":"),
-        )
-        try:
-            response = _session.post(
-                self.api_url,
-                headers={
-                    "Authorization": f"Bearer {self.api_key}",
-                    "Content-Type": "application/json",
-                },
-                json={
-                    "model": self.model,
-                    "messages": [
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": payload},
-                    ],
-                    "temperature": 0,
-                    "max_tokens": min(
-                        512, int(settings.AI_ASSISTANT_MAX_OUTPUT_TOKENS)
-                    ),
-                    "top_p": 1,
-                },
-                timeout=120 if self.provider == "ollama" else 180,
-            )
-            if response.status_code != 200:
-                return self._provider_failure(request_id=request_id)
-            provider_payload = response.json()
-            choice = provider_payload.get("choices", [{}])[0]
-            content = choice.get("message", {}).get("content", "")
-            narration = validate_narration(content, validated_brief)
-            if narration is None:
-                result = {
-                    "success": False,
-                    "error": PUBLIC_PROVIDER_ERROR,
-                    "code": "AI_OFFICER_NARRATION_INVALID",
-                }
-                if request_id:
-                    result["request_id"] = request_id
-                return result
-            usage = provider_payload.get("usage", {})
-            return {
-                "success": True,
-                "response": narration,
-                "model": self.model,
-                "provider": self.provider,
-                "response_time_ms": int((time.time() - started) * 1000),
-                "tokens_used": usage.get("total_tokens", 0),
-            }
-        except requests.Timeout as exc:
-            return self._provider_failure(exc, request_id=request_id)
-        except requests.RequestException as exc:
-            return self._provider_failure(exc, request_id=request_id)
-        except (json.JSONDecodeError, TypeError, AttributeError, IndexError):
-            return self._provider_failure(request_id=request_id)
 
     def chat_stream(
         self,

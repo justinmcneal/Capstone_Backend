@@ -427,6 +427,9 @@ class OfficerAIStatusView(AccessControlMixin, APIView):
                     "model_available": False,
                     "state": "disabled",
                     "circuit": "disabled",
+                    "preset_summaries_available": False,
+                    "free_text_available": False,
+                    "free_text_state": "disabled",
                 },
                 message="Officer AI status retrieved",
             )
@@ -452,6 +455,9 @@ class OfficerAIStatusView(AccessControlMixin, APIView):
                 "model_available": readiness["model_available"],
                 "state": readiness["state"],
                 "circuit": readiness["circuit"],
+                "preset_summaries_available": True,
+                "free_text_available": available,
+                "free_text_state": readiness["state"],
             },
             message="Officer AI status retrieved",
         )
