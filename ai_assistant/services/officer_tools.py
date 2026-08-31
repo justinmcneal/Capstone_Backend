@@ -388,7 +388,11 @@ def _get_application_summary(scope):
             "status": (
                 "ready_for_review"
                 if status in {"submitted", "under_review"}
-                else "not_ready_for_review"
+                else (
+                    "not_ready_for_review"
+                    if status == "draft"
+                    else "review_complete"
+                )
             ),
             "is_reviewable": status in {"submitted", "under_review"},
             "manual_review_required": manual_review_required,

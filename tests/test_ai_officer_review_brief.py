@@ -107,6 +107,29 @@ def test_filipino_brief_uses_backend_localized_templates():
     )
 
 
+def test_post_review_brief_does_not_call_a_disbursed_application_not_ready():
+    brief = build_review_brief(
+        [
+            _evidence(
+                "get_application_summary",
+                {
+                    "review_readiness": {
+                        "status": "review_complete",
+                        "is_reviewable": False,
+                        "manual_review_required": False,
+                    }
+                },
+            )
+        ],
+        language="en",
+        message="Summarize this application's review readiness.",
+    )
+
+    assert brief["review_state"] == "informational"
+    assert brief["headline"] == "Review completed"
+    assert brief["reasons"][0]["code"] == "review_stage_complete"
+
+
 def test_failed_subsystem_returns_unavailable_brief_without_partial_content():
     brief = build_review_brief(
         [

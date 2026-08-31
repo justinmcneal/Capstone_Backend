@@ -12,6 +12,7 @@ PUBLIC_REASON_CODES = frozenset(
     {
         "review_stage_ready",
         "review_stage_not_ready",
+        "review_stage_complete",
         "manual_check_needed",
         "personal_profile_unavailable",
         "business_profile_unavailable",
@@ -118,6 +119,7 @@ _TEXT = {
         "sources_label": "Sources checked",
         "ready_headline": "Ready for review",
         "attention_headline": "Not ready for review",
+        "post_review_headline": "Review completed",
         "summary_headline": "Application review summary",
         "profile_headline": "Profile readiness summary",
         "document_headline": "Document review summary",
@@ -136,9 +138,12 @@ _TEXT = {
         "ready_detail": "The current application record is in a reviewable workflow stage.",
         "not_ready_label": "The application is not ready for officer review",
         "not_ready_detail": "The current application record is not in a reviewable workflow stage.",
+        "post_review_label": "The application has moved beyond active officer review",
+        "post_review_detail": "The current application record is no longer in the active review workflow.",
         "manual_label": "Manual review is required",
         "manual_detail": "Use the established portal workflow for manual review.",
         "application_next": "Verify the application record before continuing the review workflow.",
+        "post_review_next": "Verify the application record before taking further workflow action.",
         "profile_next": "Complete or verify the identified profile information before continuing review.",
         "document_next": "Resolve the identified document requirements in the established portal workflow.",
         "repayment_next": "Verify the repayment record before taking workflow action.",
@@ -172,6 +177,7 @@ _TEXT = {
         "sources_label": "Mga pinagkunang sinuri",
         "ready_headline": "Handa para sa pagsusuri",
         "attention_headline": "Hindi pa handa para sa pagsusuri",
+        "post_review_headline": "Nakumpleto na ang pagsusuri",
         "summary_headline": "Buod ng pagsusuri ng aplikasyon",
         "profile_headline": "Buod ng kahandaan ng profile",
         "document_headline": "Buod ng pagsusuri ng mga dokumento",
@@ -190,9 +196,12 @@ _TEXT = {
         "ready_detail": "Ang kasalukuyang talaan ng aplikasyon ay nasa yugto na maaari nang suriin.",
         "not_ready_label": "Hindi pa handa ang aplikasyon para sa pagsusuri ng loan officer",
         "not_ready_detail": "Ang kasalukuyang talaan ng aplikasyon ay wala pa sa yugto na maaari nang suriin.",
+        "post_review_label": "Lumampas na ang aplikasyon sa aktibong pagsusuri ng loan officer",
+        "post_review_detail": "Ang kasalukuyang talaan ng aplikasyon ay wala na sa aktibong workflow ng pagsusuri.",
         "manual_label": "Kailangan ang manu-manong pagsusuri",
         "manual_detail": "Gamitin ang itinakdang workflow ng portal para sa manu-manong pagsusuri.",
         "application_next": "Beripikahin ang talaan ng aplikasyon bago ipagpatuloy ang workflow ng pagsusuri.",
+        "post_review_next": "Beripikahin ang talaan ng aplikasyon bago gumawa ng karagdagang aksyon sa workflow.",
         "profile_next": "Kumpletuhin o beripikahin ang natukoy na impormasyon sa profile bago ipagpatuloy ang pagsusuri.",
         "document_next": "Ayusin ang natukoy na kinakailangan sa dokumento gamit ang itinakdang workflow ng portal.",
         "repayment_next": "Beripikahin ang talaan ng pagbabayad bago gumawa ng aksyon sa workflow.",
@@ -343,6 +352,15 @@ def _application_fragment(result, locale):
                 "detail": text["not_ready_detail"],
             }
         ]
+    elif status == "review_complete" and readiness.get("is_reviewable") is False:
+        state = "informational"
+        reasons = [
+            {
+                "code": "review_stage_complete",
+                "label": text["post_review_label"],
+                "detail": text["post_review_detail"],
+            }
+        ]
     else:
         raise InvalidReviewBrief("Unknown review readiness")
     if readiness.get("manual_review_required") is True:
@@ -353,7 +371,9 @@ def _application_fragment(result, locale):
                 "detail": text["manual_detail"],
             }
         )
-    return state, reasons, [text["application_next"]]
+    return state, reasons, [
+        text["post_review_next"] if state == "informational" else text["application_next"]
+    ]
 
 
 def _profile_fragment(result, locale):
@@ -663,7 +683,7 @@ def build_review_brief(evidence, *, language="en", message=""):
     states = {fragment[0] for fragment in fragments}
     if "needs_attention" in states:
         state = "needs_attention"
-    elif tools == ["get_repayment_summary"]:
+    elif any(fragment[0] == "informational" for fragment in fragments):
         state = "informational"
     else:
         state = "ready"
@@ -677,7 +697,13 @@ def build_review_brief(evidence, *, language="en", message=""):
     sources = [PUBLIC_SOURCE_LABELS[locale][tool] for tool in PUBLIC_SOURCE_LABELS[locale] if tool in tools]
 
     if tools == ["get_application_summary"]:
-        headline = text["ready_headline"] if state == "ready" else text["attention_headline"]
+        headline = (
+            text["ready_headline"]
+            if state == "ready"
+            else text["post_review_headline"]
+            if state == "informational"
+            else text["attention_headline"]
+        )
     elif tools == ["get_profile_readiness"]:
         headline = text["profile_headline"]
     elif tools == ["get_document_review_status"]:

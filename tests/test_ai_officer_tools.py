@@ -260,7 +260,9 @@ def test_application_summary_matches_complete_safe_contract(officer_scope):
     [
         ("submitted", "ready_for_review", True),
         ("under_review", "ready_for_review", True),
-        ("approved", "not_ready_for_review", False),
+        ("draft", "not_ready_for_review", False),
+        ("approved", "review_complete", False),
+        ("disbursed", "review_complete", False),
     ],
 )
 def test_application_summary_review_readiness_matches_lifecycle_status(
