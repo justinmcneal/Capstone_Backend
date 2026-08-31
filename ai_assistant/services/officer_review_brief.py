@@ -4,6 +4,13 @@ import json
 import re
 from decimal import Decimal, InvalidOperation
 
+from ai_assistant.services.officer_evidence_contract import (
+    DOCUMENT_STATUSES,
+    INSTALLMENT_STATUSES,
+    RISK_SCORE_STATUSES,
+    SCHEDULE_STATUSES,
+)
+
 
 PUBLIC_REVIEW_STATES = frozenset(
     {"ready", "needs_attention", "informational", "unavailable", "scope_limited"}
@@ -259,6 +266,10 @@ _OUT_OF_SCOPE_PATTERNS = (
 class InvalidReviewBrief(ValueError):
     """Raised when data is not safe enough to enter the narration boundary."""
 
+    def __init__(self, message, *, code="brief_contract_invalid"):
+        super().__init__(message)
+        self.code = code
+
 
 def _locale(language):
     return "fil" if str(language or "en").lower() in {"tl", "fil"} else "en"
@@ -424,7 +435,7 @@ def _profile_fragment(result, locale):
             risk_status = profile.get("risk_status")
             if (
                 risk_status
-                not in {"not_calculated", "pending", "complete", "failed", "stale"}
+                not in RISK_SCORE_STATUSES
                 or profile.get("risk_score_status") != risk_status
                 or profile.get("risk_category")
                 not in {"unknown", "low", "medium", "high"}
@@ -478,7 +489,7 @@ def _document_fragment(result, locale):
         verified = document.get("verified")
         if (
             code not in required_codes
-            or status not in {"pending", "needs_review", "approved", "rejected", "expired"}
+            or status not in DOCUMENT_STATUSES
             or not isinstance(verified, bool)
             or verified != (status == "approved")
         ):
@@ -563,8 +574,7 @@ def _repayment_fragment(result, locale):
     progress = result.get("schedule_progress")
     summaries = result.get("payment_status_summaries", [])
     if (
-        result.get("schedule_status")
-        not in {"active", "paid_off", "restructured", "written_off"}
+        result.get("schedule_status") not in SCHEDULE_STATUSES
         or result.get("payments_truncated") is not False
         or not isinstance(progress, dict)
         or not isinstance(summaries, list)
@@ -606,7 +616,7 @@ def _repayment_fragment(result, locale):
         status = summary.get("status") if isinstance(summary, dict) else None
         count = summary.get("count") if isinstance(summary, dict) else None
         if (
-            status not in {"pending", "partial", "overdue", "partial_overdue", "paid"}
+            status not in INSTALLMENT_STATUSES
             or status in seen_statuses
             or not isinstance(count, int)
             or isinstance(count, bool)
@@ -653,7 +663,7 @@ def _topic_for_tool(tool_name):
     }.get(tool_name)
 
 
-def build_review_brief(evidence, *, language="en", message=""):
+def build_review_brief(evidence, *, language="en", message="", diagnostics=None):
     locale = _locale(language)
     text = _TEXT[locale]
     if _is_out_of_scope(message):
@@ -667,12 +677,16 @@ def build_review_brief(evidence, *, language="en", message=""):
         for entry in evidence:
             tool_name, result = _decode_evidence(entry)
             if result is None:
+                if diagnostics is not None:
+                    diagnostics.append("tool_read_unavailable")
                 return build_unavailable_review_brief(
                     locale, topic=_topic_for_tool(tool_name)
                 )
             fragments.append(_FRAGMENT_BUILDERS[tool_name](result, locale))
             tools.append(tool_name)
-    except InvalidReviewBrief:
+    except InvalidReviewBrief as exc:
+        if diagnostics is not None:
+            diagnostics.append(exc.code)
         topic = (
             _topic_for_tool(evidence[0].get("tool_name")) or "application"
             if evidence and isinstance(evidence[0], dict)
