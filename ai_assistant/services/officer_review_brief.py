@@ -123,6 +123,7 @@ _TEXT = {
         "disclaimer": "AI assistance is advisory only. Verify details against the application record.",
         "review_label": "Review readiness",
         "next_label": "Next step",
+        "next_plural_label": "Next steps",
         "sources_label": "Sources checked",
         "ready_headline": "Ready for review",
         "attention_headline": "Not ready for review",
@@ -152,7 +153,9 @@ _TEXT = {
         "application_next": "Verify the application record before continuing the review workflow.",
         "post_review_next": "Verify the application record before taking further workflow action.",
         "profile_next": "Complete or verify the identified profile information before continuing review.",
+        "profile_complete_next": "No required profile information is missing. Continue with the established review workflow.",
         "document_next": "Resolve the identified document requirements in the established portal workflow.",
+        "document_complete_next": "All required documents have been reviewed. Continue with the established review workflow.",
         "repayment_next": "Verify the repayment record before taking workflow action.",
         "profile_unavailable_label": "{profile} profile is unavailable",
         "profile_unavailable_detail": "The current record does not contain an available {profile_lower} profile.",
@@ -181,6 +184,7 @@ _TEXT = {
         "disclaimer": "Ang tulong ng AI ay para lamang sa gabay. Beripikahin ang mga detalye sa talaan ng aplikasyon.",
         "review_label": "Kahandaan para sa pagsusuri",
         "next_label": "Susunod na hakbang",
+        "next_plural_label": "Mga susunod na hakbang",
         "sources_label": "Mga pinagkunang sinuri",
         "ready_headline": "Handa para sa pagsusuri",
         "attention_headline": "Hindi pa handa para sa pagsusuri",
@@ -210,7 +214,9 @@ _TEXT = {
         "application_next": "Beripikahin ang talaan ng aplikasyon bago ipagpatuloy ang workflow ng pagsusuri.",
         "post_review_next": "Beripikahin ang talaan ng aplikasyon bago gumawa ng karagdagang aksyon sa workflow.",
         "profile_next": "Kumpletuhin o beripikahin ang natukoy na impormasyon sa profile bago ipagpatuloy ang pagsusuri.",
+        "profile_complete_next": "Walang kulang na kinakailangang impormasyon sa profile. Ipagpatuloy ang itinakdang workflow ng pagsusuri.",
         "document_next": "Ayusin ang natukoy na kinakailangan sa dokumento gamit ang itinakdang workflow ng portal.",
+        "document_complete_next": "Nasuri na ang lahat ng kinakailangang dokumento. Ipagpatuloy ang itinakdang workflow ng pagsusuri.",
         "repayment_next": "Beripikahin ang talaan ng pagbabayad bago gumawa ng aksyon sa workflow.",
         "profile_unavailable_label": "Hindi available ang {profile} profile",
         "profile_unavailable_detail": "Walang available na {profile_lower} profile sa kasalukuyang talaan.",
@@ -390,11 +396,13 @@ def _application_fragment(result, locale):
 def _profile_fragment(result, locale):
     text = _TEXT[locale]
     reasons = []
+    profile_requires_completion = False
     for profile_name in ("personal", "business", "alternative"):
         profile = result.get(profile_name)
         if not isinstance(profile, dict) or not isinstance(profile.get("available"), bool):
             raise InvalidReviewBrief("Malformed profile evidence")
         if not profile["available"]:
+            profile_requires_completion = True
             label = text[profile_name]
             reasons.append(
                 {
@@ -420,6 +428,7 @@ def _profile_fragment(result, locale):
         ):
             raise InvalidReviewBrief("Malformed profile fields")
         for field in missing_fields:
+            profile_requires_completion = True
             code = field.get("code") if isinstance(field, dict) else None
             label = _PROFILE_FIELD_LABELS[locale].get(code)
             if not label:
@@ -460,7 +469,11 @@ def _profile_fragment(result, locale):
     return (
         "needs_attention" if reasons else "ready",
         reasons,
-        [text["profile_next"]],
+        [
+            text["profile_next"]
+            if profile_requires_completion
+            else text["profile_complete_next"]
+        ],
     )
 
 
@@ -538,7 +551,7 @@ def _document_fragment(result, locale):
     return (
         "needs_attention" if reasons else "ready",
         reasons,
-        [text["document_next"]],
+        [text["document_next"] if reasons else text["document_complete_next"]],
     )
 
 
@@ -818,15 +831,13 @@ def render_review_brief(brief):
         )
     lines = [f'{text["review_label"]}: {brief["headline"]}']
     if brief["reasons"]:
-        lines.append(
-            " ".join(
-                f'{reason["label"]}: {reason["detail"]}'
-                for reason in brief["reasons"]
-            )
+        lines.extend(
+            f'• {reason["label"]}: {reason["detail"]}'
+            for reason in brief["reasons"]
         )
-    lines.append(
-        f'{text["next_label"]}: {_join(brief["next_steps"], text["and"])}'
-    )
+    next_label = text["next_label"] if len(brief["next_steps"]) == 1 else text["next_plural_label"]
+    lines.append(f"{next_label}:")
+    lines.extend(f"• {step}" for step in brief["next_steps"])
     if brief["sources"]:
         lines.append(f'{text["sources_label"]}: {" · ".join(brief["sources"])}')
     lines.append(brief["disclaimer"])

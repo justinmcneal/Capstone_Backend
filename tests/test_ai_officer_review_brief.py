@@ -289,7 +289,121 @@ def test_profile_manual_check_uses_a_public_semantic_code():
     assert [reason["code"] for reason in brief["reasons"]] == [
         "manual_check_needed"
     ]
+    assert brief["next_steps"] == [
+        "No required profile information is missing. Continue with the established review workflow."
+    ]
     assert "manual_review_required" not in json.dumps(brief)
+
+
+def test_complete_profile_uses_a_truthful_next_step():
+    brief = build_review_brief(
+        [
+            _evidence(
+                "get_profile_readiness",
+                {
+                    "personal": {
+                        "available": True,
+                        "completion_percentage": 100,
+                        "complete": True,
+                        "missing_fields": [],
+                    },
+                    "business": {
+                        "available": True,
+                        "completion_percentage": 100,
+                        "complete": True,
+                        "missing_fields": [],
+                    },
+                    "alternative": {
+                        "available": True,
+                        "completion_percentage": 100,
+                        "complete": True,
+                        "missing_fields": [],
+                        "risk_status": "complete",
+                        "risk_score_status": "complete",
+                        "risk_category": "low",
+                        "manual_review_required": False,
+                        "manual_review_flags": [],
+                    },
+                },
+            )
+        ],
+        language="en",
+        message="What profile information is still incomplete?",
+    )
+
+    assert brief["review_state"] == "ready"
+    assert brief["reasons"] == []
+    assert brief["next_steps"] == [
+        "No required profile information is missing. Continue with the established review workflow."
+    ]
+
+
+def test_complete_documents_use_a_truthful_next_step():
+    brief = build_review_brief(
+        [
+            _evidence(
+                "get_document_review_status",
+                {
+                    "required_document_types": [{"code": "valid_id", "label": "Valid ID"}],
+                    "documents": [
+                        {
+                            "type_code": "valid_id",
+                            "status": "approved",
+                            "verified": True,
+                        }
+                    ],
+                    "truncated": False,
+                },
+            )
+        ],
+        language="en",
+        message="Summarize the required document review statuses.",
+    )
+
+    assert brief["review_state"] == "ready"
+    assert brief["reasons"] == []
+    assert brief["next_steps"] == [
+        "All required documents have been reviewed. Continue with the established review workflow."
+    ]
+
+
+def test_rendered_brief_separates_multiple_reasons_and_next_steps():
+    brief = build_review_brief(
+        [
+            _evidence(
+                "get_application_summary",
+                {
+                    "review_readiness": {
+                        "status": "not_ready_for_review",
+                        "is_reviewable": False,
+                        "manual_review_required": True,
+                    }
+                },
+            ),
+            _evidence(
+                "get_profile_readiness",
+                {
+                    "personal": {
+                        "available": True,
+                        "completion_percentage": 80,
+                        "complete": False,
+                        "missing_fields": [{"code": "personal.gender"}],
+                    },
+                    "business": {"available": False},
+                    "alternative": {"available": False},
+                },
+            ),
+        ],
+        language="en",
+        message="Summarize this application's review readiness.",
+    )
+
+    narration = render_review_brief(brief)
+    assert "• The application is not ready for officer review:" in narration
+    assert "• Manual review is required:" in narration
+    assert "Next steps:\n• Verify the application record" in narration
+    assert "• Complete or verify the identified profile information" in narration
+    assert ".," not in narration
 
 
 @pytest.mark.parametrize(
