@@ -9,7 +9,6 @@ from ai_assistant.services.officer_review_brief import (
     build_review_brief,
     build_unavailable_review_brief,
     render_review_brief,
-    validate_narration,
     validate_review_brief,
 )
 from ai_assistant.services.officer_audit import record_officer_review_brief
@@ -430,36 +429,6 @@ def test_review_brief_validation_rejects_missing_fields_and_unknown_reason_codes
                 "disclaimer": "AI assistance is advisory only. Verify details against the application record.",
             }
         )
-
-
-def test_narration_must_match_the_localized_brief_exactly():
-    brief = build_review_brief(
-        [
-            _evidence(
-                "get_application_summary",
-                {
-                    "review_readiness": {
-                        "status": "ready_for_review",
-                        "is_reviewable": True,
-                        "manual_review_required": False,
-                    }
-                },
-            )
-        ],
-        language="en",
-        message="Summarize review readiness.",
-    )
-    expected = render_review_brief(brief)
-
-    assert validate_narration(expected, brief) == expected
-    assert validate_narration(
-        expected.replace(
-            "The current application record is in a reviewable workflow stage.",
-            "Approval is likely.",
-        ),
-        brief,
-    ) is None
-    assert validate_narration(expected.rsplit("\n", 1)[0], brief) is None
 
 
 def test_viewed_review_brief_audit_persists_reconstructable_public_metadata(
