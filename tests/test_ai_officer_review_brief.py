@@ -96,7 +96,7 @@ def test_filipino_brief_uses_backend_localized_templates():
             "detail": "Ang kasalukuyang talaan ng aplikasyon ay nasa yugto na maaari nang suriin.",
         },
         {
-            "code": "manual_review_required",
+            "code": "manual_check_needed",
             "label": "Kailangan ang manu-manong pagsusuri",
             "detail": "Gamitin ang itinakdang workflow ng portal para sa manu-manong pagsusuri.",
         },
@@ -160,7 +160,14 @@ def test_malformed_or_unknown_evidence_fails_closed(evidence):
     "message",
     [
         "What are the approval odds?",
+        "What is the probability this gets approved?",
+        "Will this application be approved?",
         "Compare this application to the last applicant.",
+        "How does this differ from other applications?",
+        "Compare this application against another borrower.",
+        "Ano ang tsansang maaprubahan ito?",
+        "Ikumpara ito sa ibang aplikante.",
+        "Paano ito naiiba sa huling aplikasyon?",
     ],
 )
 def test_out_of_scope_question_returns_scope_limit_brief(message):
@@ -177,6 +184,205 @@ def test_out_of_scope_question_returns_scope_limit_brief(message):
         "advisory_only": True,
         "disclaimer": "AI assistance is advisory only. Verify details against the application record.",
     }
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "What different documents does this application need?",
+        "What other documents still need review for this application?",
+        "Compare the profile and document readiness for this application.",
+        "Ikumpara ang profile at mga dokumento ng aplikasyong ito.",
+        "Ikumpara ang profile at mga dokumento ng aplikasyon na ito.",
+    ],
+)
+def test_same_application_comparison_questions_remain_in_scope(message):
+    brief = build_review_brief([], language="en", message=message)
+
+    assert brief["review_state"] == "unavailable"
+    assert brief["review_state"] != "scope_limited"
+
+
+def test_profile_evidence_cannot_report_ready_when_incomplete_fields_are_unknown():
+    brief = build_review_brief(
+        [
+            _evidence(
+                "get_profile_readiness",
+                {
+                    "personal": {
+                        "available": True,
+                        "completion_percentage": 70,
+                        "complete": False,
+                        "missing_fields": [],
+                    },
+                    "business": {"available": False},
+                    "alternative": {"available": False},
+                },
+            )
+        ],
+        language="en",
+        message="What profile information is still incomplete?",
+    )
+
+    assert brief == build_unavailable_review_brief("en", topic="profile")
+
+
+def test_profile_manual_check_uses_a_public_semantic_code():
+    brief = build_review_brief(
+        [
+            _evidence(
+                "get_profile_readiness",
+                {
+                    "personal": {
+                        "available": True,
+                        "completion_percentage": 100,
+                        "complete": True,
+                        "missing_fields": [],
+                    },
+                    "business": {
+                        "available": True,
+                        "completion_percentage": 100,
+                        "complete": True,
+                        "missing_fields": [],
+                    },
+                    "alternative": {
+                        "available": True,
+                        "completion_percentage": 100,
+                        "complete": True,
+                        "missing_fields": [],
+                        "risk_status": "calculated",
+                        "risk_score_status": "calculated",
+                        "risk_category": "medium",
+                        "manual_review_required": True,
+                        "manual_review_flags": ["risk_score"],
+                    },
+                },
+            )
+        ],
+        language="en",
+        message="What profile information is still incomplete?",
+    )
+
+    assert brief["review_state"] == "needs_attention"
+    assert [reason["code"] for reason in brief["reasons"]] == [
+        "manual_check_needed"
+    ]
+    assert "manual_review_required" not in json.dumps(brief)
+
+
+@pytest.mark.parametrize(
+    "result",
+    [
+        {
+            "required_document_types": [
+                {"code": "valid_id", "label": "Valid Government ID"}
+            ],
+            "documents": [
+                {
+                    "type_code": "valid_id",
+                    "status": "unknown",
+                    "verified": False,
+                }
+            ],
+            "truncated": False,
+        },
+        {
+            "required_document_types": [
+                {"code": "valid_id", "label": "Valid Government ID"}
+            ],
+            "documents": [
+                {
+                    "type_code": "valid_id",
+                    "status": "approved",
+                    "verified": False,
+                }
+            ],
+            "truncated": False,
+        },
+        {
+            "required_document_types": [
+                {"code": "valid_id", "label": "Valid Government ID"}
+            ],
+            "documents": [],
+            "truncated": True,
+        },
+    ],
+)
+def test_unknown_contradictory_or_truncated_document_evidence_fails_closed(result):
+    brief = build_review_brief(
+        [_evidence("get_document_review_status", result)],
+        language="en",
+        message="Summarize required documents.",
+    )
+
+    assert brief == build_unavailable_review_brief("en", topic="document")
+
+
+def test_unknown_repayment_status_fails_closed():
+    brief = build_review_brief(
+        [
+            _evidence(
+                "get_repayment_summary",
+                {
+                    "schedule_available": True,
+                    "schedule_status": "unknown",
+                    "payments_truncated": False,
+                    "remaining_balance": 1000,
+                    "schedule_progress": {
+                        "paid_count": 0,
+                        "installment_count": 1,
+                        "completed_percentage": 0,
+                    },
+                    "payment_status_summaries": [
+                        {"status": "unknown", "count": 1}
+                    ],
+                },
+            )
+        ],
+        language="en",
+        message="Explain the current repayment summary.",
+    )
+
+    assert brief == build_unavailable_review_brief("en", topic="repayment")
+
+
+def test_no_schedule_evidence_rejects_contradictory_schedule_content():
+    brief = build_review_brief(
+        [
+            _evidence(
+                "get_repayment_summary",
+                {
+                    "schedule_available": False,
+                    "schedule_status": "active",
+                    "schedule_progress": {
+                        "paid_count": 0,
+                        "installment_count": 1,
+                        "completed_percentage": 0,
+                    },
+                    "payment_status_summaries": [
+                        {"status": "pending", "count": 1}
+                    ],
+                },
+            )
+        ],
+        language="en",
+        message="Explain the current repayment summary.",
+    )
+
+    assert brief == build_unavailable_review_brief("en", topic="repayment")
+
+
+def test_minimal_no_schedule_evidence_stays_informational():
+    brief = build_review_brief(
+        [_evidence("get_repayment_summary", {"schedule_available": False})],
+        language="en",
+        message="Explain the current repayment summary.",
+    )
+
+    assert brief["review_state"] == "informational"
+    assert [reason["code"] for reason in brief["reasons"]] == [
+        "repayment_schedule_missing"
+    ]
 
 
 def test_review_brief_validation_rejects_missing_fields_and_unknown_reason_codes():

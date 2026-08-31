@@ -12,7 +12,7 @@ PUBLIC_REASON_CODES = frozenset(
     {
         "review_stage_ready",
         "review_stage_not_ready",
-        "manual_review_required",
+        "manual_check_needed",
         "personal_profile_unavailable",
         "business_profile_unavailable",
         "alternative_profile_unavailable",
@@ -221,10 +221,29 @@ _TEXT = {
     },
 }
 
-_OUT_OF_SCOPE_PATTERN = re.compile(
-    r"\b(?:approval odds|odds of approval|chance of approval|likelihood of approval|"
-    r"last applicant|previous applicant|other applicant|compare (?:this|the) application)\b",
-    re.IGNORECASE,
+_OUT_OF_SCOPE_PATTERNS = (
+    re.compile(
+        r"\b(?:approval odds|odds of approval|chance of approval|likelihood of approval|"
+        r"probability[^?.!]{0,50}approv\w*|(?:will|would|can|could|likely)[^?.!]{0,50}approv\w*|"
+        r"approv\w*[^?.!]{0,30}(?:odds|chance|likelihood|probability))\b",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\b(?:another|other|last|previous|prior|earlier|peer|historical|past)"
+        r"[^?.!]{0,15}(?:applicants?|applications?|borrowers?|customers?)\b",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\b(?:(?:tsansa|posibilidad|probabilidad|malamang)[^?.!]{0,50}"
+        r"(?:ma+aprubahan|aprubahan|approval)|"
+        r"(?:ma+aprubahan|aprubahan)[^?.!]{0,30}(?:ba|kaya|tsansa|posibilidad))\b",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\b(?:ibang|iba|nakaraang|nakaraan|huling|nauna|naunang)"
+        r"[^?.!]{0,15}(?:aplikante|aplikasyon|customer|borrower)\b",
+        re.IGNORECASE,
+    ),
 )
 
 
@@ -234,6 +253,11 @@ class InvalidReviewBrief(ValueError):
 
 def _locale(language):
     return "fil" if str(language or "en").lower() in {"tl", "fil"} else "en"
+
+
+def _is_out_of_scope(message):
+    normalized = str(message or "")
+    return any(pattern.search(normalized) for pattern in _OUT_OF_SCOPE_PATTERNS)
 
 
 def _base_brief(*, state, headline, reasons, next_steps, sources, locale):
@@ -324,7 +348,7 @@ def _application_fragment(result, locale):
     if readiness.get("manual_review_required") is True:
         reasons.append(
             {
-                "code": "manual_review_required",
+                "code": "manual_check_needed",
                 "label": text["manual_label"],
                 "detail": text["manual_detail"],
             }
@@ -351,8 +375,18 @@ def _profile_fragment(result, locale):
                 }
             )
             continue
+        complete = profile.get("complete")
+        completion_percentage = profile.get("completion_percentage")
         missing_fields = profile.get("missing_fields", [])
-        if not isinstance(missing_fields, list):
+        if (
+            not isinstance(complete, bool)
+            or not isinstance(completion_percentage, int)
+            or isinstance(completion_percentage, bool)
+            or not 0 <= completion_percentage <= 100
+            or not isinstance(missing_fields, list)
+            or (complete and (completion_percentage != 100 or missing_fields))
+            or (not complete and (completion_percentage >= 100 or not missing_fields))
+        ):
             raise InvalidReviewBrief("Malformed profile fields")
         for field in missing_fields:
             code = field.get("code") if isinstance(field, dict) else None
@@ -366,6 +400,32 @@ def _profile_fragment(result, locale):
                     "detail": text["field_detail"].format(field_lower=label.lower()),
                 }
             )
+        if profile_name == "alternative":
+            risk_status = profile.get("risk_status")
+            if (
+                risk_status
+                not in {"not_calculated", "pending", "calculated", "failed", "stale"}
+                or profile.get("risk_score_status") != risk_status
+                or profile.get("risk_category")
+                not in {"unknown", "low", "medium", "high"}
+                or (
+                    risk_status == "calculated"
+                    and profile.get("risk_category") == "unknown"
+                )
+                or not isinstance(profile.get("manual_review_required"), bool)
+                or not isinstance(profile.get("manual_review_flags"), list)
+                or profile.get("manual_review_flags")
+                != (["risk_score"] if profile["manual_review_required"] else [])
+            ):
+                raise InvalidReviewBrief("Malformed alternative profile evidence")
+            if profile["manual_review_required"]:
+                reasons.append(
+                    {
+                        "code": "manual_check_needed",
+                        "label": text["manual_label"],
+                        "detail": text["manual_detail"],
+                    }
+                )
     return (
         "needs_attention" if reasons else "ready",
         reasons,
@@ -377,14 +437,31 @@ def _document_fragment(result, locale):
     text = _TEXT[locale]
     required = result.get("required_document_types")
     documents = result.get("documents")
-    if not isinstance(required, list) or not isinstance(documents, list):
+    if (
+        not isinstance(required, list)
+        or not isinstance(documents, list)
+        or result.get("truncated") is not False
+    ):
         raise InvalidReviewBrief("Malformed document evidence")
+    required_codes = []
+    for required_document in required:
+        code = required_document.get("code") if isinstance(required_document, dict) else None
+        if code not in _DOCUMENT_LABELS[locale] or code in required_codes:
+            raise InvalidReviewBrief("Unknown required document type")
+        required_codes.append(code)
     submitted = {}
     for document in documents:
         if not isinstance(document, dict):
             raise InvalidReviewBrief("Malformed document item")
         code = document.get("type_code")
-        if code not in _DOCUMENT_LABELS[locale]:
+        status = document.get("status")
+        verified = document.get("verified")
+        if (
+            code not in required_codes
+            or status not in {"pending", "needs_review", "approved", "rejected", "expired"}
+            or not isinstance(verified, bool)
+            or verified != (status == "approved")
+        ):
             raise InvalidReviewBrief("Unknown document type")
         submitted.setdefault(code, []).append(document)
     reasons = []
@@ -448,6 +525,8 @@ def _repayment_fragment(result, locale):
     text = _TEXT[locale]
     available = result.get("schedule_available")
     if available is False:
+        if set(result) != {"schedule_available"}:
+            raise InvalidReviewBrief("Malformed repayment evidence")
         return (
             "informational",
             [
@@ -463,11 +542,30 @@ def _repayment_fragment(result, locale):
         raise InvalidReviewBrief("Malformed repayment evidence")
     progress = result.get("schedule_progress")
     summaries = result.get("payment_status_summaries", [])
-    if not isinstance(progress, dict) or not isinstance(summaries, list):
+    if (
+        result.get("schedule_status")
+        not in {"active", "paid_off", "restructured", "written_off"}
+        or result.get("payments_truncated") is not False
+        or not isinstance(progress, dict)
+        or not isinstance(summaries, list)
+    ):
         raise InvalidReviewBrief("Malformed repayment evidence")
     paid_count = progress.get("paid_count")
     installment_count = progress.get("installment_count")
-    if not isinstance(paid_count, int) or not isinstance(installment_count, int):
+    completed_percentage = progress.get("completed_percentage")
+    if (
+        not isinstance(paid_count, int)
+        or isinstance(paid_count, bool)
+        or not isinstance(installment_count, int)
+        or isinstance(installment_count, bool)
+        or not isinstance(completed_percentage, int)
+        or isinstance(completed_percentage, bool)
+        or paid_count < 0
+        or installment_count < 0
+        or paid_count > installment_count
+        or completed_percentage
+        != (int(paid_count * 100 / installment_count) if installment_count else 0)
+    ):
         raise InvalidReviewBrief("Malformed repayment progress")
     reasons = [
         {
@@ -481,14 +579,28 @@ def _repayment_fragment(result, locale):
         }
     ]
     overdue_count = 0
+    summarized_count = 0
+    summarized_paid_count = 0
+    seen_statuses = set()
     for summary in summaries:
-        if not isinstance(summary, dict):
+        status = summary.get("status") if isinstance(summary, dict) else None
+        count = summary.get("count") if isinstance(summary, dict) else None
+        if (
+            status not in {"pending", "partial", "overdue", "partial_overdue", "paid"}
+            or status in seen_statuses
+            or not isinstance(count, int)
+            or isinstance(count, bool)
+            or count < 0
+        ):
             raise InvalidReviewBrief("Malformed repayment status")
-        if summary.get("status") in {"overdue", "partial_overdue"}:
-            count = summary.get("count")
-            if not isinstance(count, int) or count < 0:
-                raise InvalidReviewBrief("Malformed repayment status")
+        seen_statuses.add(status)
+        summarized_count += count
+        if status == "paid":
+            summarized_paid_count = count
+        if status in {"overdue", "partial_overdue"}:
             overdue_count += count
+    if summarized_count != installment_count or summarized_paid_count != paid_count:
+        raise InvalidReviewBrief("Inconsistent repayment status")
     if overdue_count:
         reasons.append(
             {
@@ -524,7 +636,7 @@ def _topic_for_tool(tool_name):
 def build_review_brief(evidence, *, language="en", message=""):
     locale = _locale(language)
     text = _TEXT[locale]
-    if _OUT_OF_SCOPE_PATTERN.search(str(message or "")):
+    if _is_out_of_scope(message):
         return build_scope_limit_review_brief(locale)
     if not isinstance(evidence, list) or not evidence:
         return build_unavailable_review_brief(locale, topic="application")
@@ -637,7 +749,12 @@ def validate_review_brief(brief):
     serialized = json.dumps(brief, ensure_ascii=False).lower()
     if re.search(r"\bget_[a-z][a-z0-9_]*\b", serialized) or any(
         internal in serialized
-        for internal in ("not_ready_for_review", "ready_for_review", "is_reviewable")
+        for internal in (
+            "not_ready_for_review",
+            "ready_for_review",
+            "is_reviewable",
+            "manual_review_required",
+        )
     ):
         raise InvalidReviewBrief("Internal identifiers are not public")
     return brief
