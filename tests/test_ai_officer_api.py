@@ -931,6 +931,111 @@ def test_officer_preset_intent_executes_without_provider(monkeypatch):
     provider.assert_not_called()
 
 
+def test_officer_readiness_preset_checks_application_profile_and_documents(monkeypatch):
+    officer = _officer()
+    application = _application(officer.id)
+    provider = Mock(side_effect=AssertionError("preset must not call provider"))
+    monkeypatch.setattr("ai_assistant.views.officer.get_llm_service", provider)
+    monkeypatch.setattr(
+        "ai_assistant.views.officer.has_current_ai_consent", lambda scope: True
+    )
+    monkeypatch.setattr(
+        "ai_assistant.services.officer_tools.has_current_ai_consent",
+        lambda scope: True,
+    )
+
+    evidence_by_tool = {
+        "get_application_summary": {
+            "status": "under_review",
+            "product": None,
+            "product_assigned": False,
+            "requested_amount": "10000.00",
+            "recommended_amount": "0.00",
+            "approved_amount": "0.00",
+            "term_months": 0,
+            "purpose": "inventory",
+            "eligibility_score": 0,
+            "risk_category": "unknown",
+            "reason_codes": [],
+            "review_readiness": {
+                "status": "ready_for_review",
+                "is_reviewable": True,
+                "manual_review_required": False,
+            },
+        },
+        "get_profile_readiness": {
+            "personal": {
+                "available": True,
+                "completion_percentage": 100,
+                "complete": True,
+                "missing_fields": [],
+            },
+            "business": {
+                "available": True,
+                "completion_percentage": 100,
+                "complete": True,
+                "missing_fields": [],
+            },
+            "alternative": {
+                "available": True,
+                "completion_percentage": 100,
+                "complete": True,
+                "missing_fields": [],
+                "risk_status": "complete",
+                "risk_score_status": "complete",
+                "risk_category": "low",
+                "manual_review_required": False,
+                "manual_review_flags": [],
+            },
+        },
+        "get_document_review_status": {
+            "required_document_types": [
+                {"code": "valid_id", "label": "Valid Government ID"}
+            ],
+            "documents": [
+                {
+                    "type_code": "valid_id",
+                    "status": "approved",
+                    "verified": True,
+                }
+            ],
+            "truncated": False,
+        },
+    }
+
+    def fake_execute(tool_name, _tool_args, _scope, request_id=None):
+        del request_id
+        return {"success": True, "result": json.dumps(evidence_by_tool[tool_name])}
+
+    monkeypatch.setattr(
+        "ai_assistant.views.officer.execute_officer_tool_result", fake_execute
+    )
+
+    response = OfficerChatView.as_view()(
+        _request(
+            "POST",
+            "/api/ai/officer/chat/",
+            officer.id,
+            data={
+                "message": "Summarize this application's review readiness.",
+                "application_id": str(application.id),
+                "language": "en",
+                "intent": "application_readiness",
+            },
+        )
+    )
+
+    assert response.status_code == 200, response.data
+    brief = response.data["data"]["review_brief"]
+    assert brief["review_state"] == "ready"
+    assert brief["sources"] == [
+        "Application summary",
+        "Profile readiness",
+        "Document review",
+    ]
+    provider.assert_not_called()
+
+
 def test_officer_stream_preset_intent_executes_without_provider(monkeypatch):
     officer = _officer()
     application = _application(officer.id)

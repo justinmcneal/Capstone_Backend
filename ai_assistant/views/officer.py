@@ -283,6 +283,28 @@ def _bound_executor(scope, request_id, evidence=None):
     return execute
 
 
+def _execute_preset_intent(scope, request_id, intent, evidence):
+    """Run the server-owned tool sequence for one deterministic preset."""
+    tool_names = []
+    execution = {"success": True}
+    for tool_name in OFFICER_SUGGESTION_INTENTS[intent]:
+        execution = _bound_executor(scope, request_id, evidence)(
+            tool_name,
+            {},
+            scope.customer_id,
+            request_id=request_id,
+        )
+        if execution.get("success") is not True:
+            break
+        tool_names.append(tool_name)
+    return {
+        "success": True,
+        "code": execution.get("code"),
+        "response_time_ms": 0,
+        "tools_called": tool_names,
+    }
+
+
 def _rendered_review_brief(evidence, data):
     # A validated preset intent is the server-owned semantic request. Ignore
     # any client-edited label when building the brief so a preset cannot be
@@ -549,25 +571,13 @@ class OfficerChatView(AIRequestMetricsMixin, APIView):
         evidence = []
         try:
             if data.get("intent"):
-                tool_name = OFFICER_SUGGESTION_INTENTS[data["intent"]]
-                execution = _bound_executor(scope, request_id, evidence)(
-                    tool_name,
-                    {},
-                    scope.customer_id,
-                    request_id=request_id,
+                # A deterministic preset always returns a review brief,
+                # including an unavailable brief when a read-only tool cannot
+                # load data. Do not turn that expected data failure into a
+                # generic provider error.
+                result = _execute_preset_intent(
+                    scope, request_id, data["intent"], evidence
                 )
-                result = {
-                    # A deterministic preset always returns a review brief,
-                    # including a topic-specific unavailable brief when its
-                    # read-only tool cannot load data.  Do not turn that
-                    # expected data failure into a generic provider error.
-                    "success": True,
-                    "code": execution.get("code"),
-                    "response_time_ms": 0,
-                    "tools_called": [tool_name]
-                    if execution.get("success") is True
-                    else [],
-                }
             elif scope_limited:
                 result = {
                     "success": True,
@@ -935,15 +945,10 @@ class OfficerStreamingChatView(AIRequestMetricsMixin, APIView):
                     )
                     return
                 if data.get("intent"):
-                    tool_name = OFFICER_SUGGESTION_INTENTS[data["intent"]]
-                    execution = _bound_executor(scope, request_id, evidence)(
-                        tool_name,
-                        {},
-                        scope.customer_id,
-                        request_id=request_id,
+                    preset_result = _execute_preset_intent(
+                        scope, request_id, data["intent"], evidence
                     )
-                    if execution.get("success") is True:
-                        tool_names.append(tool_name)
+                    tool_names.extend(preset_result["tools_called"])
                     # The renderer will produce a topic-specific unavailable
                     # brief from the failed evidence entry when needed.
                     provider_stream = iter([{"type": "done"}])

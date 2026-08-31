@@ -36,10 +36,14 @@ Hard rules:
 
 
 OFFICER_SUGGESTION_INTENTS = {
-    "application_readiness": "get_application_summary",
-    "profile_readiness": "get_profile_readiness",
-    "document_status": "get_document_review_status",
-    "repayment_summary": "get_repayment_summary",
+    "application_readiness": (
+        "get_application_summary",
+        "get_profile_readiness",
+        "get_document_review_status",
+    ),
+    "profile_readiness": ("get_profile_readiness",),
+    "document_status": ("get_document_review_status",),
+    "repayment_summary": ("get_repayment_summary",),
 }
 
 
