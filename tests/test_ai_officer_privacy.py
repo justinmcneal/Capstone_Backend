@@ -86,7 +86,7 @@ def test_officer_privacy_blocks_identifiers_in_replayed_history():
     provider_post.assert_not_called()
 
 
-def test_officer_privacy_sanitizes_provider_identifier_echo():
+def test_officer_planner_rejects_provider_identifier_echo():
     service = GroqService(
         api_key="synthetic-key",
         provider="ollama",
@@ -105,6 +105,8 @@ def test_officer_privacy_sanitizes_provider_identifier_echo():
             officer_mode=True,
         )
 
-    assert result["success"] is True
-    assert result["response"] == EXPECTED_UNSUPPORTED_RESPONSE
-    assert "Alice Santos" not in result["response"]
+    # Phase 3 never accepts provider prose for officer review. A non-JSON
+    # planner response fails closed before any deterministic tool execution.
+    assert result["success"] is False
+    assert result["code"] == "AI_PROVIDER_PLANNER_INVALID"
+    assert "Alice Santos" not in str(result)

@@ -140,6 +140,19 @@ class JsonLLM:
             self.before_chat()
         return self.result
 
+    def plan_officer_request(self, **kwargs):
+        self.kwargs = kwargs
+        if self.before_chat:
+            self.before_chat()
+        return {
+            "success": True,
+            "intent": "application_readiness",
+            "provider": self.provider,
+            "model": self.model,
+            "response_time_ms": 17,
+            "tokens_used": 8,
+        }
+
 
 class CloseAwareStream:
     def __init__(self, chunks):
@@ -217,6 +230,17 @@ class ReviewBriefLLM(JsonLLM):
             "tools_called": ["get_application_summary"],
         }
 
+    def plan_officer_request(self, **kwargs):
+        self.kwargs = kwargs
+        return {
+            "success": True,
+            "intent": "application_readiness",
+            "provider": self.provider,
+            "model": self.model,
+            "response_time_ms": 17,
+            "tokens_used": 8,
+        }
+
     def chat_with_tools_stream(self, **kwargs):
         self.kwargs = kwargs
         execution = kwargs["tool_executor"](
@@ -253,6 +277,10 @@ class ReviewBriefLLM(JsonLLM):
 
 class ExplodingJsonLLM(JsonLLM):
     def chat_with_tools(self, **kwargs):
+        self.kwargs = kwargs
+        raise RuntimeError("provider secret failure")
+
+    def plan_officer_request(self, **kwargs):
         self.kwargs = kwargs
         raise RuntimeError("provider secret failure")
 
@@ -932,6 +960,70 @@ def test_officer_preset_intent_executes_without_provider(monkeypatch):
         "Repayment summary unavailable",
     }
     provider.assert_not_called()
+
+
+def test_officer_common_question_routes_without_provider(monkeypatch):
+    officer = _officer()
+    application = _application(officer.id)
+    provider = Mock(side_effect=AssertionError("deterministic route must not call provider"))
+    monkeypatch.setattr("ai_assistant.views.officer.get_llm_service", provider)
+    monkeypatch.setattr(
+        "ai_assistant.views.officer.has_current_ai_consent", lambda scope: True
+    )
+    monkeypatch.setattr(
+        "ai_assistant.services.officer_tools.has_current_ai_consent",
+        lambda scope: True,
+    )
+
+    response = OfficerChatView.as_view()(
+        _request(
+            "POST",
+            "/api/ai/officer/chat/",
+            officer.id,
+            data={
+                "message": "What is the current application status?",
+                "application_id": str(application.id),
+                "language": "en",
+            },
+        )
+    )
+
+    assert response.status_code == 200, response.data
+    assert response.data["data"]["review_brief"]["headline"] in {
+        "Application review summary",
+        "Application summary unavailable",
+        "Document summary unavailable",
+    }
+    provider.assert_not_called()
+
+
+def test_officer_ambiguous_question_uses_planner_once_and_never_narrates():
+    from ai_assistant.services.llm_service import GroqService
+
+    service = GroqService(api_key="configured", model="planner-model", provider="groq")
+    plan = {
+        "success": True,
+        "intent": "profile_readiness",
+        "provider": "groq",
+        "model": "planner-model",
+        "response_time_ms": 4,
+        "tokens_used": 6,
+    }
+    service.plan_officer_request = Mock(return_value=plan)
+    service._execute_officer_plan = Mock(
+        return_value={"success": True, "tools_called": ["get_profile_readiness"]}
+    )
+
+    result = service.chat_with_tools(
+        message="Can you tell me what needs attention in this record?",
+        customer_id="customer-1",
+        officer_mode=True,
+    )
+
+    assert result["success"] is True
+    assert result["response"] == ""
+    service.plan_officer_request.assert_called_once()
+    service._execute_officer_plan.assert_called_once()
 
 
 def test_officer_readiness_preset_checks_application_profile_and_documents(monkeypatch):

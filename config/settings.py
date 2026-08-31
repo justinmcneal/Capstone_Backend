@@ -1285,6 +1285,9 @@ AI_ASSISTANT_CIRCUIT_FAILURE_THRESHOLD = int(
 AI_ASSISTANT_CIRCUIT_RECOVERY_SECONDS = float(
     os.getenv('AI_ASSISTANT_CIRCUIT_RECOVERY_SECONDS') or '30'
 )
+AI_ASSISTANT_PROVIDER_READINESS_CACHE_SECONDS = float(
+    os.getenv('AI_ASSISTANT_PROVIDER_READINESS_CACHE_SECONDS') or '15'
+)
 # Stage 6 release evidence. These remain fail-closed until an operator validates
 # the selected deployment and records the approved evidence there.
 AI_ASSISTANT_QUALITY_REPORT_PATH = (
@@ -1356,6 +1359,7 @@ for _name, _minimum, _maximum in (
     ('AI_ASSISTANT_STREAM_MAX_DURATION_SECONDS', 0.1, 3600),
     ('AI_ASSISTANT_PROVIDER_RETRY_BACKOFF_SECONDS', 0, 10),
     ('AI_ASSISTANT_CIRCUIT_RECOVERY_SECONDS', 1, 600),
+    ('AI_ASSISTANT_PROVIDER_READINESS_CACHE_SECONDS', 0, 300),
 ):
     if not _minimum <= globals()[_name] <= _maximum:
         raise ImproperlyConfigured(f'{_name} must be between {_minimum} and {_maximum}')

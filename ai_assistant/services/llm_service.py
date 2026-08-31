@@ -23,6 +23,7 @@ HOW IT WORKS:
 """
 import json
 import logging
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -66,6 +67,44 @@ GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
 _session = provider_session
 PUBLIC_PROVIDER_ERROR = "AI service is temporarily unavailable. Please try again later."
 INVALID_TOOL_ARGUMENTS = {"__invalid_tool_arguments__": True}
+OFFICER_PLANNER_SYSTEM_PROMPT = """You are the routing planner for a read-only loan-officer review assistant.
+Return exactly one JSON object with exactly one key, `intent`.
+The value must be one of: application_readiness, profile_readiness, document_status, repayment_summary.
+Choose the single review topic that best matches the officer's question.
+Do not answer the question, summarize evidence, translate text, or include any other keys or prose.
+"""
+OFFICER_PLANNER_INTENTS = frozenset(
+    {
+        "application_readiness",
+        "profile_readiness",
+        "document_status",
+        "repayment_summary",
+    }
+)
+_READINESS_CACHE = {}
+_READINESS_CACHE_LOCK = threading.Lock()
+
+
+def _parse_officer_planner_json(raw_content):
+    """Parse the planner's JSON, allowing only an optional Markdown fence."""
+    if not isinstance(raw_content, str):
+        return None
+    candidate = raw_content.strip()
+    if candidate.startswith(("`", "```")) and candidate.endswith(("`", "```")):
+        lines = candidate.splitlines()
+        opening = lines[0].strip().casefold() if lines else ""
+        closing = lines[-1].strip() if lines else ""
+        if (
+            len(lines) < 3
+            or opening not in {"`", "`json", "```", "```json"}
+            or closing not in {"`", "```"}
+        ):
+            return None
+        candidate = "\n".join(lines[1:-1]).strip()
+    try:
+        return json.loads(candidate)
+    except (json.JSONDecodeError, TypeError):
+        return None
 
 
 def _officer_stream_buffer_limit():
@@ -272,11 +311,30 @@ class GroqService:
             result['state'] = 'not_configured' if not configured else 'degraded'
             return result
 
+        cache_ttl = max(
+            0.0,
+            float(
+                getattr(
+                    settings,
+                    'AI_ASSISTANT_PROVIDER_READINESS_CACHE_SECONDS',
+                    15,
+                )
+            ),
+        )
+        cache_key = (self.provider, self.model, self._ollama_base_url)
+        now = time.monotonic()
+        if cache_ttl:
+            with _READINESS_CACHE_LOCK:
+                cached = _READINESS_CACHE.get(cache_key)
+                if cached and cached[0] > now:
+                    return dict(cached[1])
+
         url = (
             f"{self._ollama_base_url}/api/tags"
             if self.provider == 'ollama'
             else "https://api.groq.com/openai/v1/models"
         )
+        response = None
         try:
             response = _session.get(
                 url,
@@ -313,11 +371,125 @@ class GroqService:
         except (requests.RequestException, TypeError, ValueError, AttributeError) as exc:
             logger.warning('AI provider readiness failed: %s', type(exc).__name__)
             result['state'] = 'degraded'
+        finally:
+            if response is not None:
+                response.close()
+        if cache_ttl and result['circuit'] == 'closed':
+            with _READINESS_CACHE_LOCK:
+                _READINESS_CACHE[cache_key] = (
+                    time.monotonic() + cache_ttl,
+                    dict(result),
+                )
         return result
 
     def is_available(self):
         """Check whether the provider is reachable and authenticated."""
         return self.readiness()['available']
+
+    def plan_officer_request(
+        self,
+        message,
+        *,
+        language='en',
+        conversation_history=None,
+        request_id=None,
+    ):
+        """Select one allowlisted officer review intent without generating prose."""
+        privacy_result = _officer_privacy_result(
+            message,
+            conversation_history=conversation_history,
+            model=self.model,
+            provider=self.provider,
+            request_id=request_id,
+        )
+        if privacy_result:
+            return {
+                'success': False,
+                'error': PUBLIC_PROVIDER_ERROR,
+                'code': 'AI_PROVIDER_PLANNER_INVALID',
+            }
+        policy_result = _officer_policy_result(
+            message,
+            model=self.model,
+            provider=self.provider,
+            request_id=request_id,
+        )
+        if policy_result:
+            return {
+                'success': False,
+                'error': PUBLIC_PROVIDER_ERROR,
+                'code': 'AI_PROVIDER_PLANNER_INVALID',
+            }
+        if not self.api_key:
+            return self._provider_failure(request_id=request_id)
+
+        started = time.time()
+        planner_message = (
+            f"Language: {language}.\nOfficer question: {str(message or '')}"
+        )
+        response = None
+        try:
+            response = _session.post(
+                self.api_url,
+                headers={
+                    'Authorization': f'Bearer {self.api_key}',
+                    'Content-Type': 'application/json',
+                },
+                json={
+                    'model': self.model,
+                    'messages': [
+                        {'role': 'system', 'content': OFFICER_PLANNER_SYSTEM_PROMPT},
+                        {'role': 'user', 'content': planner_message},
+                    ],
+                    'temperature': 0,
+                    'max_tokens': 64,
+                    'top_p': 1,
+                },
+                timeout=120 if self.provider == 'ollama' else 180,
+            )
+            if response.status_code != 200:
+                return self._provider_failure(request_id=request_id)
+            payload = response.json()
+            choices = payload.get('choices') if isinstance(payload, dict) else None
+            choice = choices[0] if isinstance(choices, list) and choices else {}
+            provider_message = choice.get('message') if isinstance(choice, dict) else {}
+            raw_plan = provider_message.get('content') if isinstance(provider_message, dict) else None
+            plan = _parse_officer_planner_json(raw_plan)
+            intent = plan.get('intent') if isinstance(plan, dict) else None
+            if (
+                not isinstance(plan, dict)
+                or set(plan) != {'intent'}
+                or intent not in OFFICER_PLANNER_INTENTS
+            ):
+                return {
+                    'success': False,
+                    'error': PUBLIC_PROVIDER_ERROR,
+                    'code': 'AI_PROVIDER_PLANNER_INVALID',
+                }
+            usage = payload.get('usage') if isinstance(payload, dict) else {}
+            tokens_used = usage.get('total_tokens', 0) if isinstance(usage, dict) else 0
+            result = {
+                'success': True,
+                'intent': intent,
+                'provider': self.provider,
+                'model': self.model,
+                'response_time_ms': int((time.time() - started) * 1000),
+                'tokens_used': tokens_used,
+            }
+            return result
+        except (AttributeError, IndexError):
+            return {
+                'success': False,
+                'error': PUBLIC_PROVIDER_ERROR,
+                'code': 'AI_PROVIDER_PLANNER_INVALID',
+            }
+        except requests.Timeout as exc:
+            return self._provider_failure(exc, request_id=request_id)
+        except requests.RequestException as exc:
+            return self._provider_failure(exc, request_id=request_id)
+        finally:
+            if response is not None:
+                response.close()
 
     @staticmethod
     def _bounded_limits(max_tokens, max_tool_rounds=None):
@@ -509,6 +681,45 @@ class GroqService:
     @staticmethod
     def _tool_budget_exceeded(count):
         return count > settings.AI_ASSISTANT_MAX_TOOL_CALLS_PER_REQUEST
+
+    def _execute_officer_plan(
+        self,
+        intent,
+        *,
+        customer_id,
+        request_id=None,
+        tool_executor=None,
+    ):
+        """Execute the planner's allowlisted intent without a prose round-trip."""
+        from ai_assistant.services.officer_prompt import (
+            OFFICER_SUGGESTION_INTENTS,
+        )
+        from ai_assistant.services.tools import execute_tool_result
+
+        if intent not in OFFICER_SUGGESTION_INTENTS:
+            return {
+                'success': False,
+                'error': PUBLIC_PROVIDER_ERROR,
+                'code': 'AI_PROVIDER_PLANNER_INVALID',
+                'tools_called': [],
+            }
+
+        executor = tool_executor or execute_tool_result
+        tools_called = []
+        for tool_name in OFFICER_SUGGESTION_INTENTS[intent]:
+            execution = executor(
+                tool_name,
+                {},
+                customer_id,
+                request_id=request_id,
+            )
+            if execution.get('success') is not True:
+                # The deterministic renderer will turn the captured failure
+                # into an unavailable brief; do not ask the provider to fill
+                # in missing evidence.
+                break
+            tools_called.append(tool_name)
+        return {'success': True, 'tools_called': tools_called}
     
     def chat(
         self,
@@ -837,6 +1048,34 @@ class GroqService:
                 return controlled_result
         if not self.api_key:
             return self._provider_failure(request_id=request_id)
+
+        if officer_mode:
+            plan_result = self.plan_officer_request(
+                message,
+                language=language,
+                conversation_history=conversation_history,
+                request_id=request_id,
+            )
+            if not plan_result.get('success'):
+                return plan_result
+            execution = self._execute_officer_plan(
+                plan_result['intent'],
+                customer_id=customer_id,
+                request_id=request_id,
+                tool_executor=executor,
+            )
+            if not execution.get('success'):
+                return execution
+            return {
+                'success': True,
+                'response': '',
+                'model': self.model,
+                'provider': self.provider,
+                'response_time_ms': plan_result.get('response_time_ms', 0),
+                'tokens_used': plan_result.get('tokens_used', 0),
+                'tools_called': execution['tools_called'],
+                'planner_used': True,
+            }
 
         start_time = time.time()
         total_tokens = 0
@@ -1228,6 +1467,44 @@ class GroqService:
                 return
         if not self.api_key:
             yield {'type': 'error', 'content': PUBLIC_PROVIDER_ERROR, 'code': 'AI_PROVIDER_ERROR'}
+            return
+
+        if officer_mode:
+            plan_result = self.plan_officer_request(
+                message,
+                language=language,
+                conversation_history=conversation_history,
+                request_id=request_id,
+            )
+            if not plan_result.get('success'):
+                yield {
+                    'type': 'error',
+                    'content': PUBLIC_PROVIDER_ERROR,
+                    'code': plan_result.get('code', 'AI_PROVIDER_ERROR'),
+                }
+                return
+            execution = self._execute_officer_plan(
+                plan_result['intent'],
+                customer_id=customer_id,
+                request_id=request_id,
+                tool_executor=executor,
+            )
+            if not execution.get('success'):
+                yield {
+                    'type': 'error',
+                    'content': PUBLIC_PROVIDER_ERROR,
+                    'code': execution.get('code', 'AI_PROVIDER_ERROR'),
+                }
+                return
+            yield {
+                'type': 'done',
+                'model': self.model,
+                'provider': self.provider,
+                'tokens_used': plan_result.get('tokens_used', 0),
+                'tools_called': execution['tools_called'],
+                'planner_used': True,
+                'response': '',
+            }
             return
 
         tools_called = []

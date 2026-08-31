@@ -50,6 +50,7 @@ from ai_assistant.services.officer_prompt import (
     OFFICER_SYSTEM_PROMPT,
     OFFICER_SUGGESTION_INTENTS,
     officer_suggestions,
+    route_officer_intent,
 )
 from ai_assistant.services.officer_review_brief import (
     build_review_brief,
@@ -85,6 +86,7 @@ SAFE_CONTROLLED_ERROR_CODES = frozenset(
         "AI_PROVIDER_STREAM_TRUNCATED",
         "AI_PROVIDER_TIMEOUT",
         "AI_PROVIDER_UNAVAILABLE",
+        "AI_PROVIDER_PLANNER_INVALID",
         "AI_OFFICER_CONSENT_CHANGED",
         "AI_OFFICER_SCOPE_CHANGED",
         "AI_OFFICER_TOOL_READ_FAILED",
@@ -550,7 +552,8 @@ class OfficerChatView(AIRequestMetricsMixin, APIView):
 
         started = time.monotonic()
         scope_limited = _is_scope_limited_request(data)
-        if data.get("intent") or scope_limited:
+        resolved_intent = data.get("intent") or route_officer_intent(data["message"])
+        if resolved_intent or scope_limited:
             llm = None
         else:
             llm, preflight_error = _officer_provider_preflight(
@@ -579,13 +582,13 @@ class OfficerChatView(AIRequestMetricsMixin, APIView):
 
         evidence = []
         try:
-            if data.get("intent"):
+            if resolved_intent:
                 # A deterministic preset always returns a review brief,
                 # including an unavailable brief when a read-only tool cannot
                 # load data. Do not turn that expected data failure into a
                 # generic provider error.
                 result = _execute_preset_intent(
-                    scope, request_id, data["intent"], evidence
+                    scope, request_id, resolved_intent, evidence
                 )
             elif scope_limited:
                 result = {
@@ -843,7 +846,8 @@ class OfficerStreamingChatView(AIRequestMetricsMixin, APIView):
             )
 
         scope_limited = _is_scope_limited_request(data)
-        if data.get("intent") or scope_limited:
+        resolved_intent = data.get("intent") or route_officer_intent(data["message"])
+        if resolved_intent or scope_limited:
             llm = None
         else:
             llm, preflight_error = _officer_provider_preflight(
@@ -957,9 +961,9 @@ class OfficerStreamingChatView(AIRequestMetricsMixin, APIView):
                         },
                     )
                     return
-                if data.get("intent"):
+                if resolved_intent:
                     preset_result = _execute_preset_intent(
-                        scope, request_id, data["intent"], evidence
+                        scope, request_id, resolved_intent, evidence
                     )
                     tool_names.extend(preset_result["tools_called"])
                     # The renderer will produce a topic-specific unavailable

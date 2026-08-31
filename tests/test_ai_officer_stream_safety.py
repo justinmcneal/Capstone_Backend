@@ -17,7 +17,7 @@ class ProviderResponse:
         self.closed = True
 
 
-def _provider_completion(content="The summary is ready."):
+def _provider_completion(content='{"intent":"application_readiness"}'):
     response = Mock()
     response.status_code = 200
     response.json.return_value = {
@@ -47,15 +47,10 @@ def test_officer_provider_stream_emits_only_one_validated_terminal_event():
         provider="ollama",
         model="test-model",
     )
-    stream = _provider_stream(
-        "The applicant is Alice",
-        " Santos's application is ready for review.",
-    )
-
     with patch(
         "ai_assistant.services.llm_service._session.post",
-        side_effect=[_provider_completion(), stream],
-    ):
+        return_value=_provider_completion(),
+    ) as post:
         events = list(
             service.chat_with_tools_stream(
                 message="Summarize review readiness.",
@@ -65,27 +60,21 @@ def test_officer_provider_stream_emits_only_one_validated_terminal_event():
         )
 
     assert [event["type"] for event in events] == ["done"]
-    assert "Alice" not in json.dumps(events)
-    assert "Santos" not in json.dumps(events)
-    assert events[0]["response"]
-    assert stream.closed is True
+    assert events[0]["response"] == ""
+    assert events[0]["planner_used"] is True
+    assert post.call_count == 1
 
 
-def test_officer_provider_stream_rejects_an_oversized_buffer():
+def test_officer_provider_stream_does_not_open_a_final_prose_stream():
     service = GroqService(
         api_key="synthetic-key",
         provider="ollama",
         model="test-model",
     )
-    stream = _provider_stream("x" * 9)
-
     with patch(
         "ai_assistant.services.llm_service._session.post",
-        side_effect=[_provider_completion(), stream],
-    ), patch(
-        "ai_assistant.services.llm_service.settings.AI_ASSISTANT_MAX_OUTPUT_TOKENS",
-        1,
-    ):
+        return_value=_provider_completion(),
+    ) as post:
         events = list(
             service.chat_with_tools_stream(
                 message="Summarize review readiness.",
@@ -94,11 +83,5 @@ def test_officer_provider_stream_rejects_an_oversized_buffer():
             )
         )
 
-    assert events == [
-        {
-            "type": "error",
-            "content": "AI service is temporarily unavailable. Please try again later.",
-            "code": "AI_PROVIDER_STREAM_OUTPUT_LIMIT",
-        }
-    ]
-    assert stream.closed is True
+    assert [event["type"] for event in events] == ["done"]
+    assert post.call_count == 1

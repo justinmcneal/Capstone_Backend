@@ -53,6 +53,7 @@ _OFFICER_CONTEXT_SAFE_PROMPTS = frozenset(
         "ipaliwanag ang kasalukuyang buod ng pagbabayad",
         "summarize what is still needed before review",
         "review missing documents",
+        "can you tell me what needs attention in this record",
     }
 )
 _OFFICER_CONTEXT_NAME_AFTER_CONTEXT = re.compile(
