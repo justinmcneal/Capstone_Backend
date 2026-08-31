@@ -17,9 +17,12 @@ Its routes are `GET /api/ai/officer/status/`, `GET
 `loan_officer` role, a currently assigned application, and current customer
 data/AI consent. The four tools are parameterless, read-only, application-bound
 capabilities: `get_application_summary`, `get_profile_readiness`,
-`get_document_review_status`, and `get_repayment_summary`. Assignment and
-consent are revalidated before provider work, recognized tool execution, and
-stream termination.
+`get_document_review_status`, and `get_repayment_summary`. The review-readiness
+preset composes the first three into one deterministic brief; profile,
+document, and repayment presets remain topic-specific. Assignment and consent
+are revalidated before provider work, every tool execution, and stream
+termination. Preset tests must pass with the provider offline; free-text tests
+remain provider-gated.
 
 The focused AI command is an offline regression set. Real MongoDB and the
 deployment probes are separately opt-in; recorded exercises cover the owner-
