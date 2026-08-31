@@ -59,6 +59,9 @@ AUDIT_ACTION_REGISTRY = {
     "loan_officer_deactivated": "delete",
     # Analytics privileged reads
     "analytics_privileged_read": "read",
+    "ai_officer_assistant_access": "read",
+    "ai_officer_assistant_result": "read",
+    "ai_officer_review_brief_viewed": "read",
     # Profile
     "profile_created": "create",
     "profile_updated": "update",
@@ -445,6 +448,39 @@ AUDIT_ACTION_DETAIL_KEYS.update(
             {"amount", "installment_number", "loan_id", "reason", "policy_version"}
         ),
         "analytics_privileged_read": frozenset(),
+        "ai_officer_assistant_access": frozenset(
+            {
+                "application_id",
+                "request_id",
+                "language",
+                "outcome",
+                "tool_names",
+                "tool_count",
+                "duration_ms",
+            }
+        ),
+        "ai_officer_assistant_result": frozenset(
+            {
+                "application_id",
+                "request_id",
+                "language",
+                "outcome",
+                "tool_names",
+                "tool_count",
+                "duration_ms",
+            }
+        ),
+        "ai_officer_review_brief_viewed": frozenset(
+            {
+                "application_id",
+                "request_id",
+                "language",
+                "review_state",
+                "reasons",
+                "sources",
+                "narration_version",
+            }
+        ),
     }
 )
 AUDIT_ALLOWED_DETAIL_KEYS = frozenset().union(*AUDIT_ACTION_DETAIL_KEYS.values())
@@ -1041,6 +1077,7 @@ class AuditLog:
         event_id=None,
         idempotency_key=None,
         scope_officer_id=None,
+        scope_officer_index=None,
         scope_policy_version=None,
     ):
         """
@@ -1076,6 +1113,7 @@ class AuditLog:
             ip_address=ip_address,
             event_id=stable_event_id,
             scope_officer_id=scope_officer_id,
+            scope_officer_index=scope_officer_index,
             scope_policy_version=scope_policy_version,
         )
         return log.save()

@@ -10,16 +10,32 @@ This guide covers the AI Assistant's API, consent and customer isolation,
 context/tool safety, chat persistence, SSE behavior, provider integration,
 privacy lifecycle, observability, and deployment validation.
 
-The current focused AI test command passed during the review:
+The loan-officer assistant is a separate contract from the customer assistant.
+Its routes are `GET /api/ai/officer/status/`, `GET
+/api/ai/officer/suggestions/`, `POST /api/ai/officer/chat/`, and `POST
+/api/ai/officer/chat/stream/`. Officer contextual routes require the
+`loan_officer` role, a currently assigned application, and current customer
+data/AI consent. The four tools are parameterless, read-only, application-bound
+capabilities: `get_application_summary`, `get_profile_readiness`,
+`get_document_review_status`, and `get_repayment_summary`. Assignment and
+consent are revalidated before provider work, recognized tool execution, and
+stream termination.
 
-```text
-226 passed
-```
-
-The focused command is an offline regression set. Real MongoDB and the
+The focused AI command is an offline regression set. Real MongoDB and the
 deployment probes are separately opt-in; recorded exercises cover the owner-
 designated database, local Redis/Ollama, and local monitoring. They do not
-replace future deployed proxy, worker, load, recovery, and alert-route gates.
+replace future deployed proxy, worker, load, recovery, provider, and alert-route
+gates.
+
+The focused officer/customer/safety test files passed on 2026-08-28:
+
+```text
+277 passed
+```
+
+The broader AI suite passed 429 tests with 7 skips. The skips are two
+isolated-real-Mongo cases and five Stage 6 deployment probes. The ordinary
+suite verifies offline behavior; it does not replace those opt-in gates.
 
 The complete local repository suite also passed after Stage 6:
 
@@ -76,6 +92,9 @@ capacity recommendations:
 | `AI_ASSISTANT_HISTORY_MAX_PAGE` | `200` | Maximum legacy offset page; new clients should use signed cursors. |
 | `AI_ASSISTANT_IDEMPOTENCY_LEASE_SECONDS` | `900` | Active-request lease; must exceed the longest provider/stream execution. |
 | `AI_ASSISTANT_MAX_OUTPUT_TOKENS` | `512` | Hard output cap supplied to the provider. |
+| `AI_ASSISTANT_STREAM_MAX_CHARS` | `32768` | Cumulative server-side stream character cap. |
+| `AI_ASSISTANT_STREAM_MAX_BYTES` | `131072` | Cumulative server-side UTF-8 stream byte cap. |
+| `AI_ASSISTANT_STREAM_MAX_DURATION_SECONDS` | `120` | Monotonic total stream duration cap. |
 | `AI_ASSISTANT_MAX_TOOL_ROUNDS` | `3` | Maximum tool-selection iterations. |
 | `AI_ASSISTANT_MAX_TOOL_CALLS_PER_REQUEST` | `6` | Maximum aggregate tool calls in one request. |
 | `AI_ASSISTANT_TOOL_COST_PER_MINUTE` | `30` | Shared weighted tool-attempt budget per customer/minute. |
@@ -108,6 +127,50 @@ Invalid provider/model/URL/rate/range combinations raise
 `ImproperlyConfigured` during startup.
 
 ## API Reference
+
+### Loan-officer assistant routes
+
+These routes are not customer-route aliases. The server resolves the officer's
+current assignment and the selected application; the client cannot choose a
+customer by supplying a tool argument. Access and result audit records are
+metadata-only and exclude prompts, responses, raw tool output, direct
+identifiers, and exception details.
+
+`GET /api/ai/officer/status/` returns bounded provider readiness for an
+authenticated loan officer without reading application data.
+
+`GET /api/ai/officer/suggestions/?application_id=<id>&language=en|tl` returns
+static suggestions after role, assignment, and consent checks.
+
+`POST /api/ai/officer/chat/` accepts the same bounded message/history shape as
+the client contract and returns the standard success/error envelope. Successful
+data contains response/request/conversation metadata and allowlisted tool
+names only. Each successful response also includes `history_signature`; the
+client must return that signature on the matching assistant history entry.
+Signatures are bound to the officer, application, and exact response content,
+expire after one hour, and are rejected before provider invocation when they
+are missing, expired, altered, or replayed in another scope.
+
+`POST /api/ai/officer/chat/stream/` emits named `tool_call`, `tool_result`, and
+`token` events followed by exactly one terminal `done` or `error` event. A
+successful `done` includes `conversation_id`, `request_id`,
+`response_time_ms`, `tokens_used`, and allowlisted `tools_called`. Clients must
+not treat HTTP 200 alone as stream success. A successful `done` event carries
+the same scoped `history_signature` contract as the JSON route.
+
+Officer chat requests use a short-lived, application- and officer-bound lease
+for retry protection. The web client creates one UUID `Idempotency-Key` per
+logical attempt and reuses it, together with the same conversation and
+history, when retrying after a disconnect. An active duplicate returns
+`AI_REQUEST_IN_PROGRESS` (409); a completed ephemeral officer request returns
+`AI_REQUEST_ALREADY_COMPLETED` (409) and never invokes the provider again. A
+key reused with different message, history, conversation, assignment, or
+officer scope returns `AI_IDEMPOTENCY_KEY_REUSED` (409). Provider failures,
+disconnects before successful terminal completion, and stream-limit
+cancellations release the lease for a safe retry. Assignment or consent
+changes are revalidated independently and fail closed before provider work.
+Officer idempotency records contain only request metadata and are not an
+officer conversation history store.
 
 ### `POST /api/ai/chat/`
 
@@ -257,6 +320,27 @@ Static checks for the module and its focused tests:
   tests/test_tool_safety.py \
   tests/test_context_builder.py
 ```
+
+For the 2026-08-28 officer-assistant verification, the isolated worktree used
+the dependency-safe equivalent:
+
+```bash
+UV_CACHE_DIR=/private/tmp/msme-ai-uv-cache uv run \
+  --with-requirements requirements.txt \
+  python -m pytest \
+  tests/test_ai_officer_scope.py \
+  tests/test_ai_officer_tools.py \
+  tests/test_ai_officer_api.py \
+  tests/test_chatbot_api.py \
+  tests/test_ai_tool_safety_integration.py \
+  tests/test_tool_safety.py \
+  tests/test_ai_stage5_streaming_correctness.py -q
+```
+
+That focused command passed 277 tests. The broader AI command passed 429 tests
+with 7 skips, and `python manage.py check` reported no issues. No deployed
+provider, production database, proxy, Redis/Celery, or browser operation was
+performed.
 
 The two context/tool files without the `ai_` prefix are intentional legacy test
 modules and are required for the current focused count.
@@ -682,6 +766,46 @@ AI_ASSISTANT_DEPLOYMENT_LOAD_REQUESTS=10 \
 AI_ASSISTANT_DEPLOYMENT_LOAD_CONCURRENCY=2 \
   .venv/bin/pytest -q -m deployment_integration \
   tests/test_ai_stage6_deployment_integrations.py::test_representative_deployed_chat_load
+```
+
+The officer proxy suite uses cookie transport and the real CSRF double-submit
+pair. It requires a disposable, pre-provisioned synthetic officer and
+customer; the customer must own the assigned application's current consent.
+The unassigned application must belong to a different officer. The suite
+restores customer AI consent after the revocation test and never prints the
+configured credentials or response bodies:
+
+```bash
+RUN_AI_OFFICER_PROXY_DEPLOYMENT_TESTS=1 \
+AI_ASSISTANT_DEPLOYMENT_OFFICER_BASE_URL='https://backend.example' \
+AI_ASSISTANT_DEPLOYMENT_OFFICER_EMAIL='<synthetic officer email>' \
+AI_ASSISTANT_DEPLOYMENT_OFFICER_PASSWORD='<synthetic officer password>' \
+AI_ASSISTANT_DEPLOYMENT_OFFICER_APPLICATION_ID='<assigned synthetic application id>' \
+AI_ASSISTANT_DEPLOYMENT_OFFICER_UNASSIGNED_APPLICATION_ID='<unassigned application id>' \
+AI_ASSISTANT_DEPLOYMENT_CUSTOMER_EMAIL='<synthetic customer email>' \
+AI_ASSISTANT_DEPLOYMENT_CUSTOMER_PASSWORD='<synthetic customer password>' \
+AI_ASSISTANT_DEPLOYMENT_RAW_TOKEN_CANARY='<synthetic customer identifier>' \
+  .venv/bin/pytest -q -m deployment_integration \
+  tests/test_ai_stage6_deployment_integrations.py -k real_officer_proxy
+```
+
+This exercises successful officer SSE, one terminal event, no raw canary in
+the proxied stream, assignment denial, consent revocation during a stream, and
+cancellation cleanup. The browser journey uses the same synthetic account and
+actual backend origin; set `VITE_API_URL` to the proxy origin and disable
+notifications for this isolated run:
+
+```bash
+RUN_AI_OFFICER_BROWSER_E2E=1 \
+VITE_API_URL='https://backend.example' \
+VITE_WS_URL='wss://backend.example' \
+VITE_ENABLE_REALTIME=false \
+AI_ASSISTANT_DEPLOYMENT_OFFICER_EMAIL='<synthetic officer email>' \
+AI_ASSISTANT_DEPLOYMENT_OFFICER_PASSWORD='<synthetic officer password>' \
+AI_ASSISTANT_DEPLOYMENT_OFFICER_APPLICATION_ID='<assigned synthetic application id>' \
+AI_ASSISTANT_DEPLOYMENT_OFFICER_UNASSIGNED_APPLICATION_ID='<unassigned application id>' \
+AI_ASSISTANT_DEPLOYMENT_RAW_TOKEN_CANARY='<synthetic customer identifier>' \
+  npm run test:e2e -- e2e/loan-officer-ai-assistant-real-proxy.spec.ts
 ```
 
 The proxy synthetic customer must be verified, have current data/AI consent,

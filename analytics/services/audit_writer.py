@@ -30,6 +30,7 @@ AUDIT_PAYLOAD_KEYS = frozenset(
         "event_id",
         "idempotency_key",
         "scope_officer_id",
+        "scope_officer_index",
         "scope_policy_version",
     }
 )
@@ -53,9 +54,19 @@ def normalize_audit_payload(kwargs):
     return payload
 
 
+def _recovery_event_id(payload):
+    event_id = str(payload.get("event_id") or "").strip()
+    if event_id:
+        return event_id
+    idempotency_key = str(payload.get("idempotency_key") or "").strip()
+    if idempotency_key:
+        return f"evt_{AuditLog.blind_index(idempotency_key)}"
+    return f"evt_{uuid.uuid4().hex}"
+
+
 def queue_audit_failure(*, domain, payload, error):
     """Persist an encrypted, replayable event without duplicating queue rows."""
-    event_id = str(payload.get("event_id") or "")
+    event_id = _recovery_event_id(payload)
     details = payload.get("details") or {}
     subject_id = details.get("customer_id")
     if not subject_id and payload.get("user_type") == "customer":

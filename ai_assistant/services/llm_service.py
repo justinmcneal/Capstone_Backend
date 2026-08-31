@@ -41,10 +41,23 @@ from ai_assistant.services.provider_boundary import (
     ProviderConcurrencyExceeded,
     provider_session,
 )
+from ai_assistant.services.officer_policy import (
+    OFFICER_UNSUPPORTED_RESPONSE,
+    officer_policy_response,
+    validate_officer_response,
+)
+from ai_assistant.services.officer_privacy import officer_provider_input_violations
+from ai_assistant.services.officer_review_brief import (
+    InvalidReviewBrief,
+    validate_narration,
+    validate_review_brief,
+)
 from ai_assistant.services.response_controls import (
     controlled_guidance_response,
     validate_provider_response,
 )
+from ai_assistant.services.request_limits import bounded_conversation_history
+from ai_assistant.metrics import AI_STREAM_LIMIT_CANCELLATIONS, increment
 
 logger = logging.getLogger('ai_assistant')
 
@@ -57,6 +70,12 @@ GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
 
 _session = provider_session
 PUBLIC_PROVIDER_ERROR = "AI service is temporarily unavailable. Please try again later."
+INVALID_TOOL_ARGUMENTS = {"__invalid_tool_arguments__": True}
+
+
+def _officer_stream_buffer_limit():
+    """Return a finite response buffer bound derived from the output policy."""
+    return max(1, int(settings.AI_ASSISTANT_MAX_OUTPUT_TOKENS)) * 8
 
 
 def _policy_result(message, *, model, provider, request_id=None):
@@ -96,6 +115,63 @@ def _controlled_result(message, *, language, model, provider, request_id=None):
     if request_id:
         result['request_id'] = request_id
     return result
+
+
+def _officer_policy_result(message, *, model, provider, request_id=None):
+    response = officer_policy_response(message)
+    if not response:
+        return None
+    result = {
+        'success': True,
+        'response': response,
+        'model': model,
+        'provider': provider,
+        'response_time_ms': 0,
+        'tokens_used': 0,
+        'tools_called': [],
+        'policy_intercepted': True,
+    }
+    if request_id:
+        result['request_id'] = request_id
+    return result
+
+
+def _officer_privacy_result(
+    message,
+    *,
+    conversation_history=None,
+    model,
+    provider,
+    request_id=None,
+):
+    violations = officer_provider_input_violations(message, conversation_history)
+    if not violations:
+        return None
+    result = {
+        'success': True,
+        'response': OFFICER_UNSUPPORTED_RESPONSE,
+        'model': model,
+        'provider': provider,
+        'response_time_ms': 0,
+        'tokens_used': 0,
+        'tools_called': [],
+        'policy_intercepted': True,
+        'privacy_blocked': True,
+        'privacy_violations': list(violations),
+    }
+    if request_id:
+        result['request_id'] = request_id
+    return result
+
+
+def _parse_tool_arguments(arguments, *, injected_executor):
+    try:
+        return json.loads(arguments)
+    except json.JSONDecodeError:
+        if injected_executor:
+            return dict(INVALID_TOOL_ARGUMENTS)
+        return {}
+
 
 def _get_config():
     """Read LLM config from Django settings (which reads .env via load_dotenv)."""
@@ -278,8 +354,43 @@ class GroqService:
         """Parse one provider SSE response and close it on every exit path."""
         total_tokens = 0
         saw_done = False
+        output_chars = 0
+        output_bytes = 0
+        started = time.monotonic()
+        max_chars = max(1, int(settings.AI_ASSISTANT_STREAM_MAX_CHARS))
+        max_bytes = max(1, int(settings.AI_ASSISTANT_STREAM_MAX_BYTES))
+        max_duration = max(
+            0.1,
+            float(settings.AI_ASSISTANT_STREAM_MAX_DURATION_SECONDS),
+        )
+
+        def limit_error(limit):
+            code = (
+                'AI_PROVIDER_STREAM_DURATION_LIMIT'
+                if limit == 'duration'
+                else 'AI_PROVIDER_STREAM_OUTPUT_LIMIT'
+            )
+            increment(
+                AI_STREAM_LIMIT_CANCELLATIONS,
+                provider=str(self.provider),
+                limit=limit,
+            )
+            logger.warning(
+                'AI provider stream cancelled by %s limit',
+                limit,
+                extra={'request_id': request_id},
+            )
+            return {
+                'type': 'error',
+                'content': PUBLIC_PROVIDER_ERROR,
+                'code': code,
+            }
+
         try:
             for line in response.iter_lines():
+                if time.monotonic() - started >= max_duration:
+                    yield limit_error('duration')
+                    return
                 if not line:
                     continue
                 try:
@@ -358,8 +469,22 @@ class GroqService:
                     return
                 content = delta.get('content', '')
                 if content:
-                    yield {'type': 'token', 'content': str(content)}
+                    content = str(content)
+                    next_chars = output_chars + len(content)
+                    next_bytes = output_bytes + len(content.encode('utf-8'))
+                    if next_chars > max_chars:
+                        yield limit_error('characters')
+                        return
+                    if next_bytes > max_bytes:
+                        yield limit_error('bytes')
+                        return
+                    output_chars = next_chars
+                    output_bytes = next_bytes
+                    yield {'type': 'token', 'content': content}
 
+            if time.monotonic() - started >= max_duration:
+                yield limit_error('duration')
+                return
             if not saw_done:
                 logger.warning(
                     'AI provider stream ended without a terminal marker',
@@ -378,6 +503,11 @@ class GroqService:
                 'provider': self.provider,
                 'tokens_used': total_tokens,
             }
+        except requests.Timeout:
+            if time.monotonic() - started >= max_duration:
+                yield limit_error('duration')
+                return
+            raise
         finally:
             response.close()
 
@@ -450,7 +580,7 @@ class GroqService:
         
         # Add previous conversation messages for context (last 6 for efficiency)
         if conversation_history:
-            for hist in conversation_history[-6:]:
+            for hist in bounded_conversation_history(conversation_history):
                 messages.append({
                     "role": hist.get('role', 'user'),
                     "content": hist.get('content', '')
@@ -521,6 +651,7 @@ class GroqService:
         customer_id,
         request_id=None,
         max_workers=4,
+        tool_executor=None,
     ):
         """
         Execute multiple tool calls concurrently using ThreadPoolExecutor.
@@ -534,24 +665,30 @@ class GroqService:
         Returns:
             List of (tool_call_id, tool_name, result_json) tuples in original order
         """
-        from ai_assistant.services.tool_safety import safe_execute_tool
+        from ai_assistant.services.tools import execute_tool_result
+
+        tool_executor_fn = tool_executor or execute_tool_result
         
         def run_tool(tool_call):
             func = tool_call.get('function', {})
             tool_name = func.get('name', '')
             tool_call_id = tool_call.get('id', '')
             try:
-                tool_args = json.loads(func.get('arguments', '{}'))
-            except json.JSONDecodeError:
-                tool_args = {}
+                tool_args = _parse_tool_arguments(
+                    func.get('arguments', '{}'),
+                    injected_executor=tool_executor is not None,
+                )
+            except TypeError:
+                tool_args = (
+                    dict(INVALID_TOOL_ARGUMENTS) if tool_executor is not None else {}
+                )
             
             logger.info(
                 "AI parallel tool call started",
                 extra={'request_id': request_id, 'tool': tool_name},
             )
             
-            # Use safe executor with rate limiting and validation
-            result = safe_execute_tool(
+            result = tool_executor_fn(
                 tool_name,
                 tool_args,
                 customer_id,
@@ -577,9 +714,14 @@ class GroqService:
         
         results = []
         # Use ThreadPoolExecutor for I/O-bound MongoDB queries
-        with ThreadPoolExecutor(max_workers=min(max_workers, len(tool_calls))) as executor:
+        with ThreadPoolExecutor(
+            max_workers=min(max_workers, len(tool_calls))
+        ) as thread_pool:
             # Submit all tasks and maintain order
-            future_to_idx = {executor.submit(run_tool, tc): idx for idx, tc in enumerate(tool_calls)}
+            future_to_idx = {
+                thread_pool.submit(run_tool, tool_call): index
+                for index, tool_call in enumerate(tool_calls)
+            }
             results = [None] * len(tool_calls)
             
             for future in as_completed(future_to_idx):
@@ -635,6 +777,8 @@ class GroqService:
         top_p=0.9,
         max_tool_rounds=3,
         request_id=None,
+        tool_executor=None,
+        officer_mode=False,
     ):
         """
         Send a message with function calling support.
@@ -657,24 +801,45 @@ class GroqService:
         """
         from ai_assistant.services.tools import execute_tool_result
 
+        executor = tool_executor or execute_tool_result
+
         max_tokens, max_tool_rounds = self._bounded_limits(max_tokens, max_tool_rounds)
-        policy_result = _policy_result(
-            message,
-            model=self.model,
-            provider=self.provider,
-            request_id=request_id,
-        )
-        if policy_result:
-            return policy_result
-        controlled_result = _controlled_result(
-            message,
-            language=language,
-            model=self.model,
-            provider=self.provider,
-            request_id=request_id,
-        )
-        if controlled_result:
-            return controlled_result
+        if officer_mode:
+            privacy_result = _officer_privacy_result(
+                message,
+                conversation_history=conversation_history,
+                model=self.model,
+                provider=self.provider,
+                request_id=request_id,
+            )
+            if privacy_result:
+                return privacy_result
+            policy_result = _officer_policy_result(
+                message,
+                model=self.model,
+                provider=self.provider,
+                request_id=request_id,
+            )
+            if policy_result:
+                return policy_result
+        else:
+            policy_result = _policy_result(
+                message,
+                model=self.model,
+                provider=self.provider,
+                request_id=request_id,
+            )
+            if policy_result:
+                return policy_result
+            controlled_result = _controlled_result(
+                message,
+                language=language,
+                model=self.model,
+                provider=self.provider,
+                request_id=request_id,
+            )
+            if controlled_result:
+                return controlled_result
         if not self.api_key:
             return self._provider_failure(request_id=request_id)
 
@@ -686,7 +851,7 @@ class GroqService:
         messages = [{"role": "system", "content": active_system_prompt}]
 
         if conversation_history:
-            for hist in conversation_history[-6:]:
+            for hist in bounded_conversation_history(conversation_history):
                 messages.append({
                     "role": hist.get('role', 'user'),
                     "content": hist.get('content', '')
@@ -759,6 +924,7 @@ class GroqService:
                             tool_calls,
                             customer_id,
                             request_id=request_id,
+                            tool_executor=tool_executor,
                         )
                         for tool_call_id, tool_name, tool_result, _success in tool_results:
                             tools_called.append(tool_name)
@@ -773,15 +939,22 @@ class GroqService:
                         func = tool_call.get('function', {})
                         tool_name = func.get('name', '')
                         try:
-                            tool_args = json.loads(func.get('arguments', '{}'))
-                        except json.JSONDecodeError:
-                            tool_args = {}
+                            tool_args = _parse_tool_arguments(
+                                func.get('arguments', '{}'),
+                                injected_executor=tool_executor is not None,
+                            )
+                        except TypeError:
+                            tool_args = (
+                                dict(INVALID_TOOL_ARGUMENTS)
+                                if tool_executor is not None
+                                else {}
+                            )
 
                         logger.info(
                             "AI tool call started",
                             extra={'request_id': request_id, 'tool': tool_name},
                         )
-                        execution = execute_tool_result(
+                        execution = executor(
                             tool_name,
                             tool_args,
                             customer_id,
@@ -810,7 +983,12 @@ class GroqService:
                     continue
                 else:
                     elapsed_ms = int((time.time() - start_time) * 1000)
-                    provider_text, violations = validate_provider_response(
+                    validator = (
+                        validate_officer_response
+                        if officer_mode
+                        else validate_provider_response
+                    )
+                    provider_text, violations = validator(
                         assistant_message.get('content', ''),
                         message=message,
                         language=language,
@@ -842,6 +1020,87 @@ class GroqService:
             'response_time_ms': elapsed_ms,
             'tools_called': tools_called,
         }
+
+    def narrate_review_brief(
+        self,
+        review_brief,
+        *,
+        system_prompt,
+        request_id=None,
+    ):
+        """Narrate one already-localized public brief without tool access."""
+        try:
+            validated_brief = validate_review_brief(review_brief)
+        except InvalidReviewBrief:
+            result = {
+                "success": False,
+                "error": PUBLIC_PROVIDER_ERROR,
+                "code": "AI_OFFICER_REVIEW_BRIEF_INVALID",
+            }
+            if request_id:
+                result["request_id"] = request_id
+            return result
+
+        if not self.api_key:
+            return self._provider_failure(request_id=request_id)
+
+        started = time.time()
+        payload = json.dumps(
+            {"review_brief": validated_brief},
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+        try:
+            response = _session.post(
+                self.api_url,
+                headers={
+                    "Authorization": f"Bearer {self.api_key}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "model": self.model,
+                    "messages": [
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": payload},
+                    ],
+                    "temperature": 0,
+                    "max_tokens": min(
+                        512, int(settings.AI_ASSISTANT_MAX_OUTPUT_TOKENS)
+                    ),
+                    "top_p": 1,
+                },
+                timeout=120 if self.provider == "ollama" else 180,
+            )
+            if response.status_code != 200:
+                return self._provider_failure(request_id=request_id)
+            provider_payload = response.json()
+            choice = provider_payload.get("choices", [{}])[0]
+            content = choice.get("message", {}).get("content", "")
+            narration = validate_narration(content, validated_brief)
+            if narration is None:
+                result = {
+                    "success": False,
+                    "error": PUBLIC_PROVIDER_ERROR,
+                    "code": "AI_OFFICER_NARRATION_INVALID",
+                }
+                if request_id:
+                    result["request_id"] = request_id
+                return result
+            usage = provider_payload.get("usage", {})
+            return {
+                "success": True,
+                "response": narration,
+                "model": self.model,
+                "provider": self.provider,
+                "response_time_ms": int((time.time() - started) * 1000),
+                "tokens_used": usage.get("total_tokens", 0),
+            }
+        except requests.Timeout as exc:
+            return self._provider_failure(exc, request_id=request_id)
+        except requests.RequestException as exc:
+            return self._provider_failure(exc, request_id=request_id)
+        except (json.JSONDecodeError, TypeError, AttributeError, IndexError):
+            return self._provider_failure(request_id=request_id)
 
     def chat_stream(
         self,
@@ -902,7 +1161,7 @@ class GroqService:
         messages = [{"role": "system", "content": active_system_prompt}]
 
         if conversation_history:
-            for hist in conversation_history[-6:]:
+            for hist in bounded_conversation_history(conversation_history):
                 messages.append({
                     "role": hist.get('role', 'user'),
                     "content": hist.get('content', '')
@@ -959,6 +1218,8 @@ class GroqService:
         top_p=0.9,
         max_tool_rounds=3,
         request_id=None,
+        tool_executor=None,
+        officer_mode=False,
     ):
         """
         Stream chat with function calling support.
@@ -975,42 +1236,82 @@ class GroqService:
         """
         from ai_assistant.services.tools import execute_tool_result
 
+        executor = tool_executor or execute_tool_result
+
         max_tokens, max_tool_rounds = self._bounded_limits(max_tokens, max_tool_rounds)
-        policy_result = _policy_result(
-            message,
-            model=self.model,
-            provider=self.provider,
-            request_id=request_id,
-        )
-        if policy_result:
-            yield {'type': 'token', 'content': policy_result['response']}
-            yield {
-                'type': 'done',
-                'model': self.model,
-                'provider': self.provider,
-                'tokens_used': 0,
-                'tools_called': [],
-                'policy_intercepted': True,
-            }
-            return
-        controlled_result = _controlled_result(
-            message,
-            language=language,
-            model=self.model,
-            provider=self.provider,
-            request_id=request_id,
-        )
-        if controlled_result:
-            yield {'type': 'token', 'content': controlled_result['response']}
-            yield {
-                'type': 'done',
-                'model': self.model,
-                'provider': self.provider,
-                'tokens_used': 0,
-                'tools_called': [],
-                'controlled_response': True,
-            }
-            return
+        if officer_mode:
+            privacy_result = _officer_privacy_result(
+                message,
+                conversation_history=conversation_history,
+                model=self.model,
+                provider=self.provider,
+                request_id=request_id,
+            )
+            if privacy_result:
+                yield {
+                    'type': 'done',
+                    'model': self.model,
+                    'provider': self.provider,
+                    'tokens_used': 0,
+                    'tools_called': [],
+                    'policy_intercepted': True,
+                    'privacy_blocked': True,
+                    'response': privacy_result['response'],
+                }
+                return
+            policy_result = _officer_policy_result(
+                message,
+                model=self.model,
+                provider=self.provider,
+                request_id=request_id,
+            )
+            if policy_result:
+                yield {
+                    'type': 'done',
+                    'model': self.model,
+                    'provider': self.provider,
+                    'tokens_used': 0,
+                    'tools_called': [],
+                    'policy_intercepted': True,
+                    'response': policy_result['response'],
+                }
+                return
+        else:
+            policy_result = _policy_result(
+                message,
+                model=self.model,
+                provider=self.provider,
+                request_id=request_id,
+            )
+            if policy_result:
+                yield {'type': 'token', 'content': policy_result['response']}
+                yield {
+                    'type': 'done',
+                    'model': self.model,
+                    'provider': self.provider,
+                    'tokens_used': 0,
+                    'tools_called': [],
+                    'policy_intercepted': True,
+                }
+                return
+            controlled_result = _controlled_result(
+                message,
+                language=language,
+                model=self.model,
+                provider=self.provider,
+                request_id=request_id,
+            )
+            if controlled_result:
+                yield {'type': 'token', 'content': controlled_result['response']}
+                yield {
+                    'type': 'done',
+                    'model': self.model,
+                    'provider': self.provider,
+                    'tokens_used': 0,
+                    'tools_called': [],
+                    'controlled_response': True,
+                }
+                return
         if not self.api_key:
             yield {'type': 'error', 'content': PUBLIC_PROVIDER_ERROR, 'code': 'AI_PROVIDER_ERROR'}
             return
@@ -1020,7 +1321,7 @@ class GroqService:
         messages = [{"role": "system", "content": active_system_prompt}]
 
         if conversation_history:
-            for hist in conversation_history[-6:]:
+            for hist in bounded_conversation_history(conversation_history):
                 messages.append({
                     "role": hist.get('role', 'user'),
                     "content": hist.get('content', '')
@@ -1099,6 +1400,7 @@ class GroqService:
                             tool_calls,
                             customer_id,
                             request_id=request_id,
+                            tool_executor=tool_executor,
                         )
                         
                         # Yield results and add to messages
@@ -1120,13 +1422,20 @@ class GroqService:
                         func = tool_call.get('function', {})
                         tool_name = func.get('name', '')
                         try:
-                            tool_args = json.loads(func.get('arguments', '{}'))
-                        except json.JSONDecodeError:
-                            tool_args = {}
+                            tool_args = _parse_tool_arguments(
+                                func.get('arguments', '{}'),
+                                injected_executor=tool_executor is not None,
+                            )
+                        except TypeError:
+                            tool_args = (
+                                dict(INVALID_TOOL_ARGUMENTS)
+                                if tool_executor is not None
+                                else {}
+                            )
 
                         yield {'type': 'tool_call', 'name': tool_name}
                         
-                        execution = execute_tool_result(
+                        execution = executor(
                             tool_name,
                             tool_args,
                             customer_id,
@@ -1195,13 +1504,48 @@ class GroqService:
                 yield {'type': 'error', 'content': PUBLIC_PROVIDER_ERROR, 'code': 'AI_PROVIDER_ERROR'}
                 return
 
-            for chunk in self._provider_stream_chunks(
-                response,
-                request_id=request_id,
-            ):
-                if chunk.get('type') == 'done':
-                    chunk['tools_called'] = tools_called
-                yield chunk
+            if officer_mode:
+                buffered_parts = []
+                buffered_chars = 0
+                buffer_limit = _officer_stream_buffer_limit()
+                for chunk in self._provider_stream_chunks(
+                    response,
+                    request_id=request_id,
+                ):
+                    chunk_type = chunk.get('type')
+                    if chunk_type == 'token':
+                        content = str(chunk.get('content') or '')
+                        buffered_chars += len(content)
+                        if buffered_chars > buffer_limit:
+                            yield {
+                                'type': 'error',
+                                'content': PUBLIC_PROVIDER_ERROR,
+                                'code': 'AI_PROVIDER_STREAM_OUTPUT_LIMIT',
+                            }
+                            return
+                        buffered_parts.append(content)
+                        continue
+                    if chunk_type == 'done':
+                        safe_response, violations = validate_officer_response(
+                            ''.join(buffered_parts),
+                            message=message,
+                            language=language,
+                            tools_called=tools_called,
+                        )
+                        chunk['tools_called'] = tools_called
+                        chunk['response_validation_violations'] = violations
+                        chunk['response'] = safe_response
+                        yield chunk
+                        continue
+                    yield chunk
+            else:
+                for chunk in self._provider_stream_chunks(
+                    response,
+                    request_id=request_id,
+                ):
+                    if chunk.get('type') == 'done':
+                        chunk['tools_called'] = tools_called
+                    yield chunk
 
         except requests.Timeout:
             yield {'type': 'error', 'content': PUBLIC_PROVIDER_ERROR, 'code': 'AI_PROVIDER_TIMEOUT'}
