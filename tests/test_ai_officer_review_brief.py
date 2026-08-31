@@ -68,6 +68,97 @@ def test_application_brief_localizes_internal_readiness_without_leaking_it():
         assert internal not in serialized
 
 
+def test_application_brief_explains_missing_purpose_and_safe_income_trigger():
+    brief = build_review_brief(
+        [
+            _evidence(
+                "get_application_summary",
+                {
+                    "purpose": None,
+                    "reason_codes": ["income_missing"],
+                    "review_readiness": {
+                        "status": "not_ready_for_review",
+                        "is_reviewable": False,
+                        "manual_review_required": True,
+                    },
+                },
+            )
+        ],
+        language="en",
+        message="Summarize this application's review readiness.",
+    )
+
+    reasons = {reason["code"]: reason for reason in brief["reasons"]}
+    assert reasons["application_field_incomplete"] == {
+        "code": "application_field_incomplete",
+        "label": "Loan purpose is incomplete",
+        "detail": "Complete or verify the loan purpose in the application workflow.",
+    }
+    assert reasons["manual_check_needed"] == {
+        "code": "manual_check_needed",
+        "label": "Income information is missing",
+        "detail": "Provide or verify income information before continuing review.",
+    }
+    assert "income_missing" not in json.dumps(brief)
+
+
+def test_application_evidence_explanations_use_localized_filipino_templates():
+    brief = build_review_brief(
+        [
+            _evidence(
+                "get_application_summary",
+                {
+                    "purpose": None,
+                    "reason_codes": ["income_missing"],
+                    "review_readiness": {
+                        "status": "not_ready_for_review",
+                        "is_reviewable": False,
+                        "manual_review_required": False,
+                    },
+                },
+            )
+        ],
+        language="tl",
+        message="Ibuod ang kahandaan ng aplikasyon para sa pagsusuri.",
+    )
+
+    serialized = json.dumps(brief, ensure_ascii=False)
+    assert "Hindi pa kumpleto ang layunin ng pautang" in serialized
+    assert "Kulang ang impormasyon tungkol sa kita" in serialized
+    assert "income_missing" not in serialized
+
+
+def test_repayment_brief_explains_the_next_due_date():
+    brief = build_review_brief(
+        [
+            _evidence(
+                "get_repayment_summary",
+                {
+                    "schedule_available": True,
+                    "schedule_status": "active",
+                    "payments_truncated": False,
+                    "remaining_balance": 10900,
+                    "next_due_date": "2026-02-01T00:00:00+00:00",
+                    "schedule_progress": {
+                        "paid_count": 1,
+                        "installment_count": 3,
+                        "completed_percentage": 33,
+                    },
+                    "payment_status_summaries": [
+                        {"status": "paid", "count": 1},
+                        {"status": "pending", "count": 2},
+                    ],
+                },
+            )
+        ],
+        language="en",
+        message="Explain the current repayment summary.",
+    )
+
+    detail = brief["reasons"][0]["detail"]
+    assert "Next due date: February 1, 2026." in detail
+
+
 def test_filipino_brief_uses_backend_localized_templates():
     brief = build_review_brief(
         [

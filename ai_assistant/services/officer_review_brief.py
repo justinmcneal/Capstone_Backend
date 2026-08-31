@@ -2,6 +2,7 @@
 
 import json
 import re
+from datetime import datetime
 from decimal import Decimal, InvalidOperation
 
 from ai_assistant.services.officer_evidence_contract import (
@@ -25,6 +26,7 @@ PUBLIC_REASON_CODES = frozenset(
         "business_profile_unavailable",
         "alternative_profile_unavailable",
         "profile_field_incomplete",
+        "application_field_incomplete",
         "document_missing",
         "document_pending_review",
         "document_needs_review",
@@ -152,6 +154,10 @@ _TEXT = {
         "manual_detail": "Use the established portal workflow for manual review.",
         "application_next": "Verify the application record before continuing the review workflow.",
         "post_review_next": "Verify the application record before taking further workflow action.",
+        "purpose_label": "Loan purpose is incomplete",
+        "purpose_detail": "Complete or verify the loan purpose in the application workflow.",
+        "income_missing_label": "Income information is missing",
+        "income_missing_detail": "Provide or verify income information before continuing review.",
         "profile_next": "Complete or verify the identified profile information before continuing review.",
         "profile_complete_next": "No required profile information is missing. Continue with the established review workflow.",
         "document_next": "Resolve the identified document requirements in the established portal workflow.",
@@ -167,6 +173,7 @@ _TEXT = {
         "document_status_detail": "The current {document_lower} status is {status}.",
         "repayment_available_label": "A repayment schedule is available",
         "repayment_available_detail": "{paid_count} of {installment_count} installments are paid; the remaining balance is {remaining_balance}.",
+        "next_due_detail": "Next due date: {date}.",
         "repayment_missing_label": "No repayment schedule is available",
         "repayment_missing_detail": "The current application record does not contain a repayment schedule.",
         "repayment_overdue_label": "The repayment schedule requires attention",
@@ -213,6 +220,10 @@ _TEXT = {
         "manual_detail": "Gamitin ang itinakdang workflow ng portal para sa manu-manong pagsusuri.",
         "application_next": "Beripikahin ang talaan ng aplikasyon bago ipagpatuloy ang workflow ng pagsusuri.",
         "post_review_next": "Beripikahin ang talaan ng aplikasyon bago gumawa ng karagdagang aksyon sa workflow.",
+        "purpose_label": "Hindi pa kumpleto ang layunin ng pautang",
+        "purpose_detail": "Kumpletuhin o beripikahin ang layunin ng pautang gamit ang application workflow.",
+        "income_missing_label": "Kulang ang impormasyon tungkol sa kita",
+        "income_missing_detail": "Ibigay o beripikahin ang impormasyon tungkol sa kita bago ipagpatuloy ang pagsusuri.",
         "profile_next": "Kumpletuhin o beripikahin ang natukoy na impormasyon sa profile bago ipagpatuloy ang pagsusuri.",
         "profile_complete_next": "Walang kulang na kinakailangang impormasyon sa profile. Ipagpatuloy ang itinakdang workflow ng pagsusuri.",
         "document_next": "Ayusin ang natukoy na kinakailangan sa dokumento gamit ang itinakdang workflow ng portal.",
@@ -228,6 +239,7 @@ _TEXT = {
         "document_status_detail": "Ang kasalukuyang katayuan ng {document_lower} ay {status}.",
         "repayment_available_label": "Available ang iskedyul ng pagbabayad",
         "repayment_available_detail": "Bayad na ang {paid_count} sa {installment_count} hulog; ang natitirang balanse ay {remaining_balance}.",
+        "next_due_detail": "Susunod na takdang petsa ng bayad: {date}.",
         "repayment_missing_label": "Walang available na iskedyul ng pagbabayad",
         "repayment_missing_detail": "Walang iskedyul ng pagbabayad sa kasalukuyang talaan ng aplikasyon.",
         "repayment_overdue_label": "Kailangang suriin ang iskedyul ng pagbabayad",
@@ -380,12 +392,43 @@ def _application_fragment(result, locale):
         ]
     else:
         raise InvalidReviewBrief("Unknown review readiness")
+    if "purpose" in result:
+        purpose = result["purpose"]
+        if purpose is not None and purpose not in {
+            "inventory",
+            "working_capital",
+            "equipment",
+            "expansion",
+            "operations",
+        }:
+            raise InvalidReviewBrief("Unknown application purpose")
+        if purpose is None:
+            reasons.append(
+                {
+                    "code": "application_field_incomplete",
+                    "label": text["purpose_label"],
+                    "detail": text["purpose_detail"],
+                }
+            )
+    reason_codes = result.get("reason_codes", [])
+    if not isinstance(reason_codes, list) or any(
+        not isinstance(code, str) for code in reason_codes
+    ):
+        raise InvalidReviewBrief("Malformed application reason codes")
     if readiness.get("manual_review_required") is True:
         reasons.append(
             {
                 "code": "manual_check_needed",
                 "label": text["manual_label"],
                 "detail": text["manual_detail"],
+            }
+        )
+    if "income_missing" in reason_codes:
+        reasons.append(
+            {
+                "code": "manual_check_needed",
+                "label": text["income_missing_label"],
+                "detail": text["income_missing_detail"],
             }
         )
     return state, reasons, [
@@ -565,6 +608,48 @@ def _money(value):
     return f"₱{amount:,.2f}"
 
 
+def _format_due_date(value, locale):
+    if value is None:
+        return None
+    if not isinstance(value, str) or not value.strip():
+        raise InvalidReviewBrief("Invalid repayment due date")
+    try:
+        parsed = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise InvalidReviewBrief("Invalid repayment due date") from exc
+    if locale == "fil":
+        month = (
+            "Enero",
+            "Pebrero",
+            "Marso",
+            "Abril",
+            "Mayo",
+            "Hunyo",
+            "Hulyo",
+            "Agosto",
+            "Setyembre",
+            "Oktubre",
+            "Nobyembre",
+            "Disyembre",
+        )[parsed.month - 1]
+        return f"{parsed.day} {month} {parsed.year}"
+    month = (
+        "January",
+        "February",
+        "March",
+        "April",
+        "May",
+        "June",
+        "July",
+        "August",
+        "September",
+        "October",
+        "November",
+        "December",
+    )[parsed.month - 1]
+    return f"{month} {parsed.day}, {parsed.year}"
+
+
 def _repayment_fragment(result, locale):
     text = _TEXT[locale]
     available = result.get("schedule_available")
@@ -621,6 +706,10 @@ def _repayment_fragment(result, locale):
             ),
         }
     ]
+    if "next_due_date" in result:
+        due_date = _format_due_date(result["next_due_date"], locale)
+        if due_date:
+            reasons[0]["detail"] += " " + text["next_due_detail"].format(date=due_date)
     overdue_count = 0
     summarized_count = 0
     summarized_paid_count = 0
