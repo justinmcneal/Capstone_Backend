@@ -19,7 +19,7 @@ from accounts.authentication import CustomJWTAuthentication
 from accounts.utils.access_control import AccessControlMixin
 from accounts.utils.response_helpers import error_response, success_response
 from accounts.utils.throttles import ChatRateThrottle
-from accounts.utils.validation_utils import escape_llm_output, sanitize_multiline_text
+from accounts.utils.validation_utils import sanitize_multiline_text
 from ai_assistant.metrics import (
     AI_ACTIVE_STREAMS,
     AI_PROVIDER_LATENCY,
@@ -686,9 +686,7 @@ class OfficerChatView(AIRequestMetricsMixin, APIView):
             )
 
         review_brief, narration_result = _rendered_review_brief(evidence, data)
-        narration = sanitize_multiline_text(
-            escape_llm_output(review_brief["narration"])
-        )
+        narration = sanitize_multiline_text(review_brief["narration"])
         review_brief["narration"] = narration
         duration_ms = _safe_duration_ms(
             (
@@ -1074,9 +1072,7 @@ class OfficerStreamingChatView(AIRequestMetricsMixin, APIView):
                         review_brief, narration_result = _rendered_review_brief(
                             evidence, data
                         )
-                        narration = sanitize_multiline_text(
-                            escape_llm_output(review_brief["narration"])
-                        )
+                        narration = sanitize_multiline_text(review_brief["narration"])
                         review_brief["narration"] = narration
                         if (
                             len(narration) > max_stream_chars

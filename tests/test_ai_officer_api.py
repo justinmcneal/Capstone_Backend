@@ -1102,7 +1102,11 @@ def test_officer_out_of_scope_question_is_scope_limited_without_provider(monkeyp
     )
 
     assert response.status_code == 200, response.data
-    assert response.data["data"]["review_brief"]["review_state"] == "scope_limited"
+    brief = response.data["data"]["review_brief"]
+    assert brief["review_state"] == "scope_limited"
+    assert "application's" in brief["narration"]
+    assert "&#x27;" not in brief["narration"]
+    assert not brief["narration"].startswith("Review readiness:")
     provider.assert_not_called()
 
 

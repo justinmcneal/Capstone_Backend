@@ -812,7 +812,7 @@ def render_review_brief(brief):
     validate_review_brief(brief)
     locale = _brief_locale(brief)
     text = _TEXT[locale]
-    if brief["review_state"] == "unavailable":
+    if brief["review_state"] in {"unavailable", "scope_limited"}:
         return "\n".join(
             [brief["headline"], _join(brief["next_steps"], text["and"]), brief["disclaimer"]]
         )
