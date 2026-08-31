@@ -46,8 +46,9 @@ SAFE_APPLICATION_STATUSES = frozenset(
 )
 SAFE_RISK_CATEGORIES = frozenset({"low", "medium", "high"})
 SAFE_RISK_STATUSES = frozenset(
-    {"not_calculated", "pending", "calculated", "failed", "stale"}
+    {"not_calculated", "pending", "complete", "failed", "stale"}
 )
+LEGACY_RISK_STATUS_ALIASES = {"calculated": "complete"}
 SAFE_DOCUMENT_STATUSES = frozenset(
     {"pending", "needs_review", "approved", "rejected", "expired"}
 )
@@ -183,6 +184,13 @@ def _scope_application_query(scope):
 def _safe_enum(value, allowed, fallback="unknown"):
     normalized = value.strip().lower() if isinstance(value, str) else ""
     return normalized if normalized in allowed else fallback
+
+
+def _safe_risk_status(value):
+    """Normalize legacy profile status values to the canonical contract."""
+    normalized = value.strip().lower() if isinstance(value, str) else ""
+    normalized = LEGACY_RISK_STATUS_ALIASES.get(normalized, normalized)
+    return normalized if normalized in SAFE_RISK_STATUSES else "unknown"
 
 
 def _safe_percentage(value):
@@ -426,9 +434,7 @@ def _get_profile_readiness(scope):
             "missing_fields": _safe_missing_fields(profile),
         }
         if label == "alternative":
-            risk_status = _safe_enum(
-                profile.get("risk_score_status"), SAFE_RISK_STATUSES
-            )
+            risk_status = _safe_risk_status(profile.get("risk_score_status"))
             raw_manual_review = profile.get("risk_score_manual_review_required")
             manual_review_required = (
                 True if raw_manual_review is None else _safe_bool(raw_manual_review)

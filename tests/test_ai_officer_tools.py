@@ -70,7 +70,8 @@ def officer_scope(monkeypatch):
             "completion_percentage": 100,
             "profile_completed": True,
             "profile_missing_fields": [],
-            "risk_score_status": "calculated",
+            # This is the canonical value written by profiles.tasks.
+            "risk_score_status": "complete",
             "risk_category": "medium",
             "risk_score_manual_review_required": True,
             "household_income": 50000,
@@ -375,10 +376,26 @@ def test_profile_readiness_matches_complete_safe_contract(officer_scope):
     assert readiness["business"]["missing_fields"] == [
         {"code": "business.business_type", "label": "Business type"}
     ]
-    assert readiness["alternative"]["risk_status"] == "calculated"
-    assert readiness["alternative"]["risk_score_status"] == "calculated"
+    assert readiness["alternative"]["risk_status"] == "complete"
+    assert readiness["alternative"]["risk_score_status"] == "complete"
     assert readiness["alternative"]["manual_review_required"] is True
     assert readiness["alternative"]["manual_review_flags"] == ["risk_score"]
+
+
+def test_profile_readiness_normalizes_legacy_calculated_status(officer_scope):
+    settings.MONGODB["alternative_data"].update_one(
+        {"customer_id": "customer-42"},
+        {"$set": {"risk_score_status": "calculated"}},
+    )
+
+    result = execute_officer_tool_result(
+        "get_profile_readiness", {}, officer_scope, request_id="request-1"
+    )
+
+    assert result["success"] is True
+    readiness = json.loads(result["result"])
+    assert readiness["alternative"]["risk_status"] == "complete"
+    assert readiness["alternative"]["risk_score_status"] == "complete"
 
 
 def test_document_review_status_matches_complete_safe_contract(officer_scope):

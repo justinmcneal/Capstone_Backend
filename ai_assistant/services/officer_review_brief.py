@@ -404,12 +404,12 @@ def _profile_fragment(result, locale):
             risk_status = profile.get("risk_status")
             if (
                 risk_status
-                not in {"not_calculated", "pending", "calculated", "failed", "stale"}
+                not in {"not_calculated", "pending", "complete", "failed", "stale"}
                 or profile.get("risk_score_status") != risk_status
                 or profile.get("risk_category")
                 not in {"unknown", "low", "medium", "high"}
                 or (
-                    risk_status == "calculated"
+                    risk_status == "complete"
                     and profile.get("risk_category") == "unknown"
                 )
                 or not isinstance(profile.get("manual_review_required"), bool)
