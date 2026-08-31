@@ -310,10 +310,12 @@ def _rendered_review_brief(evidence, data):
     # any client-edited label when building the brief so a preset cannot be
     # rerouted through free-text scope handling.
     message = "" if data.get("intent") else data["message"]
+    diagnostics = []
     brief = build_review_brief(
         evidence,
         language=data["language"],
         message=message,
+        diagnostics=diagnostics,
     )
     return {
         **brief,
@@ -324,6 +326,7 @@ def _rendered_review_brief(evidence, data):
         "model": None,
         "response_time_ms": 0,
         "tokens_used": 0,
+        "diagnostic_code": diagnostics[-1] if diagnostics else None,
     }
 
 
@@ -714,6 +717,11 @@ class OfficerChatView(AIRequestMetricsMixin, APIView):
             outcome="success",
             tool_names=tool_names,
             duration_ms=duration_ms,
+            diagnostic_code=(
+                narration_result.get("diagnostic_code")
+                if isinstance(narration_result, dict)
+                else None
+            ),
         )
         try:
             record_officer_review_brief(
@@ -866,7 +874,7 @@ class OfficerStreamingChatView(AIRequestMetricsMixin, APIView):
             def elapsed_ms():
                 return max(0, int((time.monotonic() - started) * 1000))
 
-            def record_result(outcome, *, duration_ms=None):
+            def record_result(outcome, *, duration_ms=None, diagnostic_code=None):
                 nonlocal result_recorded
                 if result_recorded:
                     return
@@ -878,6 +886,7 @@ class OfficerStreamingChatView(AIRequestMetricsMixin, APIView):
                     outcome=outcome,
                     tool_names=tool_names,
                     duration_ms=elapsed_ms() if duration_ms is None else duration_ms,
+                    diagnostic_code=diagnostic_code,
                 )
 
             def complete_lease():
@@ -1108,7 +1117,15 @@ class OfficerStreamingChatView(AIRequestMetricsMixin, APIView):
                                 "request_id": request_id,
                             },
                         )
-                        record_result("success", duration_ms=duration_ms)
+                        record_result(
+                            "success",
+                            duration_ms=duration_ms,
+                            diagnostic_code=(
+                                narration_result.get("diagnostic_code")
+                                if isinstance(narration_result, dict)
+                                else None
+                            ),
+                        )
                         complete_lease()
                         _record_provider_metrics(
                             llm,

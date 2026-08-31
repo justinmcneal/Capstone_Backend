@@ -11,6 +11,15 @@ logger = logging.getLogger("ai_assistant")
 AUDIT_DOMAIN = "ai_assistant"
 SCOPE_POLICY_VERSION = "event-time-assignment-v1"
 NARRATION_VERSION = "review-brief-v1"
+OFFICER_DIAGNOSTIC_CODES = frozenset(
+    {
+        "tool_read_unavailable",
+        "unsupported_domain_value",
+        "evidence_truncated",
+        "evidence_inconsistent",
+        "brief_contract_invalid",
+    }
+)
 
 
 class OfficerAIAuditUnavailable(RuntimeError):
@@ -101,6 +110,7 @@ def record_officer_ai_result(
     outcome,
     tool_names=None,
     duration_ms=0,
+    diagnostic_code=None,
 ):
     names = list(tool_names or [])
     details = {
@@ -112,6 +122,8 @@ def record_officer_ai_result(
         "tool_count": len(names),
         "duration_ms": max(0, int(duration_ms or 0)),
     }
+    if diagnostic_code in OFFICER_DIAGNOSTIC_CODES:
+        details["diagnostic_code"] = diagnostic_code
     return _write_or_queue(
         _payload(
             "ai_officer_assistant_result",
