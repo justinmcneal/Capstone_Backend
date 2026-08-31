@@ -161,9 +161,16 @@ def _validate_officer_context(value):
             detection_text,
         )
     )
+    context_match = _OFFICER_CONTEXT_NAME_AFTER_CONTEXT.search(detection_text)
+    context_tokens = context_match.group(0).split()[1:] if context_match else ()
+    context_name_after_context = any(
+        token not in _OFFICER_CONTEXT_STOP_WORDS
+        and token not in {"mr", "mrs", "ms", "miss"}
+        for token in context_tokens
+    )
     if (
         any(pattern.search(detection_text) for pattern in _OFFICER_CONTEXT_RESTRICTED_PATTERNS)
-        or _OFFICER_CONTEXT_NAME_AFTER_CONTEXT.search(detection_text)
+        or context_name_after_context
         or _OFFICER_CONTEXT_UNICODE_NAME.search(detection_text)
         or _OFFICER_CONTEXT_LATIN_NAME.search(str(value or ""))
         or bare_name
