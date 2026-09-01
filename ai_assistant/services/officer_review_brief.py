@@ -4,6 +4,7 @@ import json
 import re
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
+from pathlib import Path
 
 from ai_assistant.services.officer_evidence_contract import (
     DOCUMENT_STATUSES,
@@ -13,30 +14,24 @@ from ai_assistant.services.officer_evidence_contract import (
 )
 
 
+_SCHEMA_PATH = (
+    Path(__file__).resolve().parents[1]
+    / "contracts"
+    / "officer_review_brief.schema.json"
+)
+OFFICER_REVIEW_BRIEF_SCHEMA = json.loads(_SCHEMA_PATH.read_text(encoding="utf-8"))
+OFFICER_REVIEW_BRIEF_CONTRACT_VERSION = OFFICER_REVIEW_BRIEF_SCHEMA["properties"][
+    "contract_version"
+]["const"]
 PUBLIC_REVIEW_STATES = frozenset(
-    {"ready", "needs_attention", "informational", "unavailable", "scope_limited"}
+    OFFICER_REVIEW_BRIEF_SCHEMA["properties"]["review_state"]["enum"]
 )
 PUBLIC_REASON_CODES = frozenset(
-    {
-        "review_stage_ready",
-        "review_stage_not_ready",
-        "review_stage_complete",
-        "manual_check_needed",
-        "personal_profile_unavailable",
-        "business_profile_unavailable",
-        "alternative_profile_unavailable",
-        "profile_field_incomplete",
-        "application_field_incomplete",
-        "document_missing",
-        "document_pending_review",
-        "document_needs_review",
-        "document_rejected",
-        "document_expired",
-        "repayment_schedule_available",
-        "repayment_schedule_missing",
-        "repayment_overdue",
-    }
+    OFFICER_REVIEW_BRIEF_SCHEMA["properties"]["reasons"]["items"]["properties"][
+        "code"
+    ]["enum"]
 )
+PUBLIC_REVIEW_BRIEF_FIELDS = frozenset(OFFICER_REVIEW_BRIEF_SCHEMA["required"])
 PUBLIC_SOURCE_LABELS = {
     "en": {
         "get_application_summary": "Application summary",
@@ -300,6 +295,7 @@ def _is_out_of_scope(message):
 
 def _base_brief(*, state, headline, reasons, next_steps, sources, locale):
     return {
+        "contract_version": OFFICER_REVIEW_BRIEF_CONTRACT_VERSION,
         "review_state": state,
         "headline": headline,
         "reasons": reasons,
@@ -847,20 +843,20 @@ def _brief_locale(brief):
     raise InvalidReviewBrief("Unknown review brief locale")
 
 
-def validate_review_brief(brief):
+def validate_review_brief(brief, *, require_narration=False):
     if not isinstance(brief, dict):
         raise InvalidReviewBrief("Review brief must be an object")
-    required = {
-        "review_state",
-        "headline",
-        "reasons",
-        "next_steps",
-        "sources",
-        "advisory_only",
-        "disclaimer",
-    }
-    if set(brief) != required:
+    required = set(PUBLIC_REVIEW_BRIEF_FIELDS)
+    if not require_narration:
+        required.discard("narration")
+    if not require_narration:
+        allowed_fields = required
+    else:
+        allowed_fields = set(PUBLIC_REVIEW_BRIEF_FIELDS)
+    if set(brief) != allowed_fields:
         raise InvalidReviewBrief("Review brief fields are invalid")
+    if brief.get("contract_version") != OFFICER_REVIEW_BRIEF_CONTRACT_VERSION:
+        raise InvalidReviewBrief("Review brief contract version is invalid")
     if brief["review_state"] not in PUBLIC_REVIEW_STATES:
         raise InvalidReviewBrief("Unknown review state")
     if not isinstance(brief["headline"], str) or not brief["headline"].strip():
@@ -888,6 +884,12 @@ def validate_review_brief(brief):
         source not in allowed_sources for source in brief["sources"]
     ):
         raise InvalidReviewBrief("Review sources are invalid")
+    if require_narration and (
+        not isinstance(brief.get("narration"), str)
+        or not brief["narration"].strip()
+        or not brief["narration"].strip().endswith(brief["disclaimer"])
+    ):
+        raise InvalidReviewBrief("Review narration is invalid")
     serialized = json.dumps(brief, ensure_ascii=False).lower()
     if re.search(r"\bget_[a-z][a-z0-9_]*\b", serialized) or any(
         internal in serialized

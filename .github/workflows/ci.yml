@@ -7,6 +7,22 @@ on:
     branches: [ main, master ]
 
 jobs:
+  officer-contract-drift:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check out officer portal contract snapshot
+        uses: actions/checkout@v4
+        with:
+          repository: eligabsoriano/Capstone-Web
+          path: portal
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Check officer review contract
+        run: node portal/scripts/check-officer-contract.mjs --backend-schema ai_assistant/contracts/officer_review_brief.schema.json --web-root portal
+
   test:
     runs-on: ubuntu-latest
     strategy:

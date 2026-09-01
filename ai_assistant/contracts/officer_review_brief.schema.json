@@ -1,0 +1,99 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://msme-pathways.example/contracts/officer-review-brief.schema.json",
+  "title": "Officer Review Brief",
+  "description": "Backend-owned public contract for the read-only loan-officer review copilot.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contract_version",
+    "review_state",
+    "headline",
+    "reasons",
+    "next_steps",
+    "sources",
+    "advisory_only",
+    "disclaimer",
+    "narration"
+  ],
+  "properties": {
+    "contract_version": {
+      "type": "string",
+      "const": "1.0.0"
+    },
+    "review_state": {
+      "type": "string",
+      "enum": ["ready", "needs_attention", "informational", "unavailable", "scope_limited"]
+    },
+    "headline": {
+      "type": "string",
+      "minLength": 1
+    },
+    "reasons": {
+      "type": "array",
+      "maxItems": 40,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["code", "label", "detail"],
+        "properties": {
+          "code": {
+            "type": "string",
+            "enum": [
+              "review_stage_ready",
+              "review_stage_not_ready",
+              "review_stage_complete",
+              "manual_check_needed",
+              "personal_profile_unavailable",
+              "business_profile_unavailable",
+              "alternative_profile_unavailable",
+              "profile_field_incomplete",
+              "application_field_incomplete",
+              "document_missing",
+              "document_pending_review",
+              "document_needs_review",
+              "document_rejected",
+              "document_expired",
+              "repayment_schedule_available",
+              "repayment_schedule_missing",
+              "repayment_overdue"
+            ]
+          },
+          "label": {
+            "type": "string",
+            "minLength": 1
+          },
+          "detail": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "next_steps": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "sources": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "advisory_only": {
+      "const": true
+    },
+    "disclaimer": {
+      "type": "string",
+      "minLength": 1
+    },
+    "narration": {
+      "type": "string",
+      "minLength": 1
+    }
+  }
+}

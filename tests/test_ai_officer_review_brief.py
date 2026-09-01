@@ -1,10 +1,12 @@
 import json
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
 
 from ai_assistant.services.officer_review_brief import (
+    OFFICER_REVIEW_BRIEF_CONTRACT_VERSION,
     InvalidReviewBrief,
     build_review_brief,
     build_unavailable_review_brief,
@@ -45,6 +47,7 @@ def test_application_brief_localizes_internal_readiness_without_leaking_it():
     )
 
     assert brief == {
+        "contract_version": OFFICER_REVIEW_BRIEF_CONTRACT_VERSION,
         "review_state": "needs_attention",
         "headline": "Not ready for review",
         "reasons": [
@@ -287,6 +290,7 @@ def test_out_of_scope_question_returns_scope_limit_brief(message):
     brief = build_review_brief([], language="en", message=message)
 
     assert brief == {
+        "contract_version": OFFICER_REVIEW_BRIEF_CONTRACT_VERSION,
         "review_state": "scope_limited",
         "headline": "Request outside this review brief",
         "reasons": [],
@@ -619,6 +623,7 @@ def test_review_brief_validation_rejects_missing_fields_and_unknown_reason_codes
     with pytest.raises(InvalidReviewBrief):
         validate_review_brief(
             {
+                "contract_version": OFFICER_REVIEW_BRIEF_CONTRACT_VERSION,
                 "review_state": "ready",
                 "headline": "Ready for review",
                 "reasons": [
@@ -634,6 +639,51 @@ def test_review_brief_validation_rejects_missing_fields_and_unknown_reason_codes
                 "disclaimer": "AI assistance is advisory only. Verify details against the application record.",
             }
         )
+
+
+def test_review_brief_includes_the_backend_contract_version():
+    brief = build_review_brief(
+        [
+            _evidence(
+                "get_application_summary",
+                {
+                    "review_readiness": {
+                        "status": "ready_for_review",
+                        "is_reviewable": True,
+                        "manual_review_required": False,
+                    }
+                },
+            )
+        ],
+        language="en",
+        message="Summarize review readiness.",
+    )
+
+    assert brief["contract_version"] == OFFICER_REVIEW_BRIEF_CONTRACT_VERSION
+
+
+def test_review_brief_validation_rejects_unknown_contract_version():
+    brief = build_unavailable_review_brief("en")
+    brief["contract_version"] = "9.9.9"
+
+    with pytest.raises(InvalidReviewBrief):
+        validate_review_brief(brief)
+
+
+def test_v1_compatibility_fixture_matches_the_public_contract():
+    fixture_path = Path(__file__).parent / "fixtures" / "officer_review_brief_v1.json"
+    fixture = json.loads(fixture_path.read_text(encoding="utf-8"))
+
+    assert validate_review_brief(fixture, require_narration=True) == fixture
+
+
+def test_v1_compatibility_fixture_rejects_unknown_state():
+    fixture_path = Path(__file__).parent / "fixtures" / "officer_review_brief_v1.json"
+    fixture = json.loads(fixture_path.read_text(encoding="utf-8"))
+    fixture["review_state"] = "new_state"
+
+    with pytest.raises(InvalidReviewBrief):
+        validate_review_brief(fixture, require_narration=True)
 
 
 def test_viewed_review_brief_audit_persists_reconstructable_public_metadata(

@@ -56,6 +56,7 @@ from ai_assistant.services.officer_review_brief import (
     build_review_brief,
     build_unavailable_review_brief,
     render_review_brief,
+    validate_review_brief,
 )
 from ai_assistant.services.officer_scope import (
     has_current_ai_consent,
@@ -319,9 +320,12 @@ def _rendered_review_brief(evidence, data):
         message=message,
         diagnostics=diagnostics,
     )
+    narration = render_review_brief(brief)
+    brief["narration"] = narration
+    validate_review_brief(brief, require_narration=True)
     return {
         **brief,
-        "narration": render_review_brief(brief),
+        "narration": narration,
     }, {
         "success": True,
         "provider": "deterministic",
