@@ -47,7 +47,9 @@
       "targets": [
         {"expr": "sum by (window) (rate(ai_assistant_tool_budget_rejections_total[5m]))", "legendFormat": "budget {{window}}", "refId": "A"},
         {"expr": "rate(ai_assistant_audit_write_failures_total[5m])", "legendFormat": "audit writes", "refId": "B"},
-        {"expr": "sum by (operation) (rate(ai_assistant_persistence_failures_total[5m]))", "legendFormat": "persistence {{operation}}", "refId": "C"}
+        {"expr": "sum by (operation) (rate(ai_assistant_persistence_failures_total[5m]))", "legendFormat": "persistence {{operation}}", "refId": "C"},
+        {"expr": "sum by (topic) (rate(ai_officer_brief_unavailable_total[5m]))", "legendFormat": "brief unavailable {{topic}}", "refId": "D"},
+        {"expr": "rate(ai_officer_contract_failures_total[5m])", "legendFormat": "contract failures", "refId": "E"}
       ],
       "title": "Safety and persistence failures",
       "type": "timeseries"
@@ -61,7 +63,10 @@
         {"expr": "sum by (provider) (rate(ai_assistant_tokens_total[5m]))", "legendFormat": "tokens {{provider}}", "refId": "A"},
         {"expr": "ai_assistant_active_streams", "legendFormat": "active streams", "refId": "B"},
         {"expr": "sum by (provider, outcome) (rate(ai_assistant_provider_requests_total[5m]))", "legendFormat": "provider {{provider}} {{outcome}}", "refId": "C"},
-        {"expr": "histogram_quantile(0.95, sum by (le, provider, operation) (rate(ai_assistant_provider_duration_seconds_bucket[5m])))", "legendFormat": "provider p95 {{provider}} {{operation}}", "refId": "D"}
+        {"expr": "histogram_quantile(0.95, sum by (le, provider, operation) (rate(ai_assistant_provider_duration_seconds_bucket[5m])))", "legendFormat": "provider p95 {{provider}} {{operation}}", "refId": "D"},
+        {"expr": "histogram_quantile(0.95, sum by (le, provider) (rate(ai_officer_planner_duration_seconds_bucket[5m])))", "legendFormat": "planner p95 {{provider}}", "refId": "E"},
+        {"expr": "sum by (intent, outcome) (rate(ai_officer_planner_selections_total[5m]))", "legendFormat": "planner {{intent}} {{outcome}}", "refId": "F"},
+        {"expr": "sum by (provider, operation) (rate(ai_officer_provider_outages_total[5m]))", "legendFormat": "outage {{provider}} {{operation}}", "refId": "G"}
       ],
       "title": "Provider usage and active streams",
       "type": "timeseries"

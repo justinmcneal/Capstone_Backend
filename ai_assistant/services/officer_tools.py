@@ -321,6 +321,8 @@ def _get_application_summary(scope):
         "risk_category": 1,
         "purpose": 1,
         "ai_recommendation": 1,
+        "revision": 1,
+        "updated_at": 1,
     }
     application = settings.MONGODB[LoanApplication.collection_name].find_one(
         _scope_application_query(scope), projection
@@ -377,6 +379,8 @@ def _get_application_summary(scope):
             "is_reviewable": status in {"submitted", "under_review"},
             "manual_review_required": manual_review_required,
         },
+        "evidence_revision": str(application.get("revision", 0) or 0),
+        "evidence_updated_at": _safe_iso_datetime(application.get("updated_at")),
     }
 
 
@@ -391,6 +395,8 @@ def _get_profile_readiness(scope):
         "completion_percentage": 1,
         "profile_completed": 1,
         "profile_missing_fields": 1,
+        "profile_revision": 1,
+        "updated_at": 1,
     }
     result = {}
     for label, collection in collections.items():
@@ -401,6 +407,9 @@ def _get_profile_readiness(scope):
                     "risk_score_status": 1,
                     "risk_category": 1,
                     "risk_score_manual_review_required": 1,
+                    "risk_input_revision": 1,
+                    "risk_calculated_revision": 1,
+                    "score_calculated_at": 1,
                 }
             )
         profile = settings.MONGODB[collection].find_one(
@@ -416,6 +425,8 @@ def _get_profile_readiness(scope):
             ),
             "complete": _safe_bool(profile.get("profile_completed", False)),
             "missing_fields": _safe_missing_fields(profile),
+            "profile_revision": int(profile.get("profile_revision", 0) or 0),
+            "evidence_updated_at": _safe_iso_datetime(profile.get("updated_at")),
         }
         if label == "alternative":
             risk_status = normalize_risk_status(profile.get("risk_score_status"))
@@ -434,6 +445,9 @@ def _get_profile_readiness(scope):
                     "manual_review_flags": ["risk_score"]
                     if manual_review_required
                     else [],
+                    "risk_input_revision": profile.get("risk_input_revision"),
+                    "risk_calculated_revision": profile.get("risk_calculated_revision"),
+                    "risk_calculated_at": _safe_iso_datetime(profile.get("score_calculated_at")),
                 }
             )
     return result
@@ -467,7 +481,7 @@ def _get_document_review_status(scope):
         raise LookupError("Bound application product requirements are invalid")
     product = LoanProduct.from_dict(product_data)
     required_types = resolve_required_document_types(product)
-    projection = {"document_type": 1, "status": 1, "verified": 1}
+    projection = {"document_type": 1, "status": 1, "verified": 1, "revision": 1, "updated_at": 1}
     documents = list(
         settings.MONGODB["documents"]
         .find(
@@ -512,6 +526,11 @@ def _get_document_review_status(scope):
             for document in documents
         ],
         "truncated": truncated,
+        "evidence_revision": str(max((int(document.get("revision", 0) or 0) for document in documents), default=0)),
+        "evidence_updated_at": max(
+            (_safe_iso_datetime(document.get("updated_at")) for document in documents if _safe_iso_datetime(document.get("updated_at"))),
+            default=None,
+        ),
     }
 
 
@@ -642,6 +661,8 @@ def _get_repayment_summary(scope):
         "total_amount": 1,
         "total_amount_centavos": 1,
         "installments": 1,
+        "revision": 1,
+        "updated_at": 1,
     }
     schedule = settings.MONGODB["repayment_schedules"].find_one(
         {"loan_id": str(scope.application_id), "customer_id": str(scope.customer_id)},
@@ -703,6 +724,8 @@ def _get_repayment_summary(scope):
         },
         "next_due_date": next_due_date,
         "payment_status_summaries": _summarize_installment_statuses(installments),
+        "evidence_revision": str(schedule.get("revision", 0) or 0),
+        "evidence_updated_at": _safe_iso_datetime(schedule.get("updated_at")),
     }
 
 

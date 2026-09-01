@@ -61,6 +61,31 @@ try:
         "AI streams cancelled by an output or duration limit",
         ("provider", "limit"),
     )
+    AI_OFFICER_BRIEF_UNAVAILABLE = Counter(
+        "ai_officer_brief_unavailable_total",
+        "Officer review briefs unavailable by allowlisted topic",
+        ("topic",),
+    )
+    AI_OFFICER_CONTRACT_FAILURES = Counter(
+        "ai_officer_contract_failures_total",
+        "Officer review brief contract validation failures",
+        ("stage",),
+    )
+    AI_OFFICER_PLANNER_LATENCY = Histogram(
+        "ai_officer_planner_duration_seconds",
+        "Officer planner-only provider latency",
+        ("provider",),
+    )
+    AI_OFFICER_PLANNER_SELECTIONS = Counter(
+        "ai_officer_planner_selections_total",
+        "Officer planner selection outcomes",
+        ("intent", "outcome"),
+    )
+    AI_OFFICER_PROVIDER_OUTAGES = Counter(
+        "ai_officer_provider_outages_total",
+        "Officer AI provider outage outcomes",
+        ("provider", "operation"),
+    )
 except (ImportError, ValueError):
     AI_REQUESTS = None
     AI_REQUEST_LATENCY = None
@@ -74,6 +99,11 @@ except (ImportError, ValueError):
     AI_PROVIDER_REQUESTS = None
     AI_PROVIDER_LATENCY = None
     AI_STREAM_LIMIT_CANCELLATIONS = None
+    AI_OFFICER_BRIEF_UNAVAILABLE = None
+    AI_OFFICER_CONTRACT_FAILURES = None
+    AI_OFFICER_PLANNER_LATENCY = None
+    AI_OFFICER_PLANNER_SELECTIONS = None
+    AI_OFFICER_PROVIDER_OUTAGES = None
 
 
 def increment(metric, amount=1, **labels):

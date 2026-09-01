@@ -188,6 +188,11 @@ def test_ai_monitoring_assets_cover_every_metric_family():
         "ai_assistant_active_streams",
         "ai_assistant_provider_requests_total",
         "ai_assistant_provider_duration_seconds_bucket",
+        "ai_officer_brief_unavailable_total",
+        "ai_officer_contract_failures_total",
+        "ai_officer_planner_duration_seconds_bucket",
+        "ai_officer_planner_selections_total",
+        "ai_officer_provider_outages_total",
     }
     assert all(metric in expressions for metric in expected)
     assert dashboard["uid"] == "capstone-ai-assistant"

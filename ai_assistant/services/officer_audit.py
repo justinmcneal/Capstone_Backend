@@ -1,6 +1,8 @@
 """Metadata-only audit helpers for officer AI access and outcomes."""
 
 import logging
+import hashlib
+import json
 
 from analytics.models import AuditLog
 from analytics.services.audit_writer import normalize_audit_payload, queue_audit_failure
@@ -139,6 +141,8 @@ def record_officer_ai_result(
 def record_officer_review_brief(scope, request_id, language, *, brief):
     """Persist the exact public facts shown to an officer, or fail closed."""
     validated = validate_review_brief(brief)
+    canonical = json.dumps(validated, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    brief_hash = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
     details = {
         "application_id": scope.application_id,
         "request_id": request_id,
@@ -146,7 +150,12 @@ def record_officer_review_brief(scope, request_id, language, *, brief):
         "review_state": validated["review_state"],
         "reasons": validated["reasons"],
         "sources": validated["sources"],
+        "headline": validated["headline"][:500],
+        "next_steps": [step[:500] for step in validated["next_steps"][:20]],
+        "contract_version": validated["contract_version"],
         "narration_version": NARRATION_VERSION,
+        "evidence_revision": validated["evidence_revision"],
+        "canonical_brief_hash": brief_hash,
     }
     return _write_or_queue(
         _payload(

@@ -14,12 +14,16 @@
     "sources",
     "advisory_only",
     "disclaimer",
-    "narration"
+    "narration",
+    "as_of",
+    "evidence_revision",
+    "freshness",
+    "actions"
   ],
   "properties": {
     "contract_version": {
       "type": "string",
-      "const": "1.0.0"
+      "const": "1.1.0"
     },
     "review_state": {
       "type": "string",
@@ -94,6 +98,47 @@
     "narration": {
       "type": "string",
       "minLength": 1
+    },
+    "as_of": {
+      "type": ["string", "null"],
+      "format": "date-time"
+    },
+    "evidence_revision": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "freshness": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["state", "warnings"],
+      "properties": {
+        "state": {
+          "type": "string",
+          "enum": ["current", "stale", "unavailable", "unknown"]
+        },
+        "warnings": {
+          "type": "array",
+          "maxItems": 8,
+          "items": {"type": "string", "minLength": 1}
+        }
+      }
+    },
+    "actions": {
+      "type": "array",
+      "maxItems": 3,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "label", "href"],
+        "properties": {
+          "id": {
+            "type": "string",
+            "enum": ["open_profile", "review_documents", "view_repayment_schedule"]
+          },
+          "label": {"type": "string", "minLength": 1},
+          "href": {"type": "string", "pattern": "^/officer/"}
+        }
+      }
     }
   }
 }

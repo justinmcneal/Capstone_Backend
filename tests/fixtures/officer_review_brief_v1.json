@@ -1,5 +1,5 @@
 {
-  "contract_version": "1.0.0",
+  "contract_version": "1.1.0",
   "review_state": "needs_attention",
   "headline": "Not ready for review",
   "reasons": [
@@ -15,5 +15,9 @@
   "sources": ["Application summary"],
   "advisory_only": true,
   "disclaimer": "AI assistance is advisory only. Verify details against the application record.",
-  "narration": "Review readiness: Not ready for review\n• Loan purpose is incomplete: Complete or verify the loan purpose in the application workflow.\nNext step:\n• Complete or verify the loan purpose in the application workflow.\nSources checked: Application summary\nAI assistance is advisory only. Verify details against the application record."
+  "narration": "Review readiness: Not ready for review\n• Loan purpose is incomplete: Complete or verify the loan purpose in the application workflow.\nNext step:\n• Complete or verify the loan purpose in the application workflow.\nSources checked: Application summary\nAI assistance is advisory only. Verify details against the application record.",
+  "as_of": null,
+  "evidence_revision": "0000000000000000000000000000000000000000000000000000000000000000",
+  "freshness": {"state": "unknown", "warnings": []},
+  "actions": []
 }

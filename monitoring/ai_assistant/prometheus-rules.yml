@@ -88,3 +88,19 @@ groups:
         annotations:
           summary: AI Assistant provider token use is above the review threshold
           runbook: docs/AI_ASSISTANT_TESTING_GUIDE.md#ai-operations-runbook
+
+      - alert: OfficerAIProviderOutage
+        expr: sum(rate(ai_officer_provider_outages_total[5m])) > 0
+        for: 5m
+        labels: {severity: warning, service: ai-assistant}
+        annotations:
+          summary: Officer AI provider outages detected
+          runbook: docs/AI_ASSISTANT_TESTING_GUIDE.md#ai-operations-runbook
+
+      - alert: OfficerAIContractFailures
+        expr: sum(rate(ai_officer_contract_failures_total[5m])) > 0
+        for: 1m
+        labels: {severity: critical, service: ai-assistant}
+        annotations:
+          summary: Officer review brief contract failures detected
+          runbook: docs/AI_ASSISTANT_TESTING_GUIDE.md#ai-operations-runbook

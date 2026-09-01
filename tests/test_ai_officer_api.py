@@ -1331,7 +1331,12 @@ def test_officer_chat_audits_before_provider_and_returns_minimized_json(monkeypa
         "review_state",
         "reasons",
         "sources",
+        "headline",
+        "next_steps",
+        "contract_version",
         "narration_version",
+        "evidence_revision",
+        "canonical_brief_hash",
     }
     for event in events:
         assert set(event.details) <= (

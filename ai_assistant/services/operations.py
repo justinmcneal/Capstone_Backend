@@ -6,7 +6,11 @@ from pathlib import Path
 from django.conf import settings
 from pymongo.errors import PyMongoError
 
-from ai_assistant.evaluation import load_dataset, validate_quality_report
+from ai_assistant.evaluation import (
+    load_dataset,
+    load_officer_phase6_matrix,
+    validate_quality_report,
+)
 
 EXPECTED_INDEXES = {
     "ai_interactions": {
@@ -56,6 +60,20 @@ def _quality_report_check():
         return {"ready": False, "checks": {"report_valid": False}}
 
 
+def _officer_phase6_matrix_check():
+    """Ensure the checked-in officer release matrix remains exhaustive."""
+    try:
+        matrix = load_officer_phase6_matrix()
+        return {
+            "ready": True,
+            "matrix_version": matrix["matrix_version"],
+            "matrix_sha256": matrix["matrix_sha256"],
+            "case_count": len(matrix["cases"]),
+        }
+    except (OSError, TypeError, ValueError, json.JSONDecodeError):
+        return {"ready": False}
+
+
 def ai_release_readiness(db):
     """Collect non-secret, read-only AI release checks for an operator."""
     db.command("ping")
@@ -69,6 +87,7 @@ def ai_release_readiness(db):
     }
     monitoring_root = Path(settings.BASE_DIR) / "monitoring" / "ai_assistant"
     quality = _quality_report_check()
+    officer_phase6 = _officer_phase6_matrix_check()
     provider = str(getattr(settings, "LLM_PROVIDER", "") or "").strip()
     provider_configured = (
         bool(getattr(settings, "GROQ_API_KEY", ""))
@@ -108,6 +127,7 @@ def ai_release_readiness(db):
         "required_indexes_present": all(index_checks.values()),
         "validators_present": all(validator_checks.values()),
         "quality_report_approved": quality["ready"],
+        "officer_phase6_matrix_approved": officer_phase6["ready"],
         "provider_privacy_approved": bool(
             getattr(settings, "AI_ASSISTANT_PROVIDER_PRIVACY_APPROVED", False)
         ),
@@ -139,4 +159,5 @@ def ai_release_readiness(db):
         "index_checks": index_checks,
         "validator_checks": validator_checks,
         "quality": quality,
+        "officer_phase6": officer_phase6,
     }

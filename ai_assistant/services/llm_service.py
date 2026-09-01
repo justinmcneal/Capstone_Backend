@@ -47,13 +47,20 @@ from ai_assistant.services.officer_policy import (
     officer_policy_response,
     validate_officer_response,
 )
+from ai_assistant.services.officer_prompt import route_officer_intent
 from ai_assistant.services.officer_privacy import officer_provider_input_violations
 from ai_assistant.services.response_controls import (
     controlled_guidance_response,
     validate_provider_response,
 )
 from ai_assistant.services.request_limits import bounded_conversation_history
-from ai_assistant.metrics import AI_STREAM_LIMIT_CANCELLATIONS, increment
+from ai_assistant.metrics import (
+    AI_OFFICER_PLANNER_LATENCY,
+    AI_OFFICER_PLANNER_SELECTIONS,
+    AI_STREAM_LIMIT_CANCELLATIONS,
+    increment,
+    observe,
+)
 
 logger = logging.getLogger('ai_assistant')
 
@@ -476,6 +483,21 @@ class GroqService:
                 'response_time_ms': int((time.time() - started) * 1000),
                 'tokens_used': tokens_used,
             }
+            observe(
+                AI_OFFICER_PLANNER_LATENCY,
+                max(0, time.time() - started),
+                provider=str(self.provider or "unknown"),
+            )
+            expected_intent = route_officer_intent(str(message or ""))
+            selection_outcome = (
+                "match" if expected_intent and expected_intent == intent else
+                "mismatch" if expected_intent else "selected"
+            )
+            increment(
+                AI_OFFICER_PLANNER_SELECTIONS,
+                intent=intent,
+                outcome=selection_outcome,
+            )
             return result
         except (AttributeError, IndexError):
             return {
@@ -484,8 +506,10 @@ class GroqService:
                 'code': 'AI_PROVIDER_PLANNER_INVALID',
             }
         except requests.Timeout as exc:
+            increment(AI_OFFICER_PLANNER_SELECTIONS, intent="unknown", outcome="provider_error")
             return self._provider_failure(exc, request_id=request_id)
         except requests.RequestException as exc:
+            increment(AI_OFFICER_PLANNER_SELECTIONS, intent="unknown", outcome="provider_error")
             return self._provider_failure(exc, request_id=request_id)
         finally:
             if response is not None:

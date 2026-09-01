@@ -4,6 +4,8 @@ import json
 import logging
 import re
 import time
+from datetime import datetime, timezone
+from urllib.parse import quote
 from decimal import Decimal, InvalidOperation
 from typing import Any, cast
 
@@ -22,6 +24,9 @@ from accounts.utils.throttles import ChatRateThrottle
 from accounts.utils.validation_utils import sanitize_multiline_text
 from ai_assistant.metrics import (
     AI_ACTIVE_STREAMS,
+    AI_OFFICER_BRIEF_UNAVAILABLE,
+    AI_OFFICER_CONTRACT_FAILURES,
+    AI_OFFICER_PROVIDER_OUTAGES,
     AI_PROVIDER_LATENCY,
     AI_PROVIDER_REQUESTS,
     AI_STREAM_LIMIT_CANCELLATIONS,
@@ -308,7 +313,29 @@ def _execute_preset_intent(scope, request_id, intent, evidence):
     }
 
 
-def _rendered_review_brief(evidence, data):
+def _navigation_actions(scope, language):
+    labels = {
+        "en": {
+            "open_profile": "Open profile",
+            "review_documents": "Review documents",
+            "view_repayment_schedule": "View repayment schedule",
+        },
+        "fil": {
+            "open_profile": "Buksan ang profile",
+            "review_documents": "Suriin ang mga dokumento",
+            "view_repayment_schedule": "Tingnan ang iskedyul ng pagbabayad",
+        },
+    }["fil" if str(language).lower() in {"fil", "tl"} else "en"]
+    customer_id = quote(str(scope.customer_id), safe="")
+    application_id = quote(str(scope.application_id), safe="")
+    return [
+        {"id": "open_profile", "label": labels["open_profile"], "href": f"/officer/profiles/{customer_id}"},
+        {"id": "review_documents", "label": labels["review_documents"], "href": f"/officer/documents?applicationId={application_id}"},
+        {"id": "view_repayment_schedule", "label": labels["view_repayment_schedule"], "href": f"/officer/payment-history?applicationId={application_id}"},
+    ]
+
+
+def _rendered_review_brief(evidence, data, scope):
     # A validated preset intent is the server-owned semantic request. Ignore
     # any client-edited label when building the brief so a preset cannot be
     # rerouted through free-text scope handling.
@@ -319,7 +346,16 @@ def _rendered_review_brief(evidence, data):
         language=data["language"],
         message=message,
         diagnostics=diagnostics,
+        as_of=datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        actions=_navigation_actions(scope, data["language"]),
     )
+    if brief.get("review_state") == "unavailable":
+        topic = (brief.get("headline") or "unknown").split(" ", 1)[0].lower()
+        if topic not in {"application", "profile", "document", "repayment", "review"}:
+            topic = "unknown"
+        increment(AI_OFFICER_BRIEF_UNAVAILABLE, topic=topic)
+    if diagnostics and diagnostics[-1] == "brief_contract_invalid":
+        increment(AI_OFFICER_CONTRACT_FAILURES, stage="evidence")
     narration = render_review_brief(brief)
     brief["narration"] = narration
     validate_review_brief(brief, require_narration=True)
@@ -391,6 +427,11 @@ def _officer_provider_preflight(scope, request_id, language, started, *, stream=
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
         )
     if not provider_available:
+        increment(
+            AI_OFFICER_PROVIDER_OUTAGES,
+            provider=_safe_metric_provider(getattr(llm, "provider", "unknown")),
+            operation="preflight",
+        )
         _release_officer_request(scope, request_id)
         _record_provider_metrics(
             llm,
@@ -692,7 +733,7 @@ class OfficerChatView(AIRequestMetricsMixin, APIView):
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             )
 
-        review_brief, narration_result = _rendered_review_brief(evidence, data)
+        review_brief, narration_result = _rendered_review_brief(evidence, data, scope)
         narration = sanitize_multiline_text(review_brief["narration"])
         review_brief["narration"] = narration
         duration_ms = _safe_duration_ms(
@@ -1078,7 +1119,7 @@ class OfficerStreamingChatView(AIRequestMetricsMixin, APIView):
                         )
                         duration_ms = elapsed_ms()
                         review_brief, narration_result = _rendered_review_brief(
-                            evidence, data
+                            evidence, data, scope
                         )
                         narration = sanitize_multiline_text(review_brief["narration"])
                         review_brief["narration"] = narration

@@ -1,8 +1,9 @@
 """Deterministic, localized public contract for the officer review copilot."""
 
 import json
+import hashlib
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
@@ -181,6 +182,11 @@ _TEXT = {
         "rejected": "rejected",
         "expired": "expired",
         "and": "and",
+        "freshness_stale_profile": "Profile risk results may be out of date. Verify the latest profile assessment.",
+        "freshness_stale_evidence": "Application evidence may be out of date. Verify the latest application record.",
+        "action_open_profile": "Open profile",
+        "action_review_documents": "Review documents",
+        "action_view_repayment": "View repayment schedule",
     },
     "fil": {
         "disclaimer": "Ang tulong ng AI ay para lamang sa gabay. Beripikahin ang mga detalye sa talaan ng aplikasyon.",
@@ -247,6 +253,11 @@ _TEXT = {
         "rejected": "tinanggihan",
         "expired": "nag-expire",
         "and": "at",
+        "freshness_stale_profile": "Maaaring luma na ang resulta ng panganib sa profile. Beripikahin ang pinakabagong pagtatasa ng profile.",
+        "freshness_stale_evidence": "Maaaring luma na ang ebidensya ng aplikasyon. Beripikahin ang pinakabagong talaan ng aplikasyon.",
+        "action_open_profile": "Buksan ang profile",
+        "action_review_documents": "Suriin ang mga dokumento",
+        "action_view_repayment": "Tingnan ang iskedyul ng pagbabayad",
     },
 }
 
@@ -274,6 +285,7 @@ _OUT_OF_SCOPE_PATTERNS = (
         re.IGNORECASE,
     ),
 )
+STALE_EVIDENCE_AFTER_SECONDS = 15 * 60
 
 
 class InvalidReviewBrief(ValueError):
@@ -293,7 +305,23 @@ def _is_out_of_scope(message):
     return any(pattern.search(normalized) for pattern in _OUT_OF_SCOPE_PATTERNS)
 
 
-def _base_brief(*, state, headline, reasons, next_steps, sources, locale):
+def _base_brief(
+    *,
+    state,
+    headline,
+    reasons,
+    next_steps,
+    sources,
+    locale,
+    as_of=None,
+    evidence_revision=None,
+    freshness=None,
+    actions=None,
+):
+    if evidence_revision is None:
+        evidence_revision = hashlib.sha256(b"unknown").hexdigest()
+    if freshness is None:
+        freshness = {"state": "unknown", "warnings": []}
     return {
         "contract_version": OFFICER_REVIEW_BRIEF_CONTRACT_VERSION,
         "review_state": state,
@@ -303,10 +331,16 @@ def _base_brief(*, state, headline, reasons, next_steps, sources, locale):
         "sources": sources,
         "advisory_only": True,
         "disclaimer": _TEXT[locale]["disclaimer"],
+        "as_of": as_of,
+        "evidence_revision": evidence_revision,
+        "freshness": freshness,
+        "actions": list(actions or []),
     }
 
 
-def build_unavailable_review_brief(language, *, topic=None):
+def build_unavailable_review_brief(
+    language, *, topic=None, as_of=None, evidence_revision=None, actions=None
+):
     locale = _locale(language)
     text = _TEXT[locale]
     topic_key = topic if topic in {"application", "profile", "document", "repayment"} else "general"
@@ -319,10 +353,14 @@ def build_unavailable_review_brief(language, *, topic=None):
         ],
         sources=[],
         locale=locale,
+        as_of=as_of,
+        evidence_revision=None,
+        freshness={"state": "unavailable", "warnings": []},
+        actions=actions,
     )
 
 
-def build_scope_limit_review_brief(language):
+def build_scope_limit_review_brief(language, *, as_of=None):
     locale = _locale(language)
     text = _TEXT[locale]
     return _base_brief(
@@ -332,6 +370,7 @@ def build_scope_limit_review_brief(language):
         next_steps=[text["scope_step"]],
         sources=[],
         locale=locale,
+        as_of=as_of,
     )
 
 
@@ -761,13 +800,104 @@ def _topic_for_tool(tool_name):
     }.get(tool_name)
 
 
-def build_review_brief(evidence, *, language="en", message="", diagnostics=None):
+def _evidence_revision(evidence):
+    """Return a deterministic, non-identifying digest for the evidence snapshot."""
+    sanitized = []
+    for entry in evidence if isinstance(evidence, list) else []:
+        if not isinstance(entry, dict):
+            sanitized.append({"valid": False})
+            continue
+        item = {"tool_name": entry.get("tool_name"), "success": entry.get("success") is True}
+        if item["success"]:
+            raw = entry.get("result")
+            try:
+                parsed = json.loads(raw) if isinstance(raw, str) else raw
+            except (TypeError, ValueError):
+                parsed = None
+            item["result"] = parsed
+        else:
+            item["code"] = entry.get("code")
+        sanitized.append(item)
+    canonical = json.dumps(sanitized, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def _freshness_for_evidence(evidence, locale):
+    stale_profile = False
+    stale_application = False
+    for entry in evidence if isinstance(evidence, list) else []:
+        if not isinstance(entry, dict) or entry.get("success") is not True:
+            continue
+        raw = entry.get("result")
+        try:
+            result = json.loads(raw) if isinstance(raw, str) else raw
+        except (TypeError, ValueError):
+            result = {}
+        if not isinstance(result, dict):
+            continue
+        tool_name = entry.get("tool_name")
+        if tool_name == "get_profile_readiness":
+            alternative = result.get("alternative")
+            if isinstance(alternative, dict):
+                risk_status = alternative.get("risk_status") or alternative.get("risk_score_status")
+                if risk_status == "stale" or (
+                    alternative.get("risk_input_revision") is not None
+                    and alternative.get("risk_calculated_revision") is not None
+                    and alternative.get("risk_input_revision") != alternative.get("risk_calculated_revision")
+                ):
+                    stale_profile = True
+            for profile_value in result.values():
+                if isinstance(profile_value, dict) and isinstance(profile_value.get("evidence_updated_at"), str):
+                    try:
+                        profile_updated = datetime.fromisoformat(profile_value["evidence_updated_at"].replace("Z", "+00:00"))
+                        if profile_updated.tzinfo is None:
+                            profile_updated = profile_updated.replace(tzinfo=timezone.utc)
+                        if (datetime.now(timezone.utc) - profile_updated).total_seconds() > STALE_EVIDENCE_AFTER_SECONDS:
+                            stale_application = True
+                    except ValueError:
+                        pass
+        if result.get("stale") is True or result.get("evidence_stale") is True:
+            stale_application = True
+        updated_at = result.get("evidence_updated_at")
+        if isinstance(updated_at, str):
+            try:
+                parsed_updated_at = datetime.fromisoformat(updated_at.replace("Z", "+00:00"))
+                if parsed_updated_at.tzinfo is None:
+                    parsed_updated_at = parsed_updated_at.replace(tzinfo=timezone.utc)
+                if (datetime.now(timezone.utc) - parsed_updated_at).total_seconds() > STALE_EVIDENCE_AFTER_SECONDS:
+                    stale_application = True
+            except ValueError:
+                pass
+    warnings = []
+    text = _TEXT[locale]
+    if stale_profile:
+        warnings.append(text["freshness_stale_profile"])
+    if stale_application:
+        warnings.append(text["freshness_stale_evidence"])
+    return {"state": "stale" if warnings else "current", "warnings": warnings}
+
+
+def build_review_brief(
+    evidence,
+    *,
+    language="en",
+    message="",
+    diagnostics=None,
+    as_of=None,
+    actions=None,
+):
     locale = _locale(language)
     text = _TEXT[locale]
     if _is_out_of_scope(message):
-        return build_scope_limit_review_brief(locale)
+        return build_scope_limit_review_brief(locale, as_of=as_of)
     if not isinstance(evidence, list) or not evidence:
-        return build_unavailable_review_brief(locale, topic="application")
+        return build_unavailable_review_brief(
+            locale,
+            topic="application",
+            as_of=as_of,
+            evidence_revision=_evidence_revision(evidence),
+            actions=actions,
+        )
 
     fragments = []
     tools = []
@@ -778,7 +908,11 @@ def build_review_brief(evidence, *, language="en", message="", diagnostics=None)
                 if diagnostics is not None:
                     diagnostics.append("tool_read_unavailable")
                 return build_unavailable_review_brief(
-                    locale, topic=_topic_for_tool(tool_name)
+                    locale,
+                    topic=_topic_for_tool(tool_name),
+                    as_of=as_of,
+                    evidence_revision=_evidence_revision(evidence),
+                    actions=actions,
                 )
             fragments.append(_FRAGMENT_BUILDERS[tool_name](result, locale))
             tools.append(tool_name)
@@ -790,7 +924,13 @@ def build_review_brief(evidence, *, language="en", message="", diagnostics=None)
             if evidence and isinstance(evidence[0], dict)
             else "application"
         )
-        return build_unavailable_review_brief(locale, topic=topic)
+        return build_unavailable_review_brief(
+            locale,
+            topic=topic,
+            as_of=as_of,
+            evidence_revision=_evidence_revision(evidence),
+            actions=actions,
+        )
 
     states = {fragment[0] for fragment in fragments}
     if "needs_attention" in states:
@@ -831,6 +971,10 @@ def build_review_brief(evidence, *, language="en", message="", diagnostics=None)
         next_steps=next_steps,
         sources=sources,
         locale=locale,
+        as_of=as_of,
+        evidence_revision=_evidence_revision(evidence),
+        freshness=_freshness_for_evidence(evidence, locale),
+        actions=actions,
     )
     return validate_review_brief(brief)
 
@@ -863,6 +1007,58 @@ def validate_review_brief(brief, *, require_narration=False):
         raise InvalidReviewBrief("Review headline is invalid")
     if brief["advisory_only"] is not True:
         raise InvalidReviewBrief("Review brief must be advisory")
+    if brief.get("as_of") is not None:
+        if (
+            not isinstance(brief["as_of"], str)
+            or not brief["as_of"].strip()
+            or "T" not in brief["as_of"]
+        ):
+            raise InvalidReviewBrief("Review as_of is invalid")
+        try:
+            datetime.fromisoformat(brief["as_of"].replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise InvalidReviewBrief("Review as_of is invalid") from exc
+    evidence_revision = brief.get("evidence_revision")
+    if not isinstance(evidence_revision, str) or not re.fullmatch(r"[a-f0-9]{64}", evidence_revision):
+        raise InvalidReviewBrief("Review evidence revision is invalid")
+    freshness = brief.get("freshness")
+    if (
+        not isinstance(freshness, dict)
+        or set(freshness) != {"state", "warnings"}
+        or freshness.get("state") not in {"current", "stale", "unavailable", "unknown"}
+        or not isinstance(freshness.get("warnings"), list)
+        or len(freshness["warnings"]) > 8
+        or any(not isinstance(warning, str) or not warning.strip() for warning in freshness["warnings"])
+    ):
+        raise InvalidReviewBrief("Review freshness is invalid")
+    if freshness["state"] == "stale" and not freshness["warnings"]:
+        raise InvalidReviewBrief("Stale review freshness requires warnings")
+    actions = brief.get("actions")
+    allowed_actions = {
+        "open_profile",
+        "review_documents",
+        "view_repayment_schedule",
+    }
+    if not isinstance(actions, list) or len(actions) > 3:
+        raise InvalidReviewBrief("Review actions are invalid")
+    seen_actions = set()
+    for action in actions:
+        if (
+            not isinstance(action, dict)
+            or set(action) != {"id", "label", "href"}
+            or action["id"] not in allowed_actions
+            or action["id"] in seen_actions
+            or not isinstance(action["label"], str)
+            or not action["label"].strip()
+            or not isinstance(action["href"], str)
+            or not (
+                (action["id"] == "open_profile" and re.fullmatch(r"/officer/profiles/[^/?#]+", action["href"]))
+                or (action["id"] == "review_documents" and re.fullmatch(r"/officer/documents(?:\?applicationId=[^&#]+)?", action["href"]))
+                or (action["id"] == "view_repayment_schedule" and re.fullmatch(r"/officer/payment-history(?:\?applicationId=[^&#]+)?", action["href"]))
+            )
+        ):
+            raise InvalidReviewBrief("Review actions are invalid")
+        seen_actions.add(action["id"])
     locale = _brief_locale(brief)
     if brief["disclaimer"] != _TEXT[locale]["disclaimer"]:
         raise InvalidReviewBrief("Review disclaimer is invalid")

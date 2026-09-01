@@ -46,7 +46,10 @@ def test_application_brief_localizes_internal_readiness_without_leaking_it():
         message="Summarize this application's review readiness.",
     )
 
-    assert brief == {
+    assert {key: brief[key] for key in (
+        "contract_version", "review_state", "headline", "reasons", "next_steps",
+        "sources", "advisory_only", "disclaimer"
+    )} == {
         "contract_version": OFFICER_REVIEW_BRIEF_CONTRACT_VERSION,
         "review_state": "needs_attention",
         "headline": "Not ready for review",
@@ -289,7 +292,10 @@ def test_malformed_or_unknown_evidence_fails_closed(evidence):
 def test_out_of_scope_question_returns_scope_limit_brief(message):
     brief = build_review_brief([], language="en", message=message)
 
-    assert brief == {
+    assert {key: brief[key] for key in (
+        "contract_version", "review_state", "headline", "reasons", "next_steps",
+        "sources", "advisory_only", "disclaimer"
+    )} == {
         "contract_version": OFFICER_REVIEW_BRIEF_CONTRACT_VERSION,
         "review_state": "scope_limited",
         "headline": "Request outside this review brief",
@@ -732,5 +738,10 @@ def test_viewed_review_brief_audit_persists_reconstructable_public_metadata(
         "review_state": "ready",
         "reasons": brief["reasons"],
         "sources": ["Application summary"],
+        "headline": brief["headline"],
+        "next_steps": brief["next_steps"],
+        "contract_version": brief["contract_version"],
         "narration_version": "review-brief-v1",
+        "evidence_revision": brief["evidence_revision"],
+        "canonical_brief_hash": payload["details"]["canonical_brief_hash"],
     }

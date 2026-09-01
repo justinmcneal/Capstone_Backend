@@ -478,7 +478,12 @@ AUDIT_ACTION_DETAIL_KEYS.update(
                 "review_state",
                 "reasons",
                 "sources",
+                "headline",
+                "next_steps",
+                "contract_version",
                 "narration_version",
+                "evidence_revision",
+                "canonical_brief_hash",
             }
         ),
     }
