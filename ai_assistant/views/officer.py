@@ -35,7 +35,11 @@ from ai_assistant.metrics import (
     increment,
     observe,
 )
-from ai_assistant.serializers.officer import OfficerChatRequestSerializer
+from ai_assistant.serializers.officer import (
+    OFFICER_PRIVACY_BLOCKED_CODE,
+    OFFICER_REQUEST_INVALID_CODE,
+    OfficerChatRequestSerializer,
+)
 from ai_assistant.services import get_llm_service
 from ai_assistant.services.idempotency import (
     claim,
@@ -47,10 +51,12 @@ from ai_assistant.services.officer_audit import (
     OfficerAIAuditUnavailable,
     record_officer_ai_access,
     record_officer_ai_result,
-    record_officer_review_brief,
 )
 from ai_assistant.services.officer_history import sign_officer_assistant_history
-from ai_assistant.services.officer_policy import validate_officer_response
+from ai_assistant.services.officer_policy import (
+    officer_policy_category,
+    validate_officer_response,
+)
 from ai_assistant.services.officer_prompt import (
     OFFICER_SYSTEM_PROMPT,
     OFFICER_SUGGESTION_INTENTS,
@@ -59,6 +65,7 @@ from ai_assistant.services.officer_prompt import (
 )
 from ai_assistant.services.officer_review_brief import (
     build_review_brief,
+    build_scope_limit_review_brief,
     build_unavailable_review_brief,
     render_review_brief,
     validate_review_brief,
@@ -115,6 +122,30 @@ def _consent_required_response():
         message="Current customer AI consent is required to use this feature",
         code="CONSENT_REQUIRED",
         status_code=status.HTTP_403_FORBIDDEN,
+    )
+
+
+def _contains_validation_code(errors, code):
+    if isinstance(errors, dict):
+        return any(_contains_validation_code(value, code) for value in errors.values())
+    if isinstance(errors, (list, tuple)):
+        return any(_contains_validation_code(value, code) for value in errors)
+    return getattr(errors, "code", None) == code
+
+
+def _officer_validation_response(serializer):
+    """Return a stable validation contract without exposing protected input."""
+    if _contains_validation_code(serializer.errors, OFFICER_PRIVACY_BLOCKED_CODE):
+        return error_response(
+            message="Protected information cannot be processed by the officer assistant.",
+            code=OFFICER_PRIVACY_BLOCKED_CODE,
+            status_code=status.HTTP_400_BAD_REQUEST,
+        )
+    return error_response(
+        message="Invalid officer assistant request",
+        code=OFFICER_REQUEST_INVALID_CODE,
+        errors=serializer.errors,
+        status_code=status.HTTP_400_BAD_REQUEST,
     )
 
 
@@ -335,19 +366,37 @@ def _navigation_actions(scope, language):
     ]
 
 
-def _rendered_review_brief(evidence, data, scope):
+def _rendered_review_brief(
+    evidence,
+    data,
+    scope,
+    *,
+    force_scope_limited=False,
+    scope_reason=None,
+):
     # A validated preset intent is the server-owned semantic request. Ignore
     # any client-edited label when building the brief so a preset cannot be
     # rerouted through free-text scope handling.
     message = "" if data.get("intent") else data["message"]
     diagnostics = []
-    brief = build_review_brief(
-        evidence,
-        language=data["language"],
-        message=message,
-        diagnostics=diagnostics,
-        as_of=datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
-        actions=_navigation_actions(scope, data["language"]),
+    as_of = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    if force_scope_limited and scope_reason is None:
+        policy_reason = officer_policy_category(data["message"])
+        if policy_reason in {"help", "ambiguous", "read_only"}:
+            scope_reason = policy_reason
+    brief = (
+        build_scope_limit_review_brief(
+            data["language"], reason=scope_reason, as_of=as_of
+        )
+        if force_scope_limited
+        else build_review_brief(
+            evidence,
+            language=data["language"],
+            message=message,
+            diagnostics=diagnostics,
+            as_of=as_of,
+            actions=_navigation_actions(scope, data["language"]),
+        )
     )
     if brief.get("review_state") == "unavailable":
         topic = (brief.get("headline") or "unknown").split(" ", 1)[0].lower()
@@ -377,6 +426,40 @@ def _is_scope_limited_request(data):
         [], language=data["language"], message=data["message"]
     )
     return brief.get("review_state") == "scope_limited"
+
+
+def _audit_routing_metadata(data, resolved_intent, scope_limited, result=None):
+    """Return bounded routing metadata without retaining officer text."""
+    if resolved_intent:
+        return {
+            "route": resolved_intent,
+            "routing_source": "deterministic",
+            "scope_outcome": "in_scope",
+            "provider_available": "not_required",
+        }
+    if scope_limited:
+        category = officer_policy_category(data["message"])
+        return {
+            "route": "ambiguous" if category == "ambiguous" else "out_of_scope",
+            "routing_source": "deterministic",
+            "scope_outcome": "policy" if category else "out_of_scope",
+            "provider_available": "not_required",
+        }
+
+    route = result.get("route") if isinstance(result, dict) else None
+    if route in OFFICER_SUGGESTION_INTENTS:
+        scope_outcome = "in_scope"
+    elif route == "out_of_scope":
+        scope_outcome = "out_of_scope"
+    else:
+        route = "ambiguous" if route == "ambiguous" else "unresolved"
+        scope_outcome = "ambiguous"
+    return {
+        "route": route,
+        "routing_source": "classifier",
+        "scope_outcome": scope_outcome,
+        "provider_available": "available",
+    }
 
 
 def _authorization_error(scope):
@@ -412,6 +495,10 @@ def _officer_provider_preflight(scope, request_id, language, started, *, stream=
             language,
             outcome="AI_PROVIDER_ERROR",
             duration_ms=int((time.monotonic() - started) * 1000),
+            route="unresolved",
+            routing_source="classifier",
+            scope_outcome="ambiguous",
+            provider_available="unknown",
         )
         logger.error(
             "Officer AI provider setup failed",
@@ -445,6 +532,10 @@ def _officer_provider_preflight(scope, request_id, language, started, *, stream=
             language,
             outcome="AI_PROVIDER_UNAVAILABLE",
             duration_ms=int((time.monotonic() - started) * 1000),
+            route="unresolved",
+            routing_source="classifier",
+            scope_outcome="ambiguous",
+            provider_available="unavailable",
         )
         return None, error_response(
             message="AI service is currently unavailable",
@@ -538,7 +629,12 @@ class OfficerSuggestionsView(APIView):
         if not has_current_ai_consent(scope):
             return _consent_required_response()
         return success_response(
-            data={"suggestions": officer_suggestions(language), "language": language},
+            data={
+                "suggestions": officer_suggestions(
+                    language, status=getattr(scope.application, "status", None)
+                ),
+                "language": language,
+            },
             message="Officer suggestions retrieved",
         )
 
@@ -558,11 +654,7 @@ class OfficerChatView(AIRequestMetricsMixin, APIView):
             context={"request": request},
         )
         if not serializer.is_valid():
-            return error_response(
-                message="Invalid officer assistant request",
-                errors=serializer.errors,
-                status_code=status.HTTP_400_BAD_REQUEST,
-            )
+            return _officer_validation_response(serializer)
 
         scope, response = resolve_officer_scope(
             request, serializer.validated_data["application_id"]
@@ -616,6 +708,7 @@ class OfficerChatView(AIRequestMetricsMixin, APIView):
                 data["language"],
                 outcome=authorization_error,
                 duration_ms=int((time.monotonic() - started) * 1000),
+                **_audit_routing_metadata(data, resolved_intent, scope_limited),
             )
             return error_response(
                 message="Officer access to this application is no longer available."
@@ -667,6 +760,7 @@ class OfficerChatView(AIRequestMetricsMixin, APIView):
                 data["language"],
                 outcome="AI_PROVIDER_ERROR",
                 duration_ms=int((time.monotonic() - started) * 1000),
+                **_audit_routing_metadata(data, resolved_intent, scope_limited),
             )
             logger.error(
                 "Officer AI provider request failed",
@@ -698,6 +792,7 @@ class OfficerChatView(AIRequestMetricsMixin, APIView):
                     result.get("response_time_ms"),
                     (time.monotonic() - started) * 1000,
                 ),
+                **_audit_routing_metadata(data, resolved_intent, scope_limited),
             )
             return error_response(
                 message="Failed to process officer AI request",
@@ -726,6 +821,7 @@ class OfficerChatView(AIRequestMetricsMixin, APIView):
                 outcome=outcome,
                 tool_names=tool_names,
                 duration_ms=duration_ms,
+                **_audit_routing_metadata(data, resolved_intent, scope_limited, result),
             )
             return error_response(
                 message="AI service is temporarily unavailable",
@@ -733,7 +829,13 @@ class OfficerChatView(AIRequestMetricsMixin, APIView):
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             )
 
-        review_brief, narration_result = _rendered_review_brief(evidence, data, scope)
+        review_brief, narration_result = _rendered_review_brief(
+            evidence,
+            data,
+            scope,
+            force_scope_limited=scope_limited or result.get("scope_limited", False),
+            scope_reason=result.get("scope_reason"),
+        )
         narration = sanitize_multiline_text(review_brief["narration"])
         review_brief["narration"] = narration
         duration_ms = _safe_duration_ms(
@@ -754,6 +856,7 @@ class OfficerChatView(AIRequestMetricsMixin, APIView):
                 outcome=authorization_error,
                 tool_names=tool_names,
                 duration_ms=duration_ms,
+                **_audit_routing_metadata(data, resolved_intent, scope_limited, result),
             )
             return error_response(
                 message="Officer access to this application is no longer available."
@@ -774,25 +877,8 @@ class OfficerChatView(AIRequestMetricsMixin, APIView):
                 if isinstance(narration_result, dict)
                 else None
             ),
+            **_audit_routing_metadata(data, resolved_intent, scope_limited, result),
         )
-        try:
-            record_officer_review_brief(
-                scope,
-                request_id,
-                data["language"],
-                brief={
-                    key: value
-                    for key, value in review_brief.items()
-                    if key != "narration"
-                },
-            )
-        except OfficerAIAuditUnavailable:
-            _release_officer_request(scope, request_id)
-            return error_response(
-                message="AI review audit is temporarily unavailable",
-                code="AI_AUDIT_UNAVAILABLE",
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            )
         mark_complete(scope.customer_id, request_id)
         _record_provider_metrics(
             llm,
@@ -854,11 +940,7 @@ class OfficerStreamingChatView(AIRequestMetricsMixin, APIView):
             context={"request": request},
         )
         if not serializer.is_valid():
-            return error_response(
-                message="Invalid officer assistant request",
-                errors=serializer.errors,
-                status_code=status.HTTP_400_BAD_REQUEST,
-            )
+            return _officer_validation_response(serializer)
 
         data = serializer.validated_data
         scope, response = resolve_officer_scope(request, data["application_id"])
@@ -927,7 +1009,13 @@ class OfficerStreamingChatView(AIRequestMetricsMixin, APIView):
             def elapsed_ms():
                 return max(0, int((time.monotonic() - started) * 1000))
 
-            def record_result(outcome, *, duration_ms=None, diagnostic_code=None):
+            def record_result(
+                outcome,
+                *,
+                duration_ms=None,
+                diagnostic_code=None,
+                routing_metadata=None,
+            ):
                 nonlocal result_recorded
                 if result_recorded:
                     return
@@ -940,6 +1028,12 @@ class OfficerStreamingChatView(AIRequestMetricsMixin, APIView):
                     tool_names=tool_names,
                     duration_ms=elapsed_ms() if duration_ms is None else duration_ms,
                     diagnostic_code=diagnostic_code,
+                    **(
+                        routing_metadata
+                        or _audit_routing_metadata(
+                            data, resolved_intent, scope_limited
+                        )
+                    ),
                 )
 
             def complete_lease():
@@ -1119,7 +1213,12 @@ class OfficerStreamingChatView(AIRequestMetricsMixin, APIView):
                         )
                         duration_ms = elapsed_ms()
                         review_brief, narration_result = _rendered_review_brief(
-                            evidence, data, scope
+                            evidence,
+                            data,
+                            scope,
+                            force_scope_limited=scope_limited
+                            or chunk.get("scope_limited", False),
+                            scope_reason=chunk.get("scope_reason"),
                         )
                         narration = sanitize_multiline_text(review_brief["narration"])
                         review_brief["narration"] = narration
@@ -1129,30 +1228,6 @@ class OfficerStreamingChatView(AIRequestMetricsMixin, APIView):
                         ):
                             terminal_emitted = True
                             yield stream_limit_event("characters")
-                            return
-                        try:
-                            record_officer_review_brief(
-                                scope,
-                                request_id,
-                                data["language"],
-                                brief={
-                                    key: value
-                                    for key, value in review_brief.items()
-                                    if key != "narration"
-                                },
-                            )
-                        except OfficerAIAuditUnavailable:
-                            release_lease()
-                            record_result("AI_AUDIT_UNAVAILABLE")
-                            terminal_emitted = True
-                            yield self._event(
-                                "error",
-                                {
-                                    "content": "AI review audit is temporarily unavailable",
-                                    "code": "AI_AUDIT_UNAVAILABLE",
-                                    "request_id": request_id,
-                                },
-                            )
                             return
                         terminal_event = self._event(
                             "done",
@@ -1175,6 +1250,9 @@ class OfficerStreamingChatView(AIRequestMetricsMixin, APIView):
                                 narration_result.get("diagnostic_code")
                                 if isinstance(narration_result, dict)
                                 else None
+                            ),
+                            routing_metadata=_audit_routing_metadata(
+                                data, resolved_intent, scope_limited, chunk
                             ),
                         )
                         complete_lease()

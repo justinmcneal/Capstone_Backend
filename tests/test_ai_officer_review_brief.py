@@ -9,6 +9,7 @@ from ai_assistant.services.officer_review_brief import (
     OFFICER_REVIEW_BRIEF_CONTRACT_VERSION,
     InvalidReviewBrief,
     build_review_brief,
+    build_scope_limit_review_brief,
     build_unavailable_review_brief,
     render_review_brief,
     validate_review_brief,
@@ -307,6 +308,30 @@ def test_out_of_scope_question_returns_scope_limit_brief(message):
         "advisory_only": True,
         "disclaimer": "AI assistance is advisory only. Verify details against the application record.",
     }
+
+
+@pytest.mark.parametrize(
+    ("message", "headline_fragment", "step_fragment"),
+    [
+        ("hi", "help with this application", "review readiness"),
+        ("Please approve this application", "read-only", "portal workflow"),
+    ],
+)
+def test_semantic_scope_cases_return_deterministic_guidance(
+    message, headline_fragment, step_fragment
+):
+    brief = build_review_brief([], language="en", message=message)
+
+    assert brief["review_state"] == "scope_limited"
+    assert headline_fragment in brief["headline"].lower()
+    assert step_fragment in " ".join(brief["next_steps"]).lower()
+
+
+def test_scope_limit_brief_supports_ambiguous_guidance():
+    brief = build_scope_limit_review_brief("en", reason="ambiguous")
+
+    assert brief["review_state"] == "scope_limited"
+    assert "clarify" in brief["headline"].lower()
 
 
 @pytest.mark.parametrize(
@@ -692,7 +717,7 @@ def test_v1_compatibility_fixture_rejects_unknown_state():
         validate_review_brief(fixture, require_narration=True)
 
 
-def test_viewed_review_brief_audit_persists_reconstructable_public_metadata(
+def test_viewed_review_brief_audit_records_only_non_content_metadata(
     monkeypatch,
 ):
     writer = Mock(return_value=SimpleNamespace(id="audit-1"))
@@ -725,23 +750,28 @@ def test_viewed_review_brief_audit_persists_reconstructable_public_metadata(
         "request-1",
         "en",
         brief=brief,
+        route="application_readiness",
+        routing_source="deterministic",
+        scope_outcome="in_scope",
+        tool_names=["get_application_summary"],
+        provider_available="not_required",
     )
 
     payload = writer.call_args.kwargs
     assert payload["action"] == "ai_officer_review_brief_viewed"
-    assert payload["resource_id"] == "application-1"
+    assert payload["resource_id"] != "application-1"
     assert payload["user_id"] != "officer-1"
     assert payload["details"] == {
-        "application_id": "application-1",
+        "application_index": payload["resource_id"],
         "request_id": "request-1",
         "language": "en",
         "review_state": "ready",
-        "reasons": brief["reasons"],
-        "sources": ["Application summary"],
-        "headline": brief["headline"],
-        "next_steps": brief["next_steps"],
-        "contract_version": brief["contract_version"],
-        "narration_version": "review-brief-v1",
-        "evidence_revision": brief["evidence_revision"],
-        "canonical_brief_hash": payload["details"]["canonical_brief_hash"],
+        "route": "application_readiness",
+        "routing_source": "deterministic",
+        "scope_outcome": "in_scope",
+        "tool_names": ["get_application_summary"],
+        "tool_count": 1,
+        "duration_ms": 0,
+        "provider_available": "not_required",
+        "diagnostic_code": "AI_OFFICER_OK",
     }

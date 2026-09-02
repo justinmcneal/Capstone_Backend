@@ -87,7 +87,7 @@ def route_officer_intent(message):
     return None
 
 
-def officer_suggestions(language):
+def officer_suggestions(language, status=None):
     labels = (
         [
             "Ibuod ang kahandaan ng aplikasyon para sa pagsusuri.",
@@ -103,7 +103,69 @@ def officer_suggestions(language):
             "Explain the current repayment summary.",
         ]
     )
-    return [
+    suggestions = [
         {"id": intent, "label": label}
         for intent, label in zip(OFFICER_SUGGESTION_INTENTS, labels)
     ]
+    if status is None:
+        return suggestions
+
+    normalized_status = str(status or "").strip().lower()
+    if normalized_status in {"draft", "submitted", "under_review"}:
+        return suggestions[:3]
+
+    lifecycle_labels = {
+        "en": {
+            "approved": (
+                "application_readiness",
+                "Review approval conditions and disbursement readiness.",
+            ),
+            "disbursed": (
+                "repayment_summary",
+                "Review repayment health, next installment, and overdue status.",
+            ),
+            "active": (
+                "repayment_summary",
+                "Review repayment health, next installment, and overdue status.",
+            ),
+            "completed": ("repayment_summary", "Summarize repayment completion."),
+            "rejected": (
+                "application_readiness",
+                "Review recorded reasons and permitted follow-up.",
+            ),
+            "cancelled": (
+                "application_readiness",
+                "Review cancellation state and administrative follow-up.",
+            ),
+        },
+        "tl": {
+            "approved": (
+                "application_readiness",
+                "Suriin ang mga kondisyon ng pag-apruba at kahandaan sa pag-release.",
+            ),
+            "disbursed": (
+                "repayment_summary",
+                "Suriin ang kalagayan ng bayaran, susunod na hulog, at overdue.",
+            ),
+            "active": (
+                "repayment_summary",
+                "Suriin ang kalagayan ng bayaran, susunod na hulog, at overdue.",
+            ),
+            "completed": ("repayment_summary", "Ibuod ang pagkumpleto ng bayaran."),
+            "rejected": (
+                "application_readiness",
+                "Suriin ang naitalang dahilan at pinapahintulutang follow-up.",
+            ),
+            "cancelled": (
+                "application_readiness",
+                "Suriin ang pagkansela at administratibong follow-up.",
+            ),
+        },
+    }
+    lifecycle_suggestion = lifecycle_labels[
+        "tl" if str(language or "en").lower() == "tl" else "en"
+    ].get(normalized_status)
+    if lifecycle_suggestion is None:
+        return suggestions[:3]
+    intent, label = lifecycle_suggestion
+    return [{"id": intent, "label": label}]

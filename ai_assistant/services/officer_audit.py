@@ -1,9 +1,6 @@
 """Metadata-only audit helpers for officer AI access and outcomes."""
 
 import logging
-import hashlib
-import json
-
 from analytics.models import AuditLog
 from analytics.services.audit_writer import normalize_audit_payload, queue_audit_failure
 from ai_assistant.services.officer_review_brief import validate_review_brief
@@ -12,9 +9,29 @@ logger = logging.getLogger("ai_assistant")
 
 AUDIT_DOMAIN = "ai_assistant"
 SCOPE_POLICY_VERSION = "event-time-assignment-v1"
-NARRATION_VERSION = "review-brief-v1"
 OFFICER_DIAGNOSTIC_CODES = frozenset(
     {
+        "AI_OFFICER_OK",
+        "AI_OFFICER_REQUEST_ACCEPTED",
+        "AI_OFFICER_SCOPE_LIMITED",
+        "AI_PROVIDER_ERROR",
+        "AI_PROVIDER_BUSY",
+        "AI_PROVIDER_CIRCUIT_OPEN",
+        "AI_PROVIDER_PLANNER_INVALID",
+        "AI_PROVIDER_TIMEOUT",
+        "AI_PROVIDER_UNAVAILABLE",
+        "AI_PROVIDER_STREAM_MALFORMED",
+        "AI_PROVIDER_STREAM_TRUNCATED",
+        "AI_OFFICER_CONSENT_CHANGED",
+        "AI_OFFICER_SCOPE_CHANGED",
+        "AI_OFFICER_TOOL_READ_FAILED",
+        "AI_OFFICER_TOOL_UNKNOWN",
+        "AI_OFFICER_TOOL_VALIDATION_FAILED",
+        "AI_AUDIT_UNAVAILABLE",
+        "AI_STREAM_ERROR",
+        "AI_STREAM_INCOMPLETE",
+        "AI_PROVIDER_STREAM_OUTPUT_LIMIT",
+        "AI_PROVIDER_STREAM_DURATION_LIMIT",
         "tool_read_unavailable",
         "unsupported_domain_value",
         "evidence_truncated",
@@ -30,6 +47,7 @@ class OfficerAIAuditUnavailable(RuntimeError):
 
 def _payload(action, scope, request_id, language, details):
     officer_index = AuditLog.blind_index(scope.officer_id)
+    application_index = AuditLog.blind_index(scope.application_id)
     return normalize_audit_payload(
         {
             "action": action,
@@ -38,7 +56,7 @@ def _payload(action, scope, request_id, language, details):
             "user_email": "",
             "description": "Loan officer AI assistant access metadata",
             "resource_type": "loan_application",
-            "resource_id": scope.application_id,
+            "resource_id": application_index,
             "details": details,
             "ip_address": "",
             "idempotency_key": f"officer-ai:{request_id}:{action}",
@@ -84,13 +102,18 @@ def _write_or_queue(payload, *, required):
 
 def record_officer_ai_access(scope, request_id, language):
     details = {
-        "application_id": scope.application_id,
+        "application_index": AuditLog.blind_index(scope.application_id),
         "request_id": request_id,
         "language": language,
         "outcome": "authorized",
+        "route": "unresolved",
+        "routing_source": "pending",
+        "scope_outcome": "ambiguous",
         "tool_names": [],
         "tool_count": 0,
         "duration_ms": 0,
+        "provider_available": "unknown",
+        "diagnostic_code": "AI_OFFICER_REQUEST_ACCEPTED",
     }
     return _write_or_queue(
         _payload(
@@ -113,19 +136,61 @@ def record_officer_ai_result(
     tool_names=None,
     duration_ms=0,
     diagnostic_code=None,
+    route="unresolved",
+    routing_source="unknown",
+    scope_outcome="ambiguous",
+    provider_available="unknown",
 ):
     names = list(tool_names or [])
     details = {
-        "application_id": scope.application_id,
+        "application_index": AuditLog.blind_index(scope.application_id),
         "request_id": request_id,
         "language": language,
         "outcome": str(outcome),
+        "route": route if route in {
+            "application_readiness",
+            "profile_readiness",
+            "document_status",
+            "repayment_summary",
+            "out_of_scope",
+            "ambiguous",
+            "unresolved",
+        } else "unresolved",
+        "routing_source": routing_source if routing_source in {
+            "deterministic",
+            "classifier",
+            "pending",
+            "unknown",
+        } else "unknown",
+        "scope_outcome": scope_outcome if scope_outcome in {
+            "in_scope",
+            "out_of_scope",
+            "ambiguous",
+            "policy",
+        } else "ambiguous",
         "tool_names": names,
         "tool_count": len(names),
         "duration_ms": max(0, int(duration_ms or 0)),
+        "provider_available": provider_available if provider_available in {
+            "available",
+            "unavailable",
+            "not_required",
+            "unknown",
+        } else "unknown",
+        "diagnostic_code": (
+            diagnostic_code
+            if diagnostic_code in OFFICER_DIAGNOSTIC_CODES
+            else (
+                "AI_OFFICER_OK"
+                if outcome == "success"
+                else (
+                    str(outcome)
+                    if str(outcome) in OFFICER_DIAGNOSTIC_CODES
+                    else "AI_PROVIDER_ERROR"
+                )
+            )
+        ),
     }
-    if diagnostic_code in OFFICER_DIAGNOSTIC_CODES:
-        details["diagnostic_code"] = diagnostic_code
     return _write_or_queue(
         _payload(
             "ai_officer_assistant_result",
@@ -138,24 +203,48 @@ def record_officer_ai_result(
     )
 
 
-def record_officer_review_brief(scope, request_id, language, *, brief):
-    """Persist the exact public facts shown to an officer, or fail closed."""
+def record_officer_review_brief(
+    scope,
+    request_id,
+    language,
+    *,
+    brief,
+    route="unresolved",
+    routing_source="unknown",
+    scope_outcome="ambiguous",
+    tool_names=None,
+    duration_ms=0,
+    provider_available="unknown",
+    diagnostic_code="AI_OFFICER_OK",
+):
+    """Persist review-brief state without retaining any rendered content."""
     validated = validate_review_brief(brief)
-    canonical = json.dumps(validated, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-    brief_hash = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
     details = {
-        "application_id": scope.application_id,
+        "application_index": AuditLog.blind_index(scope.application_id),
         "request_id": request_id,
         "language": language,
         "review_state": validated["review_state"],
-        "reasons": validated["reasons"],
-        "sources": validated["sources"],
-        "headline": validated["headline"][:500],
-        "next_steps": [step[:500] for step in validated["next_steps"][:20]],
-        "contract_version": validated["contract_version"],
-        "narration_version": NARRATION_VERSION,
-        "evidence_revision": validated["evidence_revision"],
-        "canonical_brief_hash": brief_hash,
+        "route": route if route in {
+            "application_readiness", "profile_readiness", "document_status",
+            "repayment_summary", "out_of_scope", "ambiguous", "unresolved",
+        } else "unresolved",
+        "routing_source": routing_source if routing_source in {
+            "deterministic", "classifier", "pending", "unknown",
+        } else "unknown",
+        "scope_outcome": scope_outcome if scope_outcome in {
+            "in_scope", "out_of_scope", "ambiguous", "policy",
+        } else "ambiguous",
+        "tool_names": list(tool_names or []),
+        "tool_count": len(tool_names or []),
+        "duration_ms": max(0, int(duration_ms or 0)),
+        "provider_available": provider_available if provider_available in {
+            "available", "unavailable", "not_required", "unknown",
+        } else "unknown",
+        "diagnostic_code": (
+            diagnostic_code
+            if diagnostic_code in OFFICER_DIAGNOSTIC_CODES
+            else "AI_OFFICER_OK"
+        ),
     }
     return _write_or_queue(
         _payload(

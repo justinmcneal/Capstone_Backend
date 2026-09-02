@@ -13,6 +13,10 @@ from ai_assistant.services.officer_evidence_contract import (
     RISK_SCORE_STATUSES,
     SCHEDULE_STATUSES,
 )
+from ai_assistant.services.officer_policy import (
+    officer_policy_category,
+    officer_policy_response,
+)
 
 
 _SCHEMA_PATH = (
@@ -138,6 +142,12 @@ _TEXT = {
         "general_unavailable": "Review summary unavailable",
         "scope_headline": "Request outside this review brief",
         "scope_step": "Ask about this application's review readiness, profile, documents, or repayment summary.",
+        "help_headline": "I can help with this application",
+        "help_step": "Ask about this application's review readiness, profile, documents, or repayment summary.",
+        "ambiguous_headline": "Please clarify your application review question",
+        "ambiguous_step": "Mention the application's review readiness, profile, documents, or repayment summary.",
+        "read_only_headline": "This assistant is read-only",
+        "read_only_step": "Use the established portal workflow for approvals, updates, disbursement, verification, or payments.",
         "retry_step": "Retry the request or verify the application record manually.",
         "repayment_retry_step": "Retry the request or verify the repayment record manually.",
         "ready_label": "The application is ready for officer review",
@@ -209,6 +219,12 @@ _TEXT = {
         "general_unavailable": "Hindi makuha ang buod ng pagsusuri",
         "scope_headline": "Wala sa saklaw ng review brief ang kahilingan",
         "scope_step": "Magtanong tungkol sa kahandaan para sa pagsusuri, profile, mga dokumento, o buod ng pagbabayad ng aplikasyong ito.",
+        "help_headline": "Makakatulong ako sa pagsusuri ng aplikasyong ito",
+        "help_step": "Magtanong tungkol sa kahandaan para sa pagsusuri, profile, mga dokumento, o buod ng pagbabayad ng aplikasyong ito.",
+        "ambiguous_headline": "Paki-linaw ang tanong tungkol sa pagsusuri ng aplikasyon",
+        "ambiguous_step": "Banggitin kung tungkol ito sa kahandaan, profile, mga dokumento, o buod ng pagbabayad ng aplikasyon.",
+        "read_only_headline": "Read-only ang assistant na ito",
+        "read_only_step": "Gamitin ang itinakdang workflow ng portal para sa pag-apruba, pag-update, disbursement, beripikasyon, o pagbabayad.",
         "retry_step": "Subukang muli ang kahilingan o beripikahin nang manu-mano ang talaan ng aplikasyon.",
         "repayment_retry_step": "Subukang muli ang kahilingan o beripikahin nang manu-mano ang talaan ng pagbabayad.",
         "ready_label": "Handa ang aplikasyon para sa pagsusuri ng loan officer",
@@ -360,14 +376,21 @@ def build_unavailable_review_brief(
     )
 
 
-def build_scope_limit_review_brief(language, *, as_of=None):
+def build_scope_limit_review_brief(language, *, reason=None, as_of=None):
     locale = _locale(language)
     text = _TEXT[locale]
+    reason_key = {
+        "help": "help",
+        "ambiguous": "ambiguous",
+        "read_only": "read_only",
+    }.get(reason)
+    headline = text[f"{reason_key}_headline"] if reason_key else text["scope_headline"]
+    step = text[f"{reason_key}_step"] if reason_key else text["scope_step"]
     return _base_brief(
         state="scope_limited",
-        headline=text["scope_headline"],
+        headline=headline,
         reasons=[],
-        next_steps=[text["scope_step"]],
+        next_steps=[step],
         sources=[],
         locale=locale,
         as_of=as_of,
@@ -888,8 +911,13 @@ def build_review_brief(
 ):
     locale = _locale(language)
     text = _TEXT[locale]
-    if _is_out_of_scope(message):
-        return build_scope_limit_review_brief(locale, as_of=as_of)
+    policy_category = officer_policy_category(message)
+    if _is_out_of_scope(message) or officer_policy_response(message):
+        return build_scope_limit_review_brief(
+            locale,
+            reason=policy_category,
+            as_of=as_of,
+        )
     if not isinstance(evidence, list) or not evidence:
         return build_unavailable_review_brief(
             locale,

@@ -14,6 +14,11 @@ OFFICER_UNSUPPORTED_RESPONSE = (
     "I can help summarize this application's status, profile readiness, document "
     "review, or repayment information. I can't help with that request here."
 )
+OFFICER_HELP_RESPONSE = (
+    "I can help with this application's review readiness, profile completeness, "
+    "document review, and repayment summary. Ask a question about the selected "
+    "application."
+)
 OFFICER_READ_ONLY_ACTION_RESPONSE = (
     "I am read-only and cannot perform that action. Use the established portal workflow."
 )
@@ -74,6 +79,27 @@ _GENERAL_TERMS = (
     "sports score",
     "politics",
     "news",
+    "code",
+    "debug",
+    "programming",
+    "python",
+    "javascript",
+    "typescript",
+    "sql",
+    "html",
+    "function",
+    "algorithm",
+    "dictionary",
+)
+_GREETING_PATTERN = re.compile(
+    r"^(?:hi|hello|hey|good morning|good afternoon|good evening|help|"
+    r"what can you do)[!?. ]*$",
+    re.IGNORECASE,
+)
+_CODE_REQUEST_PATTERN = re.compile(
+    r"(?:\bgiven\s+input\b|\bexpected\s+output\b|\bdict_[a-z]\b|"
+    r"```|\b(?:def|class|import|return)\s+[A-Za-z_])",
+    re.IGNORECASE,
 )
 _LEGAL_TERMS = ("legal advice", "lawyer", "attorney", "court", "lawsuit")
 _BORROWER_GUIDANCE_REQUEST_PATTERN = re.compile(
@@ -134,18 +160,23 @@ def _normalized(value):
     return " ".join(str(value or "").replace("’", "'").lower().split())
 
 
-def officer_policy_response(message, *, language="en"):
-    """Return a deterministic officer response for requests needing no provider."""
+def officer_policy_category(message):
+    """Return the local-only category for a request, if one applies."""
     text = _normalized(message)
 
+    if _GREETING_PATTERN.fullmatch(text):
+        return "help"
+    if _CODE_REQUEST_PATTERN.search(text):
+        return "code"
+
     if any(term in text for term in _BOUNDARY_TERMS):
-        return OFFICER_UNSUPPORTED_RESPONSE
+        return "unsupported"
     if any(term in text for term in _CROSS_SCOPE_TERMS):
-        return OFFICER_UNSUPPORTED_RESPONSE
+        return "unsupported"
     if any(term in text for term in _RESTRICTED_TERMS):
-        return OFFICER_UNSUPPORTED_RESPONSE
+        return "privacy"
     if any(term in text for term in _GENERAL_TERMS + _LEGAL_TERMS):
-        return OFFICER_UNSUPPORTED_RESPONSE
+        return "unsupported"
     if (
         "apply for a loan" in text
         or "apply for loan" in text
@@ -153,11 +184,23 @@ def officer_policy_response(message, *, language="en"):
         or "mag-aapply" in text
         or "mag apply" in text
     ):
-        return OFFICER_UNSUPPORTED_RESPONSE
+        return "unsupported"
     if _BORROWER_GUIDANCE_REQUEST_PATTERN.search(text):
-        return OFFICER_UNSUPPORTED_RESPONSE
+        return "unsupported"
     if _ACTION_PATTERN.search(text):
+        return "read_only"
+    return None
+
+
+def officer_policy_response(message, *, language="en"):
+    """Return a deterministic officer response for requests needing no provider."""
+    category = officer_policy_category(message)
+    if category == "help":
+        return OFFICER_HELP_RESPONSE
+    if category == "read_only":
         return OFFICER_READ_ONLY_ACTION_RESPONSE
+    if category:
+        return OFFICER_UNSUPPORTED_RESPONSE
     return None
 
 

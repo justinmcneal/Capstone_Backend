@@ -1,6 +1,7 @@
 import uuid
 from types import SimpleNamespace
 
+import pytest
 from bson import ObjectId
 from django.test import override_settings
 
@@ -126,6 +127,24 @@ def test_officer_chat_serializer_accepts_a_bilingual_context_question():
     assert serializer.is_valid(), serializer.errors
     assert serializer.validated_data["message"] == "Ano ang kulang sa aplikasyon na ito?"
     assert serializer.validated_data["language"] == "tl"
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "hi",
+        "Can you list a recipe for adobo?",
+        "solve this Given Input: dict_a = {'a': 10}; Expected Output: merged",
+    ],
+)
+def test_officer_chat_serializer_accepts_non_review_messages_for_local_scope_handling(
+    message,
+):
+    serializer = OfficerChatRequestSerializer(
+        data={"message": message, "application_id": "app-1"}
+    )
+
+    assert serializer.is_valid(), serializer.errors
 
 
 def test_officer_chat_serializer_accepts_all_static_bilingual_suggestions():

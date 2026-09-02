@@ -228,6 +228,8 @@ class ReviewBriefLLM(JsonLLM):
             "response_time_ms": 17,
             "tokens_used": 8,
             "tools_called": ["get_application_summary"],
+            "route": "application_readiness",
+            "routing_source": "classifier",
         }
 
     def plan_officer_request(self, **kwargs):
@@ -352,6 +354,29 @@ def test_officer_suggestions_are_static_and_language_specific():
         "profile_readiness",
         "document_status",
         "repayment_summary",
+    ]
+
+
+def test_officer_suggestions_follow_application_lifecycle():
+    assert officer_suggestions("en", status="submitted") == [
+        {"id": "application_readiness", "label": "Summarize this application's review readiness."},
+        {"id": "profile_readiness", "label": "What profile information is still incomplete?"},
+        {"id": "document_status", "label": "Summarize the required document review statuses."},
+    ]
+    assert officer_suggestions("en", status="approved") == [
+        {"id": "application_readiness", "label": "Review approval conditions and disbursement readiness."},
+    ]
+    assert officer_suggestions("en", status="disbursed") == [
+        {"id": "repayment_summary", "label": "Review repayment health, next installment, and overdue status."},
+    ]
+    assert officer_suggestions("en", status="completed") == [
+        {"id": "repayment_summary", "label": "Summarize repayment completion."},
+    ]
+    assert officer_suggestions("en", status="rejected") == [
+        {"id": "application_readiness", "label": "Review recorded reasons and permitted follow-up."},
+    ]
+    assert officer_suggestions("en", status="cancelled") == [
+        {"id": "application_readiness", "label": "Review cancellation state and administrative follow-up."},
     ]
 
 
@@ -543,11 +568,14 @@ def test_officer_context_privacy_rejects_restricted_current_message(
     )
 
     assert response.status_code == 400
+    assert response.data["code"] == "AI_OFFICER_PRIVACY_BLOCKED"
     serialized = json.dumps(response.data).lower()
     assert restricted_content.lower() not in serialized
     assert "customer" not in serialized
     assert "provider" not in serialized
     provider.assert_not_called()
+    assert settings.MONGODB[AuditLog.collection_name].count_documents({}) == 0
+    assert settings.MONGODB[idempotency.COLLECTION].count_documents({}) == 0
 
 
 @pytest.mark.parametrize(
@@ -599,10 +627,13 @@ def test_officer_context_privacy_rejects_restricted_history_before_provider(
     )
 
     assert response.status_code == 400
+    assert response.data["code"] == "AI_OFFICER_PRIVACY_BLOCKED"
     serialized = json.dumps(response.data).lower()
     assert "customer@example.com" not in serialized
     assert "customer" not in serialized
     provider.assert_not_called()
+    assert settings.MONGODB[AuditLog.collection_name].count_documents({}) == 0
+    assert settings.MONGODB[idempotency.COLLECTION].count_documents({}) == 0
 
 
 def test_officer_context_privacy_preserves_safe_review_prompts(monkeypatch):
@@ -923,7 +954,9 @@ def test_officer_suggestions_require_assignment_and_consent_without_provider(mon
 
     assert response.status_code == 200, response.data
     assert response.data["data"]["language"] == "tl"
-    assert response.data["data"]["suggestions"] == officer_suggestions("tl")
+    assert response.data["data"]["suggestions"] == officer_suggestions(
+        "tl", status=application.status
+    )
     provider.assert_not_called()
 
 
@@ -1003,7 +1036,7 @@ def test_officer_ambiguous_question_uses_planner_once_and_never_narrates():
     service = GroqService(api_key="configured", model="planner-model", provider="groq")
     plan = {
         "success": True,
-        "intent": "profile_readiness",
+        "route": "profile_readiness",
         "provider": "groq",
         "model": "planner-model",
         "response_time_ms": 4,
@@ -1202,6 +1235,119 @@ def test_officer_out_of_scope_question_is_scope_limited_without_provider(monkeyp
     provider.assert_not_called()
 
 
+@pytest.mark.parametrize(
+    "message",
+    [
+        "hi",
+        "Can you list a recipe for adobo?",
+        "solve this Given Input: dict_a = {'a': 10}; Expected Output: merged",
+    ],
+)
+def test_officer_non_review_messages_are_scope_limited_without_provider(
+    monkeypatch, message
+):
+    officer = _officer()
+    application = _application(officer.id)
+    provider = Mock(side_effect=AssertionError("non-review request must not call provider"))
+    monkeypatch.setattr("ai_assistant.views.officer.get_llm_service", provider)
+    monkeypatch.setattr(
+        "ai_assistant.views.officer.has_current_ai_consent", lambda scope: True
+    )
+    monkeypatch.setattr(
+        "ai_assistant.services.officer_tools.has_current_ai_consent",
+        lambda scope: True,
+    )
+
+    response = OfficerChatView.as_view()(
+        _request(
+            "POST",
+            "/api/ai/officer/chat/",
+            officer.id,
+            data={"message": message, "application_id": str(application.id)},
+        )
+    )
+
+    assert response.status_code == 200, response.data
+    assert response.data["data"]["review_brief"]["review_state"] == "scope_limited"
+    provider.assert_not_called()
+
+
+def test_officer_planner_scope_route_renders_scope_limited_brief(monkeypatch):
+    officer = _officer()
+    application = _application(officer.id)
+    llm = JsonLLM(
+        result={
+            "success": True,
+            "response": "",
+            "provider": "groq",
+            "model": "planner-model",
+            "response_time_ms": 3,
+            "tokens_used": 2,
+            "tools_called": [],
+            "scope_limited": True,
+        }
+    )
+    monkeypatch.setattr("ai_assistant.views.officer.get_llm_service", lambda **kwargs: llm)
+    monkeypatch.setattr(
+        "ai_assistant.views.officer.has_current_ai_consent", lambda scope: True
+    )
+
+    response = OfficerChatView.as_view()(
+        _request(
+            "POST",
+            "/api/ai/officer/chat/",
+            officer.id,
+            data={
+                "message": "Please explain the current application details",
+                "application_id": str(application.id),
+            },
+        )
+    )
+
+    assert response.status_code == 200, response.data
+    assert response.data["data"]["review_brief"]["review_state"] == "scope_limited"
+
+
+def test_invalid_officer_request_has_stable_validation_code(monkeypatch):
+    officer = _officer()
+    response = OfficerChatView.as_view()(
+        _request(
+            "POST",
+            "/api/ai/officer/chat/",
+            officer.id,
+            data={"message": "Review this application"},
+        )
+    )
+
+    assert response.status_code == 400
+    assert response.data["code"] == "AI_OFFICER_REQUEST_INVALID"
+
+
+def test_greeting_returns_help_guidance_without_provider(monkeypatch):
+    officer = _officer()
+    application = _application(officer.id)
+    provider = Mock(side_effect=AssertionError("greeting must not call provider"))
+    monkeypatch.setattr("ai_assistant.views.officer.get_llm_service", provider)
+    monkeypatch.setattr(
+        "ai_assistant.views.officer.has_current_ai_consent", lambda scope: True
+    )
+
+    response = OfficerChatView.as_view()(
+        _request(
+            "POST",
+            "/api/ai/officer/chat/",
+            officer.id,
+            data={"message": "hi", "application_id": str(application.id)},
+        )
+    )
+
+    assert response.status_code == 200
+    brief = response.data["data"]["review_brief"]
+    assert brief["review_state"] == "scope_limited"
+    assert "help with this application" in brief["headline"].lower()
+    provider.assert_not_called()
+
+
 def test_officer_chat_renders_deterministically_without_narration_provider(monkeypatch):
     officer = _officer()
     application = _application(officer.id)
@@ -1313,50 +1459,38 @@ def test_officer_chat_audits_before_provider_and_returns_minimized_json(monkeypa
     assert [event.action for event in events] == [
         "ai_officer_assistant_access",
         "ai_officer_assistant_result",
-        "ai_officer_review_brief_viewed",
     ]
-    assistant_allowed = {
-        "application_id",
+    allowed_metadata = {
+        "application_index",
         "request_id",
         "language",
         "outcome",
+        "route",
+        "routing_source",
+        "scope_outcome",
         "tool_names",
         "tool_count",
         "duration_ms",
-    }
-    review_allowed = {
-        "application_id",
-        "request_id",
-        "language",
-        "review_state",
-        "reasons",
-        "sources",
-        "headline",
-        "next_steps",
-        "contract_version",
-        "narration_version",
-        "evidence_revision",
-        "canonical_brief_hash",
+        "provider_available",
+        "diagnostic_code",
     }
     for event in events:
-        assert set(event.details) <= (
-            review_allowed
-            if event.action == "ai_officer_review_brief_viewed"
-            else assistant_allowed
-        )
+        assert set(event.details) == allowed_metadata
+        assert event.resource_id == AuditLog.blind_index(str(application.id))
         serialized = json.dumps(event.details).lower()
         for forbidden in (
             "summarize",
             "review summary",
             "server-customer",
             str(officer.id).lower(),
+            str(application.id).lower(),
             "actor@example.com",
             "attacker-selected-customer",
         ):
             assert forbidden not in serialized
 
 
-def test_officer_chat_returns_only_public_review_brief_and_persists_view_audit(
+def test_officer_chat_returns_only_public_review_brief_and_audits_metadata_only(
     monkeypatch,
 ):
     officer = _officer()
@@ -1416,12 +1550,23 @@ def test_officer_chat_returns_only_public_review_brief_and_persists_view_audit(
     assert [event.action for event in events] == [
         "ai_officer_assistant_access",
         "ai_officer_assistant_result",
-        "ai_officer_review_brief_viewed",
     ]
-    viewed = events[-1]
-    assert viewed.details["review_state"] == "ready"
-    assert viewed.details["reasons"] == brief["reasons"]
-    assert viewed.details["sources"] == ["Application summary"]
+    result = events[-1]
+    assert result.details["route"] == "application_readiness"
+    assert result.details["routing_source"] == "classifier"
+    assert result.details["scope_outcome"] == "in_scope"
+    assert result.details["provider_available"] == "available"
+    assert result.details["diagnostic_code"] == "AI_OFFICER_OK"
+    serialized_audit = json.dumps(
+        [event.to_dict() for event in events], default=str
+    ).lower()
+    for forbidden in (
+        brief["headline"].lower(),
+        brief["reasons"][0]["detail"].lower(),
+        "application summary",
+        str(application.id).lower(),
+    ):
+        assert forbidden not in serialized_audit
 
 
 def test_officer_stream_never_emits_raw_tool_events_or_identifiers(monkeypatch):
@@ -1518,7 +1663,7 @@ def test_officer_ai_audit_documents_pseudonymize_officer_and_customer_identifier
 
     assert response.status_code == 200, response.data
     events = _audit_events()
-    assert len(events) == 3
+    assert len(events) == 2
     for event in events:
         assert event.user_id != str(officer.id)
         assert event.scope_officer_index == AuditLog.blind_index(str(officer.id))
@@ -1776,11 +1921,10 @@ def test_officer_chat_may_continue_when_failed_access_audit_is_durably_queued(
     )
 
     assert response.status_code == 200, response.data
-    assert queued.call_count == 3
+    assert queued.call_count == 2
     assert [call.kwargs["payload"]["action"] for call in queued.call_args_list] == [
         "ai_officer_assistant_access",
         "ai_officer_assistant_result",
-        "ai_officer_review_brief_viewed",
     ]
     assert llm.kwargs is not None
 

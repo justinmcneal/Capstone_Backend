@@ -5,6 +5,10 @@ import uuid
 from rest_framework import serializers
 
 from ai_assistant.services.officer_history import verify_officer_assistant_history
+from ai_assistant.services.officer_policy import (
+    officer_policy_category,
+)
+from ai_assistant.services.officer_privacy import officer_text_privacy_violations
 from ai_assistant.services.request_limits import (
     AI_ASSISTANT_HISTORY_MAX_MESSAGES,
     validate_chat_message,
@@ -103,6 +107,8 @@ _OFFICER_CONTEXT_STOP_WORDS = frozenset(
     }
 )
 _OFFICER_CONTEXT_ERROR = "This request cannot be processed"
+OFFICER_PRIVACY_BLOCKED_CODE = "AI_OFFICER_PRIVACY_BLOCKED"
+OFFICER_REQUEST_INVALID_CODE = "AI_OFFICER_REQUEST_INVALID"
 _OFFICER_CONTEXT_UNICODE_SLASHES = frozenset({"⁄", "∕", "／", "⧸"})
 
 
@@ -143,7 +149,10 @@ def _validate_officer_context(value):
         and "LATIN" not in unicodedata.name(character, "")
         for character in normalized
     ):
-        raise serializers.ValidationError(_OFFICER_CONTEXT_ERROR)
+        raise serializers.ValidationError(
+            _OFFICER_CONTEXT_ERROR,
+            code=OFFICER_PRIVACY_BLOCKED_CODE,
+        )
     bare_name = any(
         f"{first} {second}" not in _OFFICER_CONTEXT_SAFE_WORD_PAIRS
         and first not in _OFFICER_CONTEXT_STOP_WORDS
@@ -179,7 +188,10 @@ def _validate_officer_context(value):
         or separated_name
         or re.search(r"(?<!\w)(?:\d[\s().,/+-]*){7,}(?!\w)", detection_text)
     ):
-        raise serializers.ValidationError(_OFFICER_CONTEXT_ERROR)
+        raise serializers.ValidationError(
+            _OFFICER_CONTEXT_ERROR,
+            code=OFFICER_PRIVACY_BLOCKED_CODE,
+        )
 
 
 class OfficerChatRequestSerializer(serializers.Serializer):
@@ -207,7 +219,20 @@ class OfficerChatRequestSerializer(serializers.Serializer):
         )
         if error:
             raise serializers.ValidationError(self._message_error(error))
-        _validate_officer_context(message)
+        # Greetings and clearly unsupported requests are handled locally by
+        # the officer policy boundary. Keep them out of the conservative
+        # name heuristic (which would otherwise reject inputs such as "hi"
+        # or a code question before the safe scope response is rendered).
+        policy_category = officer_policy_category(message)
+        privacy_violations = officer_text_privacy_violations(message)
+        local_only = policy_category in {"help", "unsupported"} and not privacy_violations
+        # The conservative name detector sees capitalized programming labels
+        # such as "Given Input" as a name pair. Code requests are still local
+        # and never reach a provider, so only that false-positive is tolerated.
+        if policy_category == "code" and set(privacy_violations) <= {"name"}:
+            local_only = True
+        if not local_only:
+            _validate_officer_context(message)
         return message
 
     def validate_conversation_id(self, value):
