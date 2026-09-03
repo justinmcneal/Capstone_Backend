@@ -362,22 +362,65 @@ def test_officer_suggestions_follow_application_lifecycle():
         {"id": "application_readiness", "label": "Review readiness"},
         {"id": "profile_readiness", "label": "Profile gaps"},
         {"id": "document_status", "label": "Document status"},
+        {"id": "repayment_summary", "label": "Review repayments"},
     ]
     assert officer_suggestions("en", status="approved") == [
         {"id": "application_readiness", "label": "Review approval conditions"},
+        {"id": "profile_readiness", "label": "Profile gaps"},
+        {"id": "document_status", "label": "Document status"},
+        {"id": "repayment_summary", "label": "Review repayments"},
     ]
     assert officer_suggestions("en", status="disbursed") == [
         {"id": "repayment_summary", "label": "Review repayments"},
+        {"id": "application_readiness", "label": "Review readiness"},
+        {"id": "profile_readiness", "label": "Profile gaps"},
+        {"id": "document_status", "label": "Document status"},
     ]
     assert officer_suggestions("en", status="completed") == [
         {"id": "repayment_summary", "label": "Review repayment completion"},
+        {"id": "application_readiness", "label": "Review readiness"},
+        {"id": "profile_readiness", "label": "Profile gaps"},
+        {"id": "document_status", "label": "Document status"},
     ]
     assert officer_suggestions("en", status="rejected") == [
         {"id": "application_readiness", "label": "Review recorded reasons"},
+        {"id": "profile_readiness", "label": "Profile gaps"},
+        {"id": "document_status", "label": "Document status"},
+        {"id": "repayment_summary", "label": "Review repayments"},
     ]
     assert officer_suggestions("en", status="cancelled") == [
         {"id": "application_readiness", "label": "Review cancellation"},
+        {"id": "profile_readiness", "label": "Profile gaps"},
+        {"id": "document_status", "label": "Document status"},
+        {"id": "repayment_summary", "label": "Review repayments"},
     ]
+
+
+def test_officer_suggestions_always_offer_all_four_actions():
+    for status in (
+        None,
+        "draft",
+        "submitted",
+        "under_review",
+        "approved",
+        "disbursed",
+        "active",
+        "completed",
+        "rejected",
+        "cancelled",
+        "unknown_status",
+    ):
+        suggestions = officer_suggestions("en", status=status)
+        assert [item["id"] for item in suggestions] == [
+            suggestions[0]["id"],
+            *[item for item in (
+                "application_readiness",
+                "profile_readiness",
+                "document_status",
+                "repayment_summary",
+            ) if item != suggestions[0]["id"]],
+        ]
+        assert len(suggestions) == 4
 
 
 def test_officer_history_signature_is_content_and_scope_bound():

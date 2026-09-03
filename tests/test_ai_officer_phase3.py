@@ -8,7 +8,10 @@ from ai_assistant.services.llm_service import GroqService
 from ai_assistant.serializers.officer import OfficerChatRequestSerializer
 from ai_assistant.services.officer_policy import officer_policy_category
 from ai_assistant.services.officer_privacy import officer_text_privacy_violations
-from ai_assistant.services.officer_prompt import route_officer_intent
+from ai_assistant.services.officer_prompt import (
+    guess_officer_intent_by_keywords,
+    route_officer_intent,
+)
 
 
 @pytest.mark.parametrize(
@@ -16,16 +19,171 @@ from ai_assistant.services.officer_prompt import route_officer_intent
     [
         ("Summarize this application's review readiness.", "application_readiness"),
         ("What is the current application status?", "application_readiness"),
+        ("application summary", "application_readiness"),
+        ("app status", "application_readiness"),
         ("What profile information is still incomplete?", "profile_readiness"),
+        ("profile summary", "profile_readiness"),
+        ("Profile gaps", "profile_readiness"),
         ("Ano pa ang kulang sa profile bago ang pagsusuri?", "profile_readiness"),
+        ("buod ng profile", "profile_readiness"),
         ("Summarize the required document review statuses.", "document_status"),
+        ("document status", "document_status"),
+        ("docs status", "document_status"),
         ("Ibuod ang katayuan ng mga kinakailangang dokumento.", "document_status"),
+        ("katayuan ng dokumento", "document_status"),
         ("Explain the current repayment summary.", "repayment_summary"),
+        ("schedule in repayment", "repayment_summary"),
+        ("repayment schedule", "repayment_summary"),
+        ("repayment status", "repayment_summary"),
         ("Ipaliwanag ang kasalukuyang buod ng pagbabayad.", "repayment_summary"),
+        ("iskedyul ng pagbabayad", "repayment_summary"),
+        ("how about the profile summary", "profile_readiness"),
+        ("Please explain the current repayment summary.", "repayment_summary"),
+        ("Can you summarize the required document review statuses?", "document_status"),
+        ("What about the application status?", "application_readiness"),
+        ("Show me the repayment schedule", "repayment_summary"),
+        ("profile summary please", "profile_readiness"),
     ],
 )
 def test_common_officer_questions_route_to_server_owned_intents(message, intent):
     assert route_officer_intent(message) == intent
+
+
+@pytest.mark.parametrize(
+    ("message", "intent"),
+    [
+        ("how is the payment going", "repayment_summary"),
+        ("how about the profile summary", "profile_readiness"),
+        ("anything missing from the docs", "document_status"),
+        ("is this application ready", "application_readiness"),
+    ],
+)
+def test_keyword_fallback_guesses_clear_single_intent_signals(message, intent):
+    assert guess_officer_intent_by_keywords(message) == intent
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "Tell me something unrelated",
+        "What is 37 x 19",
+        "missing documents and repayment status",
+        "",
+        "!!! ??? ###",
+    ],
+)
+def test_keyword_fallback_stays_unresolved_without_clear_signal(message):
+    assert guess_officer_intent_by_keywords(message) is None
+
+
+def test_officer_chat_falls_back_to_keywords_when_planner_is_invalid():
+    service = GroqService(api_key="configured", model="planner-fallback-test", provider="groq")
+    service.plan_officer_request = Mock(
+        return_value={
+            "success": False,
+            "error": "provider unavailable",
+            "code": "AI_PROVIDER_PLANNER_INVALID",
+        }
+    )
+    executor = Mock(return_value={"success": True, "result": {"complete": True}})
+
+    result = service.chat_with_tools(
+        "how is the payment going",
+        customer_id="customer-1",
+        officer_mode=True,
+        tool_executor=executor,
+    )
+
+    assert result["success"] is True
+    assert result["route"] == "repayment_summary"
+    assert result["routing_source"] == "keyword-fallback"
+    assert result["tools_called"] == ["get_repayment_summary"]
+    executor.assert_called_once_with(
+        "get_repayment_summary", {}, "customer-1", request_id=None
+    )
+
+
+def test_officer_chat_falls_back_to_keywords_on_ambiguous_route():
+    service = GroqService(api_key="configured", model="planner-ambiguous-test", provider="groq")
+    service.plan_officer_request = Mock(
+        return_value={
+            "success": True,
+            "route": "ambiguous",
+            "provider": "groq",
+            "model": "planner-ambiguous-test",
+            "response_time_ms": 3,
+            "tokens_used": 2,
+        }
+    )
+    executor = Mock(return_value={"success": True, "result": {"complete": True}})
+
+    result = service.chat_with_tools(
+        "how about the profile summary",
+        customer_id="customer-1",
+        officer_mode=True,
+        tool_executor=executor,
+    )
+
+    assert result["success"] is True
+    assert result["route"] == "profile_readiness"
+    assert result["routing_source"] == "keyword-fallback"
+    executor.assert_called_once_with(
+        "get_profile_readiness", {}, "customer-1", request_id=None
+    )
+
+
+def test_officer_chat_keeps_explicit_out_of_scope_without_keyword_override():
+    service = GroqService(api_key="configured", model="planner-scope-test", provider="groq")
+    service.plan_officer_request = Mock(
+        return_value={
+            "success": True,
+            "route": "out_of_scope",
+            "provider": "groq",
+            "model": "planner-scope-test",
+            "response_time_ms": 3,
+            "tokens_used": 2,
+        }
+    )
+    executor = Mock()
+
+    result = service.chat_with_tools(
+        "What is the application timeline for unrelated research?",
+        customer_id="customer-1",
+        officer_mode=True,
+        tool_executor=executor,
+    )
+
+    assert result["success"] is True
+    assert result["scope_limited"] is True
+    assert result["tools_called"] == []
+    executor.assert_not_called()
+
+
+def test_officer_stream_falls_back_to_keywords_when_planner_is_invalid():
+    service = GroqService(api_key="configured", model="planner-stream-fallback", provider="groq")
+    service.plan_officer_request = Mock(
+        return_value={
+            "success": False,
+            "error": "provider unavailable",
+            "code": "AI_PROVIDER_PLANNER_INVALID",
+        }
+    )
+    executor = Mock(return_value={"success": True, "result": {"complete": True}})
+
+    chunks = list(
+        service.chat_with_tools_stream(
+            "how is the payment going",
+            customer_id="customer-1",
+            officer_mode=True,
+            tool_executor=executor,
+        )
+    )
+
+    assert [chunk["type"] for chunk in chunks] == ["done"]
+    assert chunks[0]["route"] == "repayment_summary"
+    assert chunks[0]["routing_source"] == "keyword-fallback"
+    assert chunks[0]["tools_called"] == ["get_repayment_summary"]
+    executor.assert_called_once()
 
 
 def test_ambiguous_officer_planner_returns_only_an_allowlisted_route(monkeypatch):
@@ -254,6 +412,33 @@ def test_reported_non_loan_and_unclear_phrases_clear_request_validation(message)
             "message": message,
             "application_id": "synthetic-application",
             "language": "en",
+        }
+    )
+
+    assert serializer.is_valid(), {"message": message, "errors": serializer.errors}
+
+
+@pytest.mark.parametrize(
+    ("message", "language"),
+    [
+        ("profile summary", "en"),
+        ("application summary", "en"),
+        ("document status", "en"),
+        ("schedule in repayment", "en"),
+        ("repayment schedule", "en"),
+        ("buod ng profile", "tl"),
+        ("iskedyul ng pagbabayad", "tl"),
+    ],
+)
+def test_short_review_phrases_clear_privacy_and_request_validation(
+    message, language
+):
+    assert officer_text_privacy_violations(message) == ()
+    serializer = OfficerChatRequestSerializer(
+        data={
+            "message": message,
+            "application_id": "synthetic-application",
+            "language": language,
         }
     )
 

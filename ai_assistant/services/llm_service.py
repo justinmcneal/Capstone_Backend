@@ -47,7 +47,10 @@ from ai_assistant.services.officer_policy import (
     officer_policy_response,
     validate_officer_response,
 )
-from ai_assistant.services.officer_prompt import route_officer_intent
+from ai_assistant.services.officer_prompt import (
+    guess_officer_intent_by_keywords,
+    route_officer_intent,
+)
 from ai_assistant.services.officer_privacy import (
     officer_provider_input_violations,
     officer_provider_output_violations,
@@ -1000,6 +1003,46 @@ class GroqService:
         result = self.chat(prompt)
         return result.get('response', '') if result.get('success') else ''
 
+    def _keyword_fallback_officer_plan(
+        self,
+        message,
+        *,
+        customer_id,
+        request_id=None,
+        tool_executor=None,
+        tokens_used=0,
+        response_time_ms=0,
+    ):
+        """Execute a keyword-supported loan route when the planner cannot.
+
+        Returns a chat-style result dict, or None when the message carries no
+        clear single-intent signal. Policy-clean unrelated requests keep
+        falling through to the scope-limited response.
+        """
+        keyword_route = guess_officer_intent_by_keywords(message)
+        if not keyword_route:
+            return None
+        execution = self._execute_officer_plan(
+            keyword_route,
+            customer_id=customer_id,
+            request_id=request_id,
+            tool_executor=tool_executor,
+        )
+        if not execution.get('success'):
+            return execution
+        return {
+            'success': True,
+            'response': '',
+            'model': self.model,
+            'provider': self.provider,
+            'response_time_ms': response_time_ms,
+            'tokens_used': tokens_used,
+            'tools_called': execution['tools_called'],
+            'planner_used': True,
+            'route': keyword_route,
+            'routing_source': 'keyword-fallback',
+        }
+
     def chat_with_tools(
         self,
         message,
@@ -1091,6 +1134,16 @@ class GroqService:
                     plan_result.get('code') == 'AI_PROVIDER_PLANNER_INVALID'
                     and not plan_result.get('privacy_blocked')
                 ):
+                    keyword_result = self._keyword_fallback_officer_plan(
+                        message,
+                        customer_id=customer_id,
+                        request_id=request_id,
+                        tool_executor=executor,
+                        tokens_used=plan_result.get('tokens_used', 0),
+                        response_time_ms=plan_result.get('response_time_ms', 0),
+                    )
+                    if keyword_result is not None:
+                        return keyword_result
                     return {
                         'success': True,
                         'response': '',
@@ -1107,6 +1160,17 @@ class GroqService:
                     }
                 return plan_result
             if plan_result.get('route') in OFFICER_PLANNER_NON_REVIEW_ROUTES:
+                if plan_result.get('route') == 'ambiguous':
+                    keyword_result = self._keyword_fallback_officer_plan(
+                        message,
+                        customer_id=customer_id,
+                        request_id=request_id,
+                        tool_executor=executor,
+                        tokens_used=plan_result.get('tokens_used', 0),
+                        response_time_ms=plan_result.get('response_time_ms', 0),
+                    )
+                    if keyword_result is not None:
+                        return keyword_result
                 return {
                     'success': True,
                     'response': '',
@@ -1545,6 +1609,33 @@ class GroqService:
                     plan_result.get('code') == 'AI_PROVIDER_PLANNER_INVALID'
                     and not plan_result.get('privacy_blocked')
                 ):
+                    keyword_result = self._keyword_fallback_officer_plan(
+                        message,
+                        customer_id=customer_id,
+                        request_id=request_id,
+                        tool_executor=executor,
+                        tokens_used=plan_result.get('tokens_used', 0),
+                    )
+                    if keyword_result is not None:
+                        if not keyword_result.get('success'):
+                            yield {
+                                'type': 'error',
+                                'content': PUBLIC_PROVIDER_ERROR,
+                                'code': keyword_result.get('code', 'AI_PROVIDER_ERROR'),
+                            }
+                            return
+                        yield {
+                            'type': 'done',
+                            'model': self.model,
+                            'provider': self.provider,
+                            'tokens_used': keyword_result.get('tokens_used', 0),
+                            'tools_called': keyword_result['tools_called'],
+                            'planner_used': True,
+                            'response': '',
+                            'route': keyword_result['route'],
+                            'routing_source': 'keyword-fallback',
+                        }
+                        return
                     yield {
                         'type': 'done',
                         'model': self.model,
@@ -1567,6 +1658,34 @@ class GroqService:
                 }
                 return
             if plan_result.get('route') in OFFICER_PLANNER_NON_REVIEW_ROUTES:
+                if plan_result.get('route') == 'ambiguous':
+                    keyword_result = self._keyword_fallback_officer_plan(
+                        message,
+                        customer_id=customer_id,
+                        request_id=request_id,
+                        tool_executor=executor,
+                        tokens_used=plan_result.get('tokens_used', 0),
+                    )
+                    if keyword_result is not None:
+                        if not keyword_result.get('success'):
+                            yield {
+                                'type': 'error',
+                                'content': PUBLIC_PROVIDER_ERROR,
+                                'code': keyword_result.get('code', 'AI_PROVIDER_ERROR'),
+                            }
+                            return
+                        yield {
+                            'type': 'done',
+                            'model': self.model,
+                            'provider': self.provider,
+                            'tokens_used': keyword_result.get('tokens_used', 0),
+                            'tools_called': keyword_result['tools_called'],
+                            'planner_used': True,
+                            'response': '',
+                            'route': keyword_result['route'],
+                            'routing_source': 'keyword-fallback',
+                        }
+                        return
                 yield {
                     'type': 'done',
                     'model': self.model,
