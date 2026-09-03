@@ -1,5 +1,3 @@
-import re
-import unicodedata
 import uuid
 
 from rest_framework import serializers
@@ -19,185 +17,19 @@ from ai_assistant.services.request_limits import (
     validate_chat_message,
 )
 
-
-_OFFICER_CONTEXT_RESTRICTED_PATTERNS = tuple(
-    re.compile(pattern, re.IGNORECASE)
-    for pattern in (
-        r"\b(?:customer|borrower|applicant)\s+(?:name|email|phone|mobile|address)\s*[:=-]",
-        r"\b(?:customer|borrower|applicant)\s*:\s*[a-z][a-z' -]{2,}",
-        r"\b[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}\b",
-        r"(?<!\w)\+\d{1,3}(?:[\s().-]*\d){7,14}(?!\w)",
-        r"(?<!\w)(?:00\d{1,3}|011)[\s().-]*(?:\d[\s().-]*){7,14}(?!\w)",
-        r"(?<!\w)(?:\d[\s().-]*){10,15}(?!\w)",
-        r"(?<!\w)(?:\+?63|0)9\d{9}(?!\w)",
-        r"\b(?:phone|mobile|address|government\s+id|national\s+id|passport|id\s+number|date\s+of\s+birth|dob)\b",
-        r"\b(?:document|file)\s+(?:filename|name|content|path|url|storage)\b",
-        r"\b[\w.-]+\.(?:pdf|png|jpe?g|docx?|csv)\b",
-        r"[\\/][^\s]+",
-        r"\b(?:wallet|transaction\s+hash|payment\s+reference|reference\s+number)\b",
-        r"\b(?:internal\s+note|staff\s+(?:password|credential)|password|secret|api\s+key|token|credential)\b",
-        r"\b0x[0-9a-f]{8,}\b",
-        r"\b(?:pay|txn|ref)[-_][A-Za-z0-9]{4,}\b",
-        r"\b(?:\d{4}[-/]\d{1,2}[-/]\d{1,2}|\d{1,2}[-/]\d{1,2}[-/]\d{2,4}|\d{8})\b",
-        r"\b(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+\d{1,2}(?:st|nd|rd|th)?(?:,\s*|\s+)\d{4}\b",
-        r"\b\d{1,2}(?:st|nd|rd|th)?\s+(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+\d{4}\b",
-        r"\b\d{1,5}\s+[A-Za-z][A-Za-z.'-]*(?:,\s*|\s+)[A-Za-z][A-Za-z.'-]*\s+(?:city|municipality|barangay)\b",
-        r"\b\d{1,6}\s+[\w][\w.'’-]{1,}(?:\s+[\w][\w.'’-]{1,}){0,4}(?:,|$)",
-    )
-)
-_OFFICER_CONTEXT_SAFE_PROMPTS = frozenset(
-    {
-        "summarize this application's review readiness",
-        "summarize review readiness",
-        "review summary",
-        "review this application",
-        "review missing documents and repayment status",
-        "what documents are present",
-        "what profile information is still incomplete",
-        "summarize the required document review statuses",
-        "explain the current repayment summary",
-        "ibuod ang kahandaan ng aplikasyon para sa pagsusuri",
-        "ano pa ang kulang sa profile bago ang pagsusuri",
-        "ibuod ang katayuan ng mga kinakailangang dokumento",
-        "ipaliwanag ang kasalukuyang buod ng pagbabayad",
-        "summarize what is still needed before review",
-        "review missing documents",
-        "can you tell me what needs attention in this record",
-    }
-)
-_OFFICER_CONTEXT_NAME_AFTER_CONTEXT = re.compile(
-    r"\b(?:review|about|for|contact|call|customer|borrower|applicant)\s+"
-    r"(?:mr|mrs|ms|miss)?\.?\s*[\w'’-]+(?:\s+[\w'’-]+)?\b",
-    re.IGNORECASE,
-)
-_OFFICER_CONTEXT_UNICODE_NAME = re.compile(
-    r"(?<!\w)[\u0400-\u04ff\u0370-\u03ff]+\s+[\u0400-\u04ff\u0370-\u03ff]+(?!\w)"
-)
-_OFFICER_CONTEXT_LATIN_NAME = re.compile(
-    r"(?<!\w)[A-Z][a-zÀ-ÖØ-öø-ÿ'’-]{1,30}\s+[A-Z][a-zÀ-ÖØ-öø-ÿ'’-]{1,30}(?!\w)"
-)
-_OFFICER_CONTEXT_BARE_NAME = re.compile(
-    r"(?<!\w)([^\W\d_][\w'’-]{1,30})\s+"
-    r"([^\W\d_][\w'’-]{1,30})(?!\w)",
-    re.IGNORECASE,
-)
-_OFFICER_CONTEXT_SAFE_WORD_PAIRS = frozenset(
-    {
-        "application summary",
-        "document review",
-        "explain current",
-        "earlier question",
-        "loan application",
-        "missing documents",
-        "payment status",
-        "profile readiness",
-        "repayment status",
-        "review readiness",
-        "review summary",
-        "what status",
-    }
-)
-_OFFICER_CONTEXT_STOP_WORDS = frozenset(
-    {
-        "about", "and", "application", "are", "call", "contact", "current",
-        "document", "documents", "earlier", "explain", "for", "incomplete",
-        "information", "is", "loan", "missing", "next", "payment", "please",
-        "profile", "question", "readiness", "repayment", "required", "review",
-        "show", "still", "status", "statuses", "summary", "summarize", "tell",
-        "explain", "stream",
-        "the", "this", "what", "with",
-        # Common Tagalog function/context words must not look like a bare name
-        # when officers ask a normal bilingual application question.
-        "ano", "ang", "aplikasyon", "ito", "kulang", "na", "sa",
-    }
-)
 _OFFICER_CONTEXT_ERROR = "This request cannot be processed"
 OFFICER_PRIVACY_BLOCKED_CODE = "AI_OFFICER_PRIVACY_BLOCKED"
 OFFICER_REQUEST_INVALID_CODE = "AI_OFFICER_REQUEST_INVALID"
-_OFFICER_CONTEXT_UNICODE_SLASHES = frozenset({"⁄", "∕", "／", "⧸"})
-
-
-def _canonicalize_officer_detection_text(value):
-    """Normalize Unicode separators before running the privacy detectors."""
-    normalized = unicodedata.normalize("NFKC", str(value or "")).casefold()
-    canonical = []
-    for character in normalized:
-        if unicodedata.category(character) == "Cf":
-            continue
-        if character in _OFFICER_CONTEXT_UNICODE_SLASHES:
-            canonical.append("/")
-            continue
-        category = unicodedata.category(character)
-        if category == "Pd":
-            canonical.append("-")
-        elif character in {"．", "。", "｡"}:
-            canonical.append(".")
-        elif category.startswith("P") and character not in {"'", "’", ".", "+", "@", "-", "/"}:
-            canonical.append(" ")
-        else:
-            canonical.append(character)
-    return re.sub(r"\s+", " ", "".join(canonical)).strip()
 
 
 def _validate_officer_context(value):
-    normalized = re.sub(
-        r"\s+",
-        " ",
-        unicodedata.normalize("NFKC", str(value or "")).casefold(),
-    ).strip()
-    safe_prompt_key = normalized.strip(" .!?;:")
-    if safe_prompt_key in _OFFICER_CONTEXT_SAFE_PROMPTS:
-        return
-    detection_text = _canonicalize_officer_detection_text(value)
-    if any(
-        unicodedata.category(character).startswith("L")
-        and "LATIN" not in unicodedata.name(character, "")
-        for character in normalized
-    ):
+    violations = officer_text_privacy_violations(value)
+    if violations:
         raise serializers.ValidationError(
             _OFFICER_CONTEXT_ERROR,
             code=OFFICER_PRIVACY_BLOCKED_CODE,
         )
-    bare_name = any(
-        f"{first} {second}" not in _OFFICER_CONTEXT_SAFE_WORD_PAIRS
-        and first not in _OFFICER_CONTEXT_STOP_WORDS
-        and second not in _OFFICER_CONTEXT_STOP_WORDS
-        for first, second in _OFFICER_CONTEXT_BARE_NAME.findall(detection_text)
-    )
-    single_name = bool(
-        re.fullmatch(r"[^\W\d_][^\W\d_']{1,30}", detection_text)
-        and detection_text not in _OFFICER_CONTEXT_STOP_WORDS
-    )
-    separated_name = any(
-        first not in _OFFICER_CONTEXT_STOP_WORDS
-        and second not in _OFFICER_CONTEXT_STOP_WORDS
-        for first, second in re.findall(
-            r"(?<!\w)([^\W\d_]{2,30})[.\-]([^\W\d_]{2,30})(?!\w)",
-            detection_text,
-        )
-    )
-    context_match = _OFFICER_CONTEXT_NAME_AFTER_CONTEXT.search(detection_text)
-    context_tokens = context_match.group(0).split()[1:] if context_match else ()
-    context_name_after_context = any(
-        token not in _OFFICER_CONTEXT_STOP_WORDS
-        and token not in {"mr", "mrs", "ms", "miss"}
-        for token in context_tokens
-    )
-    if (
-        any(pattern.search(detection_text) for pattern in _OFFICER_CONTEXT_RESTRICTED_PATTERNS)
-        or context_name_after_context
-        or _OFFICER_CONTEXT_UNICODE_NAME.search(detection_text)
-        or _OFFICER_CONTEXT_LATIN_NAME.search(str(value or ""))
-        or bare_name
-        or single_name
-        or separated_name
-        or re.search(r"(?<!\w)(?:\d[\s().,/+-]*){7,}(?!\w)", detection_text)
-    ):
-        raise serializers.ValidationError(
-            _OFFICER_CONTEXT_ERROR,
-            code=OFFICER_PRIVACY_BLOCKED_CODE,
-        )
-
+    return
 
 class OfficerChatRequestSerializer(serializers.Serializer):
     """Validate the bounded request envelope for the officer assistant."""
@@ -337,7 +169,12 @@ class OfficerChatRequestSerializer(serializers.Serializer):
             # name heuristic so local guidance can be rendered safely.
             policy_category = officer_policy_category(message)
             privacy_violations = officer_text_privacy_violations(message)
-            local_only = policy_category in {"help", "unsupported"} and not privacy_violations
+            local_only = policy_category in {
+                "help",
+                "unsupported",
+                "read_only",
+                "ambiguous",
+            } and not privacy_violations
             if policy_category == "code" and set(privacy_violations) <= {"name"}:
                 local_only = True
             if not local_only:

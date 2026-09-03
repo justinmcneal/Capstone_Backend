@@ -47,41 +47,86 @@ _CONTEXTUAL_NAME_AFTER_ACTION_PATTERN = re.compile(
     r"(?:[ -][A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ'’-]{1,30})?)",
     re.IGNORECASE,
 )
-_CAPITALIZED_NAME_PAIR_PATTERN = re.compile(
-    r"(?<!\w)([A-Z][A-Za-zÀ-ÖØ-öø-ÿ'’-]{1,30})"
-    r"(?:[ -]([A-Z][A-Za-zÀ-ÖØ-öø-ÿ'’-]{1,30}))(?!\w)"
-)
 _BARE_NAME_PATTERN = re.compile(
-    r"[A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ'’-]{1,30}"
-    r"\s+[A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ'’-]{1,30}",
+    r"(?<!\w)([^\W\d_][^\W\d_'’-]{1,30})\s+"
+    r"([^\W\d_][^\W\d_'’-]{1,30})(?!\w)",
+    re.IGNORECASE,
+)
+_SEPARATED_NAME_PATTERN = re.compile(
+    r"(?<!\w)([A-Za-zÀ-ÖØ-öø-ÿ]{2,30})[.\-]"
+    r"([A-Za-zÀ-ÖØ-öø-ÿ]{2,30})(?!\w)",
     re.IGNORECASE,
 )
 _NON_LATIN_LETTER = re.compile(r"[^\W\d_]")
+_PROVIDER_NAME_PATTERN = re.compile(
+    r"(?<!\w)([A-Z][A-Za-zÀ-ÖØ-öø-ÿ'’-]{1,30})"
+    r"(?:[ -]([A-Z][A-Za-zÀ-ÖØ-öø-ÿ'’-]{1,30}))(?!\w)"
+)
 _NAME_STOP_WORDS = frozenset(
     {
         "a", "an", "and", "application", "are", "before", "can", "complete",
         "current", "customer", "decision", "documents", "earlier", "explain",
         "for", "has", "have", "in", "information", "is", "it", "loan", "making",
-        "missing", "my", "next", "not", "of", "please", "profile", "qualified",
+        "fix", "function", "homework", "javascript", "missing", "my", "next",
+        "not", "of", "please", "profile", "python", "qualified", "solve",
         "ready", "repayment", "required", "review", "should", "status", "still",
         "summary", "summarize", "tell", "the", "this", "to", "what", "with", "you",
     }
+)
+_HIGH_CONFIDENCE_RESTRICTED_PATTERN = re.compile(
+    r"\b(?:phone|mobile|address|government\s+id|national\s+id|passport|"
+    r"id\s+number|date\s+of\s+birth|dob|wallet|transaction\s+hash|"
+    r"payment\s+reference|reference\s+number|internal\s+note|password|"
+    r"secret|api\s+key|token|credential|private\s+key)\b"
+    r"|\b(?:customer|borrower|applicant|client)\s+(?:name|email|phone|"
+    r"mobile|address)\b"
+    r"|\b(?:document|file)\s+(?:filename|name|content|path|url|storage)\b"
+    r"|[\\/]\S+|\b[\w.-]+\.(?:pdf|png|jpe?g|docx?|csv)\b"
+    r"|\b\d{1,6}\s+[^\W\d_][^\W\d_'’-]{1,30}"
+    r"(?:\s+[^\W\d_][^\W\d_'’-]{1,30}){0,3}\s*,"
+    r"|\b\d{1,6}\s+[^\W\d_][^\W\d_'’-]{1,30}"
+    r"(?:\s+[^\W\d_][^\W\d_'’-]{1,30}){0,3}\s+"
+    r"(?:city|municipality|barangay)\b"
+    r"|\b(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|"
+    r"jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|"
+    r"nov(?:ember)?|dec(?:ember)?)\s+\d{1,2}(?:st|nd|rd|th)?(?:,?\s+)\d{4}\b",
+    re.IGNORECASE,
 )
 
 
 def _canonical_text(value):
     normalized = unicodedata.normalize("NFKC", str(value or ""))
-    return "".join(
-        character
-        for character in normalized
-        if unicodedata.category(character) != "Cf"
-    )
+    canonical = []
+    for character in normalized:
+        if unicodedata.category(character) == "Cf":
+            continue
+        if character in {"⁄", "∕", "／", "⧸"}:
+            canonical.append("/")
+        elif character in {"．", "。", "｡"}:
+            canonical.append(".")
+        elif unicodedata.category(character) == "Pd":
+            canonical.append("-")
+        elif character in {",", "،"}:
+            canonical.append(",")
+        elif unicodedata.category(character).startswith("P") and character not in {
+            "'",
+            "’",
+            ".",
+            "+",
+            "@",
+            "-",
+            "/",
+        }:
+            canonical.append(" ")
+        else:
+            canonical.append(character)
+    return "".join(canonical)
 
 
-def officer_text_privacy_violations(value):
+def officer_text_privacy_violations(value, *, include_bare_name=True):
     """Return privacy violation codes without returning the sensitive text."""
-    text = _canonical_text(value)
-    normalized = " ".join(text.casefold().strip(" .!?;:").split())
+    text = " ".join(_canonical_text(value).split())
+    normalized = text.casefold().strip(" .!?;:")
     if normalized in _SAFE_PROMPTS:
         return ()
 
@@ -114,21 +159,26 @@ def officer_text_privacy_violations(value):
             for part in contextual_action_match.group("name").split()
         )
     )
-    capitalized_name = any(
-        first.casefold() not in _NAME_STOP_WORDS
-        and second.casefold() not in _NAME_STOP_WORDS
-        for first, second in _CAPITALIZED_NAME_PAIR_PATTERN.findall(text)
-    )
-    bare_name_parts = _BARE_NAME_PATTERN.fullmatch(text)
+    bare_name_match = _BARE_NAME_PATTERN.fullmatch(text)
     bare_name = bool(
-        bare_name_parts
+        bare_name_match
         and all(
             part.casefold() not in _NAME_STOP_WORDS
-            for part in text.split()
+            for part in bare_name_match.groups()
         )
     )
-    if contextual_name or contextual_action_name or capitalized_name or bare_name:
+    separated_name = any(
+        first.casefold() not in _NAME_STOP_WORDS
+        and second.casefold() not in _NAME_STOP_WORDS
+        for first, second in _SEPARATED_NAME_PATTERN.findall(text)
+    )
+    if contextual_name or contextual_action_name or separated_name or (
+        include_bare_name and bare_name
+    ):
         violations.append("name")
+
+    if _HIGH_CONFIDENCE_RESTRICTED_PATTERN.search(text):
+        violations.append("restricted_information")
 
     if any(
         _NON_LATIN_LETTER.fullmatch(character)
@@ -137,6 +187,22 @@ def officer_text_privacy_violations(value):
     ):
         violations.append("non_latin_identifier")
 
+    return tuple(dict.fromkeys(violations))
+
+
+def normalize_officer_text(value):
+    """Return the detector's canonical text form without returning evidence."""
+    return " ".join(_canonical_text(value).casefold().split())
+
+
+def officer_provider_output_violations(value):
+    """Add conservative output-only checks without treating names as input proof."""
+    violations = list(
+        officer_text_privacy_violations(value, include_bare_name=False)
+    )
+    text = _canonical_text(value)
+    if _PROVIDER_NAME_PATTERN.search(text):
+        violations.append("name")
     return tuple(dict.fromkeys(violations))
 
 

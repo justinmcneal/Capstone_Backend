@@ -50,7 +50,7 @@ from ai_assistant.services.officer_policy import (
 from ai_assistant.services.officer_prompt import route_officer_intent
 from ai_assistant.services.officer_privacy import (
     officer_provider_input_violations,
-    officer_text_privacy_violations,
+    officer_provider_output_violations,
 )
 from ai_assistant.services.response_controls import (
     controlled_guidance_response,
@@ -460,7 +460,7 @@ class GroqService:
             choice = choices[0] if isinstance(choices, list) and choices else {}
             provider_message = choice.get('message') if isinstance(choice, dict) else {}
             raw_plan = provider_message.get('content') if isinstance(provider_message, dict) else None
-            if officer_text_privacy_violations(raw_plan):
+            if officer_provider_output_violations(raw_plan):
                 return {
                     'success': False,
                     'error': PUBLIC_PROVIDER_ERROR,

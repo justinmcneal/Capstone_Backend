@@ -7,7 +7,7 @@ contract and a single public refusal response for unsupported requests.
 
 import re
 
-from ai_assistant.services.officer_privacy import officer_text_privacy_violations
+from ai_assistant.services.officer_privacy import officer_provider_output_violations
 
 
 OFFICER_UNSUPPORTED_RESPONSE = (
@@ -91,6 +91,10 @@ _GENERAL_TERMS = (
     "algorithm",
     "dictionary",
 )
+_AMBIGUOUS_MARKERS = frozenset({"hedf", "gawf"})
+_CAPITALIZED_NAME_LIKE_PATTERN = re.compile(
+    r"^[A-Z][A-Za-zÀ-ÖØ-öø-ÿ'’-]{1,30}(?:[ -][A-Z][A-Za-zÀ-ÖØ-öø-ÿ'’-]{1,30})$"
+)
 _GREETING_PATTERN = re.compile(
     r"^(?:hi|hello|hey|good morning|good afternoon|good evening|help|"
     r"what can you do)[!?. ]*$",
@@ -124,6 +128,11 @@ _ACTION_PATTERN = re.compile(
     r"|(?:^|\b)(?:please\s+)?verify\s+(?:this|the|an?)\s+document\b"
     r"|(?:^|\b)(?:can|could)\s+you\s+(?:approve|reject|disburse|"
     r"escalate|mutate|update|change|verify)\b",
+    re.IGNORECASE,
+)
+_ACTION_LIST_PATTERN = re.compile(
+    r"\b(?:approve|reject|disburse|pay|verify)\b(?:\s*,?\s*(?:or\s+)?"
+    r"(?:approve|reject|disburse|pay|verify)\b){2,}",
     re.IGNORECASE,
 )
 _ACTION_CLAIM_PATTERN = re.compile(
@@ -164,6 +173,10 @@ def officer_policy_category(message):
     """Return the local-only category for a request, if one applies."""
     text = _normalized(message)
 
+    if text in _AMBIGUOUS_MARKERS:
+        return "ambiguous"
+    if _CAPITALIZED_NAME_LIKE_PATTERN.fullmatch(str(message or "").strip()):
+        return "ambiguous"
     if _GREETING_PATTERN.fullmatch(text):
         return "help"
     if _CODE_REQUEST_PATTERN.search(text):
@@ -187,7 +200,7 @@ def officer_policy_category(message):
         return "unsupported"
     if _BORROWER_GUIDANCE_REQUEST_PATTERN.search(text):
         return "unsupported"
-    if _ACTION_PATTERN.search(text):
+    if _ACTION_PATTERN.search(text) or _ACTION_LIST_PATTERN.search(text):
         return "read_only"
     return None
 
@@ -219,7 +232,7 @@ def validate_officer_response(
 
     violations = []
     lowered = _normalized(text)
-    privacy_violations = officer_text_privacy_violations(text)
+    privacy_violations = officer_provider_output_violations(text)
     if privacy_violations:
         violations.extend(
             f"direct_identifier_{violation}" for violation in privacy_violations
