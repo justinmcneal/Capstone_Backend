@@ -203,6 +203,29 @@ def record_officer_ai_result(
     )
 
 
+def record_officer_ai_feedback(scope, request_id, language, *, rating):
+    """Record a brief rating without retaining the officer's comment text."""
+    safe_rating = rating if rating in {"up", "down"} else "unknown"
+    details = {
+        "application_index": AuditLog.blind_index(scope.application_id),
+        "request_id": request_id,
+        "language": language,
+        "outcome": "success",
+        "rating": safe_rating,
+        "diagnostic_code": "AI_OFFICER_OK",
+    }
+    return _write_or_queue(
+        _payload(
+            "ai_officer_feedback_recorded",
+            scope,
+            request_id,
+            language,
+            details,
+        ),
+        required=False,
+    )
+
+
 def record_officer_review_brief(
     scope,
     request_id,

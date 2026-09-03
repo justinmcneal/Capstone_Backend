@@ -8,6 +8,7 @@ from ai_assistant.views import (
     FAQsView,
     OfficerAIStatusView,
     OfficerChatView,
+    OfficerFeedbackView,
     OfficerStreamingChatView,
     OfficerSuggestionsView,
     StreamingChatView,
@@ -21,6 +22,7 @@ urlpatterns = [
     path('officer/suggestions/', OfficerSuggestionsView.as_view(), name='officer-suggestions'),
     path('officer/chat/', OfficerChatView.as_view(), name='officer-chat'),
     path('officer/chat/stream/', OfficerStreamingChatView.as_view(), name='officer-chat-stream'),
+    path('officer/feedback/', OfficerFeedbackView.as_view(), name='officer-feedback'),
 
     # Main chat endpoint
     path('chat/', ChatView.as_view(), name='chat'),

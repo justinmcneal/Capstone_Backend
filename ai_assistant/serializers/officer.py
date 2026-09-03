@@ -20,6 +20,8 @@ from ai_assistant.services.request_limits import (
 _OFFICER_CONTEXT_ERROR = "This request cannot be processed"
 OFFICER_PRIVACY_BLOCKED_CODE = "AI_OFFICER_PRIVACY_BLOCKED"
 OFFICER_REQUEST_INVALID_CODE = "AI_OFFICER_REQUEST_INVALID"
+OFFICER_FEEDBACK_INVALID_CODE = "AI_OFFICER_FEEDBACK_INVALID"
+OFFICER_FEEDBACK_COMMENT_MAX_LENGTH = 500
 
 
 def _validate_officer_context(value):
@@ -191,3 +193,46 @@ class OfficerChatRequestSerializer(serializers.Serializer):
                     _validate_officer_context(message)
         attrs.setdefault("conversation_id", str(uuid.uuid4()))
         return attrs
+
+
+class OfficerFeedbackSerializer(serializers.Serializer):
+    """Validate one officer rating for a generated review brief."""
+
+    application_id = serializers.CharField(required=True, allow_blank=False)
+    request_id = serializers.CharField(required=True, allow_blank=False)
+    rating = serializers.ChoiceField(required=True, choices=["up", "down"])
+    comment = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        default="",
+        max_length=OFFICER_FEEDBACK_COMMENT_MAX_LENGTH,
+    )
+    conversation_id = serializers.CharField(required=False, allow_blank=False)
+    language = serializers.CharField(required=False, default="en", allow_blank=False)
+
+    def validate_request_id(self, value):
+        try:
+            return str(uuid.UUID(str(value)))
+        except (TypeError, ValueError, AttributeError) as exc:
+            raise serializers.ValidationError("Invalid UUID format") from exc
+
+    def validate_conversation_id(self, value):
+        try:
+            return str(uuid.UUID(str(value)))
+        except (TypeError, ValueError, AttributeError) as exc:
+            raise serializers.ValidationError("Invalid UUID format") from exc
+
+    def validate_language(self, value):
+        language = str(value).strip().lower()
+        if language not in {"en", "tl"}:
+            raise serializers.ValidationError("Use one of: en, tl")
+        return language
+
+    def validate_comment(self, value):
+        cleaned = str(value or "").strip()
+        if not cleaned:
+            return ""
+        # Officer comments ride the same privacy boundary as prompts: they
+        # are stored encrypted, but identifiers must never enter at all.
+        _validate_officer_context(cleaned)
+        return cleaned

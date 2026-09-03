@@ -12,6 +12,7 @@ from ai_assistant.views.officer import (
     OfficerStreamingChatView,
     OfficerSuggestionsView,
 )
+from ai_assistant.views.officer_feedback import OfficerFeedbackView
 from ai_assistant.views.streaming import StreamingChatView
 
 __all__ = [
@@ -22,6 +23,7 @@ __all__ = [
     'FAQsView',
     'OfficerAIStatusView',
     'OfficerChatView',
+    'OfficerFeedbackView',
     'OfficerStreamingChatView',
     'OfficerSuggestionsView',
     'StreamingChatView',

@@ -62,6 +62,7 @@ AUDIT_ACTION_REGISTRY = {
     "ai_officer_assistant_access": "read",
     "ai_officer_assistant_result": "read",
     "ai_officer_review_brief_viewed": "read",
+    "ai_officer_feedback_recorded": "create",
     # Profile
     "profile_created": "create",
     "profile_updated": "update",
@@ -493,6 +494,16 @@ AUDIT_ACTION_DETAIL_KEYS.update(
                 "tool_count",
                 "duration_ms",
                 "provider_available",
+                "diagnostic_code",
+            }
+        ),
+        "ai_officer_feedback_recorded": frozenset(
+            {
+                "application_index",
+                "request_id",
+                "language",
+                "outcome",
+                "rating",
                 "diagnostic_code",
             }
         ),
