@@ -312,6 +312,88 @@ It validates public-access blocking, encryption, object ownership, CORS, URL
 expiry, versioning, and quarantine lifecycle. IAM policy and backup/restore
 evidence require separate operator review.
 
+#### Optional CNN training and evaluation
+
+CNN is disabled in the approved production baseline. These commands are for
+controlled development/research and do not make a trained model production-
+approved. Never use or commit personal documents without approved provenance,
+consent or licensing, anonymization, access controls, and retention handling.
+
+Build and validate the required dataset manifest:
+
+```bash
+# Preview a subject-grouped train/validation/holdout manifest
+python scripts/build_document_dataset_manifest.py \
+  --data-root documents/ml/training_data \
+  --provenance /path/to/approved-provenance.json
+
+# Write the manifest only after reviewing the preview
+python scripts/build_document_dataset_manifest.py \
+  --data-root documents/ml/training_data \
+  --provenance /path/to/approved-provenance.json \
+  --apply
+
+# Fail-closed dataset validation
+python scripts/check_training_data.py \
+  --data-root documents/ml/training_data
+```
+
+Train the MobileNetV2-based classifier:
+
+```bash
+# Defaults: 10 epochs, batch size 32, learning rate 0.001
+python manage.py train_document_classifier
+
+# Common overrides
+python manage.py train_document_classifier --epochs 20
+python manage.py train_document_classifier --batch-size 16
+python manage.py train_document_classifier --learning-rate 0.0005
+python manage.py train_document_classifier --fine-tune
+
+# Local experimentation only: bypasses strict dataset readiness
+python manage.py train_document_classifier --allow-dev
+```
+
+`--allow-dev` must never be used as release evidence. Training writes
+`documents/ml/models/document_classifier.pth`, updates the model registry as
+`not_approved`, and may update reports under `documents/ml/reports/`. Depending
+on the local PyTorch cache, training may also download pretrained MobileNetV2
+weights.
+
+The current training command validates the manifest but then creates its own
+seeded 80/20 split from every image under `documents/ml/training_data`; it does
+not train according to the manifest's `train`/`validation`/`holdout`
+assignments. Treat it as a development training command, keep the independent
+holdout physically separate, and never use holdout results for tuning or claim
+that this command alone satisfies the CNN release gate.
+
+Evaluate the artifact separately:
+
+```bash
+# Developer smoke checks
+python scripts/test_cnn_model.py /path/to/image.jpg
+python scripts/test_cnn_model.py /path/to/folder --batch
+python scripts/test_cnn_model.py documents/ml/test_data --confusion
+
+# Independent machine-readable quality gate
+python scripts/evaluate_document_model.py predictions.json \
+  --output evaluation-report.json
+
+# Dry-run approval eligibility check
+python scripts/approve_document_model.py \
+  --config documents/ml/models/model_config.json \
+  --artifact documents/ml/models/document_classifier.pth \
+  --evaluation evaluation-report.json
+```
+
+Approval remains a separate authorized action. Do not use the approval script's
+`--apply` mode until the independent evaluation, privacy/provenance review,
+rollback target, and approver are documented. See
+[`docs/documents/DOCUMENTS_TESTING_GUIDE.md`](docs/documents/DOCUMENTS_TESTING_GUIDE.md)
+for the full CNN workflow and
+[`docs/documents/DOCUMENTS_PRODUCTION_READINESS_REVIEW.md`](docs/documents/DOCUMENTS_PRODUCTION_READINESS_REVIEW.md)
+for optional CNN release conditions.
+
 ### Loans Commands
 
 #### Inventory and backfill loan persistence

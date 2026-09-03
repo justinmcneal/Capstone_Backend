@@ -1,8 +1,8 @@
 {
   "registry_schema_version": 1,
-  "model_version": "document-classifier-20260815T045352Z",
-  "approval_status": "approved",
-  "artifact_sha256": "46e5c4ed37c2715052522213fee01fc629df9e9af56f35a24583c511a6a93283",
+  "model_version": "document-classifier-20260903T024716Z",
+  "approval_status": "not_approved",
+  "artifact_sha256": "c745dbfefe0a933ea825ed91291523cc9a806bceb9be897bbd762a49f4ab6a02",
   "dataset_manifest_sha256": "02edf7028ee4acb7c683ff008de3b80ddf03e635baeac8ee6b724f8d5ffde054",
   "code_version": "documents-cnn-mobilenetv2-v1",
   "preprocessing_version": "document-photo-letterbox-v2",
@@ -10,7 +10,7 @@
   "intended_use": "advisory_document_quality_and_type_triage",
   "manual_review_required": true,
   "deployed_at": null,
-  "rollback_target": "v0.1",
+  "rollback_target": null,
   "classes": [
     "business_permit",
     "business_photo",
@@ -39,13 +39,13 @@
   ],
   "history": {
     "train_loss": [
-      1.3089161799067544
+      1.3397045220647539
     ],
     "val_loss": [
-      0.8659473632772764
+      0.9272718876600266
     ],
     "train_acc": [
-      69.96904024767802
+      62.22910216718266
     ],
     "val_acc": [
       91.35802469135803
@@ -53,8 +53,5 @@
     "lr": [
       0.001
     ]
-  },
-  "evaluation_report_sha256": "46e5c4ed37c2715052522213fee01fc629df9e9af56f35a24583c511a6a93283",
-  "approved_by": "gab",
-  "approved_at": "2026-08-15T04:54:06.384151+00:00"
+  }
 }

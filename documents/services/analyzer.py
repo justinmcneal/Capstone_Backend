@@ -52,6 +52,7 @@ class DocumentAnalyzer:
         self.class_names = None  # Loaded from model_config.json
         self.model_metadata = {}
         self.model_error_code = "artifact_missing"
+        self.model_runtime_status = "unavailable"
         self._try_load_model()
 
     def _try_load_model(self):
@@ -80,26 +81,34 @@ class DocumentAnalyzer:
 
             expected_hash = self.model_metadata.get("artifact_sha256")
             approval_status = self.model_metadata.get("approval_status")
-            if approval_status != "approved" or not expected_hash:
+            approval_required = bool(settings.DOCUMENT_AI_REQUIRE_APPROVED_MODEL)
+            allow_unapproved_dev = bool(settings.DEBUG) and not approval_required
+            if not expected_hash:
+                self.model_error_code = "registry_invalid"
+                logger.error("CNN artifact registry is missing its artifact hash")
+                return
+            if approval_status != "approved" and not allow_unapproved_dev:
                 self.model_error_code = "artifact_not_approved"
                 logger.warning(
                     "CNN artifact is present but not approved in its registry"
                 )
                 return
-            required_registry_fields = (
-                "model_version",
-                "dataset_manifest_sha256",
-                "evaluation_report_sha256",
-                "approved_by",
-                "approved_at",
-                "rollback_target",
-            )
-            if any(
-                not self.model_metadata.get(field) for field in required_registry_fields
-            ):
-                self.model_error_code = "registry_approval_incomplete"
-                logger.error("Approved CNN registry entry is incomplete")
-                return
+            if approval_status == "approved":
+                required_registry_fields = (
+                    "model_version",
+                    "dataset_manifest_sha256",
+                    "evaluation_report_sha256",
+                    "approved_by",
+                    "approved_at",
+                    "rollback_target",
+                )
+                if any(
+                    not self.model_metadata.get(field)
+                    for field in required_registry_fields
+                ):
+                    self.model_error_code = "registry_approval_incomplete"
+                    logger.error("Approved CNN registry entry is incomplete")
+                    return
             if (
                 self.model_metadata.get("preprocessing_version")
                 != PREPROCESSING_VERSION
@@ -121,7 +130,7 @@ class DocumentAnalyzer:
                 return
 
             # Inference must never attempt to download pretrained weights. The
-            # complete approved state dict is loaded immediately afterwards.
+            # complete hash-verified state dict is loaded immediately afterwards.
             self.model = DocumentClassifier(
                 num_classes=len(self.class_names), pretrained=False
             )
@@ -131,12 +140,18 @@ class DocumentAnalyzer:
             self.model.eval()
             self.model_loaded = True
             self.model_error_code = ""
+            self.model_runtime_status = (
+                "available"
+                if approval_status == "approved"
+                else "available_unapproved_dev"
+            )
             logger.info(
-                "Approved CNN model loaded: %s",
+                "%s CNN model loaded: %s",
+                "Approved" if approval_status == "approved" else "Unapproved development",
                 self.model_metadata.get("model_version", "unversioned"),
             )
         except Exception:
-            logger.exception("Could not load approved CNN model")
+            logger.exception("Could not load CNN model")
             self.model_error_code = "artifact_load_failed"
             self.model_loaded = False
 
@@ -192,7 +207,7 @@ class DocumentAnalyzer:
                 "type_validation_passed": type_validation["is_valid"],
                 "type_confidence_threshold": TYPE_CONFIDENCE_THRESHOLD,
                 "model_available": self.model_loaded,
-                "model_status": "available"
+                "model_status": getattr(self, "model_runtime_status", "available")
                 if self.model_loaded
                 else self.model_error_code,
                 "model_version": self.model_metadata.get("model_version"),
@@ -212,7 +227,7 @@ class DocumentAnalyzer:
                 "analysis_mode": "failed",
                 "analysis_status": "failed",
                 "model_available": self.model_loaded,
-                "model_status": "available"
+                "model_status": getattr(self, "model_runtime_status", "available")
                 if self.model_loaded
                 else self.model_error_code,
                 "model_version": self.model_metadata.get("model_version"),
@@ -352,7 +367,9 @@ class DocumentAnalyzer:
             "status": (
                 "dependency_missing"
                 if REQUIRE_BLUR_CHECK and not blur_available
-                else "available" if self.model_loaded else self.model_error_code
+                else getattr(self, "model_runtime_status", "available")
+                if self.model_loaded
+                else self.model_error_code
             ),
             "model_version": self.model_metadata.get("model_version"),
             "approval_status": self.model_metadata.get("approval_status", "missing"),
