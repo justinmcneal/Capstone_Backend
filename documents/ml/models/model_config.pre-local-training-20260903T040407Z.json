@@ -1,8 +1,8 @@
 {
   "registry_schema_version": 1,
-  "model_version": "document-classifier-20260903T040432Z",
+  "model_version": "document-classifier-20260903T024716Z",
   "approval_status": "not_approved",
-  "artifact_sha256": "2481be08258fc011e616ba118cb0cb4c95033ec083f843404ea3e59894dcf108",
+  "artifact_sha256": "c745dbfefe0a933ea825ed91291523cc9a806bceb9be897bbd762a49f4ab6a02",
   "dataset_manifest_sha256": "02edf7028ee4acb7c683ff008de3b80ddf03e635baeac8ee6b724f8d5ffde054",
   "code_version": "documents-cnn-mobilenetv2-v1",
   "preprocessing_version": "document-photo-letterbox-v2",
@@ -39,13 +39,13 @@
   ],
   "history": {
     "train_loss": [
-      1.3826895253289313
+      1.3397045220647539
     ],
     "val_loss": [
-      0.9431636917094389
+      0.9272718876600266
     ],
     "train_acc": [
-      69.3498452012384
+      62.22910216718266
     ],
     "val_acc": [
       91.35802469135803
