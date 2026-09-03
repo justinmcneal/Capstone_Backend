@@ -9,7 +9,10 @@ from accounts.authentication import AuthenticatedUser
 from accounts.models import LoanOfficer
 from ai_assistant.serializers.officer import OfficerChatRequestSerializer
 from ai_assistant.services.officer_history import sign_officer_assistant_history
-from ai_assistant.services.officer_prompt import officer_suggestions
+from ai_assistant.services.officer_prompt import (
+    canonical_officer_question,
+    officer_suggestions,
+)
 from ai_assistant.services.officer_scope import (
     OfficerAssistantScope,
     has_current_ai_consent,
@@ -147,23 +150,142 @@ def test_officer_chat_serializer_accepts_non_review_messages_for_local_scope_han
     assert serializer.is_valid(), serializer.errors
 
 
-def test_officer_chat_serializer_accepts_all_static_bilingual_suggestions():
-    for language in ("en", "tl"):
-        for suggestion in officer_suggestions(language):
-            message = suggestion["label"]
-            serializer = OfficerChatRequestSerializer(
-                data={
-                    "message": message,
-                    "application_id": "app-1",
-                    "language": language,
-                }
-            )
-
-            assert serializer.is_valid(), {
+@pytest.mark.parametrize("language", ["en", "tl"])
+@pytest.mark.parametrize(
+    "lifecycle",
+    [
+        "draft",
+        "submitted",
+        "under_review",
+        "approved",
+        "disbursed",
+        "active",
+        "completed",
+        "rejected",
+        "cancelled",
+    ],
+)
+def test_every_displayed_suggestion_is_valid_for_its_action(language, lifecycle):
+    for suggestion in officer_suggestions(language, status=lifecycle):
+        serializer = OfficerChatRequestSerializer(
+            data={
+                "message": suggestion["label"],
+                "intent": suggestion["id"],
+                "application_id": "synthetic-application",
                 "language": language,
-                "message": message,
-                "errors": serializer.errors,
             }
+        )
+
+        assert serializer.is_valid(), {
+            "language": language,
+            "lifecycle": lifecycle,
+            "suggestion": suggestion,
+            "errors": serializer.errors,
+        }
+
+
+def test_action_request_can_omit_display_message():
+    serializer = OfficerChatRequestSerializer(
+        data={
+            "application_id": "synthetic-application",
+            "intent": "document_status",
+            "language": "en",
+        }
+    )
+
+    assert serializer.is_valid(), serializer.errors
+    assert serializer.validated_data["intent"] == "document_status"
+    assert (
+        serializer.validated_data["message"]
+        == canonical_officer_question("document_status", "en")
+    )
+
+
+@pytest.mark.parametrize(
+    ("message", "intent", "language"),
+    [
+        (
+            "What profile information is still incomplete?",
+            "application_readiness",
+            "en",
+        ),
+        (
+            "Summarize the required document review statuses.",
+            "document_status",
+            "tl",
+        ),
+        (
+            "Review approval conditions and disbursement readiness.",
+            "repayment_summary",
+            "en",
+        ),
+        (
+            "Summarize this application's review readiness.",
+            "application_readiness",
+            "tl",
+        ),
+    ],
+)
+def test_legacy_action_label_must_match_its_intent_and_language(
+    message, intent, language
+):
+    serializer = OfficerChatRequestSerializer(
+        data={
+            "message": message,
+            "intent": intent,
+            "application_id": "synthetic-application",
+            "language": language,
+        }
+    )
+
+    assert serializer.is_valid() is False
+    assert "message" in serializer.errors
+
+
+def test_action_label_with_identifier_is_blocked_before_compatibility_acceptance():
+    serializer = OfficerChatRequestSerializer(
+        data={
+            "message": "Review Alice Santos's application readiness.",
+            "intent": "application_readiness",
+            "application_id": "synthetic-application",
+            "language": "en",
+        }
+    )
+
+    assert serializer.is_valid() is False
+    assert serializer.errors["message"][0].code == "AI_OFFICER_PRIVACY_BLOCKED"
+
+
+def test_filipino_action_label_in_history_is_replayed_as_canonical_question():
+    content = "Suriin ang talaan ng aplikasyon."
+    serializer = OfficerChatRequestSerializer(
+        data={
+            "message": "Ano pa ang kulang sa profile bago ang pagsusuri?",
+            "application_id": "synthetic-application",
+            "language": "tl",
+            "history": [
+                {
+                    "role": "user",
+                    "content": "Ibuod ang pagkumpleto ng bayaran.",
+                },
+                {
+                    "role": "assistant",
+                    "content": content,
+                    "history_signature": sign_officer_assistant_history(
+                        officer_id="officer-1",
+                        application_id="synthetic-application",
+                        content=content,
+                    ),
+                },
+            ],
+        },
+        context={"request": _officer_request("officer-1")},
+    )
+
+    assert serializer.is_valid(), serializer.errors
+    assert serializer.validated_data["history"][0]["content"] == (
+        "Ipaliwanag ang kasalukuyang buod ng pagbabayad."
+    )
 
 
 def test_officer_chat_serializer_normalizes_supplied_conversation_uuid():

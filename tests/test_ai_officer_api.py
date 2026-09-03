@@ -992,6 +992,46 @@ def test_officer_preset_intent_executes_without_provider(monkeypatch):
         "Repayment summary",
         "Repayment summary unavailable",
     }
+    assert response.data["data"]["history_message"] == (
+        "Explain the current repayment summary."
+    )
+    provider.assert_not_called()
+
+
+def test_officer_action_request_executes_without_display_message(monkeypatch):
+    officer = _officer()
+    application = _application(officer.id)
+    provider = Mock(side_effect=AssertionError("action request must not call provider"))
+    monkeypatch.setattr("ai_assistant.views.officer.get_llm_service", provider)
+    monkeypatch.setattr(
+        "ai_assistant.views.officer.has_current_ai_consent", lambda scope: True
+    )
+    monkeypatch.setattr(
+        "ai_assistant.services.officer_tools.has_current_ai_consent",
+        lambda scope: True,
+    )
+
+    response = OfficerChatView.as_view()(
+        _request(
+            "POST",
+            "/api/ai/officer/chat/",
+            officer.id,
+            data={
+                "application_id": str(application.id),
+                "language": "en",
+                "intent": "repayment_summary",
+            },
+        )
+    )
+
+    assert response.status_code == 200, response.data
+    assert response.data["data"]["review_brief"]["headline"] in {
+        "Repayment summary",
+        "Repayment summary unavailable",
+    }
+    assert response.data["data"]["history_message"] == (
+        "Explain the current repayment summary."
+    )
     provider.assert_not_called()
 
 

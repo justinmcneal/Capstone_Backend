@@ -32,6 +32,21 @@ OFFICER_SUGGESTION_INTENTS = {
     "repayment_summary": ("get_repayment_summary",),
 }
 
+OFFICER_CANONICAL_QUESTIONS = {
+    "en": {
+        "application_readiness": "Summarize this application's review readiness.",
+        "profile_readiness": "What profile information is still incomplete?",
+        "document_status": "Summarize the required document review statuses.",
+        "repayment_summary": "Explain the current repayment summary.",
+    },
+    "tl": {
+        "application_readiness": "Ibuod ang kahandaan ng aplikasyon para sa pagsusuri.",
+        "profile_readiness": "Ano pa ang kulang sa profile bago ang pagsusuri?",
+        "document_status": "Ibuod ang katayuan ng mga kinakailangang dokumento.",
+        "repayment_summary": "Ipaliwanag ang kasalukuyang buod ng pagbabayad.",
+    },
+}
+
 
 def _normalize_intent_message(message):
     normalized = unicodedata.normalize("NFKC", str(message or "")).casefold()
@@ -76,6 +91,130 @@ _DETERMINISTIC_INTENT_ALIASES = {
         }
     ),
 }
+
+_LEGACY_ACTION_LABELS = {
+    "en": {
+        "application_readiness": frozenset(
+            {
+                "Review approval conditions and disbursement readiness.",
+                "Review recorded reasons and permitted follow-up.",
+                "Review cancellation state and administrative follow-up.",
+            }
+        ),
+        "profile_readiness": frozenset(),
+        "document_status": frozenset(),
+        "repayment_summary": frozenset(
+            {
+                "Review repayment health, next installment, and overdue status.",
+                "Summarize repayment completion.",
+            }
+        ),
+    },
+    "tl": {
+        "application_readiness": frozenset(
+            {
+                "Suriin ang mga kondisyon ng pag-apruba at kahandaan sa pag-release.",
+                "Suriin ang naitalang dahilan at pinapahintulutang follow-up.",
+                "Suriin ang pagkansela at administratibong follow-up.",
+            }
+        ),
+        "profile_readiness": frozenset(),
+        "document_status": frozenset(),
+        "repayment_summary": frozenset(
+            {
+                "Suriin ang kalagayan ng bayaran, susunod na hulog, at overdue.",
+                "Ibuod ang pagkumpleto ng bayaran.",
+            }
+        ),
+    },
+}
+
+_LANGUAGE_ACTION_ALIASES = {
+    "en": {
+        "application_readiness": frozenset(
+            {
+                "summarize this application's review readiness",
+                "summarize review readiness",
+                "review summary",
+                "review this application",
+                "what is the current application status",
+                "current application status",
+            }
+        ),
+        "profile_readiness": frozenset(
+            {
+                "what profile information is still incomplete",
+                "what is missing from the profile",
+                "what is incomplete in the profile",
+            }
+        ),
+        "document_status": frozenset(
+            {
+                "summarize the required document review statuses",
+                "summarize the required document review status",
+                "what documents are present",
+                "what documents still need review",
+            }
+        ),
+        "repayment_summary": frozenset(
+            {
+                "explain the current repayment summary",
+                "what is the current repayment status",
+                "show the repayment summary",
+            }
+        ),
+    },
+    "tl": {
+        "application_readiness": frozenset(
+            {"ibuod ang kahandaan ng aplikasyon para sa pagsusuri"}
+        ),
+        "profile_readiness": frozenset(
+            {"ano pa ang kulang sa profile bago ang pagsusuri"}
+        ),
+        "document_status": frozenset(
+            {
+                "ibuod ang katayuan ng mga kinakailangang dokumento",
+                "ibuod ang mga katayuan ng pagsusuri ng kinakailangang dokumento",
+            }
+        ),
+        "repayment_summary": frozenset(
+            {"ipaliwanag ang kasalukuyang buod ng pagbabayad"}
+        ),
+    },
+}
+
+
+def canonical_officer_question(intent, language="en"):
+    """Return the server-owned question for an allowlisted review intent."""
+    normalized_language = "tl" if str(language or "en").lower() == "tl" else "en"
+    return OFFICER_CANONICAL_QUESTIONS[normalized_language][intent]
+
+
+def _all_action_message_aliases(intent, language):
+    normalized_language = "tl" if str(language or "en").lower() == "tl" else "en"
+    aliases = set(_LANGUAGE_ACTION_ALIASES[normalized_language][intent])
+    aliases.add(_normalize_intent_message(canonical_officer_question(intent, normalized_language)))
+    aliases.update(
+        _normalize_intent_message(label)
+        for label in _LEGACY_ACTION_LABELS[normalized_language][intent]
+    )
+    return aliases
+
+
+def officer_action_intent_for_message(message, language="en"):
+    """Return an intent only for an exact approved action/canonical label."""
+    normalized = _normalize_intent_message(message)
+    for intent in OFFICER_SUGGESTION_INTENTS:
+        if normalized in _all_action_message_aliases(intent, language):
+            return intent
+    return None
+
+
+def is_approved_officer_action_message(message, intent, language="en"):
+    return intent in OFFICER_SUGGESTION_INTENTS and (
+        _normalize_intent_message(message)
+        in _all_action_message_aliases(intent, language)
+    )
 
 
 def route_officer_intent(message):

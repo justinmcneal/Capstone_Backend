@@ -910,6 +910,11 @@ class OfficerChatView(AIRequestMetricsMixin, APIView):
                 "conversation_id": data["conversation_id"],
                 "response_time_ms": duration_ms,
                 "request_id": request_id,
+                **(
+                    {"history_message": data["message"]}
+                    if data.get("intent")
+                    else {}
+                ),
             },
             message="Officer AI response generated successfully",
         )
@@ -1241,6 +1246,11 @@ class OfficerStreamingChatView(AIRequestMetricsMixin, APIView):
                                     content=narration,
                                 ),
                                 "request_id": request_id,
+                                **(
+                                    {"history_message": data["message"]}
+                                    if data.get("intent")
+                                    else {}
+                                ),
                             },
                         )
                         record_result(

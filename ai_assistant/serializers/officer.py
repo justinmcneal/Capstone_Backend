@@ -9,6 +9,11 @@ from ai_assistant.services.officer_policy import (
     officer_policy_category,
 )
 from ai_assistant.services.officer_privacy import officer_text_privacy_violations
+from ai_assistant.services.officer_prompt import (
+    canonical_officer_question,
+    is_approved_officer_action_message,
+    officer_action_intent_for_message,
+)
 from ai_assistant.services.request_limits import (
     AI_ASSISTANT_HISTORY_MAX_MESSAGES,
     validate_chat_message,
@@ -197,7 +202,7 @@ def _validate_officer_context(value):
 class OfficerChatRequestSerializer(serializers.Serializer):
     """Validate the bounded request envelope for the officer assistant."""
 
-    message = serializers.CharField(required=True, allow_blank=False)
+    message = serializers.CharField(required=False, allow_blank=False)
     application_id = serializers.CharField(required=True, allow_blank=False)
     conversation_id = serializers.CharField(required=False, allow_blank=False)
     language = serializers.CharField(required=False, default="en", allow_blank=False)
@@ -219,20 +224,6 @@ class OfficerChatRequestSerializer(serializers.Serializer):
         )
         if error:
             raise serializers.ValidationError(self._message_error(error))
-        # Greetings and clearly unsupported requests are handled locally by
-        # the officer policy boundary. Keep them out of the conservative
-        # name heuristic (which would otherwise reject inputs such as "hi"
-        # or a code question before the safe scope response is rendered).
-        policy_category = officer_policy_category(message)
-        privacy_violations = officer_text_privacy_violations(message)
-        local_only = policy_category in {"help", "unsupported"} and not privacy_violations
-        # The conservative name detector sees capitalized programming labels
-        # such as "Given Input" as a name pair. Code requests are still local
-        # and never reach a provider, so only that false-positive is tolerated.
-        if policy_category == "code" and set(privacy_violations) <= {"name"}:
-            local_only = True
-        if not local_only:
-            _validate_officer_context(message)
         return message
 
     def validate_conversation_id(self, value):
@@ -263,6 +254,7 @@ class OfficerChatRequestSerializer(serializers.Serializer):
             actor, "id", None
         )
         application_id = self.initial_data.get("application_id")
+        history_language = self.initial_data.get("language", "en")
         for index, entry in enumerate(value):
             if not isinstance(entry, dict):
                 raise serializers.ValidationError(
@@ -297,11 +289,58 @@ class OfficerChatRequestSerializer(serializers.Serializer):
                         {str(index): {"content": _OFFICER_CONTEXT_ERROR}}
                     )
             else:
-                _validate_officer_context(cleaned_content)
+                history_intent = officer_action_intent_for_message(
+                    cleaned_content, history_language
+                )
+                if history_intent:
+                    cleaned_content = canonical_officer_question(
+                        history_intent, history_language
+                    )
+                else:
+                    _validate_officer_context(cleaned_content)
             normalized.append({"role": role, "content": cleaned_content})
 
         return normalized[-AI_ASSISTANT_HISTORY_MAX_MESSAGES:]
 
     def validate(self, attrs):
+        message = attrs.get("message")
+        intent = attrs.get("intent")
+        language = attrs.get("language", "en")
+
+        if intent:
+            if message:
+                privacy_violations = officer_text_privacy_violations(message)
+                if privacy_violations and not (
+                    set(privacy_violations) == {"name"}
+                    and is_approved_officer_action_message(message, intent, language)
+                ):
+                    raise serializers.ValidationError(
+                        {
+                            "message": serializers.ErrorDetail(
+                                _OFFICER_CONTEXT_ERROR,
+                                code=OFFICER_PRIVACY_BLOCKED_CODE,
+                            )
+                        }
+                    )
+                if not is_approved_officer_action_message(message, intent, language):
+                    raise serializers.ValidationError(
+                        {"message": "The message does not match the selected suggestion"}
+                    )
+            attrs["message"] = canonical_officer_question(intent, language)
+        elif not message:
+            raise serializers.ValidationError(
+                {"message": "This field is required unless an intent is supplied"}
+            )
+        else:
+            # Greetings and clearly unsupported requests are handled locally by
+            # the officer policy boundary. Keep them out of the conservative
+            # name heuristic so local guidance can be rendered safely.
+            policy_category = officer_policy_category(message)
+            privacy_violations = officer_text_privacy_violations(message)
+            local_only = policy_category in {"help", "unsupported"} and not privacy_violations
+            if policy_category == "code" and set(privacy_violations) <= {"name"}:
+                local_only = True
+            if not local_only:
+                _validate_officer_context(message)
         attrs.setdefault("conversation_id", str(uuid.uuid4()))
         return attrs
