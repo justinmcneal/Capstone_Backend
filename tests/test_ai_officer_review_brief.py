@@ -252,15 +252,6 @@ def test_failed_subsystem_returns_unavailable_brief_without_partial_content():
     [
         [{"tool_name": "unknown_tool", "success": True, "result": "{}"}],
         [{"tool_name": "get_application_summary", "success": True, "result": "{"}],
-        [
-            {
-                "tool_name": "get_application_summary",
-                "success": True,
-                "result": json.dumps(
-                    {"review_readiness": {"status": "unexpected_state"}}
-                ),
-            }
-        ],
     ],
 )
 def test_malformed_or_unknown_evidence_fails_closed(evidence):
@@ -532,6 +523,33 @@ def test_rendered_brief_separates_multiple_reasons_and_next_steps():
     assert ".," not in narration
 
 
+def test_contradictory_document_evidence_fails_closed():
+    brief = build_review_brief(
+        [
+            _evidence(
+                "get_document_review_status",
+                {
+                    "required_document_types": [
+                        {"code": "valid_id", "label": "Valid Government ID"}
+                    ],
+                    "documents": [
+                        {
+                            "type_code": "valid_id",
+                            "status": "approved",
+                            "verified": False,
+                        }
+                    ],
+                    "truncated": False,
+                },
+            )
+        ],
+        language="en",
+        message="Summarize required documents.",
+    )
+
+    assert brief == build_unavailable_review_brief("en", topic="document")
+
+
 @pytest.mark.parametrize(
     "result",
     [
@@ -552,35 +570,27 @@ def test_rendered_brief_separates_multiple_reasons_and_next_steps():
             "required_document_types": [
                 {"code": "valid_id", "label": "Valid Government ID"}
             ],
-            "documents": [
-                {
-                    "type_code": "valid_id",
-                    "status": "approved",
-                    "verified": False,
-                }
-            ],
-            "truncated": False,
-        },
-        {
-            "required_document_types": [
-                {"code": "valid_id", "label": "Valid Government ID"}
-            ],
             "documents": [],
             "truncated": True,
         },
     ],
 )
-def test_unknown_contradictory_or_truncated_document_evidence_fails_closed(result):
+def test_unassessable_document_evidence_degrades_to_manual_review(result):
     brief = build_review_brief(
         [_evidence("get_document_review_status", result)],
         language="en",
         message="Summarize required documents.",
     )
 
-    assert brief == build_unavailable_review_brief("en", topic="document")
+    assert brief["review_state"] == "needs_attention"
+    assert brief["headline"] == "Document review summary"
+    assert any(
+        reason["code"] == "manual_check_needed" for reason in brief["reasons"]
+    )
+    assert brief["sources"] == ["Document review"]
 
 
-def test_unknown_repayment_status_fails_closed():
+def test_unknown_repayment_status_degrades_to_manual_review():
     brief = build_review_brief(
         [
             _evidence(
@@ -605,7 +615,91 @@ def test_unknown_repayment_status_fails_closed():
         message="Explain the current repayment summary.",
     )
 
-    assert brief == build_unavailable_review_brief("en", topic="repayment")
+    assert brief["review_state"] == "needs_attention"
+    assert any(
+        reason["code"] == "manual_check_needed" for reason in brief["reasons"]
+    )
+    assert brief["sources"] == ["Repayment summary"]
+
+
+def test_partially_failed_evidence_keeps_loaded_sections_with_manual_review():
+    brief = build_review_brief(
+        [
+            _evidence(
+                "get_application_summary",
+                {
+                    "review_readiness": {
+                        "status": "ready_for_review",
+                        "is_reviewable": True,
+                        "manual_review_required": False,
+                    }
+                },
+            ),
+            _evidence(
+                "get_document_review_status",
+                {"whatever": "malformed"},
+                success=False,
+                code="AI_OFFICER_TOOL_READ_FAILED",
+            ),
+        ],
+        language="en",
+        message="Summarize this application's review readiness.",
+        diagnostics=(diagnostics := []),
+    )
+
+    assert brief["review_state"] == "needs_attention"
+    assert brief["headline"] == "Not ready for review"
+    assert brief["sources"] == ["Application summary"]
+    assert any(
+        reason["code"] == "manual_check_needed" for reason in brief["reasons"]
+    )
+    assert "tool_read_unavailable" in diagnostics
+
+
+def test_unexpected_readiness_state_degrades_to_manual_review():
+    brief = build_review_brief(
+        [
+            {
+                "tool_name": "get_application_summary",
+                "success": True,
+                "result": json.dumps(
+                    {"review_readiness": {"status": "unexpected_state"}}
+                ),
+            }
+        ],
+        language="en",
+        message="Summarize review readiness.",
+    )
+
+    assert brief["review_state"] == "needs_attention"
+    assert any(
+        reason["code"] == "manual_check_needed" for reason in brief["reasons"]
+    )
+
+
+def test_unrecognized_application_purpose_degrades_to_manual_review():
+    brief = build_review_brief(
+        [
+            _evidence(
+                "get_application_summary",
+                {
+                    "review_readiness": {
+                        "status": "ready_for_review",
+                        "is_reviewable": True,
+                        "manual_review_required": False,
+                    },
+                    "purpose": "personal",
+                },
+            )
+        ],
+        language="en",
+        message="Summarize this application's review readiness.",
+    )
+
+    assert any(
+        reason["code"] == "manual_check_needed" for reason in brief["reasons"]
+    )
+    assert brief["sources"] == ["Application summary"]
 
 
 def test_no_schedule_evidence_rejects_contradictory_schedule_content():

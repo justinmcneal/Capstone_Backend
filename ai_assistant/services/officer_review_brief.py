@@ -449,7 +449,16 @@ def _application_fragment(result, locale):
             }
         ]
     else:
-        raise InvalidReviewBrief("Unknown review readiness")
+        # An unrecognized readiness combination still needs officer eyes, but
+        # it must not erase the sections that did load.
+        state = "needs_attention"
+        reasons = [
+            {
+                "code": "manual_check_needed",
+                "label": text["manual_label"],
+                "detail": text["manual_detail"],
+            }
+        ]
     if "purpose" in result:
         purpose = result["purpose"]
         if purpose is not None and purpose not in {
@@ -459,7 +468,15 @@ def _application_fragment(result, locale):
             "expansion",
             "operations",
         }:
-            raise InvalidReviewBrief("Unknown application purpose")
+            # An unrecognized purpose value is a data question for the
+            # officer, not a reason to discard the whole brief.
+            reasons.append(
+                {
+                    "code": "manual_check_needed",
+                    "label": text["manual_label"],
+                    "detail": text["manual_detail"],
+                }
+            )
         if purpose is None:
             reasons.append(
                 {
@@ -494,9 +511,18 @@ def _application_fragment(result, locale):
     ]
 
 
+def _manual_review_reason(text):
+    return {
+        "code": "manual_check_needed",
+        "label": text["manual_label"],
+        "detail": text["manual_detail"],
+    }
+
+
 def _profile_fragment(result, locale):
     text = _TEXT[locale]
     reasons = []
+    manual_review_needed = False
     profile_requires_completion = False
     for profile_name in ("personal", "business", "alternative"):
         profile = result.get(profile_name)
@@ -533,7 +559,10 @@ def _profile_fragment(result, locale):
             code = field.get("code") if isinstance(field, dict) else None
             label = _PROFILE_FIELD_LABELS[locale].get(code)
             if not label:
-                raise InvalidReviewBrief("Unknown profile field")
+                # An unrecognized profile field still needs officer eyes, but
+                # it must not erase the sections that did load.
+                manual_review_needed = True
+                continue
             reasons.append(
                 {
                     "code": "profile_field_incomplete",
@@ -567,6 +596,10 @@ def _profile_fragment(result, locale):
                         "detail": text["manual_detail"],
                     }
                 )
+    if manual_review_needed:
+        manual_reason = _manual_review_reason(text)
+        if manual_reason not in reasons:
+            reasons.append(manual_reason)
     return (
         "needs_attention" if reasons else "ready",
         reasons,
@@ -582,17 +615,24 @@ def _document_fragment(result, locale):
     text = _TEXT[locale]
     required = result.get("required_document_types")
     documents = result.get("documents")
+    truncated = result.get("truncated")
     if (
         not isinstance(required, list)
         or not isinstance(documents, list)
-        or result.get("truncated") is not False
+        or not isinstance(truncated, bool)
     ):
         raise InvalidReviewBrief("Malformed document evidence")
+    manual_review_needed = truncated
     required_codes = []
     for required_document in required:
         code = required_document.get("code") if isinstance(required_document, dict) else None
-        if code not in _DOCUMENT_LABELS[locale] or code in required_codes:
+        if not isinstance(code, str) or code in required_codes:
             raise InvalidReviewBrief("Unknown required document type")
+        if code not in _DOCUMENT_LABELS[locale]:
+            # An unrecognized requirement still needs officer eyes, but it
+            # must not erase the sections that did load.
+            manual_review_needed = True
+            continue
         required_codes.append(code)
     submitted = {}
     for document in documents:
@@ -601,12 +641,15 @@ def _document_fragment(result, locale):
         code = document.get("type_code")
         status = document.get("status")
         verified = document.get("verified")
-        if (
-            code not in required_codes
-            or status not in DOCUMENT_STATUSES
-            or not isinstance(verified, bool)
-            or verified != (status == "approved")
-        ):
+        if code not in required_codes:
+            # Extra non-required uploads are outside this brief's scope.
+            continue
+        if status not in DOCUMENT_STATUSES:
+            if isinstance(verified, bool) and verified is False:
+                manual_review_needed = True
+                continue
+            raise InvalidReviewBrief("Unknown document type")
+        if not isinstance(verified, bool) or verified != (status == "approved"):
             raise InvalidReviewBrief("Unknown document type")
         submitted.setdefault(code, []).append(document)
     reasons = []
@@ -649,6 +692,10 @@ def _document_fragment(result, locale):
                     ),
                 }
             )
+    if manual_review_needed:
+        manual_reason = _manual_review_reason(text)
+        if manual_reason not in reasons:
+            reasons.append(manual_reason)
     return (
         "needs_attention" if reasons else "ready",
         reasons,
@@ -729,13 +776,18 @@ def _repayment_fragment(result, locale):
         raise InvalidReviewBrief("Malformed repayment evidence")
     progress = result.get("schedule_progress")
     summaries = result.get("payment_status_summaries", [])
+    payments_truncated = result.get("payments_truncated")
     if (
-        result.get("schedule_status") not in SCHEDULE_STATUSES
-        or result.get("payments_truncated") is not False
+        not isinstance(payments_truncated, bool)
         or not isinstance(progress, dict)
         or not isinstance(summaries, list)
     ):
         raise InvalidReviewBrief("Malformed repayment evidence")
+    manual_review_needed = bool(payments_truncated)
+    if result.get("schedule_status") not in SCHEDULE_STATUSES:
+        # An unrecognized schedule state still needs officer eyes, but it
+        # must not erase the sections that did load.
+        manual_review_needed = True
     paid_count = progress.get("paid_count")
     installment_count = progress.get("installment_count")
     completed_percentage = progress.get("completed_percentage")
@@ -777,12 +829,15 @@ def _repayment_fragment(result, locale):
         count = summary.get("count") if isinstance(summary, dict) else None
         if (
             status not in INSTALLMENT_STATUSES
+            and status != "unknown"
             or status in seen_statuses
             or not isinstance(count, int)
             or isinstance(count, bool)
             or count < 0
         ):
             raise InvalidReviewBrief("Malformed repayment status")
+        if status == "unknown":
+            manual_review_needed = True
         seen_statuses.add(status)
         summarized_count += count
         if status == "paid":
@@ -799,8 +854,12 @@ def _repayment_fragment(result, locale):
                 "detail": text["repayment_overdue_detail"].format(count=overdue_count),
             }
         )
+    if manual_review_needed:
+        manual_reason = _manual_review_reason(text)
+        if manual_reason not in reasons:
+            reasons.append(manual_reason)
     return (
-        "needs_attention" if overdue_count else "informational",
+        "needs_attention" if (overdue_count or manual_review_needed) else "informational",
         reasons,
         [text["repayment_next"]],
     )
@@ -929,24 +988,29 @@ def build_review_brief(
 
     fragments = []
     tools = []
-    try:
-        for entry in evidence:
+    manual_review_needed = False
+    for entry in evidence:
+        try:
             tool_name, result = _decode_evidence(entry)
-            if result is None:
-                if diagnostics is not None:
-                    diagnostics.append("tool_read_unavailable")
-                return build_unavailable_review_brief(
-                    locale,
-                    topic=_topic_for_tool(tool_name),
-                    as_of=as_of,
-                    evidence_revision=_evidence_revision(evidence),
-                    actions=actions,
-                )
+        except InvalidReviewBrief as exc:
+            if diagnostics is not None:
+                diagnostics.append(exc.code)
+            manual_review_needed = True
+            continue
+        if result is None:
+            if diagnostics is not None:
+                diagnostics.append("tool_read_unavailable")
+            manual_review_needed = True
+            continue
+        try:
             fragments.append(_FRAGMENT_BUILDERS[tool_name](result, locale))
-            tools.append(tool_name)
-    except InvalidReviewBrief as exc:
-        if diagnostics is not None:
-            diagnostics.append(exc.code)
+        except InvalidReviewBrief as exc:
+            if diagnostics is not None:
+                diagnostics.append(exc.code)
+            manual_review_needed = True
+            continue
+        tools.append(tool_name)
+    if not fragments:
         topic = (
             _topic_for_tool(evidence[0].get("tool_name")) or "application"
             if evidence and isinstance(evidence[0], dict)
@@ -967,13 +1031,24 @@ def build_review_brief(
         state = "informational"
     else:
         state = "ready"
+    if manual_review_needed and state == "ready":
+        # A section failed to load, so the brief must not claim readiness.
+        state = "needs_attention"
     reasons = []
     next_steps = []
     for _state, fragment_reasons, fragment_steps in fragments:
-        reasons.extend(fragment_reasons)
+        for reason in fragment_reasons:
+            if reason not in reasons:
+                reasons.append(reason)
         for step in fragment_steps:
             if step not in next_steps:
                 next_steps.append(step)
+    if manual_review_needed:
+        # A section failed to load, but the surviving sections are still
+        # worth showing. One manual-review reason covers the gap.
+        manual_reason = _manual_review_reason(text)
+        if not any(reason.get("code") == "manual_check_needed" for reason in reasons):
+            reasons.append(manual_reason)
     sources = [PUBLIC_SOURCE_LABELS[locale][tool] for tool in PUBLIC_SOURCE_LABELS[locale] if tool in tools]
 
     if tools == ["get_application_summary"]:

@@ -116,8 +116,11 @@ def test_unavailable_and_contradictory_evidence_fail_closed():
         }],
         message="Summarize this application's review readiness.",
     )
-    assert contradictory["review_state"] == "unavailable"
-    assert not contradictory["reasons"]
+    assert contradictory["review_state"] == "needs_attention"
+    assert any(
+        reason["code"] == "manual_check_needed"
+        for reason in contradictory["reasons"]
+    )
 
 
 def test_stale_evidence_is_explicitly_flagged_without_changing_facts():
