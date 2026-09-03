@@ -865,9 +865,13 @@ def rule_based_qualification(
         # Recommend based on income (3x monthly income or requested, whichever is lower)
         income = business.estimated_monthly_income if business else 0
         max_recommend = min(income * 3, product.max_amount, requested_amount)
-        recommended = max(product.min_amount, max_recommend)
+        # Profile money fields are loaded as Decimal values. Qualification is
+        # embedded in LoanApplication.ai_recommendation, and PyMongo cannot
+        # encode a native Decimal. Keep this API/ML payload consistently numeric
+        # and BSON-safe, matching the normalized AI qualification path.
+        recommended = float(max(product.min_amount, max_recommend))
     else:
-        recommended = 0
+        recommended = 0.0
 
     return {
         "eligible": eligible,

@@ -17,9 +17,11 @@ Coverage:
 - Consistency with AI qualification schema
 """
 
+from decimal import Decimal
 from types import SimpleNamespace
 
 import pytest
+from bson import BSON
 
 from loans.services.qualification import (
     check_required_documents,
@@ -418,6 +420,35 @@ class TestRuleBasedQualification:
         )
 
         assert result["recommended_amount"] <= 15000
+
+    def test_decimal_income_produces_bson_safe_recommendation(self):
+        product = _make_product(
+            min_amount=1000,
+            max_amount=50000,
+            min_monthly_income=0,
+            required_documents=["valid_id"],
+        )
+        business = _make_business(
+            business_age_months=24,
+            estimated_monthly_income=Decimal("4500.00"),
+        )
+        data = _make_data(
+            business=business,
+            alternative=_make_alternative(),
+            docs=[_make_document("valid_id", "approved")],
+        )
+
+        result = rule_based_qualification(
+            data,
+            product,
+            requested_amount=25000,
+            requirements_scope="product",
+            require_approved_documents=True,
+        )
+
+        assert result["recommended_amount"] == 13500.0
+        assert isinstance(result["recommended_amount"], float)
+        BSON.encode({"ai_recommendation": result})
 
     def test_recommended_amount_zero_when_ineligible(self):
         product = _make_product(min_business_months=999)
