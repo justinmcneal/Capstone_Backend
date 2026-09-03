@@ -204,6 +204,30 @@ def test_action_request_can_omit_display_message():
 @pytest.mark.parametrize(
     ("message", "intent", "language"),
     [
+        ("Review repayments", "repayment_summary", "en"),
+        ("Suriin ang bayaran", "repayment_summary", "tl"),
+    ],
+)
+def test_typed_short_display_action_is_canonicalized_before_privacy_checks(
+    message, intent, language
+):
+    serializer = OfficerChatRequestSerializer(
+        data={
+            "message": message,
+            "application_id": "synthetic-application",
+            "language": language,
+        }
+    )
+
+    assert serializer.is_valid(), serializer.errors
+    assert serializer.validated_data["message"] == canonical_officer_question(
+        intent, language
+    )
+
+
+@pytest.mark.parametrize(
+    ("message", "intent", "language"),
+    [
         (
             "What profile information is still incomplete?",
             "application_readiness",

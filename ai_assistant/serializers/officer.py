@@ -164,20 +164,30 @@ class OfficerChatRequestSerializer(serializers.Serializer):
                 {"message": "This field is required unless an intent is supplied"}
             )
         else:
-            # Greetings and clearly unsupported requests are handled locally by
-            # the officer policy boundary. Keep them out of the conservative
-            # name heuristic so local guidance can be rendered safely.
-            policy_category = officer_policy_category(message)
-            privacy_violations = officer_text_privacy_violations(message)
-            local_only = policy_category in {
-                "help",
-                "unsupported",
-                "read_only",
-                "ambiguous",
-            } and not privacy_violations
-            if policy_category == "code" and set(privacy_violations) <= {"name"}:
-                local_only = True
-            if not local_only:
-                _validate_officer_context(message)
+            typed_action_intent = officer_action_intent_for_message(message, language)
+            if typed_action_intent:
+                # Exact server-owned action labels are safe to normalize before
+                # the conservative name detector. This keeps manually typed
+                # labels equivalent to their one-click counterparts without
+                # allowing arbitrary free text to bypass privacy validation.
+                attrs["message"] = canonical_officer_question(
+                    typed_action_intent, language
+                )
+            else:
+                # Greetings and clearly unsupported requests are handled locally by
+                # the officer policy boundary. Keep them out of the conservative
+                # name heuristic so local guidance can be rendered safely.
+                policy_category = officer_policy_category(message)
+                privacy_violations = officer_text_privacy_violations(message)
+                local_only = policy_category in {
+                    "help",
+                    "unsupported",
+                    "read_only",
+                    "ambiguous",
+                } and not privacy_violations
+                if policy_category == "code" and set(privacy_violations) <= {"name"}:
+                    local_only = True
+                if not local_only:
+                    _validate_officer_context(message)
         attrs.setdefault("conversation_id", str(uuid.uuid4()))
         return attrs
