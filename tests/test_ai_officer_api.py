@@ -359,24 +359,24 @@ def test_officer_suggestions_are_static_and_language_specific():
 
 def test_officer_suggestions_follow_application_lifecycle():
     assert officer_suggestions("en", status="submitted") == [
-        {"id": "application_readiness", "label": "Summarize this application's review readiness."},
-        {"id": "profile_readiness", "label": "What profile information is still incomplete?"},
-        {"id": "document_status", "label": "Summarize the required document review statuses."},
+        {"id": "application_readiness", "label": "Review readiness"},
+        {"id": "profile_readiness", "label": "Profile gaps"},
+        {"id": "document_status", "label": "Document status"},
     ]
     assert officer_suggestions("en", status="approved") == [
-        {"id": "application_readiness", "label": "Review approval conditions and disbursement readiness."},
+        {"id": "application_readiness", "label": "Review approval conditions"},
     ]
     assert officer_suggestions("en", status="disbursed") == [
-        {"id": "repayment_summary", "label": "Review repayment health, next installment, and overdue status."},
+        {"id": "repayment_summary", "label": "Review repayments"},
     ]
     assert officer_suggestions("en", status="completed") == [
-        {"id": "repayment_summary", "label": "Summarize repayment completion."},
+        {"id": "repayment_summary", "label": "Review repayment completion"},
     ]
     assert officer_suggestions("en", status="rejected") == [
-        {"id": "application_readiness", "label": "Review recorded reasons and permitted follow-up."},
+        {"id": "application_readiness", "label": "Review recorded reasons"},
     ]
     assert officer_suggestions("en", status="cancelled") == [
-        {"id": "application_readiness", "label": "Review cancellation state and administrative follow-up."},
+        {"id": "application_readiness", "label": "Review cancellation"},
     ]
 
 

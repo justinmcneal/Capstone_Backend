@@ -47,6 +47,40 @@ OFFICER_CANONICAL_QUESTIONS = {
     },
 }
 
+OFFICER_DISPLAY_LABELS = {
+    "en": {
+        "application_readiness": "Review readiness",
+        "profile_readiness": "Profile gaps",
+        "document_status": "Document status",
+        "repayment_summary": "Review repayments",
+    },
+    "tl": {
+        "application_readiness": "Suriin ang kahandaan",
+        "profile_readiness": "Kulang sa profile",
+        "document_status": "Katayuan ng dokumento",
+        "repayment_summary": "Suriin ang bayaran",
+    },
+}
+
+OFFICER_LIFECYCLE_DISPLAY_LABELS = {
+    "en": {
+        "approved": ("application_readiness", "Review approval conditions"),
+        "disbursed": ("repayment_summary", "Review repayments"),
+        "active": ("repayment_summary", "Review repayments"),
+        "completed": ("repayment_summary", "Review repayment completion"),
+        "rejected": ("application_readiness", "Review recorded reasons"),
+        "cancelled": ("application_readiness", "Review cancellation"),
+    },
+    "tl": {
+        "approved": ("application_readiness", "Suriin ang kondisyon ng pag-apruba"),
+        "disbursed": ("repayment_summary", "Suriin ang bayaran"),
+        "active": ("repayment_summary", "Suriin ang bayaran"),
+        "completed": ("repayment_summary", "Buod ng nakumpletong bayaran"),
+        "rejected": ("application_readiness", "Suriin ang naitalang dahilan"),
+        "cancelled": ("application_readiness", "Suriin ang pagkansela"),
+    },
+}
+
 
 def _normalize_intent_message(message):
     normalized = unicodedata.normalize("NFKC", str(message or "")).casefold()
@@ -194,6 +228,14 @@ def _all_action_message_aliases(intent, language):
     normalized_language = "tl" if str(language or "en").lower() == "tl" else "en"
     aliases = set(_LANGUAGE_ACTION_ALIASES[normalized_language][intent])
     aliases.add(_normalize_intent_message(canonical_officer_question(intent, normalized_language)))
+    aliases.add(_normalize_intent_message(OFFICER_DISPLAY_LABELS[normalized_language][intent]))
+    aliases.update(
+        _normalize_intent_message(label)
+        for lifecycle_intent, label in OFFICER_LIFECYCLE_DISPLAY_LABELS[
+            normalized_language
+        ].values()
+        if lifecycle_intent == intent
+    )
     aliases.update(
         _normalize_intent_message(label)
         for label in _LEGACY_ACTION_LABELS[normalized_language][intent]
@@ -227,24 +269,11 @@ def route_officer_intent(message):
 
 
 def officer_suggestions(language, status=None):
-    labels = (
-        [
-            "Ibuod ang kahandaan ng aplikasyon para sa pagsusuri.",
-            "Ano pa ang kulang sa profile bago ang pagsusuri?",
-            "Ibuod ang katayuan ng mga kinakailangang dokumento.",
-            "Ipaliwanag ang kasalukuyang buod ng pagbabayad.",
-        ]
-        if str(language or "en").lower() == "tl"
-        else [
-            "Summarize this application's review readiness.",
-            "What profile information is still incomplete?",
-            "Summarize the required document review statuses.",
-            "Explain the current repayment summary.",
-        ]
-    )
+    normalized_language = "tl" if str(language or "en").lower() == "tl" else "en"
+    labels = OFFICER_DISPLAY_LABELS[normalized_language]
     suggestions = [
-        {"id": intent, "label": label}
-        for intent, label in zip(OFFICER_SUGGESTION_INTENTS, labels)
+        {"id": intent, "label": labels[intent]}
+        for intent in OFFICER_SUGGESTION_INTENTS
     ]
     if status is None:
         return suggestions
@@ -253,56 +282,8 @@ def officer_suggestions(language, status=None):
     if normalized_status in {"draft", "submitted", "under_review"}:
         return suggestions[:3]
 
-    lifecycle_labels = {
-        "en": {
-            "approved": (
-                "application_readiness",
-                "Review approval conditions and disbursement readiness.",
-            ),
-            "disbursed": (
-                "repayment_summary",
-                "Review repayment health, next installment, and overdue status.",
-            ),
-            "active": (
-                "repayment_summary",
-                "Review repayment health, next installment, and overdue status.",
-            ),
-            "completed": ("repayment_summary", "Summarize repayment completion."),
-            "rejected": (
-                "application_readiness",
-                "Review recorded reasons and permitted follow-up.",
-            ),
-            "cancelled": (
-                "application_readiness",
-                "Review cancellation state and administrative follow-up.",
-            ),
-        },
-        "tl": {
-            "approved": (
-                "application_readiness",
-                "Suriin ang mga kondisyon ng pag-apruba at kahandaan sa pag-release.",
-            ),
-            "disbursed": (
-                "repayment_summary",
-                "Suriin ang kalagayan ng bayaran, susunod na hulog, at overdue.",
-            ),
-            "active": (
-                "repayment_summary",
-                "Suriin ang kalagayan ng bayaran, susunod na hulog, at overdue.",
-            ),
-            "completed": ("repayment_summary", "Ibuod ang pagkumpleto ng bayaran."),
-            "rejected": (
-                "application_readiness",
-                "Suriin ang naitalang dahilan at pinapahintulutang follow-up.",
-            ),
-            "cancelled": (
-                "application_readiness",
-                "Suriin ang pagkansela at administratibong follow-up.",
-            ),
-        },
-    }
-    lifecycle_suggestion = lifecycle_labels[
-        "tl" if str(language or "en").lower() == "tl" else "en"
+    lifecycle_suggestion = OFFICER_LIFECYCLE_DISPLAY_LABELS[
+        normalized_language
     ].get(normalized_status)
     if lifecycle_suggestion is None:
         return suggestions[:3]
