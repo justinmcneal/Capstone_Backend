@@ -176,6 +176,41 @@ def test_first_new_device_login_emits_security_event():
     assert AuditLog.find_by_action("new_device_login", limit=10)
 
 
+@override_settings(SECURE_SSL_REDIRECT=False, WEBSOCKET_ENABLED=False)
+def test_pending_deletion_login_explains_state_only_after_valid_credentials():
+    customer = _customer("pending-login-stage8@example.com", two_factor=True)
+    pending_customer = AccountLifecycleService.request_deletion(customer)
+    assert pending_customer is not None
+
+    invalid = APIClient().post(
+        reverse("accounts:login"),
+        {"email": customer.email, "password": "WrongPass123!"},
+        format="json",
+    )
+    assert invalid.status_code == 401
+    assert invalid.json() == {
+        "status": "error",
+        "message": "Invalid email/username or password.",
+    }
+
+    valid = APIClient().post(
+        reverse("accounts:login"),
+        {"email": customer.email, "password": "Pass123!"},
+        format="json",
+    )
+    assert valid.status_code == 403
+    assert valid.json() == {
+        "status": "error",
+        "message": (
+            "Account deletion is pending. Cancel the deletion request to restore "
+            "access."
+        ),
+        "code": "account_pending_deletion",
+    }
+    stored_customer = Customer.find_one({"_id": customer._id})
+    assert stored_customer.account_state == "pending_deletion"
+
+
 @override_settings(
     SECURE_SSL_REDIRECT=False,
     WEBSOCKET_ENABLED=False,

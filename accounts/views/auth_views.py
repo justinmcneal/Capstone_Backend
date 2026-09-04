@@ -49,6 +49,9 @@ from accounts.utils.token_utils import TokenUtils
 
 logger = logging.getLogger("authentication")
 GENERIC_LOGIN_ERROR_MESSAGE = "Invalid email/username or password."
+PENDING_DELETION_LOGIN_MESSAGE = (
+    "Account deletion is pending. Cancel the deletion request to restore access."
+)
 GENERIC_OTP_VERIFY_ERROR_MESSAGE = "Invalid OTP"
 GENERIC_OTP_RESEND_MESSAGE = "If an unverified account exists, an OTP has been sent."
 
@@ -256,10 +259,12 @@ class LoginView(APIView):
                     GENERIC_LOGIN_ERROR_MESSAGE, status.HTTP_401_UNAUTHORIZED
                 )
 
+            account_state = getattr(customer, "account_state", "active") or "active"
+            is_pending_deletion = account_state == "pending_deletion"
             if (
-                not getattr(customer, "active", True)
-                or getattr(customer, "deleted_at", None)
-                or getattr(customer, "account_state", "active") != "active"
+                getattr(customer, "deleted_at", None)
+                or account_state not in {"active", "pending_deletion"}
+                or (not getattr(customer, "active", True) and not is_pending_deletion)
             ):
                 _log_customer_login_failure(
                     request, email, "account_deactivated", user=customer
@@ -336,6 +341,16 @@ class LoginView(APIView):
 
             # Reset lockout on successful password verification
             LockoutService.reset_lockout(customer)
+
+            if is_pending_deletion:
+                _log_customer_login_failure(
+                    request, email, "account_pending_deletion", user=customer
+                )
+                return APIResponseHelper.error_response(
+                    PENDING_DELETION_LOGIN_MESSAGE,
+                    status.HTTP_403_FORBIDDEN,
+                    code="account_pending_deletion",
+                )
 
             # Check if 2FA is enabled
             if customer.two_factor_enabled:
