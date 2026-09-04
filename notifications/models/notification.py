@@ -222,7 +222,7 @@ class Notification:
 
     @classmethod
     def create_idempotent(cls, notification, idempotency_key):
-        """Insert once for retryable callers and return ``(record, created)``."""
+        """Insert once per owner for retryable callers, return ``(record, created)``."""
         collection = get_db()[cls.collection_name]
         normalized_key = str(idempotency_key).strip()
         key_hash = cls.fingerprint(normalized_key)
@@ -231,10 +231,9 @@ class Notification:
         data = notification.to_dict()
         data.pop("_id", None)
         lookup = {
-            "$or": [
-                {"idempotency_key_hash": key_hash},
-                {"idempotency_key": normalized_key},
-            ]
+            "idempotency_key_hash": key_hash,
+            "user_id": str(notification.user_id or ""),
+            "user_type": str(notification.user_type or ""),
         }
         result = collection.update_one(
             lookup,
@@ -242,6 +241,16 @@ class Notification:
             upsert=True,
         )
         record = collection.find_one(lookup)
+        # Fallback for legacy rows written before owner-scoped idempotency:
+        # they match on hash alone and are left untouched.
+        if record is None:
+            legacy_lookup = {
+                "$or": [
+                    {"idempotency_key_hash": key_hash},
+                    {"idempotency_key": normalized_key},
+                ]
+            }
+            record = collection.find_one(legacy_lookup)
         return cls.from_dict(record), result.upserted_id is not None
 
     @classmethod
@@ -290,5 +299,11 @@ class Notification:
             "idempotency_key_hash",
             unique=True,
             name="unique_notification_idempotency_hash",
+            partialFilterExpression={"idempotency_key_hash": {"$type": "string"}},
+        )
+        collection.create_index(
+            [("idempotency_key_hash", 1), ("user_id", 1), ("user_type", 1)],
+            unique=True,
+            name="unique_notification_owner_idempotency",
             partialFilterExpression={"idempotency_key_hash": {"$type": "string"}},
         )
