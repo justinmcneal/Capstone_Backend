@@ -21,17 +21,17 @@ from accounts.authentication import AuthenticatedUser
 from accounts.models import Admin, Customer, LoanOfficer
 from loans.models import LoanApplication, LoanProduct
 from loans.views.customer_views import (
-    LoanProductListView,
-    LoanProductDetailView,
-    PreQualifyView,
-    LoanApplyView,
-    MyApplicationsView,
     ApplicationDetailView,
+    LoanApplyView,
+    LoanProductDetailView,
+    LoanProductListView,
+    MyApplicationsView,
+    PreQualifyView,
 )
 from loans.views.officer_views import (
+    DisburseView,
     OfficerApplicationListView,
     OfficerReviewView,
-    DisburseView,
 )
 
 
@@ -163,6 +163,9 @@ class TestLoanProductListView:
         assert response.status_code == 200, response.data
         assert len(response.data["data"]["products"]) == 1
         assert response.data["data"]["products"][0]["name"] == "Micro Loan"
+        assert response.data["data"]["settlement_policy"][
+            "available_disbursement_methods"
+        ] == ["cash", "check"]
 
 
 class TestLoanProductDetailView:
@@ -205,6 +208,9 @@ class TestLoanProductDetailView:
         response = LoanProductDetailView.as_view()(request, product_id=product.id)
         assert response.status_code == 200
         assert response.data["data"]["name"] == "Micro Loan"
+        policy = response.data["data"]["settlement_policy"]
+        assert policy["available_disbursement_methods"] == ["cash", "check"]
+        assert "planned_provider_methods" not in policy
 
 
 class TestPreQualifyView:
@@ -273,7 +279,9 @@ class TestPreQualifyView:
 
 
 class TestLoanApplyView:
-    def test_apply_creates_application(self, monkeypatch):
+    def test_apply_accepts_uploaded_documents_pending_officer_review(
+        self, monkeypatch
+    ):
         customer = _create_customer()
         product = LoanProduct(
             _id=ObjectId(),
@@ -302,14 +310,27 @@ class TestLoanApplyView:
             },
             raising=False,
         )
+        document_gate_calls = []
+        monkeypatch.setattr(
+            "loans.views.customer.applications.check_required_documents",
+            lambda *args, **kwargs: (
+                document_gate_calls.append(kwargs["require_approved_documents"])
+                or {"requirements_met": True, "missing_requirements": []}
+            ),
+            raising=False,
+        )
+        qualification_calls = []
         monkeypatch.setattr(
             "loans.views.customer.applications.qualify_customer",
-            lambda *args, **kwargs: {
-                "eligible": True,
-                "recommended_amount": 20000,
-                "score": 85,
-                "reasoning": "Good credit history",
-            },
+            lambda *args, **kwargs: (
+                qualification_calls.append(kwargs["require_approved_documents"])
+                or {
+                    "eligible": True,
+                    "recommended_amount": 20000,
+                    "score": 85,
+                    "reasoning": "Good credit history",
+                }
+            ),
             raising=False,
         )
         monkeypatch.setattr(
@@ -361,6 +382,8 @@ class TestLoanApplyView:
         response = LoanApplyView.as_view()(request)
         assert response.status_code == 201
         assert response.data["data"]["status"] == "submitted"
+        assert document_gate_calls == [False]
+        assert qualification_calls == [False]
 
 
 class TestMyApplicationsView:
@@ -499,7 +522,6 @@ class TestOfficerReviewView:
     def test_approve_application(self, monkeypatch):
         officer = _create_officer()
         app = LoanApplication(
-            _id=ObjectId(),
             customer_id=str(ObjectId()),
             product_id=str(ObjectId()),
             requested_amount=20000,
@@ -507,12 +529,26 @@ class TestOfficerReviewView:
             purpose="Working capital",
             status="under_review",
             assigned_officer=str(officer.id),
-        )
+        ).save()
 
         monkeypatch.setattr(
             LoanApplication,
             "find_by_id",
             staticmethod(lambda app_id: app),
+            raising=False,
+        )
+        monkeypatch.setattr(
+            LoanProduct,
+            "find_by_id",
+            staticmethod(lambda product_id: object()),
+            raising=False,
+        )
+        monkeypatch.setattr(
+            "loans.views.officer.applications.check_required_documents",
+            lambda *args, **kwargs: {
+                "requirements_met": True,
+                "missing_requirements": [],
+            },
             raising=False,
         )
         monkeypatch.setattr(
@@ -547,6 +583,63 @@ class TestOfficerReviewView:
         response = OfficerReviewView.as_view()(request, application_id=app.id)
         assert response.status_code == 200
         assert response.data["data"]["status"] == "approved"
+
+    def test_approve_application_is_blocked_until_required_documents_are_approved(
+        self, monkeypatch
+    ):
+        officer = _create_officer()
+        app = LoanApplication(
+            customer_id=str(ObjectId()),
+            product_id=str(ObjectId()),
+            requested_amount=20000,
+            term_months=12,
+            purpose="Working capital",
+            status="under_review",
+            assigned_officer=str(officer.id),
+        ).save()
+
+        monkeypatch.setattr(
+            LoanApplication,
+            "find_by_id",
+            staticmethod(lambda app_id: app),
+            raising=False,
+        )
+        monkeypatch.setattr(
+            LoanProduct,
+            "find_by_id",
+            staticmethod(lambda product_id: object()),
+            raising=False,
+        )
+        monkeypatch.setattr(
+            "loans.views.officer.applications.check_required_documents",
+            lambda *args, **kwargs: {
+                "requirements_met": False,
+                "missing_requirements": [
+                    "Document pending verification: Valid Government ID"
+                ],
+            },
+            raising=False,
+        )
+
+        request = _put(
+            f"/api/loans/officer/applications/{app.id}/review/",
+            {"action": "approve", "approved_amount": 20000},
+            _auth_officer(officer),
+        )
+        monkeypatch.setattr(
+            OfficerReviewView, "authentication_classes", [], raising=False
+        )
+        monkeypatch.setattr(
+            OfficerReviewView, "permission_classes", [], raising=False
+        )
+
+        response = OfficerReviewView.as_view()(request, application_id=app.id)
+
+        assert response.status_code == 400
+        assert response.data["errors"]["missing_documents"] == [
+            "Document pending verification: Valid Government ID"
+        ]
+        assert app.status == "under_review"
 
 
 class TestDisburseView:

@@ -1,0 +1,22 @@
+rule_files:
+  - prometheus-rules.yml
+
+evaluation_interval: 1m
+
+tests:
+  - name: old notification backlog fires and resolves
+    interval: 1m
+    input_series:
+      - series: notifications_delivery_oldest_age_seconds
+        values: 0 901x6 0
+    alert_rule_test:
+      - eval_time: 6m
+        alertname: NotificationsDeliveryBacklogOld
+        exp_alerts:
+          - exp_labels: {severity: critical, service: notifications}
+            exp_annotations:
+              summary: Notification delivery backlog is older than 15 minutes
+              runbook: docs/NOTIFICATIONS_TESTING_GUIDE.md#notifications-operations-runbook
+      - eval_time: 8m
+        alertname: NotificationsDeliveryBacklogOld
+        exp_alerts: []

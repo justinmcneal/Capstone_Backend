@@ -1,0 +1,57 @@
+{
+  "registry_schema_version": 1,
+  "model_version": "document-classifier-20260903T024716Z",
+  "approval_status": "not_approved",
+  "artifact_sha256": "c745dbfefe0a933ea825ed91291523cc9a806bceb9be897bbd762a49f4ab6a02",
+  "dataset_manifest_sha256": "02edf7028ee4acb7c683ff008de3b80ddf03e635baeac8ee6b724f8d5ffde054",
+  "code_version": "documents-cnn-mobilenetv2-v1",
+  "preprocessing_version": "document-photo-letterbox-v2",
+  "threshold_policy_version": "document-type-thresholds-v1",
+  "intended_use": "advisory_document_quality_and_type_triage",
+  "manual_review_required": true,
+  "deployed_at": null,
+  "rollback_target": null,
+  "classes": [
+    "business_permit",
+    "business_photo",
+    "income_proof",
+    "invalid",
+    "proof_of_address",
+    "selfie_with_id",
+    "valid_id"
+  ],
+  "class_to_idx": {
+    "business_permit": 0,
+    "business_photo": 1,
+    "income_proof": 2,
+    "invalid": 3,
+    "proof_of_address": 4,
+    "selfie_with_id": 5,
+    "valid_id": 6
+  },
+  "num_classes": 7,
+  "best_val_accuracy": 91.35802469135803,
+  "epochs_trained": 1,
+  "model_type": "MobileNetV2",
+  "input_size": [
+    224,
+    224
+  ],
+  "history": {
+    "train_loss": [
+      1.3397045220647539
+    ],
+    "val_loss": [
+      0.9272718876600266
+    ],
+    "train_acc": [
+      62.22910216718266
+    ],
+    "val_acc": [
+      91.35802469135803
+    ],
+    "lr": [
+      0.001
+    ]
+  }
+}

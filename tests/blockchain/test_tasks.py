@@ -223,7 +223,7 @@ class TestSyncDisbursementToChain:
     @patch("loans.blockchain.models.BlockchainTransaction.create_pending")
     def test_success(self, mock_create_pending, mock_find, mock_set, mock_initiate, mock_complete, mock_update_tx, blockchain_settings):
         mock_app = MagicMock()
-        mock_app.disbursement_method = "gcash"
+        mock_app.disbursement_method = "wallet"
         mock_app.preferred_disbursement_method = None
         mock_app.disbursed_amount = 50000
         mock_app.approved_amount = 50000
@@ -241,7 +241,7 @@ class TestSyncDisbursementToChain:
         result = sync_disbursement_to_chain("loan_id_1")
 
         assert result["tx_hash"] == "0xcomplete"
-        mock_set.assert_called_once_with(loan_id="loan_id_1", method="gcash")
+        mock_set.assert_called_once_with(loan_id="loan_id_1", method="wallet")
 
     @patch("loans.blockchain.tasks._update_application_tx")
     @patch("loans.blockchain.services.disbursement_service.complete_existing_disbursement_onchain")
@@ -252,7 +252,7 @@ class TestSyncDisbursementToChain:
     def test_fallback_method_and_amount(self, mock_create_pending, mock_find, mock_set, mock_initiate, mock_complete, mock_update_tx, blockchain_settings):
         mock_app = MagicMock()
         mock_app.disbursement_method = None
-        mock_app.preferred_disbursement_method = "bank_transfer"
+        mock_app.preferred_disbursement_method = "check"
         mock_app.disbursed_amount = None
         mock_app.approved_amount = 40000
         mock_app.requested_amount = 50000
@@ -268,7 +268,7 @@ class TestSyncDisbursementToChain:
 
         sync_disbursement_to_chain("loan_id_2")
 
-        mock_set.assert_called_once_with(loan_id="loan_id_2", method="bank_transfer")
+        mock_set.assert_called_once_with(loan_id="loan_id_2", method="check")
         mock_complete.assert_called_once_with(
             loan_id="loan_id_2",
             reference_hash="DISB_loan_id_2",
@@ -361,7 +361,7 @@ class TestSyncPaymentToChain:
             "customer_id": "cust_1",
             "installment_number": 3,
             "amount": 5000,
-            "payment_method": "gcash",
+            "payment_method": "wallet",
             "reference": "PAY_REF_001",
             "notes": "",
             "recorded_by": "officer_1",
@@ -382,7 +382,7 @@ class TestSyncPaymentToChain:
             loan_id="loan_pay_1",
             installment_number=3,
             amount=5000,
-            payment_method="gcash",
+            payment_method="wallet",
             reference_hash="PAY_REF_001",
         )
 

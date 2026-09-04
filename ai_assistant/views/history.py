@@ -1,6 +1,7 @@
 import logging
 import math
 
+from django.conf import settings
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
@@ -49,6 +50,13 @@ class ChatHistoryView(ConsentRequiredMixin, APIView):
                     errors={'page': 'page must be a positive integer'},
                     status_code=status.HTTP_400_BAD_REQUEST
                 )
+            if page > settings.AI_ASSISTANT_HISTORY_MAX_PAGE:
+                return error_response(
+                    message="Requested history page is too large",
+                    code='AI_HISTORY_PAGE_EXCEEDED',
+                    errors={'page': f'Must not exceed {settings.AI_ASSISTANT_HISTORY_MAX_PAGE}'},
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                )
             limit = self._parse_positive_int(request.query_params.get('limit', 50))
             if limit is None:
                 return error_response(
@@ -58,13 +66,48 @@ class ChatHistoryView(ConsentRequiredMixin, APIView):
                 )
             limit = min(limit, 100)
             search_query = sanitize_text(request.query_params.get('search', ''))
+            if len(search_query) > settings.AI_ASSISTANT_HISTORY_SEARCH_MAX_CHARS:
+                return error_response(
+                    message="History search is too long",
+                    code='AI_HISTORY_SEARCH_EXCEEDED',
+                    errors={
+                        'search': (
+                            'Must not exceed '
+                            f'{settings.AI_ASSISTANT_HISTORY_SEARCH_MAX_CHARS} characters'
+                        )
+                    },
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                )
 
-            interactions, total_messages = AIInteraction.find_by_customer_paginated(
-                customer_id=customer_id,
-                page=page,
-                limit=limit,
-                search_query=search_query or None,
-            )
+            cursor = request.query_params.get('cursor')
+            use_cursor = request.query_params.get('pagination') == 'cursor' or bool(cursor)
+            if use_cursor:
+                try:
+                    interactions, next_cursor = AIInteraction.find_by_customer_cursor(
+                        customer_id,
+                        limit=limit,
+                        cursor=cursor,
+                        search_query=search_query or None,
+                    )
+                except ValueError:
+                    return error_response(
+                        message='Invalid history cursor',
+                        code='AI_HISTORY_CURSOR_INVALID',
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                    )
+                total_messages = None
+                total_pages = None
+                has_more = next_cursor is not None
+            else:
+                interactions, total_messages = AIInteraction.find_by_customer_paginated(
+                    customer_id=customer_id,
+                    page=page,
+                    limit=limit,
+                    search_query=search_query or None,
+                )
+                total_pages = max(1, math.ceil(total_messages / limit)) if total_messages else 1
+                has_more = page < total_pages
+                next_cursor = None
             
             history = [{
                 'id': i.id,
@@ -74,9 +117,6 @@ class ChatHistoryView(ConsentRequiredMixin, APIView):
                 'timestamp': i.timestamp.isoformat(),
                 'language': i.language
             } for i in reversed(interactions)]
-            total_pages = max(1, math.ceil(total_messages / limit)) if total_messages else 1
-            has_more = page < total_pages
-            
             return success_response(
                 data={
                     'history': history,
@@ -86,6 +126,7 @@ class ChatHistoryView(ConsentRequiredMixin, APIView):
                     'total_messages': total_messages,
                     'total_pages': total_pages,
                     'has_more': has_more,
+                    'next_cursor': next_cursor,
                 },
                 message="Chat history retrieved successfully"
             )

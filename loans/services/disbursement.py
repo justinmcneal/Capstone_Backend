@@ -4,7 +4,8 @@ from loans.models import LoanProduct, RepaymentSchedule
 from loans.services.payment import scoped_idempotency_key
 
 MANUAL_DISBURSEMENT_METHODS = {"cash", "check"}
-EXTERNAL_DISBURSEMENT_METHODS = {"gcash", "bank_transfer", "wallet"}
+WALLET_DISBURSEMENT_METHODS = {"wallet"}
+EXTERNAL_DISBURSEMENT_METHODS = WALLET_DISBURSEMENT_METHODS
 
 
 def disbursement_idempotency_key(actor_id, client_key):

@@ -124,24 +124,27 @@ def test_schedule_failure_keeps_application_approved(approved_application, monke
     assert reloaded.disbursed_at is None
 
 
-def test_external_disbursement_stays_pending_without_schedule(approved_application):
-    application, replayed = begin_disbursement(
-        application=approved_application,
-        amount=18000,
-        method="bank_transfer",
-        reference="BANK-PENDING-1",
-        actor_id="officer-1",
-        idempotency_key="disbursement:bank-pending",
-    )
+def test_unsupported_disbursement_method_is_rejected(approved_application):
+    with pytest.raises(ValueError, match="cash, check, wallet"):
+        begin_disbursement(
+            application=approved_application,
+            amount=18000,
+            method="card",
+            reference="CARD-PENDING-1",
+            actor_id="officer-1",
+            idempotency_key="disbursement:card-pending",
+        )
 
-    assert replayed is False
+    application = LoanApplication.find_by_id(approved_application.id)
     assert application.status == "approved"
-    assert application.disbursement_status == "pending"
-    assert application.disbursed_at is None
+    assert application.disbursement_status == "not_started"
     assert RepaymentSchedule.find_by_loan(application.id) is None
 
 
-def test_disbursement_idempotency_rejects_changed_payload(approved_application):
+def test_disbursement_idempotency_rejects_changed_payload(
+    approved_application, settings
+):
+    settings.BLOCKCHAIN_ENABLED = True
     begin_disbursement(
         application=approved_application,
         amount=18000,
@@ -155,16 +158,17 @@ def test_disbursement_idempotency_rejects_changed_payload(approved_application):
         begin_disbursement(
             application=approved_application,
             amount=18000,
-            method="gcash",
-            reference="GCASH-CHANGED",
+            method="wallet",
+            reference="WALLET-CHANGED",
             actor_id="officer-1",
             idempotency_key="disbursement:wallet-pending",
         )
 
 
 def test_external_disbursement_endpoint_returns_202_pending(
-    approved_application, monkeypatch
+    approved_application, monkeypatch, settings
 ):
+    settings.BLOCKCHAIN_ENABLED = True
     actor = SimpleNamespace(customer_id="officer-1")
     monkeypatch.setattr(
         DisburseView,

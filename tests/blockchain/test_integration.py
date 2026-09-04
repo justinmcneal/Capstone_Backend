@@ -165,7 +165,7 @@ class TestFullLifecycleIntegration:
         try:
             result = set_method_onchain(
                 loan_id=uid,
-                method="gcash",
+                method="wallet",
             )
             assert result["status"] == 1
         except Exception as e:

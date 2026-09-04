@@ -12,8 +12,6 @@ from accounts.services.otp_service import OTPService
 from accounts.utils.email_utils import EmailUtils
 from accounts.utils.identity_policy import assert_email_available_globally
 from accounts.utils.token_utils import TokenUtils
-from analytics.models import AuditLog
-from notifications.models.notification import Notification
 
 ACCOUNT_STATES = {
     "active",
@@ -329,6 +327,11 @@ class AccountLifecycleService:
         if getattr(customer, "account_state", "active") == "deleted" and (
             getattr(customer, "profile_cleanup_status", None) == "pending"
             or getattr(customer, "document_cleanup_status", None) in (None, "pending")
+            or getattr(customer, "analytics_cleanup_status", None) in (None, "pending")
+            or getattr(customer, "ai_cleanup_status", None) in (None, "pending")
+            or getattr(customer, "loan_cleanup_status", None) in (None, "pending")
+            or getattr(customer, "notification_cleanup_status", None)
+            in (None, "pending")
         ):
             return True
         scheduled_for = EmailUtils.to_aware_utc(
@@ -421,6 +424,30 @@ class AccountLifecycleService:
                     "document_cleanup_last_error": "",
                     "document_cleanup_last_attempt_at": None,
                     "document_cleanup_completed_at": None,
+                    "analytics_cleanup_status": "pending",
+                    "analytics_cleanup_counts": {},
+                    "analytics_cleanup_attempts": 0,
+                    "analytics_cleanup_last_error": "",
+                    "analytics_cleanup_last_attempt_at": None,
+                    "analytics_cleanup_completed_at": None,
+                    "ai_cleanup_status": "pending",
+                    "ai_cleanup_counts": {},
+                    "ai_cleanup_attempts": 0,
+                    "ai_cleanup_last_error": "",
+                    "ai_cleanup_last_attempt_at": None,
+                    "ai_cleanup_completed_at": None,
+                    "loan_cleanup_status": "pending",
+                    "loan_cleanup_counts": {},
+                    "loan_cleanup_attempts": 0,
+                    "loan_cleanup_last_error": "",
+                    "loan_cleanup_last_attempt_at": None,
+                    "loan_cleanup_completed_at": None,
+                    "notification_cleanup_status": "pending",
+                    "notification_cleanup_counts": {},
+                    "notification_cleanup_attempts": 0,
+                    "notification_cleanup_last_error": "",
+                    "notification_cleanup_last_attempt_at": None,
+                    "notification_cleanup_completed_at": None,
                     "active": False,
                     "updated_at": now,
                 },
@@ -437,6 +464,14 @@ class AccountLifecycleService:
                         {"profile_cleanup_status": "pending"},
                         {"document_cleanup_status": "pending"},
                         {"document_cleanup_status": {"$exists": False}},
+                        {"analytics_cleanup_status": "pending"},
+                        {"analytics_cleanup_status": {"$exists": False}},
+                        {"ai_cleanup_status": "pending"},
+                        {"ai_cleanup_status": {"$exists": False}},
+                        {"loan_cleanup_status": "pending"},
+                        {"loan_cleanup_status": {"$exists": False}},
+                        {"notification_cleanup_status": "pending"},
+                        {"notification_cleanup_status": {"$exists": False}},
                     ],
                 }
             )
@@ -445,6 +480,55 @@ class AccountLifecycleService:
 
         updated = Customer.from_dict(document)
         TokenUtils.revoke_all_sessions(updated.id, "customer")
+        from notifications.models.device_token import DeviceToken
+
+        DeviceToken.deactivate_for_owner(updated.id, "customer")
+
+        updated = Customer.from_dict(collection.find_one({"_id": updated._id}))
+        if updated.notification_cleanup_status in (None, "pending"):
+            from notifications.services.lifecycle import (
+                delete_customer_notification_data,
+            )
+
+            attempted_at = AccountLifecycleService._now()
+            collection.update_one(
+                {"_id": updated._id},
+                {
+                    "$set": {
+                        "notification_cleanup_last_attempt_at": attempted_at,
+                        "updated_at": attempted_at,
+                    },
+                    "$inc": {"notification_cleanup_attempts": 1},
+                },
+            )
+            try:
+                counts = delete_customer_notification_data(settings.MONGODB, updated.id)
+            except Exception as exc:
+                collection.update_one(
+                    {"_id": updated._id},
+                    {
+                        "$set": {
+                            "notification_cleanup_status": "pending",
+                            "notification_cleanup_last_error": type(exc).__name__,
+                            "updated_at": AccountLifecycleService._now(),
+                        }
+                    },
+                )
+                raise
+            cleanup_complete = counts["remaining"] == 0
+            notification_update = {
+                "notification_cleanup_status": (
+                    "complete" if cleanup_complete else "pending"
+                ),
+                "notification_cleanup_counts": counts,
+                "notification_cleanup_last_error": "",
+                "updated_at": AccountLifecycleService._now(),
+            }
+            if cleanup_complete:
+                notification_update["notification_cleanup_completed_at"] = (
+                    notification_update["updated_at"]
+                )
+            collection.update_one({"_id": updated._id}, {"$set": notification_update})
 
         if updated.profile_cleanup_status == "pending":
             from profiles.services.lifecycle import delete_customer_profile_data
@@ -493,6 +577,52 @@ class AccountLifecycleService:
                     }
                 },
             )
+
+        updated = Customer.from_dict(collection.find_one({"_id": updated._id}))
+        if updated.ai_cleanup_status in (None, "pending"):
+            from ai_assistant.services.lifecycle import delete_customer_ai_data
+
+            attempted_at = AccountLifecycleService._now()
+            collection.update_one(
+                {
+                    "_id": updated._id,
+                    "$or": [
+                        {"ai_cleanup_status": "pending"},
+                        {"ai_cleanup_status": {"$exists": False}},
+                    ],
+                },
+                {
+                    "$set": {
+                        "ai_cleanup_last_attempt_at": attempted_at,
+                        "updated_at": attempted_at,
+                    },
+                    "$inc": {"ai_cleanup_attempts": 1},
+                },
+            )
+            try:
+                counts = delete_customer_ai_data(settings.MONGODB, updated.id)
+            except Exception as exc:
+                collection.update_one(
+                    {"_id": updated._id},
+                    {
+                        "$set": {
+                            "ai_cleanup_status": "pending",
+                            "ai_cleanup_last_error": type(exc).__name__,
+                            "updated_at": AccountLifecycleService._now(),
+                        }
+                    },
+                )
+                raise
+            cleanup_complete = counts["remaining"] == 0
+            ai_update = {
+                "ai_cleanup_status": "complete" if cleanup_complete else "pending",
+                "ai_cleanup_counts": counts,
+                "ai_cleanup_last_error": "",
+                "updated_at": AccountLifecycleService._now(),
+            }
+            if cleanup_complete:
+                ai_update["ai_cleanup_completed_at"] = ai_update["updated_at"]
+            collection.update_one({"_id": updated._id}, {"$set": ai_update})
 
         updated = Customer.from_dict(collection.find_one({"_id": updated._id}))
         if updated.document_cleanup_status in (None, "pending"):
@@ -545,6 +675,90 @@ class AccountLifecycleService:
             if counts["status"] == "complete":
                 update["document_cleanup_completed_at"] = update["updated_at"]
             collection.update_one({"_id": updated._id}, {"$set": update})
+
+        updated = Customer.from_dict(collection.find_one({"_id": updated._id}))
+        if updated.loan_cleanup_status in (None, "pending"):
+            from loans.services.lifecycle import pseudonymize_customer_loan_data
+
+            attempted_at = AccountLifecycleService._now()
+            collection.update_one(
+                {"_id": updated._id},
+                {
+                    "$set": {
+                        "loan_cleanup_last_attempt_at": attempted_at,
+                        "updated_at": attempted_at,
+                    },
+                    "$inc": {"loan_cleanup_attempts": 1},
+                },
+            )
+            try:
+                counts = pseudonymize_customer_loan_data(settings.MONGODB, updated.id)
+            except Exception as exc:
+                collection.update_one(
+                    {"_id": updated._id},
+                    {
+                        "$set": {
+                            "loan_cleanup_status": "pending",
+                            "loan_cleanup_last_error": type(exc).__name__,
+                            "updated_at": AccountLifecycleService._now(),
+                        }
+                    },
+                )
+                raise
+            cleanup_complete = counts["remaining"] == 0
+            loan_update = {
+                "loan_cleanup_status": "complete" if cleanup_complete else "pending",
+                "loan_cleanup_counts": counts,
+                "loan_cleanup_last_error": "",
+                "updated_at": AccountLifecycleService._now(),
+            }
+            if cleanup_complete:
+                loan_update["loan_cleanup_completed_at"] = loan_update["updated_at"]
+            collection.update_one({"_id": updated._id}, {"$set": loan_update})
+
+        updated = Customer.from_dict(collection.find_one({"_id": updated._id}))
+        if updated.analytics_cleanup_status in (None, "pending"):
+            from analytics.services.lifecycle import pseudonymize_customer_audit_data
+
+            attempted_at = AccountLifecycleService._now()
+            collection.update_one(
+                {"_id": updated._id},
+                {
+                    "$set": {
+                        "analytics_cleanup_last_attempt_at": attempted_at,
+                        "updated_at": attempted_at,
+                    },
+                    "$inc": {"analytics_cleanup_attempts": 1},
+                },
+            )
+            try:
+                counts = pseudonymize_customer_audit_data(settings.MONGODB, updated.id)
+            except Exception as exc:
+                collection.update_one(
+                    {"_id": updated._id},
+                    {
+                        "$set": {
+                            "analytics_cleanup_status": "pending",
+                            "analytics_cleanup_last_error": type(exc).__name__,
+                            "updated_at": AccountLifecycleService._now(),
+                        }
+                    },
+                )
+                raise
+            cleanup_complete = counts["remaining"] == 0
+            analytics_update = {
+                "analytics_cleanup_status": (
+                    "complete" if cleanup_complete else "pending"
+                ),
+                "analytics_cleanup_counts": counts,
+                "analytics_cleanup_last_error": "",
+                "updated_at": AccountLifecycleService._now(),
+            }
+            if cleanup_complete:
+                analytics_update["analytics_cleanup_completed_at"] = analytics_update[
+                    "updated_at"
+                ]
+            collection.update_one({"_id": updated._id}, {"$set": analytics_update})
 
         return Customer.from_dict(collection.find_one({"_id": updated._id}))
 
@@ -842,15 +1056,20 @@ class AccountLifecycleService:
 
     @staticmethod
     def export_customer_data(customer):
+        from ai_assistant.services.lifecycle import export_customer_ai_history
+        from analytics.services.lifecycle import export_customer_audit_data
         from documents.services.lifecycle import export_customer_documents
+        from loans.services.lifecycle import export_customer_loan_data
+        from notifications.services.lifecycle import export_customer_notifications
 
         consent = Consent.find_by_user(customer.id, "customer")
         sessions = ActiveSession.find(
             {"user_id": customer.id}, sort=[("created_at", -1)]
         )
         login_activity = LoginActivity.find({"user_id": customer.id}, limit=200)
-        audit_entries = AuditLog.find_by_user(customer.id, limit=200)
-        notifications = Notification.find_by_user(customer.id, limit=200)
+        notification_export = export_customer_notifications(
+            settings.MONGODB, customer.id
+        )
 
         payload = {
             "generated_at": AccountLifecycleService._serialize_datetime(
@@ -876,8 +1095,17 @@ class AccountLifecycleService:
             "consent": consent.to_dict() if consent else None,
             "active_sessions": [session.to_dict() for session in sessions],
             "login_activity": [entry.to_dict() for entry in login_activity],
-            "audit_logs": [entry.to_dict() for entry in audit_entries],
-            "notifications": [item.to_dict() for item in notifications],
+            "audit_logs": export_customer_audit_data(settings.MONGODB, customer.id),
+            "ai_history": export_customer_ai_history(settings.MONGODB, customer.id),
+            # Preserve the historical list while adding explicit completeness
+            # metadata for clients that need to detect a bounded export.
+            "notifications": notification_export["items"],
+            "notification_export": {
+                key: value
+                for key, value in notification_export.items()
+                if key != "items"
+            },
             "documents": export_customer_documents(settings.MONGODB, customer.id),
+            "loans": export_customer_loan_data(settings.MONGODB, customer.id),
         }
         return AccountLifecycleService._serialize_document(payload)

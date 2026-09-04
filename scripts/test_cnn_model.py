@@ -5,6 +5,7 @@ Test trained CNN model on sample images.
 Usage:
     python scripts/test_cnn_model.py <image_path>
     python scripts/test_cnn_model.py <folder_path> --batch
+    python scripts/test_cnn_model.py <folder_path> --confusion --allow-unapproved
 """
 import sys
 from pathlib import Path
@@ -20,6 +21,48 @@ django.setup()
 
 from documents.services.analyzer import analyze_document
 from documents.services.cnn_model import DOCUMENT_CLASSES
+
+
+def load_unapproved_model_for_testing(analyzer):
+    """Load the local checkpoint for offline testing without approving it."""
+    import hashlib
+    import json
+
+    import torch
+
+    from documents.services.cnn_model import DocumentClassifier
+
+    model_dir = Path(__file__).parent.parent / 'documents' / 'ml' / 'models'
+    model_path = model_dir / 'document_classifier.pth'
+    config_path = model_dir / 'model_config.json'
+
+    if not model_path.exists() or not config_path.exists():
+        raise FileNotFoundError(
+            'document_classifier.pth and model_config.json are required'
+        )
+
+    config = json.loads(config_path.read_text(encoding='utf-8'))
+    expected_hash = config.get('artifact_sha256')
+    actual_hash = hashlib.sha256(model_path.read_bytes()).hexdigest()
+    if not expected_hash or actual_hash != expected_hash:
+        raise ValueError('Model artifact hash does not match model_config.json')
+
+    class_names = config.get('classes')
+    if not isinstance(class_names, list) or not class_names:
+        raise ValueError('Model class mapping is missing from model_config.json')
+
+    model = DocumentClassifier(num_classes=len(class_names), pretrained=False)
+    model.load_state_dict(
+        torch.load(model_path, map_location='cpu', weights_only=True)
+    )
+    model.eval()
+
+    analyzer.model = model
+    analyzer.model_loaded = True
+    analyzer.class_names = class_names
+    analyzer.model_metadata = config
+    analyzer.model_error_code = ''
+    analyzer.model_runtime_status = 'available_unapproved_dev'
 
 
 def test_single_image(image_path):
@@ -448,6 +491,7 @@ def main():
         print("  Single image:     python scripts/test_cnn_model.py <image_path>")
         print("  Batch folder:     python scripts/test_cnn_model.py <folder_path> --batch")
         print("  Confusion matrix: python scripts/test_cnn_model.py <test_data_path> --confusion")
+        print("  Unapproved model: add --allow-unapproved for offline testing only")
         print("\nExamples:")
         print("  python scripts/test_cnn_model.py ~/Downloads/my_id.jpg")
         print("  python scripts/test_cnn_model.py ~/test_images/ --batch")
@@ -463,11 +507,15 @@ def main():
     # Check if model is available
     from documents.services.analyzer import get_analyzer
     analyzer = get_analyzer()
+
+    if not analyzer.model_loaded and '--allow-unapproved' in sys.argv:
+        print("⚠️  Loading an UNAPPROVED checkpoint for offline testing only")
+        load_unapproved_model_for_testing(analyzer)
     
     if not analyzer.model_loaded:
-        print("❌ No trained CNN model found!")
-        print("\nTrain the model first:")
-        print("  python manage.py train_document_classifier")
+        print("❌ No approved CNN model loaded!")
+        print("\nFor offline testing of a local checkpoint, add:")
+        print("  --allow-unapproved")
         sys.exit(1)
     
     print(f"✅ CNN model loaded successfully")

@@ -10,12 +10,12 @@ Merged documentation for pending backend gaps and remaining feature endpoints.
 ## Navigation
 
 1. [Backend Gap Analysis (Pending Items Only)](#section-1-gap_analysismd)
-2. [Remaining Features Testing Guide (from Loan Lifecycle)](#section-2-loan_lifecycle_testing_guide_section-7)
+2. [Historical Remaining Features Testing Notes](#section-2-historical-remaining-features-testing-notes)
 
 ## Source Files
 
 1. `GAP_ANALYSIS.md`
-2. `LOAN_LIFECYCLE_TESTING_GUIDE.md` (Section 7)
+2. `../LOANS_TESTING_GUIDE.md` (canonical current Loans testing guide)
 
 ---
 
@@ -55,7 +55,7 @@ Status notes (where to find implementations)
 
 ---
 
-## Section 2: LOAN_LIFECYCLE_TESTING_GUIDE.md (Section 7)
+## Section 2: Historical Remaining Features Testing Notes
 
 ## Section 7: REMAINING_FEATURES_TESTING_GUIDE.md
 

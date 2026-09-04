@@ -3,6 +3,7 @@ Customer Dashboard - Personal stats for customers.
 """
 
 import logging
+from datetime import datetime, timezone
 from typing import ClassVar
 
 from django.conf import settings
@@ -12,12 +13,23 @@ from rest_framework.views import APIView
 from accounts.authentication import CustomJWTAuthentication
 from accounts.utils.access_control import AccessControlMixin
 from accounts.utils.response_helpers import success_response
+from analytics.services.dashboard_metrics import (
+    DOCUMENT_PENDING_STATUSES,
+    LOAN_APPROVED_OUTCOME_STATUSES,
+    LOAN_DISBURSED_STATUSES,
+    LOAN_PENDING_STATUSES,
+    METRIC_DEFINITION_VERSION,
+    current_document_query,
+    identity_query,
+    status_query,
+)
+from analytics.services.operations import AnalyticsOperationalMixin, db_count
 from profiles.models import AlternativeData, BusinessProfile, CustomerProfile
 
 logger = logging.getLogger("analytics")
 
 
-class CustomerDashboardView(AccessControlMixin, APIView):
+class CustomerDashboardView(AnalyticsOperationalMixin, AccessControlMixin, APIView):
     """
     Customer dashboard - personal statistics.
 
@@ -35,34 +47,57 @@ class CustomerDashboardView(AccessControlMixin, APIView):
         user = request.user
         customer_id = user.customer_id
         db = settings.MONGODB
+        as_of = datetime.now(timezone.utc)
+        loan_owner = identity_query("customer_id", customer_id)
+        document_owner = identity_query("customer_id", customer_id)
 
         # My applications
         my_apps = {
-            "total": db["loan_applications"].count_documents(
-                {"customer_id": str(customer_id)}
+            "total": db_count(db, "loan_applications", loan_owner),
+            "draft": db_count(db, "loan_applications",
+                status_query(loan_owner, {"draft"})
             ),
-            "pending": db["loan_applications"].count_documents(
-                {
-                    "customer_id": str(customer_id),
-                    "status": {"$in": ["submitted", "under_review"]},
-                }
+            "pending": db_count(db, "loan_applications",
+                status_query(loan_owner, LOAN_PENDING_STATUSES)
             ),
-            "approved": db["loan_applications"].count_documents(
-                {"customer_id": str(customer_id), "status": "approved"}
+            "approved": db_count(db, "loan_applications",
+                status_query(loan_owner, LOAN_APPROVED_OUTCOME_STATUSES)
             ),
-            "rejected": db["loan_applications"].count_documents(
-                {"customer_id": str(customer_id), "status": "rejected"}
+            "rejected": db_count(db, "loan_applications",
+                status_query(loan_owner, {"rejected"})
+            ),
+            "disbursed": db_count(db, "loan_applications",
+                status_query(loan_owner, LOAN_DISBURSED_STATUSES)
+            ),
+            "completed": db_count(db, "loan_applications",
+                status_query(loan_owner, {"completed"})
+            ),
+            "written_off": db_count(db, "loan_applications",
+                status_query(loan_owner, {"written_off"})
+            ),
+            "cancelled": db_count(db, "loan_applications",
+                status_query(loan_owner, {"cancelled"})
             ),
         }
 
-        # My documents
+        # Current, storage-available documents only.
+        current_documents = current_document_query(document_owner)
         my_docs = {
-            "total": db["documents"].count_documents({"customer_id": str(customer_id)}),
-            "verified": db["documents"].count_documents(
-                {"customer_id": str(customer_id), "verified": True}
+            "total": db_count(db, "documents", current_documents),
+            "verified": db_count(db, "documents",
+                status_query(current_documents, {"approved"})
             ),
-            "pending": db["documents"].count_documents(
-                {"customer_id": str(customer_id), "status": "pending"}
+            "pending": db_count(db, "documents",
+                status_query(current_documents, DOCUMENT_PENDING_STATUSES)
+            ),
+            "needs_review": db_count(db, "documents",
+                status_query(current_documents, {"needs_review"})
+            ),
+            "rejected": db_count(db, "documents",
+                status_query(current_documents, {"rejected"})
+            ),
+            "expired": db_count(db, "documents",
+                status_query(current_documents, {"expired"})
             ),
         }
 
@@ -74,8 +109,13 @@ class CustomerDashboardView(AccessControlMixin, APIView):
         has_business = bool(business and business.profile_completed)
         has_alternative = bool(alternative and alternative.profile_completed)
         has_id = (
-            db["documents"].count_documents(
-                {"customer_id": str(customer_id), "document_type": "valid_id"}
+            db_count(db, "documents",
+                status_query(
+                    current_document_query(
+                        {**document_owner, "document_type": "valid_id"}
+                    ),
+                    {"approved"},
+                )
             )
             > 0
         )
@@ -96,12 +136,14 @@ class CustomerDashboardView(AccessControlMixin, APIView):
         }
 
         # AI interactions
-        ai_sessions = db["ai_interactions"].count_documents(
-            {"customer_id": str(customer_id)}
+        ai_sessions = db_count(db, "ai_interactions",
+            identity_query("customer_id", customer_id)
         )
 
         return success_response(
             data={
+                "as_of": as_of.isoformat(),
+                "metric_definition_version": METRIC_DEFINITION_VERSION,
                 "applications": my_apps,
                 "documents": my_docs,
                 "profile_completion": profile_completion,

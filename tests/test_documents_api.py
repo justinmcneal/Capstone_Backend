@@ -5,6 +5,7 @@ import io
 from types import SimpleNamespace
 
 from bson import ObjectId
+from django.conf import settings
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import override_settings
 from PIL import Image
@@ -93,6 +94,16 @@ def _auth_admin(admin):
         email=admin.email,
         verified=True,
         role="admin",
+    )
+
+
+def _assign_customer(customer, officer):
+    settings.MONGODB["loan_applications"].insert_one(
+        {
+            "customer_id": str(customer.id),
+            "assigned_officer": str(officer.id),
+            "status": "submitted",
+        }
     )
 
 
@@ -407,7 +418,7 @@ class TestDocumentList:
         assert response.data["data"]["total"] == 1
         assert response.data["data"]["documents"][0]["document_type"] == DOCUMENT_TYPES[0]
 
-    def test_officer_scope_retains_customer_after_document_approval(
+    def test_officer_scope_excludes_unassigned_customer_after_document_approval(
         self, monkeypatch
     ):
         customer = _create_customer()
@@ -439,7 +450,7 @@ class TestDocumentList:
         )
 
         assert has_scope is True
-        assert str(customer.id) in scoped_customer_ids
+        assert str(customer.id) not in scoped_customer_ids
 
         other_request = SimpleNamespace(user=_auth_officer(other_officer))
         has_scope, other_scoped_customer_ids = (
@@ -543,6 +554,7 @@ class TestDocumentVerify:
     def test_verify_approves_document(self, monkeypatch):
         customer = _create_customer()
         officer = _create_officer()
+        _assign_customer(customer, officer)
         document = Document(
             customer_id=str(customer.id),
             document_type="valid_id",
@@ -601,6 +613,7 @@ class TestDocumentVerify:
     def test_verify_reject_requires_rejection_reason(self, monkeypatch):
         customer = _create_customer()
         officer = _create_officer()
+        _assign_customer(customer, officer)
         document = Document(
             customer_id=str(customer.id),
             document_type="valid_id",
@@ -660,6 +673,7 @@ class TestRequestReupload:
     def test_request_reupload_creates_reupload_request(self, monkeypatch):
         customer = _create_customer()
         officer = _create_officer()
+        _assign_customer(customer, officer)
         document = Document(
             customer_id=str(customer.id),
             document_type="valid_id",
@@ -713,6 +727,7 @@ class TestRequestReupload:
     def test_request_reupload_requires_reason(self, monkeypatch):
         customer = _create_customer()
         officer = _create_officer()
+        _assign_customer(customer, officer)
         document = Document(
             customer_id=str(customer.id),
             document_type="valid_id",

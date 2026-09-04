@@ -15,6 +15,7 @@ os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings")
 django.setup()
 
 from django.conf import settings  # noqa: E402
+from django.core.management import call_command  # noqa: E402
 from pymongo.errors import DuplicateKeyError, OperationFailure  # noqa: E402
 
 from accounts.models import (  # noqa: E402
@@ -28,7 +29,13 @@ from accounts.models import (  # noqa: E402
     LoginActivity,
     RefreshTokenEntry,
 )
-from ai_assistant.models import AIInteraction  # noqa: E402
+from ai_assistant.models import AIActivityEvent, AIInteraction  # noqa: E402
+from ai_assistant.services.idempotency import (  # noqa: E402
+    create_indexes as create_ai_request_indexes,
+)
+from ai_assistant.services.idempotency import (  # noqa: E402
+    create_validator as create_ai_request_validator,
+)
 from analytics.models import AuditLog  # noqa: E402
 from documents.models import (  # noqa: E402
     Document,
@@ -39,12 +46,12 @@ from documents.models import (  # noqa: E402
 from loans.blockchain.models import BlockchainTransaction  # noqa: E402
 from loans.models import (  # noqa: E402
     LoanApplication,
+    LoanNotificationDelivery,
     LoanPayment,
     LoanProduct,
     RepaymentSchedule,
 )
-from notifications.models import Notification  # noqa: E402
-from notifications.models.device_token import DeviceToken  # noqa: E402
+from loans.services.persistence import install_loan_validators  # noqa: E402
 from profiles.models import (  # noqa: E402
     AlternativeData,
     BusinessProfile,
@@ -183,6 +190,7 @@ def create_indexes():
     try:
         print("Creating indexes for AuditLog collection...")
         AuditLog.create_indexes()
+        AuditLog.create_validator()
         print("✓ AuditLog indexes created")
     except (DuplicateKeyError, OperationFailure):
         print("⚠ AuditLog indexes already exist, skipping")
@@ -194,6 +202,12 @@ def create_indexes():
         settings.MONGODB["audit_write_failures"].create_index(
             [("domain", 1), ("resolved_at", 1), ("occurred_at", 1)]
         )
+        settings.MONGODB["audit_write_failures"].create_index(
+            "event_id", unique=True, sparse=True
+        )
+        settings.MONGODB["audit_write_failures"].create_index(
+            [("subject_index", 1), ("resolved_at", 1)]
+        )
         print("✓ Audit failure recovery indexes created")
     except (DuplicateKeyError, OperationFailure):
         print("⚠ Audit failure recovery indexes already exist, skipping")
@@ -203,57 +217,104 @@ def create_indexes():
     try:
         print("Creating indexes for AIInteraction collection...")
         AIInteraction.create_indexes()
+        AIInteraction.create_validator()
+        create_ai_request_indexes()
+        create_ai_request_validator()
+        AIActivityEvent.create_indexes()
+        AIActivityEvent.create_validator()
         print("✓ AIInteraction indexes created")
-    except (DuplicateKeyError, OperationFailure):
-        print("⚠ AIInteraction indexes already exist, skipping")
+    except DuplicateKeyError:
+        print("⚠ AIInteraction indexes contain duplicates; reconcile before retrying")
+        raise
+    except OperationFailure as e:
+        print(f"✗ AIInteraction validator/index error: {e}")
+        if getattr(e, "code", None) == 85:
+            print(
+                "  → Run `python manage.py reconcile_ai_indexes` first, "
+                "then review and apply its guarded reconciliation."
+            )
+        raise
     except Exception as e:
         print(f"✗ AIInteraction error: {e}")
+        raise
 
     # Loan indexes
     try:
         print("Creating indexes for LoanApplication collection...")
         LoanApplication.create_indexes()
         print("✓ LoanApplication indexes created")
-    except (DuplicateKeyError, OperationFailure):
-        print("⚠ LoanApplication indexes already exist, skipping")
+    except (DuplicateKeyError, OperationFailure) as e:
+        print(f"✗ LoanApplication index error; review inventory/duplicates: {e}")
+        raise
     except Exception as e:
         print(f"✗ LoanApplication error: {e}")
+        raise
 
     try:
         print("Creating indexes for LoanProduct collection...")
         LoanProduct.create_indexes()
         print("✓ LoanProduct indexes created")
-    except (DuplicateKeyError, OperationFailure):
-        print("⚠ LoanProduct indexes already exist, skipping")
+    except (DuplicateKeyError, OperationFailure) as e:
+        print(f"✗ LoanProduct index error; review inventory/duplicates: {e}")
+        raise
     except Exception as e:
         print(f"✗ LoanProduct error: {e}")
+        raise
 
     try:
         print("Creating indexes for RepaymentSchedule collection...")
         RepaymentSchedule.create_indexes()
         print("✓ RepaymentSchedule indexes created")
-    except (DuplicateKeyError, OperationFailure):
-        print("⚠ RepaymentSchedule indexes already exist, skipping")
+    except (DuplicateKeyError, OperationFailure) as e:
+        print(f"✗ RepaymentSchedule index error; review inventory/duplicates: {e}")
+        raise
     except Exception as e:
         print(f"✗ RepaymentSchedule error: {e}")
+        raise
 
     try:
         print("Creating indexes for LoanPayment collection...")
         LoanPayment.create_indexes()
         print("✓ LoanPayment indexes created")
-    except (DuplicateKeyError, OperationFailure):
-        print("⚠ LoanPayment indexes already exist, skipping")
+    except (DuplicateKeyError, OperationFailure) as e:
+        print(f"✗ LoanPayment index error; review inventory/duplicates: {e}")
+        raise
     except Exception as e:
         print(f"✗ LoanPayment error: {e}")
+        raise
 
     try:
         print("Creating indexes for BlockchainTransaction collection...")
         BlockchainTransaction.create_indexes()
         print("✓ BlockchainTransaction indexes created")
-    except (DuplicateKeyError, OperationFailure):
-        print("⚠ BlockchainTransaction indexes already exist, skipping")
+    except (DuplicateKeyError, OperationFailure) as e:
+        print(f"✗ BlockchainTransaction index error; review inventory/duplicates: {e}")
+        raise
     except Exception as e:
         print(f"✗ BlockchainTransaction error: {e}")
+        raise
+
+    try:
+        print("Creating indexes for LoanNotificationDelivery collection...")
+        LoanNotificationDelivery.create_indexes()
+        print("✓ LoanNotificationDelivery indexes created")
+    except (DuplicateKeyError, OperationFailure) as e:
+        print(f"✗ LoanNotificationDelivery index error; review duplicates: {e}")
+        raise
+    except Exception as e:
+        print(f"✗ LoanNotificationDelivery error: {e}")
+        raise
+
+    try:
+        print("Installing strict Loans collection validators...")
+        install_loan_validators()
+        print("✓ Loans validators installed")
+    except (DuplicateKeyError, OperationFailure) as e:
+        print(f"✗ Loans validator installation failed: {e}")
+        raise
+    except Exception as e:
+        print(f"✗ Loans validator error: {e}")
+        raise
 
     # Document indexes
     try:
@@ -292,24 +353,12 @@ def create_indexes():
     except Exception as e:
         print(f"✗ DocumentStorageCleanup error: {e}")
 
-    # Notification indexes
-    try:
-        print("Creating indexes for Notification collection...")
-        Notification.create_indexes()
-        print("✓ Notification indexes created")
-    except (DuplicateKeyError, OperationFailure):
-        print("⚠ Notification indexes already exist, skipping")
-    except Exception as e:
-        print(f"✗ Notification error: {e}")
-
-    try:
-        print("Creating indexes for DeviceToken collection...")
-        DeviceToken.create_indexes()
-        print("✓ DeviceToken indexes created")
-    except (DuplicateKeyError, OperationFailure):
-        print("⚠ DeviceToken indexes already exist, skipping")
-    except Exception as e:
-        print(f"✗ DeviceToken error: {e}")
+    # Notifications schema installation is deliberately fail-closed. Existing
+    # targets must pass the dry-run inventory/backfill/encryption workflow
+    # before indexes or validators are changed.
+    print("Installing validated Notifications schema...")
+    call_command("install_notification_schema", apply=True)
+    print("✓ Notifications schema installed")
 
     try:
         print("Creating indexes for ActiveSession collection...")

@@ -1,5 +1,7 @@
 # Manual Testing Guide
 
+> Contract settlement tests cover cash, check, and wallet only.
+
 Step-by-step guide to manually test the smart contracts using Hardhat Console.
 
 ---
@@ -283,9 +285,8 @@ console.log("Status:", paid.status); // 1 = Paid
 | Value | Method |
 |-------|--------|
 | 0 | Cash |
-| 1 | BankTransfer |
-| 2 | GCash |
-| 3 | Other |
+| 1 | Check |
+| 2 | Wallet |
 
 ---
 

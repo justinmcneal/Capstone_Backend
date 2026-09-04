@@ -336,7 +336,7 @@ async function main() {
 
   // ── Step 6: Set disbursement method (borrower calls) ──
   await execStep(6, "Set disbursement method via DisbursementMethod.setPreferredMethod()",
-    () => disbursementMethod.connect(borrower).setPreferredMethod(loanId, 1)); // 1 = GCash
+    () => disbursementMethod.connect(borrower).setPreferredMethod(loanId, 1)); // 1 = Check
 
   const hasMethod = await disbursementMethod.hasPreferredMethod(loanId);
   console.log(`  verified: hasPreferredMethod = ${hasMethod}`);
@@ -349,7 +349,7 @@ async function main() {
   console.log(`  verified: disbursement status = ${disbRecord.status} (1=Processing)`);
 
   // ── Step 8: Complete disbursement ──
-  const referenceHash = ethers.keccak256(ethers.toUtf8Bytes("GCASH_REF_" + loanId));
+  const referenceHash = ethers.keccak256(ethers.toUtf8Bytes("CHECK_REF_" + loanId));
   await execStep(8, "Complete disbursement via DisbursementExecution.completeDisbursement()",
     () => disbursementExecution.completeDisbursement(disbRecord.disbursementId, referenceHash));
 
@@ -408,7 +408,7 @@ async function main() {
         loanId,
         i,              // installmentNumber (uint16)
         payAmount,
-        2,              // PaymentMethod.GCash
+        2,              // PaymentMethod.Wallet
         payRefHash
       )
     );

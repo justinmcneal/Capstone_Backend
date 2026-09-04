@@ -28,8 +28,8 @@ describe("Security Checklist", function () {
     const eligibilityScore = 85;
     const aiRecHash = ethers.keccak256(ethers.toUtf8Bytes("AI_REC_SEC"));
     const approvalNotesHash = ethers.keccak256(ethers.toUtf8Bytes("APPROVAL_SEC"));
-    const Method = { BankTransfer: 0, GCash: 1, Cash: 2, Check: 3, Wallet: 4 };
-    const PaymentMethod = { Cash: 0, BankTransfer: 1, GCash: 2, Check: 3, Wallet: 4 };
+    const Method = { Cash: 0, Check: 1, Wallet: 2 };
+    const PaymentMethod = { Cash: 0, Check: 1, Wallet: 2 };
 
     const refHash = (tag) => ethers.keccak256(ethers.toUtf8Bytes(tag));
 
@@ -164,7 +164,7 @@ describe("Security Checklist", function () {
 
     async function fullDisbursementFlow(id) {
         await createSubmitAssignAndApprove(id);
-        await disbursementMethod.connect(borrower).setPreferredMethod(id, Method.GCash);
+        await disbursementMethod.connect(borrower).setPreferredMethod(id, Method.Wallet);
         await disbursementExecution.connect(officer).initiateDisbursement(id, requestedAmount);
         const record = await disbursementExecution.getDisbursementByLoan(id);
         await disbursementExecution.connect(officer).completeDisbursement(record.disbursementId, refHash("DISB_REF_" + id.slice(0, 8)));
@@ -232,13 +232,13 @@ describe("Security Checklist", function () {
         it("DisbursementMethod: non-borrower cannot setPreferredMethod()", async function () {
             await createSubmitAssignAndApprove(loanId);
             await expect(
-                disbursementMethod.connect(unauthorized).setPreferredMethod(loanId, Method.GCash)
+                disbursementMethod.connect(unauthorized).setPreferredMethod(loanId, Method.Wallet)
             ).to.be.revertedWithCustomError(disbursementMethod, "NotBorrower");
         });
 
         it("DisbursementExecution: non-authorized cannot initiateDisbursement()", async function () {
             await createSubmitAssignAndApprove(loanId);
-            await disbursementMethod.connect(borrower).setPreferredMethod(loanId, Method.GCash);
+            await disbursementMethod.connect(borrower).setPreferredMethod(loanId, Method.Wallet);
             await expect(
                 disbursementExecution.connect(unauthorized).initiateDisbursement(loanId, requestedAmount)
             ).to.be.revertedWithCustomError(disbursementExecution, "NotAuthorized");
@@ -326,7 +326,7 @@ describe("Security Checklist", function () {
 
             it("DisbursementExecution: initiateDisbursement rejects zero amount", async function () {
                 await createSubmitAssignAndApprove(loanId);
-                await disbursementMethod.connect(borrower).setPreferredMethod(loanId, Method.GCash);
+                await disbursementMethod.connect(borrower).setPreferredMethod(loanId, Method.Wallet);
                 await expect(
                     disbursementExecution.connect(officer).initiateDisbursement(loanId, 0)
                 ).to.be.revertedWithCustomError(disbursementExecution, "InvalidAmount");
@@ -370,7 +370,7 @@ describe("Security Checklist", function () {
 
             it("DisbursementExecution: completeDisbursement rejects empty reference hash", async function () {
                 await createSubmitAssignAndApprove(loanId);
-                await disbursementMethod.connect(borrower).setPreferredMethod(loanId, Method.GCash);
+                await disbursementMethod.connect(borrower).setPreferredMethod(loanId, Method.Wallet);
                 await disbursementExecution.connect(officer).initiateDisbursement(loanId, requestedAmount);
                 const record = await disbursementExecution.getDisbursementByLoan(loanId);
 
@@ -544,18 +544,18 @@ describe("Security Checklist", function () {
             await createSubmitAssignAndApprove(loanId);
             await disbursementMethod.pause();
             await expect(
-                disbursementMethod.connect(borrower).setPreferredMethod(loanId, Method.GCash)
+                disbursementMethod.connect(borrower).setPreferredMethod(loanId, Method.Wallet)
             ).to.be.reverted;
 
             await disbursementMethod.unpause();
             await expect(
-                disbursementMethod.connect(borrower).setPreferredMethod(loanId, Method.GCash)
+                disbursementMethod.connect(borrower).setPreferredMethod(loanId, Method.Wallet)
             ).to.emit(disbursementMethod, "DisbursementMethodSelected");
         });
 
         it("DisbursementExecution: pause blocks initiateDisbursement", async function () {
             await createSubmitAssignAndApprove(loanId);
-            await disbursementMethod.connect(borrower).setPreferredMethod(loanId, Method.GCash);
+            await disbursementMethod.connect(borrower).setPreferredMethod(loanId, Method.Wallet);
 
             await disbursementExecution.pause();
             await expect(
@@ -633,7 +633,7 @@ describe("Security Checklist", function () {
         it("DisbursementExecution: duplicate reference hash is rejected on completeDisbursement", async function () {
             // First loan — complete with a reference
             await createSubmitAssignAndApprove(loanId);
-            await disbursementMethod.connect(borrower).setPreferredMethod(loanId, Method.GCash);
+            await disbursementMethod.connect(borrower).setPreferredMethod(loanId, Method.Wallet);
             await disbursementExecution.connect(officer).initiateDisbursement(loanId, requestedAmount);
             const record1 = await disbursementExecution.getDisbursementByLoan(loanId);
             const sharedRef = refHash("SHARED_DISB_REF");
@@ -652,7 +652,7 @@ describe("Security Checklist", function () {
 
         it("DisbursementExecution: same loan cannot be disbursed twice", async function () {
             await createSubmitAssignAndApprove(loanId);
-            await disbursementMethod.connect(borrower).setPreferredMethod(loanId, Method.GCash);
+            await disbursementMethod.connect(borrower).setPreferredMethod(loanId, Method.Wallet);
             await disbursementExecution.connect(officer).initiateDisbursement(loanId, requestedAmount);
 
             await expect(

@@ -67,6 +67,26 @@ app.conf.beat_schedule = {
         "task": "documents.collect_operational_metrics",
         "schedule": crontab(minute="*/15"),
     },
+    "reconcile-all-audit-failures-every-minute": {
+        "task": "analytics.reconcile_audit_failures",
+        "schedule": crontab(minute="*"),
+    },
+    "enforce-analytics-audit-retention-daily": {
+        "task": "analytics.enforce_audit_retention",
+        "schedule": crontab(hour=2, minute=0),
+    },
+    "inventory-analytics-audit-integrity-daily": {
+        "task": "analytics.audit_integrity_inventory",
+        "schedule": crontab(hour=2, minute=30),
+    },
+    "enforce-ai-assistant-retention-daily": {
+        "task": "ai_assistant.enforce_retention",
+        "schedule": crontab(hour=3, minute=0),
+    },
+    "collect-analytics-operational-metrics-every-5-minutes": {
+        "task": "analytics.collect_operational_metrics",
+        "schedule": crontab(minute="*/5"),
+    },
     "check-overdue-daily": {
         "task": "loans.tasks.check_overdue_installments_task",
         "schedule": crontab(hour=0, minute=0),
@@ -77,6 +97,30 @@ app.conf.beat_schedule = {
     },
     "reconcile-wallet-disbursements-every-5-minutes": {
         "task": "loans.reconcile_wallet_disbursements_task",
+        "schedule": crontab(minute="*/5"),
+    },
+    "reconcile-loan-notifications-every-minute": {
+        "task": "loans.reconcile_notification_deliveries",
+        "schedule": crontab(minute="*"),
+    },
+    "reconcile-shared-notification-deliveries-every-minute": {
+        "task": "notifications.reconcile_deliveries",
+        "schedule": crontab(minute="*"),
+    },
+    "enforce-notification-retention-daily": {
+        "task": "notifications.enforce_retention",
+        "schedule": crontab(hour=3, minute=30),
+    },
+    "collect-notification-operational-metrics": {
+        "task": "notifications.collect_operational_metrics",
+        "schedule": crontab(minute="*"),
+    },
+    "enforce-loan-retention-daily": {
+        "task": "loans.enforce_retention",
+        "schedule": crontab(hour=4, minute=0),
+    },
+    "collect-loan-operational-metrics-every-5-minutes": {
+        "task": "loans.collect_operational_metrics",
         "schedule": crontab(minute="*/5"),
     },
     "poll-blockchain-audit-events-every-minute": {

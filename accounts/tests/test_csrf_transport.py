@@ -198,7 +198,8 @@ def test_login_cookie_transport_does_not_expose_tokens_in_json():
     assert response.status_code == 200
     assert "access" not in response.json()["data"]
     assert "refresh" not in response.json()["data"]
-    assert response.cookies["access_token"]["path"] == "/api/"
+    # The default access cookie must also reach authenticated WebSocket paths.
+    assert response.cookies["access_token"]["path"] == "/"
     assert response.cookies["refresh_token"]["path"] == "/api/auth/"
 
 

@@ -143,6 +143,20 @@ class Consent:
         return cls.find_one({"user_id": user_id, "user_type": user_type})
 
     @classmethod
+    def find_by_users(cls, user_ids, user_type="customer"):
+        """Find legacy current-state records for multiple users in one query."""
+        normalized_ids = [
+            ObjectId(user_id) if isinstance(user_id, str) else user_id
+            for user_id in user_ids
+        ]
+        if not normalized_ids:
+            return {}
+        records = cls.find(
+            {"user_id": {"$in": normalized_ids}, "user_type": user_type}
+        )
+        return {str(record.user_id): record for record in records}
+
+    @classmethod
     def create_indexes(cls):
         """Create indexes for the collection"""
         db = get_db()
@@ -250,6 +264,32 @@ class ConsentEvent:
     def latest_for_user(cls, user_id, user_type="customer"):
         events = cls.find_by_user(user_id, user_type, limit=1)
         return events[0] if events else None
+
+    @classmethod
+    def latest_by_users(cls, user_ids, user_type="customer"):
+        """Return each user's latest authoritative event using one aggregation."""
+        normalized_ids = [
+            ObjectId(user_id) if isinstance(user_id, str) else user_id
+            for user_id in user_ids
+        ]
+        if not normalized_ids:
+            return {}
+        documents = get_db()[cls.collection_name].aggregate(
+            [
+                {
+                    "$match": {
+                        "user_id": {"$in": normalized_ids},
+                        "user_type": user_type,
+                    }
+                },
+                {"$sort": {"user_id": 1, "revision": -1, "recorded_at": -1}},
+                {"$group": {"_id": "$user_id", "event": {"$first": "$$ROOT"}}},
+            ]
+        )
+        return {
+            str(document["_id"]): cls.from_dict(document["event"])
+            for document in documents
+        }
 
     @classmethod
     def create_indexes(cls):

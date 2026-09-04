@@ -1,10 +1,11 @@
-"""
-Notification Model - Store notification history.
-"""
+"""Encrypted, owner-scoped notification inbox persistence."""
 
-from datetime import datetime, timezone
+import hashlib
+from datetime import datetime, timedelta, timezone
 
 from django.conf import settings
+
+from config.field_encryption import decrypt_fields, encrypt_fields
 
 
 def get_db():
@@ -71,6 +72,8 @@ NOTIFICATION_TYPES = [
     "admin_permissions_changed",
 ]
 
+DELIVERY_STATUSES = {"pending", "sent", "failed", "unknown"}
+
 
 class Notification:
     """
@@ -78,6 +81,17 @@ class Notification:
     """
 
     collection_name = "notifications"
+    encrypted_fields = (
+        "recipient_email",
+        "recipient_name",
+        "subject",
+        "message",
+        "related_id",
+        "metadata",
+        "idempotency_key",
+        "error_message",
+        "legal_hold_reason",
+    )
 
     def __init__(self, **kwargs):
         self._id = kwargs.get("_id")
@@ -100,21 +114,50 @@ class Notification:
         self.related_id = kwargs.get("related_id")
         self.metadata = kwargs.get("metadata", {})
         self.idempotency_key = kwargs.get("idempotency_key")
+        self.idempotency_key_hash = kwargs.get("idempotency_key_hash") or (
+            self.fingerprint(self.idempotency_key) if self.idempotency_key else None
+        )
 
-        # Status
+        # Delivery and read state are independent. ``status == 'read'`` is a
+        # legacy stored shape retained only for read compatibility.
         self.channel = kwargs.get("channel", "email")
-        self.status = kwargs.get("status", "pending")  # pending/sent/failed
+        legacy_status = kwargs.get("status", "pending")
+        delivery_status = kwargs.get("delivery_status", legacy_status)
+        if delivery_status not in DELIVERY_STATUSES:
+            delivery_status = "unknown" if legacy_status == "read" else "pending"
+        self.delivery_status = delivery_status
+        self.status = delivery_status  # Backward-compatible model attribute.
+        stored_is_read = kwargs.get("is_read")
+        self.is_read = (
+            stored_is_read if type(stored_is_read) is bool else legacy_status == "read"
+        )
         self.error_message = kwargs.get("error_message", "")
 
         # Timestamps
         self.created_at = kwargs.get("created_at", datetime.now(timezone.utc))
         self.sent_at = kwargs.get("sent_at")
+        self.read_at = kwargs.get("read_at")
+        self.retention_expires_at = kwargs.get("retention_expires_at")
+        if self.retention_expires_at is None and self.created_at:
+            self.retention_expires_at = self.created_at + timedelta(
+                days=int(settings.NOTIFICATIONS_RETENTION_DAYS)
+            )
+        self.legal_hold = bool(kwargs.get("legal_hold", False))
+        self.legal_hold_reason = kwargs.get("legal_hold_reason", "")
+
+    @staticmethod
+    def fingerprint(value):
+        normalized = str(value or "").strip()
+        return (
+            hashlib.sha256(normalized.encode("utf-8")).hexdigest() if normalized else ""
+        )
 
     @property
     def id(self):
         return str(self._id) if self._id else None
 
-    def to_dict(self):
+    def to_plain_dict(self):
+        """Return the decrypted model shape for trusted internal serialization."""
         data = {
             "user_id": self.user_id,
             "user_type": self.user_type,
@@ -127,21 +170,31 @@ class Notification:
             "related_id": self.related_id,
             "metadata": self.metadata,
             "idempotency_key": self.idempotency_key,
+            "idempotency_key_hash": self.idempotency_key_hash,
             "channel": self.channel,
-            "status": self.status,
+            "status": self.delivery_status,
+            "delivery_status": self.delivery_status,
+            "is_read": self.is_read,
             "error_message": self.error_message,
             "created_at": self.created_at,
             "sent_at": self.sent_at,
+            "read_at": self.read_at,
+            "retention_expires_at": self.retention_expires_at,
+            "legal_hold": self.legal_hold,
+            "legal_hold_reason": self.legal_hold_reason,
         }
         if self._id:
             data["_id"] = self._id
         return data
 
+    def to_dict(self):
+        return encrypt_fields(self.to_plain_dict(), self.encrypted_fields)
+
     @classmethod
     def from_dict(cls, data):
         if not data:
             return None
-        return cls(**data)
+        return cls(**decrypt_fields(data, cls.encrypted_fields))
 
     def save(self):
         db = get_db()
@@ -156,11 +209,13 @@ class Notification:
         return self
 
     def mark_sent(self):
+        self.delivery_status = "sent"
         self.status = "sent"
         self.sent_at = datetime.now(timezone.utc)
         return self.save()
 
     def mark_failed(self, error):
+        self.delivery_status = "failed"
         self.status = "failed"
         self.error_message = str(error)
         return self.save()
@@ -169,34 +224,71 @@ class Notification:
     def create_idempotent(cls, notification, idempotency_key):
         """Insert once for retryable callers and return ``(record, created)``."""
         collection = get_db()[cls.collection_name]
+        normalized_key = str(idempotency_key).strip()
+        key_hash = cls.fingerprint(normalized_key)
+        notification.idempotency_key = normalized_key
+        notification.idempotency_key_hash = key_hash
         data = notification.to_dict()
         data.pop("_id", None)
-        data["idempotency_key"] = str(idempotency_key)
+        lookup = {
+            "$or": [
+                {"idempotency_key_hash": key_hash},
+                {"idempotency_key": normalized_key},
+            ]
+        }
         result = collection.update_one(
-            {"idempotency_key": str(idempotency_key)},
+            lookup,
             {"$setOnInsert": data},
             upsert=True,
         )
-        record = collection.find_one({"idempotency_key": str(idempotency_key)})
+        record = collection.find_one(lookup)
         return cls.from_dict(record), result.upserted_id is not None
 
     @classmethod
-    def find_by_user(cls, user_id, limit=50):
+    def find_by_user(cls, user_id, limit=50, user_type=None):
         db = get_db()
         collection = db[cls.collection_name]
-        cursor = (
-            collection.find({"user_id": str(user_id)})
-            .sort("created_at", -1)
-            .limit(limit)
-        )
+        query = {"user_id": str(user_id)}
+        if user_type:
+            query["user_type"] = str(user_type)
+        cursor = collection.find(query).sort("created_at", -1).limit(limit)
         return [cls.from_dict(doc) for doc in cursor]
 
     @classmethod
     def create_indexes(cls):
         db = get_db()
         collection = db[cls.collection_name]
-        collection.create_index("user_id")
-        collection.create_index("notification_type")
-        collection.create_index("created_at")
-        collection.create_index("status")
-        collection.create_index("idempotency_key", unique=True, sparse=True)
+        collection.create_index(
+            [("user_id", 1), ("user_type", 1), ("created_at", -1), ("_id", -1)],
+            name="notification_owner_created_page",
+        )
+        collection.create_index(
+            [
+                ("user_id", 1),
+                ("user_type", 1),
+                ("is_read", 1),
+                ("created_at", -1),
+                ("_id", -1),
+            ],
+            name="notification_owner_read_page",
+        )
+        collection.create_index(
+            [
+                ("user_id", 1),
+                ("user_type", 1),
+                ("channel", 1),
+                ("created_at", -1),
+                ("_id", -1),
+            ],
+            name="notification_owner_channel_page",
+        )
+        collection.create_index(
+            [("legal_hold", 1), ("retention_expires_at", 1), ("_id", 1)],
+            name="notification_retention_due",
+        )
+        collection.create_index(
+            "idempotency_key_hash",
+            unique=True,
+            name="unique_notification_idempotency_hash",
+            partialFilterExpression={"idempotency_key_hash": {"$type": "string"}},
+        )

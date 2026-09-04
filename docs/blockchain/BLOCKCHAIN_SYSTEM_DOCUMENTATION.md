@@ -1,5 +1,8 @@
 # Blockchain System Documentation
 
+> **Rail status:** Contract/backend enums contain cash, check, and wallet only.
+> Wallet-to-wallet is available when blockchain is enabled.
+
 Complete documentation of how smart contracts integrate with the backend, web app, and mobile app.
 
 ---
@@ -103,8 +106,8 @@ The backend converts Django/MongoDB data into Solidity-compatible formats:
 | Product ID | `"product_001"` | `bytes32` | `keccak256(product_id_string)` |
 | Interest Rate | `0.015` (monthly) | `uint16` (annual bps) | `monthly_rate × 12 × 10,000` → e.g. `1800` |
 | Risk Category | `"low"` / `"medium"` / `"high"` | `uint8` | `0` / `1` / `2` |
-| Disbursement Method | `"gcash"` | `uint8` | `bank_transfer=0, gcash=1, cash=2, other=3` |
-| Payment Method | `"gcash"` | `uint8` | `cash=0, bank_transfer=1, gcash=2, other=3` |
+| Disbursement Method | `"wallet"` | `uint8` | `check=0, wallet=1, cash=2, other=3` |
+| Payment Method | `"wallet"` | `uint8` | `cash=0, check=1, wallet=2, other=3` |
 | Borrower Address | MongoDB user ID | `address` | Uses deployer address as proxy (no real wallet) |
 | Notes / Reasons | Free text | `bytes32` | `keccak256(text)` |
 | Reference Numbers | `"PAY-20260315-000001"` | `bytes32` | `keccak256(reference_string)` |
@@ -228,29 +231,29 @@ DEFAULT_ADMIN_ROLE (deployer)
 
 ## Known Issues and Mismatches
 
-### ⚠️ Issue 1: Payment Method Enum Ordering Differs Between Contracts
+### Payment method enum alignment
 
 **DisbursementMethod.sol:**
 ```
-enum Method { BankTransfer=0, GCash=1, Cash=2, Other=3 }
+enum Method { Cash=0, Check=1, Wallet=2 }
 ```
 
 **PaymentRecording.sol:**
 ```
-enum PaymentMethod { Cash=0, BankTransfer=1, GCash=2, Other=3 }
+enum PaymentMethod { Cash=0, Check=1, Wallet=2 }
 ```
 
 **Backend mapping (disbursement_service.py):**
 ```python
-METHOD_MAP = {"bank_transfer": 0, "gcash": 1, "cash": 2, "other": 3}
+METHOD_MAP = {"cash": 0, "check": 1, "wallet": 2}
 ```
 
 **Backend mapping (repayment_service.py):**
 ```python
-METHOD_MAP = {"cash": 0, "bank_transfer": 1, "gcash": 2, "other": 3}
+METHOD_MAP = {"cash": 0, "check": 1, "wallet": 2}
 ```
 
-**Status:** ✅ Backend correctly maps different orderings for each contract. No bug here — just different enum definitions across contracts.
+**Status:** ✅ Both contracts and both backend mappings use the same ordering.
 
 ### ⚠️ Issue 2: LoanCore Duplication
 

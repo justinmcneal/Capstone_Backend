@@ -1,4 +1,5 @@
 # Byte-compiled / optimized / DLL files
+.worktree/
 __pycache__/
 *.py[codz]
 *$py.class
@@ -225,3 +226,8 @@ src/
 logs/security_events.jsonl
 
 frontend/
+
+dump.rdb
+
+# Isolated feature worktrees
+.worktrees/

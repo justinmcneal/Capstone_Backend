@@ -2,10 +2,19 @@
 LoanApplication Model - Customer loan applications.
 """
 
+import uuid
+from datetime import timedelta
+
 from bson import ObjectId
 from django.conf import settings
-from config.field_encryption import decrypt_fields, encrypt_fields, encrypt_value
+from pymongo import ReturnDocument
 
+from config.field_encryption import (
+    decrypt_fields,
+    decrypt_value,
+    encrypt_fields,
+    encrypt_value,
+)
 from loans.utils.time import utcnow
 
 
@@ -27,6 +36,12 @@ APPLICATION_STATUSES = [
 ]
 
 
+class LoanTransitionConflict(ValueError):
+    """Raised when another request changed a loan before this transition."""
+
+    code = "LOAN_TRANSITION_CONFLICT"
+
+
 class LoanApplication:
     """
     Loan Application Model.
@@ -35,11 +50,15 @@ class LoanApplication:
 
     collection_name = "loan_applications"
     encrypted_fields = (
+        "purpose",
+        "ai_recommendation",
         "internal_notes",
         "officer_notes",
         "rejection_reason",
         "missing_documents_reason",
+        "legal_hold_reason",
         "disbursement_reference",
+        "disbursement_error",
         "eth_disbursement_raw_transaction",
     )
 
@@ -84,12 +103,12 @@ class LoanApplication:
         # Disbursement tracking
         self.preferred_disbursement_method = kwargs.get(
             "preferred_disbursement_method"
-        )  # Borrower-selected: gcash, bank_transfer
+        )  # Borrower-selected from the enabled settlement policy
         self.disbursed_amount = kwargs.get("disbursed_amount")
         self.disbursed_at = kwargs.get("disbursed_at")
         self.disbursement_method = kwargs.get(
             "disbursement_method"
-        )  # bank_transfer, cash, etc.
+        )  # cash/check, or wallet when explicitly enabled
         self.disbursement_reference = kwargs.get("disbursement_reference", "")
         self.disbursed_by = kwargs.get("disbursed_by")  # Officer/Admin who processed
         self.disbursed_by_type = kwargs.get("disbursed_by_type", "system")
@@ -110,9 +129,11 @@ class LoanApplication:
         self.disbursement_error = kwargs.get("disbursement_error", "")
         self.repayment_status = kwargs.get(
             "repayment_status",
-            "paid_off"
-            if self.status == "completed"
-            else ("active" if self.status == "disbursed" else "not_started"),
+            (
+                "paid_off"
+                if self.status == "completed"
+                else ("active" if self.status == "disbursed" else "not_started")
+            ),
         )
         self.paid_off_at = kwargs.get("paid_off_at")
 
@@ -139,9 +160,12 @@ class LoanApplication:
         self.eth_disbursement_rebroadcast_count = kwargs.get(
             "eth_disbursement_rebroadcast_count", 0
         )
-        self.eth_disbursement_recovery_history = kwargs.get(
-            "eth_disbursement_recovery_history", []
-        )
+        self.eth_disbursement_recovery_history = []
+        for entry in kwargs.get("eth_disbursement_recovery_history", []) or []:
+            item = dict(entry)
+            if "reason" in item:
+                item["reason"] = decrypt_value(item["reason"])
+            self.eth_disbursement_recovery_history.append(item)
         self.disbursement_worker_owner = kwargs.get("disbursement_worker_owner", "")
         self.disbursement_worker_lease_expires_at = kwargs.get(
             "disbursement_worker_lease_expires_at"
@@ -154,6 +178,23 @@ class LoanApplication:
 
         # Blockchain sync tracking
         self.blockchain_tx_hashes = kwargs.get("blockchain_tx_hashes", {})
+
+        # Immutable correlation records for lifecycle side effects.
+        self.last_transition_id = kwargs.get("last_transition_id", "")
+        self.lifecycle_transitions = kwargs.get("lifecycle_transitions", [])
+
+        # Privacy lifecycle metadata. Loan records use a long, versioned
+        # retention window and may be preserved beyond account deletion under
+        # a non-identifying customer pseudonym.
+        self.retention_policy_version = kwargs.get("retention_policy_version")
+        self.retention_expires_at = kwargs.get("retention_expires_at")
+        self.legal_hold = bool(kwargs.get("legal_hold", False))
+        self.legal_hold_reason = kwargs.get("legal_hold_reason", "")
+        self.legal_hold_set_at = kwargs.get("legal_hold_set_at")
+        self.legal_hold_set_by = kwargs.get("legal_hold_set_by")
+        self.legal_hold_released_at = kwargs.get("legal_hold_released_at")
+        self.legal_hold_released_by = kwargs.get("legal_hold_released_by")
+        self.pseudonymized_at = kwargs.get("pseudonymized_at")
 
     @property
     def id(self):
@@ -218,6 +259,17 @@ class LoanApplication:
             "created_at": self.created_at,
             "updated_at": self.updated_at,
             "blockchain_tx_hashes": self.blockchain_tx_hashes,
+            "last_transition_id": self.last_transition_id,
+            "lifecycle_transitions": self.lifecycle_transitions,
+            "retention_policy_version": self.retention_policy_version,
+            "retention_expires_at": self.retention_expires_at,
+            "legal_hold": self.legal_hold,
+            "legal_hold_reason": self.legal_hold_reason,
+            "legal_hold_set_at": self.legal_hold_set_at,
+            "legal_hold_set_by": self.legal_hold_set_by,
+            "legal_hold_released_at": self.legal_hold_released_at,
+            "legal_hold_released_by": self.legal_hold_released_by,
+            "pseudonymized_at": self.pseudonymized_at,
         }
         if self._id:
             data["_id"] = self._id
@@ -233,6 +285,13 @@ class LoanApplication:
         db = get_db()
         collection = db[self.collection_name]
         self.updated_at = utcnow()
+        if self.retention_expires_at is None:
+            self.retention_policy_version = getattr(
+                settings, "LOAN_RETENTION_POLICY_VERSION", "2026-08-15-v1"
+            )
+            self.retention_expires_at = self.created_at + timedelta(
+                days=int(getattr(settings, "LOAN_RETENTION_DAYS", 2555))
+            )
         data = self.to_dict()
 
         if self._id:
@@ -251,6 +310,15 @@ class LoanApplication:
         """Log a status transition with structured metadata."""
         from loans.services.audit import record_loan_audit
 
+        transition_details = {
+            "loan_id": self.id,
+            "customer_id": self.customer_id,
+            "old_status": getattr(self, "_prev_status", None),
+            "new_status": self.status,
+            **(extra_details or {}),
+        }
+        if self.last_transition_id:
+            transition_details["transition_id"] = self.last_transition_id
         record_loan_audit(
             action=action,
             user_id=str(actor_id) if actor_id else None,
@@ -258,33 +326,126 @@ class LoanApplication:
             description=description,
             resource_type="loan",
             resource_id=self.id,
-            details={
-                "loan_id": self.id,
-                "customer_id": self.customer_id,
-                "old_status": getattr(self, "_prev_status", None),
-                "new_status": self.status,
-                **(extra_details or {}),
-            },
+            details=transition_details,
         )
 
-    def submit(self):
-        """Submit the application for review"""
-        self.status = "submitted"
-        self.submitted_at = utcnow()
-        return self.save()
+    @staticmethod
+    def _transition_record(action, actor_id, actor_type, occurred_at):
+        return {
+            "transition_id": f"loan_evt_{uuid.uuid4().hex}",
+            "action": action,
+            "actor_id": str(actor_id) if actor_id else None,
+            "actor_type": actor_type or "system",
+            "occurred_at": occurred_at,
+        }
+
+    def _apply_atomic_transition(
+        self,
+        *,
+        selector,
+        action,
+        actor_id,
+        actor_type,
+        set_fields,
+        unset_fields=(),
+        extra_update=None,
+    ):
+        """Apply one expected-state mutation and refresh this instance."""
+        if not self._id:
+            raise ValueError("Lifecycle transition requires a persisted application")
+
+        now = utcnow()
+        transition = self._transition_record(action, actor_id, actor_type, now)
+        update = {
+            "$set": {
+                **set_fields,
+                "last_transition_id": transition["transition_id"],
+                "updated_at": now,
+            },
+            "$push": {
+                "lifecycle_transitions": {
+                    "$each": [transition],
+                    "$slice": -100,
+                }
+            },
+        }
+        if unset_fields:
+            update["$unset"] = {field: "" for field in unset_fields}
+        for operator, values in (extra_update or {}).items():
+            update.setdefault(operator, {}).update(values)
+
+        document = get_db()[self.collection_name].find_one_and_update(
+            {"_id": self._id, **selector},
+            update,
+            return_document=ReturnDocument.AFTER,
+        )
+        if not document:
+            raise LoanTransitionConflict(
+                "The application changed before this action completed. Refresh and retry."
+            )
+
+        previous_status = self.status
+        refreshed = self.from_dict(document)
+        self.__dict__.update(refreshed.__dict__)
+        self._prev_status = previous_status
+        return transition["transition_id"]
+
+    def submit(self, actor_id=None):
+        """Submit a draft exactly once."""
+        now = utcnow()
+        actor_id = actor_id or self.customer_id
+        if not self._id:
+            transition = self._transition_record(
+                "loan_submitted", actor_id, "customer", now
+            )
+            self.status = "submitted"
+            self.submitted_at = now
+            self.last_transition_id = transition["transition_id"]
+            self.lifecycle_transitions = [transition]
+            return self.save()
+
+        pending = self.to_dict()
+        pending.pop("_id", None)
+        pending.pop("created_at", None)
+        pending.pop("updated_at", None)
+        pending.pop("lifecycle_transitions", None)
+        pending.pop("last_transition_id", None)
+        pending.update({"status": "submitted", "submitted_at": now})
+        self._apply_atomic_transition(
+            selector={"status": "draft", "customer_id": self.customer_id},
+            action="loan_submitted",
+            actor_id=actor_id,
+            actor_type="customer",
+            set_fields=pending,
+        )
+        return self
 
     def assign_officer(self, officer_id, actor_id=None, actor_type="loan_officer"):
-        """Assign to a loan officer"""
-        self._prev_status = self.status
-        self.assigned_officer = officer_id
-        self.status = "under_review"
-        self.save()
+        """Assign against the status and assignee observed by the caller."""
+        if self.status not in {"submitted", "under_review"}:
+            raise ValueError(f"Cannot assign application with status: {self.status}")
+        expected_assignee = self.assigned_officer
+        selector = {"status": self.status}
+        if expected_assignee:
+            selector["assigned_officer"] = str(expected_assignee)
+        else:
+            selector["assigned_officer"] = {"$in": [None, ""]}
+        self._apply_atomic_transition(
+            selector=selector,
+            action="loan_assigned",
+            actor_id=(
+                officer_id if actor_id is None and actor_type != "system" else actor_id
+            ),
+            actor_type=actor_type,
+            set_fields={
+                "assigned_officer": str(officer_id),
+                "status": "under_review",
+            },
+        )
         self._log_status_transition(
             action="loan_assigned",
             actor_id=(
-                officer_id
-                if actor_id is None and actor_type != "system"
-                else actor_id
+                officer_id if actor_id is None and actor_type != "system" else actor_id
             ),
             actor_type=actor_type,
             description=f"Loan application assigned to officer {officer_id}",
@@ -292,23 +453,87 @@ class LoanApplication:
         )
         return self
 
-    def approve(self, officer_id, approved_amount, notes=""):
-        """Approve the application"""
-        self.status = "approved"
-        self.approved_amount = approved_amount
-        self.assigned_officer = officer_id
-        self.officer_notes = notes
-        self.decision_date = utcnow()
-        return self.save()
+    def approve(self, officer_id, approved_amount, notes="", actor_type="loan_officer"):
+        """Approve once while the application is still assigned and reviewable."""
+        if self.status not in {"submitted", "under_review"}:
+            raise ValueError(f"Cannot review application with status: {self.status}")
+        officer_id = str(officer_id)
+        actor_type = str(actor_type or "loan_officer")
+        if (
+            actor_type != "admin"
+            and self.assigned_officer
+            and str(self.assigned_officer) != officer_id
+        ):
+            raise LoanTransitionConflict(
+                "The application is assigned to another loan officer."
+            )
+        assignee_selector = (
+            str(self.assigned_officer)
+            if self.assigned_officer
+            else {"$in": [None, "", officer_id]}
+        )
+        self._apply_atomic_transition(
+            selector={
+                "status": {"$in": ["submitted", "under_review"]},
+                "assigned_officer": assignee_selector,
+            },
+            action="loan_approved",
+            actor_id=officer_id,
+            actor_type=actor_type,
+            set_fields={
+                "status": "approved",
+                "approved_amount": approved_amount,
+                "assigned_officer": (
+                    str(self.assigned_officer)
+                    if self.assigned_officer
+                    else officer_id if actor_type == "loan_officer" else None
+                ),
+                "officer_notes": encrypt_value(notes),
+                "decision_date": utcnow(),
+            },
+        )
+        return self
 
-    def reject(self, officer_id, reason, notes=""):
-        """Reject the application"""
-        self.status = "rejected"
-        self.assigned_officer = officer_id
-        self.rejection_reason = reason
-        self.officer_notes = notes
-        self.decision_date = utcnow()
-        return self.save()
+    def reject(self, officer_id, reason, notes="", actor_type="loan_officer"):
+        """Reject once while the application is still assigned and reviewable."""
+        if self.status not in {"submitted", "under_review"}:
+            raise ValueError(f"Cannot review application with status: {self.status}")
+        officer_id = str(officer_id)
+        actor_type = str(actor_type or "loan_officer")
+        if (
+            actor_type != "admin"
+            and self.assigned_officer
+            and str(self.assigned_officer) != officer_id
+        ):
+            raise LoanTransitionConflict(
+                "The application is assigned to another loan officer."
+            )
+        assignee_selector = (
+            str(self.assigned_officer)
+            if self.assigned_officer
+            else {"$in": [None, "", officer_id]}
+        )
+        self._apply_atomic_transition(
+            selector={
+                "status": {"$in": ["submitted", "under_review"]},
+                "assigned_officer": assignee_selector,
+            },
+            action="loan_rejected",
+            actor_id=officer_id,
+            actor_type=actor_type,
+            set_fields={
+                "status": "rejected",
+                "assigned_officer": (
+                    str(self.assigned_officer)
+                    if self.assigned_officer
+                    else officer_id if actor_type == "loan_officer" else None
+                ),
+                "rejection_reason": encrypt_value(reason),
+                "officer_notes": encrypt_value(notes),
+                "decision_date": utcnow(),
+            },
+        )
+        return self
 
     def add_internal_note(self, author_id, author_role, content):
         """Add an internal note without changing approval/rejection state."""
@@ -323,11 +548,37 @@ class LoanApplication:
             "created_at": utcnow(),
         }
 
-        notes = self.internal_notes or []
-        notes.append(entry)
-        # Keep history bounded
-        self.internal_notes = notes[-100:]
-        return self.save()
+        collection = get_db()[self.collection_name]
+        for _attempt in range(20):
+            raw = collection.find_one({"_id": self._id})
+            if not raw:
+                raise LoanTransitionConflict("Application no longer exists")
+            current = self.from_dict(raw)
+            if current.status in {"draft", "cancelled"}:
+                raise ValueError(
+                    f"Cannot add notes for application with status: {current.status}"
+                )
+            if str(current.assigned_officer or "") != str(self.assigned_officer or ""):
+                raise LoanTransitionConflict(
+                    "The application assignment changed. Refresh and retry."
+                )
+            notes = [*(current.internal_notes or []), entry][-100:]
+            raw_notes = raw.get("internal_notes", {"$exists": False})
+            selector = {"internal_notes": raw_notes}
+            try:
+                self._apply_atomic_transition(
+                    selector=selector,
+                    action="loan_internal_note_added",
+                    actor_id=author_id,
+                    actor_type=author_role,
+                    set_fields={"internal_notes": encrypt_value(notes)},
+                )
+                return self
+            except LoanTransitionConflict:
+                continue
+        raise LoanTransitionConflict(
+            "The note could not be appended after concurrent updates. Refresh and retry."
+        )
 
     def request_missing_documents(self, officer_id, missing_documents, reason=""):
         """
@@ -350,30 +601,42 @@ class LoanApplication:
         now = utcnow()
         officer_id = str(officer_id)
 
-        self.missing_documents_requested = unique_documents
-        self.missing_documents_reason = reason
-        self.missing_documents_requested_by = officer_id
-        self.missing_documents_requested_at = now
-
-        # Ensure application is actively tracked under review
-        if self.status == "submitted":
-            self.status = "under_review"
-        if not self.assigned_officer:
-            self.assigned_officer = officer_id
-
-        history = self.document_request_history or []
-        history.append(
-            {
-                "requested_documents": unique_documents,
-                "reason": reason,
-                "requested_by": officer_id,
-                "requested_at": now,
-            }
+        expected_assignee = str(self.assigned_officer or "")
+        assignee_selector = (
+            expected_assignee if expected_assignee else {"$in": [None, ""]}
         )
-        # Keep history bounded
-        self.document_request_history = history[-20:]
-
-        return self.save()
+        history_entry = {
+            "requested_documents": unique_documents,
+            "reason": reason,
+            "requested_by": officer_id,
+            "requested_at": now,
+        }
+        self._apply_atomic_transition(
+            selector={
+                "status": self.status,
+                "assigned_officer": assignee_selector,
+            },
+            action="loan_missing_documents_requested",
+            actor_id=officer_id,
+            actor_type="loan_officer",
+            set_fields={
+                "missing_documents_requested": unique_documents,
+                "missing_documents_reason": encrypt_value(reason),
+                "missing_documents_requested_by": officer_id,
+                "missing_documents_requested_at": now,
+                "status": "under_review",
+                "assigned_officer": expected_assignee or officer_id,
+            },
+            extra_update={
+                "$push": {
+                    "document_request_history": {
+                        "$each": [history_entry],
+                        "$slice": -20,
+                    }
+                }
+            },
+        )
+        return self
 
     def disburse(self, amount, method, reference, processed_by):
         """Compatibility helper for a synchronously confirmed disbursement."""
@@ -403,8 +666,6 @@ class LoanApplication:
             raise ValueError(
                 f"Disbursement amount must equal approved amount of PHP{float(self.approved_amount):.2f}"
             )
-        if method not in {"cash", "gcash", "bank_transfer", "check", "wallet"}:
-            raise ValueError("Invalid disbursement method")
         if not idempotency_key:
             raise ValueError("Idempotency-Key is required")
 
@@ -425,6 +686,10 @@ class LoanApplication:
             raise ValueError("Disbursement requires a persisted loan application")
         if self.disbursement_status in {"pending", "executed"}:
             raise ValueError("A disbursement is already pending or executed")
+
+        from loans.services.settlement_policy import require_disbursement_method
+
+        method = require_disbursement_method(method)
 
         now = utcnow()
         collection = get_db()[self.collection_name]
@@ -543,7 +808,7 @@ class LoanApplication:
                 "$set": {
                     "disbursement_status": "failed",
                     "disbursement_failed_at": now,
-                    "disbursement_error": str(error)[:500],
+                    "disbursement_error": encrypt_value(str(error)[:500]),
                     "updated_at": now,
                 }
             },
@@ -569,27 +834,30 @@ class LoanApplication:
 
     def set_preferred_disbursement_method(self, method):
         """Set the borrower's preferred disbursement method."""
-        allowed = {"cash", "gcash", "bank_transfer", "check", "wallet"}
-        if method not in allowed:
-            raise ValueError(
-                f"Disbursement method must be one of: {', '.join(sorted(allowed))}"
-            )
         allowed_statuses = {"pending", "submitted", "under_review", "approved"}
         if self.status not in allowed_statuses:
             raise ValueError(
                 "Cannot change disbursement method for this application status"
             )
+        from loans.services.settlement_policy import require_disbursement_method
+
+        method = require_disbursement_method(method)
         self.preferred_disbursement_method = method
         self.updated_at = utcnow()
         return self.save()
 
     def mark_paid_off(
-        self, paid_off_at=None, actor_id=None, actor_type="system", source="settlement"
+        self,
+        paid_off_at=None,
+        actor_id=None,
+        actor_type="system",
+        source="settlement",
+        allow_legacy_schedule=False,
     ):
         """Idempotently close a disbursed loan after exact schedule settlement."""
         if self.status == "completed" and self.repayment_status == "paid_off":
             return self
-        if self.status != "disbursed":
+        if self.status != "disbursed" and not allow_legacy_schedule:
             raise ValueError("Only disbursed loans can be marked paid off")
         self._prev_status = self.status
         self.status = "completed"
@@ -614,18 +882,23 @@ class LoanApplication:
         if not self.can_resubmit():
             raise ValueError("Only rejected applications can be resubmitted")
 
-        self._prev_status = self.status
-        self.status = "draft"
-        self.rejection_reason = None
-        self.officer_notes = None
-        self.decision_date = None
-        self.assigned_officer = None
-        self.missing_documents_requested = []
-        self.missing_documents_reason = ""
-        self.missing_documents_requested_by = None
-        self.missing_documents_requested_at = None
-        self.updated_at = utcnow()
-        self.save()
+        self._apply_atomic_transition(
+            selector={"status": "rejected", "customer_id": self.customer_id},
+            action="loan_resubmitted",
+            actor_id=actor_id or self.customer_id,
+            actor_type="customer",
+            set_fields={
+                "status": "draft",
+                "rejection_reason": None,
+                "officer_notes": None,
+                "decision_date": None,
+                "assigned_officer": None,
+                "missing_documents_requested": [],
+                "missing_documents_reason": "",
+                "missing_documents_requested_by": None,
+                "missing_documents_requested_at": None,
+            },
+        )
         self._log_status_transition(
             action="loan_resubmitted",
             actor_id=actor_id or self.customer_id,
@@ -642,10 +915,10 @@ class LoanApplication:
         return cls.from_dict(doc)
 
     @classmethod
-    def find(cls, query, sort=None, skip=None, limit=None):
+    def find(cls, query, sort=None, skip=None, limit=None, projection=None):
         db = get_db()
         collection = db[cls.collection_name]
-        cursor = collection.find(query)
+        cursor = collection.find(query, projection)
         if sort:
             cursor = cursor.sort(sort)
         if skip:
@@ -668,8 +941,13 @@ class LoanApplication:
             return None
 
     @classmethod
-    def find_by_customer(cls, customer_id):
-        return cls.find({"customer_id": str(customer_id)}, sort=[("created_at", -1)])
+    def find_by_customer(cls, customer_id, limit=None, projection=None):
+        return cls.find(
+            {"customer_id": str(customer_id)},
+            sort=[("created_at", -1)],
+            limit=limit,
+            projection=projection,
+        )
 
     @classmethod
     def find_pending(cls):
@@ -722,6 +1000,7 @@ class LoanApplication:
             dict with applications list and pagination info
         """
         import re
+
         from bson import ObjectId
 
         db = get_db()
@@ -804,6 +1083,7 @@ class LoanApplication:
             dict with applications list and pagination info
         """
         import re
+
         from bson import ObjectId
 
         db = get_db()
@@ -884,9 +1164,16 @@ class LoanApplication:
             raise ValueError(f"Cannot reassign application with status: {self.status}")
 
         previous_officer_id = str(self.assigned_officer)
-        self.assigned_officer = str(new_officer_id)
-        self.save()
-        self._prev_status = self.status
+        self._apply_atomic_transition(
+            selector={
+                "status": self.status,
+                "assigned_officer": previous_officer_id,
+            },
+            action="loan_reassigned",
+            actor_id=actor_id,
+            actor_type=actor_type,
+            set_fields={"assigned_officer": str(new_officer_id)},
+        )
         self._log_status_transition(
             action="loan_reassigned",
             actor_id=actor_id,
@@ -919,11 +1206,37 @@ class LoanApplication:
         collection.create_index("submitted_at")
         collection.create_index("disbursement_status")
         collection.create_index(
+            [("customer_id", 1), ("status", 1), ("created_at", -1), ("_id", -1)],
+            name="application_customer_status_page",
+        )
+        collection.create_index(
+            [
+                ("assigned_officer", 1),
+                ("status", 1),
+                ("submitted_at", -1),
+                ("_id", -1),
+            ],
+            name="application_officer_status_page",
+        )
+        collection.create_index(
+            [
+                ("status", 1),
+                ("disbursement_status", 1),
+                ("disbursement_method", 1),
+                ("_id", 1),
+            ],
+            name="application_disbursement_reconcile",
+        )
+        collection.create_index(
             "disbursement_idempotency_key",
             unique=True,
             partialFilterExpression={
                 "disbursement_idempotency_key": {"$type": "string", "$gt": ""}
             },
+        )
+        collection.create_index(
+            [("legal_hold", 1), ("retention_expires_at", 1), ("status", 1), ("_id", 1)],
+            name="loan_retention_cleanup",
         )
 
     @classmethod
@@ -969,15 +1282,19 @@ class LoanApplication:
         )
 
     @classmethod
-    def record_eth_rebroadcast(cls, application_id):
+    def record_eth_rebroadcast(cls, application_id, tx_hash=None):
+        """Record one successful raw-transaction rebroadcast callback."""
+        update_fields = {
+            "eth_disbursement_broadcast_at": utcnow(),
+            "eth_disbursement_tx_status": "broadcast",
+        }
+        if tx_hash:
+            update_fields["eth_disbursement_tx_hash"] = tx_hash
         get_db()[cls.collection_name].update_one(
             {"_id": ObjectId(str(application_id))},
             {
                 "$inc": {"eth_disbursement_rebroadcast_count": 1},
-                "$set": {
-                    "eth_disbursement_broadcast_at": utcnow(),
-                    "eth_disbursement_tx_status": "broadcast",
-                },
+                "$set": update_fields,
             },
         )
 
@@ -1029,7 +1346,9 @@ class LoanApplication:
             {
                 "$set": {
                     "disbursement_status": "cancelled",
-                    "disbursement_error": str(reason or "Cancelled by operator")[:500],
+                    "disbursement_error": encrypt_value(
+                        str(reason or "Cancelled by operator")[:500]
+                    ),
                     "disbursement_failed_at": now,
                     "updated_at": now,
                 },
@@ -1037,7 +1356,7 @@ class LoanApplication:
                     "eth_disbursement_recovery_history": {
                         "action": "cancel",
                         "actor_id": str(actor_id),
-                        "reason": str(reason)[:500],
+                        "reason": encrypt_value(str(reason)[:500]),
                         "at": now,
                     }
                 },

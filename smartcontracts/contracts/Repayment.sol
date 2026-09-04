@@ -32,10 +32,8 @@ contract Repayment is
 
     enum PaymentMethod {
         Cash,           // 0
-        BankTransfer,   // 1
-        GCash,          // 2
-        Check,          // 3
-        Wallet          // 4
+        Check,          // 1
+        Wallet          // 2
     }
 
     struct RepaymentSchedule {

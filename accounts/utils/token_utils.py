@@ -428,6 +428,15 @@ class TokenUtils:
             {"user_id": str(user_id), "role": role, "session_id": session_id},
             {"$set": {"is_active": False}},
         )
+        try:
+            from notifications.models.device_token import DeviceToken
+
+            DeviceToken.deactivate_for_session(user_id, role, session_id)
+        except Exception as exc:  # noqa: BLE001 - session revocation must complete
+            logger.error(
+                "Device-token session cleanup failed: error_type=%s",
+                type(exc).__name__,
+            )
         return True
 
     @staticmethod
@@ -516,6 +525,19 @@ class TokenUtils:
         from accounts.models.activity import ActiveSession
 
         ActiveSession.update_many(session_query, {"$set": {"is_active": False}})
+        try:
+            from notifications.models.device_token import DeviceToken
+
+            DeviceToken.deactivate_for_owner(
+                user_id,
+                role,
+                except_session_id=except_session_id,
+            )
+        except Exception as exc:  # noqa: BLE001 - session revocation must complete
+            logger.error(
+                "Device-token owner cleanup failed: error_type=%s",
+                type(exc).__name__,
+            )
         return True
 
     @staticmethod

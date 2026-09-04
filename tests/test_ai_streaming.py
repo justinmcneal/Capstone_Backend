@@ -12,15 +12,15 @@ Validates SSE formatting and streaming endpoint behavior:
 """
 import json
 from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
 
 import pytest
-from unittest.mock import patch, MagicMock
+from django.test import override_settings
 
-from ai_assistant.views import StreamingChatView
-from ai_assistant.views.chat_views import EventStreamRenderer
 from accounts.authentication import AuthenticatedUser
 from accounts.utils.access_control import AccessControlMixin
-
+from ai_assistant.views import StreamingChatView
+from ai_assistant.views.chat_views import EventStreamRenderer
 
 # =============================================================================
 # HELPERS
@@ -94,6 +94,17 @@ class TestStreamingInputValidation:
             'language': 'jp',
         }))
         assert response.status_code == 400
+
+    @override_settings(AI_ASSISTANT_ENABLED=False)
+    def test_incident_kill_switch_returns_json_before_stream_starts(self):
+        with patch("ai_assistant.views.streaming.get_llm_service") as provider:
+            response = _call_view(
+                _make_fake_request(data={"message": "Synthetic incident probe"})
+            )
+
+        assert response.status_code == 503
+        assert response.data["code"] == "AI_ASSISTANT_DISABLED"
+        assert provider.call_count == 0
 
 
 # =============================================================================
@@ -194,4 +205,5 @@ class TestSSEFrameFormatting:
         event_names = [name for name, _ in frames]
         assert event_names == ['token', 'done']
         assert frames[0][1]['content'] == mock_check_prohibited.return_value[1]
-        assert frames[1][1] == {'filtered': True}
+        assert frames[1][1]['filtered'] is True
+        assert frames[1][1]['request_id']

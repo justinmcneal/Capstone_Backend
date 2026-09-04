@@ -1,4 +1,5 @@
 import logging
+import time
 
 from django.conf import settings
 from rest_framework import status
@@ -7,6 +8,7 @@ from rest_framework.renderers import BaseRenderer
 from accounts.services.consent_service import ConsentService
 from accounts.utils.access_control import AccessControlMixin
 from accounts.utils.response_helpers import error_response
+from ai_assistant.metrics import AI_REQUEST_LATENCY, AI_REQUESTS, increment, observe
 
 logger = logging.getLogger('ai_assistant')
 ALLOWED_LANGUAGES = {'en', 'tl'}
@@ -28,6 +30,28 @@ CACHE_TTL = getattr(settings, 'CACHE_TTL', {
     'loan_products': 1800,
     'ai_status': 60,
 })
+
+
+class AIRequestMetricsMixin:
+    """Record low-cardinality HTTP outcomes without request/customer content."""
+
+    metrics_endpoint = 'unknown'
+
+    def dispatch(self, request, *args, **kwargs):
+        started = time.monotonic()
+        response = super().dispatch(request, *args, **kwargs)
+        status_code = int(getattr(response, 'status_code', 500))
+        increment(
+            AI_REQUESTS,
+            endpoint=self.metrics_endpoint,
+            outcome=f'{status_code // 100}xx',
+        )
+        observe(
+            AI_REQUEST_LATENCY,
+            time.monotonic() - started,
+            endpoint=self.metrics_endpoint,
+        )
+        return response
 
 
 class ConsentRequiredMixin(AccessControlMixin):

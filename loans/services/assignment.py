@@ -3,6 +3,7 @@
 import logging
 
 from bson import ObjectId
+from django.conf import settings
 
 from accounts.models import Customer, LoanOfficer
 from loans.models import LoanApplication
@@ -55,7 +56,12 @@ def _actor_identity(account):
 
 
 def _notify_assignment_change(
-    application, *, assigned_by, assigned_to=None, previous_assignee=None
+    application,
+    *,
+    assigned_by,
+    assigned_to=None,
+    previous_assignee=None,
+    transition_id=None,
 ):
     """Publish assignment notifications without affecting assignment success."""
     try:
@@ -75,6 +81,7 @@ def _notify_assignment_change(
             previous_assignee=_assignment_party(previous_assignee),
             related_type="loan",
             related_id=application.id,
+            transition_id=transition_id,
         )
     except Exception:
         logger.exception(
@@ -109,6 +116,7 @@ def auto_assign_application(application):
             assigned_by=None,
             assigned_to=officer,
             previous_assignee=previous_officer,
+            transition_id=getattr(application, "last_transition_id", None),
         )
 
         return officer
@@ -151,6 +159,7 @@ def manual_assign_application(application, officer_id, assigned_by=None):
         assigned_by=assigned_by,
         assigned_to=officer,
         previous_assignee=previous_officer,
+        transition_id=getattr(application, "last_transition_id", None),
     )
 
     return officer
@@ -206,6 +215,7 @@ def reassign_application(application, new_officer_id, assigned_by=None):
         assigned_by=assigned_by,
         assigned_to=new_officer,
         previous_assignee=current_officer,
+        transition_id=getattr(application, "last_transition_id", None),
     )
 
     return new_officer
@@ -225,24 +235,71 @@ def get_officers_workload(page=1, page_size=20, search=None):
     """
     import re
 
-    # Base query for active officers
-    officers = LoanOfficer.find_active()
-
-    # Apply search filter
+    query = {"active": True}
     if search:
         search_regex = re.compile(re.escape(search), re.IGNORECASE)
-        officers = [
-            o
-            for o in officers
-            if search_regex.search(o.full_name) or search_regex.search(o.email)
+        query["$or"] = [
+            {"first_name": search_regex},
+            {"last_name": search_regex},
+            {"email": search_regex},
+            {"employee_id": search_regex},
         ]
 
-    total = len(officers)
-
-    # Apply pagination
-    start = (page - 1) * page_size
-    end = start + page_size
-    paginated_officers = officers[start:end]
+    db = settings.MONGODB
+    officer_collection = db[LoanOfficer.collection_name]
+    total = officer_collection.count_documents(query)
+    cursor = (
+        officer_collection.find(query)
+        .sort([("last_name", 1), ("first_name", 1), ("_id", 1)])
+        .skip((page - 1) * page_size)
+        .limit(page_size)
+    )
+    paginated_officers = [LoanOfficer.from_dict(document) for document in cursor]
+    officer_ids = [officer.id for officer in paginated_officers if officer]
+    workload = {
+        row["_id"]: {
+            "assigned": int(row.get("assigned", 0)),
+            "pending": int(row.get("pending", 0)),
+        }
+        for row in db[LoanApplication.collection_name].aggregate(
+            [
+                {"$match": {"assigned_officer": {"$in": officer_ids}}},
+                {
+                    "$group": {
+                        "_id": "$assigned_officer",
+                        "assigned": {
+                            "$sum": {
+                                "$cond": [
+                                    {
+                                        "$in": [
+                                            "$status",
+                                            [
+                                                "submitted",
+                                                "under_review",
+                                                "approved",
+                                                "disbursed",
+                                            ],
+                                        ]
+                                    },
+                                    1,
+                                    0,
+                                ]
+                            }
+                        },
+                        "pending": {
+                            "$sum": {
+                                "$cond": [
+                                    {"$in": ["$status", ["submitted", "under_review"]]},
+                                    1,
+                                    0,
+                                ]
+                            }
+                        },
+                    }
+                },
+            ]
+        )
+    }
 
     return {
         "officers": [
@@ -251,20 +308,8 @@ def get_officers_workload(page=1, page_size=20, search=None):
                 "employee_id": officer.employee_id,
                 "name": officer.full_name,
                 "email": officer.email,
-                "assigned_count": LoanApplication.count(
-                    {
-                        "assigned_officer": officer.id,
-                        "status": {
-                            "$in": [
-                                "submitted",
-                                "under_review",
-                                "approved",
-                                "disbursed",
-                            ]
-                        },
-                    }
-                ),
-                "pending_count": officer.get_pending_count(),
+                "assigned_count": workload.get(officer.id, {}).get("assigned", 0),
+                "pending_count": workload.get(officer.id, {}).get("pending", 0),
                 "active": officer.active,
             }
             for officer in paginated_officers

@@ -110,6 +110,9 @@ def main() -> int:
         if p2_rc != 0:
             raise RuntimeError(f"openssl encryption failed with exit code {p2_rc}")
 
+        # Encrypted backups still contain sensitive system data and should not
+        # be readable by other local users.
+        backup_path.chmod(0o600)
         size_mb = backup_path.stat().st_size / (1024 * 1024)
         print(f"[backup] done: {backup_path.name} ({size_mb:.2f} MB)")
 

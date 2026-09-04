@@ -11,6 +11,7 @@ from django.template.loader import render_to_string
 from notifications.services.notification_creator import (
     create_and_broadcast_notification,
 )
+from notifications.services.preference_policy import evaluate_email_policy
 
 logger = logging.getLogger("notifications")
 
@@ -23,7 +24,15 @@ class EmailSender:
     def __init__(self):
         self.from_email = getattr(settings, "DEFAULT_FROM_EMAIL", "noreply@example.com")
 
-    def send(self, to_email, subject, template_name, context, notification=None):
+    def send(
+        self,
+        to_email,
+        subject,
+        template_name,
+        context,
+        notification=None,
+        email_policy_decision=None,
+    ):
         """
         Send an email using a template.
 
@@ -37,6 +46,14 @@ class EmailSender:
         Returns:
             bool: Success status
         """
+        if email_policy_decision and not email_policy_decision["allowed"]:
+            logger.info(
+                "Email suppressed by notification policy: preference=%s policy=%s",
+                email_policy_decision.get("preference_key"),
+                email_policy_decision.get("policy_version"),
+            )
+            return True
+
         try:
             # Render templates
             html_content = render_to_string(f"email/{template_name}.html", context)
@@ -54,7 +71,10 @@ class EmailSender:
             # Send
             email.send(fail_silently=False)
 
-            logger.info(f"Email sent: {subject} to {to_email}")
+            logger.info(
+                "Notification email accepted by backend: notification=%s",
+                getattr(notification, "id", None),
+            )
 
             if notification:
                 notification.mark_sent()
@@ -62,12 +82,32 @@ class EmailSender:
             return True
 
         except Exception as exc:  # noqa: BLE001
-            logger.error("Email send failed: %s", exc)
+            logger.error("Notification email failed: error_type=%s", type(exc).__name__)
 
             if notification:
-                notification.mark_failed(str(exc))
+                notification.mark_failed("email_delivery_failed")
 
             return False
+
+    @staticmethod
+    def _customer_email_decision(customer_id, event_type):
+        return evaluate_email_policy(
+            user_id=customer_id,
+            user_type="customer",
+            event_type=event_type,
+        )
+
+    @staticmethod
+    def _policy_metadata(decision):
+        return {
+            "email_policy": {
+                "policy_version": decision["policy_version"],
+                "preference_key": decision["preference_key"],
+                "allowed": decision["allowed"],
+                "reason": decision["reason"],
+                "decided_at": decision["decided_at"].isoformat(),
+            }
+        }
 
     def send_loan_submitted(
         self,
@@ -77,8 +117,10 @@ class EmailSender:
         product_name,
         amount,
         customer_id=None,
+        delivery_key=None,
     ):
         """Send loan submission confirmation"""
+        decision = self._customer_email_decision(customer_id, "loan_submitted")
         notification = create_and_broadcast_notification(
             user_id=str(customer_id) if customer_id else None,
             user_type="customer",
@@ -90,6 +132,8 @@ class EmailSender:
             related_type="loan",
             related_id=loan_id,
             channel="in_app",
+            idempotency_key=delivery_key,
+            metadata=self._policy_metadata(decision),
         )
 
         return self.send(
@@ -103,6 +147,7 @@ class EmailSender:
                 "loan_id": loan_id,
             },
             notification=notification,
+            email_policy_decision=decision,
         )
 
     def send_loan_approved(
@@ -112,8 +157,10 @@ class EmailSender:
         loan_id,
         approved_amount,
         customer_id=None,
+        delivery_key=None,
     ):
         """Send loan approval notification"""
+        decision = self._customer_email_decision(customer_id, "loan_approved")
         notification = create_and_broadcast_notification(
             user_id=str(customer_id) if customer_id else None,
             user_type="customer",
@@ -125,6 +172,8 @@ class EmailSender:
             related_type="loan",
             related_id=loan_id,
             channel="in_app",
+            idempotency_key=delivery_key,
+            metadata=self._policy_metadata(decision),
         )
 
         return self.send(
@@ -137,6 +186,7 @@ class EmailSender:
                 "loan_id": loan_id,
             },
             notification=notification,
+            email_policy_decision=decision,
         )
 
     def send_loan_rejected(
@@ -146,8 +196,10 @@ class EmailSender:
         loan_id,
         reason,
         customer_id=None,
+        delivery_key=None,
     ):
         """Send loan rejection notification"""
+        decision = self._customer_email_decision(customer_id, "loan_rejected")
         notification = create_and_broadcast_notification(
             user_id=str(customer_id) if customer_id else None,
             user_type="customer",
@@ -159,6 +211,8 @@ class EmailSender:
             related_type="loan",
             related_id=loan_id,
             channel="in_app",
+            idempotency_key=delivery_key,
+            metadata=self._policy_metadata(decision),
         )
 
         return self.send(
@@ -167,6 +221,7 @@ class EmailSender:
             template_name="loan_rejected",
             context={"name": customer_name, "reason": reason, "loan_id": loan_id},
             notification=notification,
+            email_policy_decision=decision,
         )
 
     def send_document_flagged(
@@ -180,6 +235,7 @@ class EmailSender:
         delivery_key=None,
     ):
         """Send document quality issue notification"""
+        decision = self._customer_email_decision(customer_id, "document_flagged")
         notification = create_and_broadcast_notification(
             user_id=str(customer_id) if customer_id else None,
             user_type="customer",
@@ -192,6 +248,7 @@ class EmailSender:
             related_id=document_id,
             channel="in_app",
             idempotency_key=delivery_key,
+            metadata=self._policy_metadata(decision),
         )
 
         return self.send(
@@ -204,6 +261,7 @@ class EmailSender:
                 "issues": issues,
             },
             notification=notification,
+            email_policy_decision=decision,
         )
 
     def send_document_approved(
@@ -217,6 +275,7 @@ class EmailSender:
         delivery_key=None,
     ):
         """Send document approval notification to customer."""
+        decision = self._customer_email_decision(customer_id, "document_verified")
         notification = create_and_broadcast_notification(
             user_id=str(customer_id) if customer_id else None,
             user_type="customer",
@@ -229,6 +288,7 @@ class EmailSender:
             related_id=document_id,
             channel="in_app",
             idempotency_key=delivery_key,
+            metadata=self._policy_metadata(decision),
         )
 
         return self.send(
@@ -242,6 +302,7 @@ class EmailSender:
                 "notes": notes,
             },
             notification=notification,
+            email_policy_decision=decision,
         )
 
     def send_document_pending_review(
@@ -291,8 +352,12 @@ class EmailSender:
         missing_documents,
         reason="",
         customer_id=None,
+        delivery_key=None,
     ):
         """Send missing documents request notification"""
+        decision = self._customer_email_decision(
+            customer_id, "missing_documents_requested"
+        )
         notification = create_and_broadcast_notification(
             user_id=str(customer_id) if customer_id else None,
             user_type="customer",
@@ -304,6 +369,8 @@ class EmailSender:
             related_type="loan",
             related_id=loan_id,
             channel="in_app",
+            idempotency_key=delivery_key,
+            metadata=self._policy_metadata(decision),
         )
 
         return self.send(
@@ -317,6 +384,7 @@ class EmailSender:
                 "reason": reason,
             },
             notification=notification,
+            email_policy_decision=decision,
         )
 
     def send_new_application_alert(
@@ -364,8 +432,10 @@ class EmailSender:
         method,
         reference,
         customer_id=None,
+        delivery_key=None,
     ):
         """Send loan disbursement notification"""
+        decision = self._customer_email_decision(customer_id, "loan_disbursed")
         notification = create_and_broadcast_notification(
             user_id=str(customer_id) if customer_id else None,
             user_type="customer",
@@ -377,6 +447,8 @@ class EmailSender:
             related_type="loan",
             related_id=loan_id,
             channel="in_app",
+            idempotency_key=delivery_key,
+            metadata=self._policy_metadata(decision),
         )
 
         return self.send(
@@ -391,6 +463,7 @@ class EmailSender:
                 "loan_id": loan_id,
             },
             notification=notification,
+            email_policy_decision=decision,
         )
 
     def send_payment_received(
@@ -402,8 +475,10 @@ class EmailSender:
         installment,
         remaining,
         customer_id=None,
+        delivery_key=None,
     ):
         """Send payment received notification"""
+        decision = self._customer_email_decision(customer_id, "payment_received")
         notification = create_and_broadcast_notification(
             user_id=str(customer_id) if customer_id else None,
             user_type="customer",
@@ -415,6 +490,8 @@ class EmailSender:
             related_type="loan",
             related_id=loan_id,
             channel="in_app",
+            idempotency_key=delivery_key,
+            metadata=self._policy_metadata(decision),
         )
 
         return self.send(
@@ -429,6 +506,7 @@ class EmailSender:
                 "loan_id": loan_id,
             },
             notification=notification,
+            email_policy_decision=decision,
         )
 
 

@@ -42,6 +42,19 @@ def find_models(model, query, *, limit=100, sort=None):
     return [model.from_dict(document) for document in cursor]
 
 
+def find_models_bounded(model, query, *, limit=100, sort=None):
+    """Return bounded results and report whether additional matches exist."""
+    limit = max(1, int(limit))
+    cursor = settings.MONGODB[model.collection_name].find(query)
+    if sort:
+        cursor = cursor.sort(sort)
+    documents = list(cursor.limit(limit + 1))
+    return (
+        [model.from_dict(document) for document in documents[:limit]],
+        len(documents) > limit,
+    )
+
+
 def application_related_maps(applications):
     """Bulk-load the customer, product, and officer rows for applications."""
     from accounts.models import Customer, LoanOfficer

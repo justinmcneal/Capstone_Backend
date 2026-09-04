@@ -1,0 +1,90 @@
+groups:
+  - name: ai-assistant-recording
+    interval: 30s
+    rules:
+      - record: ai_assistant:request_error_ratio_5m
+        expr: |
+          sum(rate(ai_assistant_requests_total{outcome=~"4xx|5xx|error"}[5m]))
+          /
+          clamp_min(sum(rate(ai_assistant_requests_total[5m])), 0.001)
+      - record: ai_assistant:request_latency_p95_seconds_5m
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum by (le) (rate(ai_assistant_request_duration_seconds_bucket[5m]))
+          )
+
+  - name: ai-assistant-alerts
+    interval: 30s
+    rules:
+      - alert: AIAssistantMetricsMissing
+        expr: absent(ai_assistant_active_streams)
+        for: 10m
+        labels: {severity: critical, service: ai-assistant}
+        annotations:
+          summary: AI Assistant application metrics are missing
+          runbook: docs/AI_ASSISTANT_TESTING_GUIDE.md#ai-operations-runbook
+
+      - alert: AIAssistantRequestErrorRatioHigh
+        expr: ai_assistant:request_error_ratio_5m > 0.10
+        for: 10m
+        labels: {severity: warning, service: ai-assistant}
+        annotations:
+          summary: AI Assistant request error ratio exceeds ten percent
+          runbook: docs/AI_ASSISTANT_TESTING_GUIDE.md#ai-operations-runbook
+
+      - alert: AIAssistantRequestLatencyHigh
+        expr: ai_assistant:request_latency_p95_seconds_5m > 10
+        for: 10m
+        labels: {severity: warning, service: ai-assistant}
+        annotations:
+          summary: AI Assistant p95 request latency exceeds ten seconds
+          runbook: docs/AI_ASSISTANT_TESTING_GUIDE.md#ai-operations-runbook
+
+      - alert: AIAssistantAuditWritesFailing
+        expr: increase(ai_assistant_audit_write_failures_total[10m]) > 0
+        for: 1m
+        labels: {severity: critical, service: ai-assistant}
+        annotations:
+          summary: AI Assistant metadata audit writes are failing
+          runbook: docs/AI_ASSISTANT_TESTING_GUIDE.md#ai-operations-runbook
+
+      - alert: AIAssistantPersistenceFailing
+        expr: sum(increase(ai_assistant_persistence_failures_total[10m])) > 0
+        for: 1m
+        labels: {severity: critical, service: ai-assistant}
+        annotations:
+          summary: AI Assistant persistence is failing
+          runbook: docs/AI_ASSISTANT_TESTING_GUIDE.md#ai-operations-runbook
+
+      - alert: AIAssistantToolErrorsHigh
+        expr: sum(rate(ai_assistant_tool_calls_total{outcome=~"execution_error|validation_error"}[5m])) > 0.1
+        for: 10m
+        labels: {severity: warning, service: ai-assistant}
+        annotations:
+          summary: AI Assistant tool errors are elevated
+          runbook: docs/AI_ASSISTANT_TESTING_GUIDE.md#ai-operations-runbook
+
+      - alert: AIAssistantProviderFailuresHigh
+        expr: sum(rate(ai_assistant_provider_requests_total{outcome!="success"}[5m])) > 0.1
+        for: 10m
+        labels: {severity: warning, service: ai-assistant}
+        annotations:
+          summary: AI Assistant provider failures are elevated
+          runbook: docs/AI_ASSISTANT_TESTING_GUIDE.md#ai-operations-runbook
+
+      - alert: AIAssistantToolRateLimitingHigh
+        expr: sum(rate(ai_assistant_tool_budget_rejections_total[5m])) > 0.2
+        for: 10m
+        labels: {severity: warning, service: ai-assistant}
+        annotations:
+          summary: AI Assistant tool budgets are rejecting calls frequently
+          runbook: docs/AI_ASSISTANT_TESTING_GUIDE.md#ai-operations-runbook
+
+      - alert: AIAssistantTokenUseHigh
+        expr: sum(rate(ai_assistant_tokens_total[15m])) * 60 > 50000
+        for: 15m
+        labels: {severity: warning, service: ai-assistant}
+        annotations:
+          summary: AI Assistant provider token use is above the review threshold
+          runbook: docs/AI_ASSISTANT_TESTING_GUIDE.md#ai-operations-runbook

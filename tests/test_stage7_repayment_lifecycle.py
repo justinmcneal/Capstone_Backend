@@ -12,10 +12,10 @@ from rest_framework.test import APIRequestFactory, force_authenticate
 from accounts.authentication import AuthenticatedUser
 from loans.models import LoanApplication, LoanPayment, RepaymentSchedule
 from loans.services.payment import post_verified_early_payoff, post_verified_payment
+from loans.tasks import reconcile_repayment_lifecycle_task
 from loans.utils.money import from_centavos, to_centavos
 from loans.utils.time import utcnow
 from loans.views.officer.payoff import EarlyPayoffView
-from loans.tasks import reconcile_repayment_lifecycle_task
 
 
 @pytest.fixture
@@ -117,7 +117,7 @@ def test_partial_overdue_state_is_preserved_and_is_next_payment(stage7_db):
 
 
 def test_penalty_waiver_normalizes_partial_payment_and_records_credit(stage7_db):
-    _, schedule = _persisted_loan_and_schedule(stage7_db, amounts=(100,))
+    _, schedule = _persisted_loan_and_schedule(stage7_db, amounts=(100, 100))
     schedule.apply_penalty(1, 20, "Late", "officer-1")
     schedule.record_payment(1, 110)
 
@@ -127,7 +127,9 @@ def test_penalty_waiver_normalizes_partial_payment_and_records_credit(stage7_db)
     assert waived["paid_amount_centavos"] == 10_000
     assert waived["waiver_credit_centavos"] == 1_000
     assert waived["waiver_credit_amount"] == 10
-    assert schedule.get_remaining_balance() == 0
+    assert waived["waiver_credit_applied_centavos"] == 1_000
+    assert schedule.get_installment(2)["paid_amount"] == 10
+    assert schedule.get_remaining_balance() == 90
 
 
 def test_final_installment_payment_marks_schedule_and_application_paid_off(stage7_db):
@@ -194,6 +196,96 @@ def test_verified_early_payoff_allocates_all_open_installments_once(stage7_db):
     assert payment.blockchain_sync_status == "not_applicable"
 
 
+def test_verified_early_payoff_closes_legacy_scheduled_application(stage7_db):
+    application, schedule = _persisted_loan_and_schedule(stage7_db, amounts=(100, 200))
+    stage7_db[LoanApplication.collection_name].update_one(
+        {"_id": application._id},
+        {"$set": {"status": "approved"}},
+    )
+
+    payment, allocations, replayed = post_verified_early_payoff(
+        schedule=schedule,
+        amount=300,
+        payment_method="cash",
+        reference="CASH-LEGACY-PAYOFF",
+        notes="",
+        recorded_by="officer-1",
+        idempotency_key="officer-payoff:legacy-schedule-1",
+        verification_source="officer_manual_payoff",
+    )
+
+    completed = LoanApplication.find_by_id(application.id)
+    assert replayed is False
+    assert payment.payment_status == "posted"
+    assert len(allocations) == 2
+    assert completed.status == "completed"
+    assert completed.repayment_status == "paid_off"
+
+
+def test_verified_early_payoff_initializes_missing_legacy_accounting_version(
+    stage7_db,
+):
+    application, schedule = _persisted_loan_and_schedule(stage7_db, amounts=(100, 200))
+    stage7_db[RepaymentSchedule.collection_name].update_one(
+        {"_id": schedule._id},
+        {"$unset": {"accounting_version": ""}},
+    )
+    legacy_schedule = RepaymentSchedule.find_by_loan(application.id)
+
+    payment, allocations, replayed = post_verified_early_payoff(
+        schedule=legacy_schedule,
+        amount=300,
+        payment_method="cash",
+        reference="CASH-LEGACY-VERSION-PAYOFF",
+        notes="",
+        recorded_by="officer-1",
+        idempotency_key="officer-payoff:legacy-version-1",
+        verification_source="officer_manual_payoff",
+    )
+
+    stored = stage7_db[RepaymentSchedule.collection_name].find_one(
+        {"_id": schedule._id}
+    )
+    assert replayed is False
+    assert payment.payment_status == "posted"
+    assert len(allocations) == 2
+    assert stored["accounting_version"] == 1
+
+
+def test_officer_early_payoff_returns_conflict_for_concurrent_schedule_update(
+    stage7_db, monkeypatch
+):
+    application, schedule = _persisted_loan_and_schedule(stage7_db, amounts=(100,))
+    monkeypatch.setattr(
+        EarlyPayoffView,
+        "_load_scoped",
+        lambda self, request, application_id: (application, schedule, None),
+    )
+    monkeypatch.setattr(
+        "loans.views.officer.payoff.post_verified_early_payoff",
+        lambda **kwargs: (_ for _ in ()).throw(
+            RuntimeError("Payoff could not be applied due to a concurrent update")
+        ),
+    )
+    user = AuthenticatedUser(
+        customer_id=str(ObjectId()),
+        email="officer@example.com",
+        verified=True,
+        role="loan_officer",
+    )
+    request = APIRequestFactory().post(
+        "/payoff/",
+        {"amount": 100, "payment_method": "cash"},
+        format="json",
+        HTTP_IDEMPOTENCY_KEY="payoff-concurrent-1",
+    )
+    force_authenticate(request, user=user)
+
+    response = EarlyPayoffView.as_view()(request, application_id=application.id)
+
+    assert response.status_code == 409
+
+
 def test_officer_early_payoff_endpoint_quotes_and_posts(stage7_db, monkeypatch):
     application, schedule = _persisted_loan_and_schedule(stage7_db, amounts=(100, 200))
     monkeypatch.setattr(
@@ -239,10 +331,50 @@ def test_officer_early_payoff_endpoint_quotes_and_posts(stage7_db, monkeypatch):
 
     assert quote.status_code == 200
     assert quote.data["data"]["payoff_amount_centavos"] == 30_000
+    assert quote.data["data"]["requires_exact_amount"] is True
+    assert quote.data["data"]["rounding"] == "half_up_centavo"
+    assert quote.data["data"]["policy_version"] == "scheduled-balance-v1"
     assert posted.status_code == 200
     assert posted.data["data"]["status"] == "completed"
     assert posted.data["data"]["remaining_balance"] == 0
     assert RepaymentSchedule.find_by_loan(schedule.loan_id).status == "paid_off"
+
+
+def test_officer_early_payoff_quotes_legacy_schedule_with_stale_application_status(
+    stage7_db, monkeypatch
+):
+    application, _ = _persisted_loan_and_schedule(stage7_db, amounts=(100, 200))
+    stage7_db[LoanApplication.collection_name].update_one(
+        {"_id": application._id},
+        {"$set": {"status": "approved"}},
+    )
+    monkeypatch.setattr(
+        EarlyPayoffView,
+        "check_officer_permission",
+        lambda self, request: (True, request.user),
+    )
+    monkeypatch.setattr(
+        EarlyPayoffView,
+        "check_application_scope",
+        lambda self, request, app, **kwargs: (True, request.user),
+    )
+    user = AuthenticatedUser(
+        customer_id=str(ObjectId()),
+        email="officer@example.com",
+        verified=True,
+        role="loan_officer",
+    )
+    url = reverse(
+        "loans:officer-early-payoff",
+        kwargs={"application_id": application.id},
+    )
+    request = APIRequestFactory().get(url)
+    force_authenticate(request, user=user)
+
+    response = EarlyPayoffView.as_view()(request, application_id=application.id)
+
+    assert response.status_code == 200
+    assert response.data["data"]["payoff_amount_centavos"] == 30_000
 
 
 def test_early_payoff_recovers_after_schedule_update_before_posting(

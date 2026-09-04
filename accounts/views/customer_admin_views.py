@@ -13,13 +13,13 @@ from accounts.serializers.account_lifecycle_serializers import (
     TwoFactorRecoveryDecisionSerializer,
 )
 from accounts.services.account_lifecycle_service import AccountLifecycleService
+from accounts.services.audit import record_account_audit
 from accounts.services.lockout_service import LockoutService
 from accounts.services.security_event_service import SecurityEventService
 from accounts.utils.access_control import AccessControlMixin
 from accounts.utils.request_utils import get_client_ip
 from accounts.utils.response_helpers import error_response, success_response
 from accounts.utils.validation_utils import parse_optional_bool, sanitize_text
-from analytics.models import AuditLog
 
 logger = logging.getLogger("admin_auth")
 
@@ -170,6 +170,38 @@ class CustomerDetailView(ManageUsersRequiredMixin, APIView):
                     if getattr(customer, "profile_cleanup_completed_at", None)
                     else None
                 ),
+                "ai_cleanup_status": getattr(customer, "ai_cleanup_status", None),
+                "ai_cleanup_counts": getattr(customer, "ai_cleanup_counts", {}),
+                "ai_cleanup_attempts": getattr(customer, "ai_cleanup_attempts", 0),
+                "ai_cleanup_last_error": getattr(customer, "ai_cleanup_last_error", ""),
+                "ai_cleanup_last_attempt_at": (
+                    customer.ai_cleanup_last_attempt_at.isoformat()
+                    if getattr(customer, "ai_cleanup_last_attempt_at", None)
+                    else None
+                ),
+                "ai_cleanup_completed_at": (
+                    customer.ai_cleanup_completed_at.isoformat()
+                    if getattr(customer, "ai_cleanup_completed_at", None)
+                    else None
+                ),
+                "loan_cleanup_status": getattr(customer, "loan_cleanup_status", None),
+                "loan_cleanup_counts": getattr(customer, "loan_cleanup_counts", {}),
+                "loan_cleanup_attempts": getattr(customer, "loan_cleanup_attempts", 0),
+                "loan_cleanup_last_error": getattr(
+                    customer, "loan_cleanup_last_error", ""
+                ),
+                "notification_cleanup_status": getattr(
+                    customer, "notification_cleanup_status", None
+                ),
+                "notification_cleanup_counts": getattr(
+                    customer, "notification_cleanup_counts", {}
+                ),
+                "notification_cleanup_attempts": getattr(
+                    customer, "notification_cleanup_attempts", 0
+                ),
+                "notification_cleanup_last_error": getattr(
+                    customer, "notification_cleanup_last_error", ""
+                ),
             },
             message="Customer retrieved successfully",
         )
@@ -224,7 +256,7 @@ class CustomerDetailView(ManageUsersRequiredMixin, APIView):
                 in {"suspended", "deactivated"},
             },
         )
-        AuditLog.log_action(
+        record_account_audit(
             action=action,
             user_id=admin.id,
             user_type="super_admin" if admin.super_admin else "admin",
@@ -281,7 +313,7 @@ class CustomerUnlockView(ManageUsersRequiredMixin, APIView):
             action="admin_customer_unlock",
             ip_address=get_client_ip(request),
         )
-        AuditLog.log_action(
+        record_account_audit(
             action="admin_customer_unlock",
             user_id=admin.id,
             user_type="super_admin" if admin.super_admin else "admin",
@@ -333,7 +365,7 @@ class CustomerDeletionFinalizeView(ManageUsersRequiredMixin, APIView):
             ip_address=get_client_ip(request),
             details={"performed_by_admin": True},
         )
-        AuditLog.log_action(
+        record_account_audit(
             action="account_deleted",
             user_id=admin.id,
             user_type="super_admin" if admin.super_admin else "admin",
@@ -424,7 +456,7 @@ class TwoFactorRecoveryAdminView(ManageUsersRequiredMixin, APIView):
                 "sessions_revoked": approve,
             },
         )
-        AuditLog.log_action(
+        record_account_audit(
             action=action,
             user_id=admin.id,
             user_type="super_admin" if admin.super_admin else "admin",

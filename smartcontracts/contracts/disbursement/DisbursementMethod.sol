@@ -36,11 +36,9 @@ contract DisbursementMethod is
      * @notice Available disbursement methods
      */
     enum Method {
-        BankTransfer,    // 0 - Direct bank transfer
-        GCash,           // 1 - GCash mobile wallet
-        Cash,            // 2 - Cash pickup
-        Check,           // 3 - Check payment
-        Wallet           // 4 - Crypto wallet (ETH)
+        Cash,            // 0 - Cash pickup
+        Check,           // 1 - Check payment
+        Wallet           // 2 - Crypto wallet (ETH)
     }
 
     // ============ Structs ============

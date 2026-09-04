@@ -1,0 +1,52 @@
+groups:
+  - name: notifications-recording
+    interval: 30s
+    rules:
+      - record: notifications:request_error_ratio_5m
+        expr: sum(rate(notifications_requests_total{outcome!="success"}[5m])) / clamp_min(sum(rate(notifications_requests_total[5m])), 0.001)
+
+  - name: notifications-alerts
+    interval: 30s
+    rules:
+      - alert: NotificationsMetricsMissing
+        expr: absent(notifications_delivery_backlog)
+        for: 10m
+        labels: {severity: critical, service: notifications}
+        annotations:
+          summary: Notifications operational metrics are missing
+          runbook: docs/NOTIFICATIONS_TESTING_GUIDE.md#notifications-operations-runbook
+      - alert: NotificationsDeliveryBacklogOld
+        expr: notifications_delivery_oldest_age_seconds > 900
+        for: 5m
+        labels: {severity: critical, service: notifications}
+        annotations:
+          summary: Notification delivery backlog is older than 15 minutes
+          runbook: docs/NOTIFICATIONS_TESTING_GUIDE.md#notifications-operations-runbook
+      - alert: NotificationsTerminalFailures
+        expr: notifications_delivery_backlog{status="failed"} > 0
+        for: 5m
+        labels: {severity: critical, service: notifications}
+        annotations:
+          summary: Notification deliveries require operator review
+          runbook: docs/NOTIFICATIONS_TESTING_GUIDE.md#notifications-operations-runbook
+      - alert: NotificationsRequestErrorsHigh
+        expr: notifications:request_error_ratio_5m > 0.05
+        for: 10m
+        labels: {severity: warning, service: notifications}
+        annotations:
+          summary: Notifications REST error ratio is above five percent
+          runbook: docs/NOTIFICATIONS_TESTING_GUIDE.md#notifications-operations-runbook
+      - alert: NotificationsWebSocketRevocations
+        expr: increase(notifications_websocket_actions_total{action="auth",outcome="revoked"}[5m]) > 10
+        for: 5m
+        labels: {severity: warning, service: notifications}
+        annotations:
+          summary: Many notification sockets are failing live authorization
+          runbook: docs/NOTIFICATIONS_TESTING_GUIDE.md#notifications-operations-runbook
+      - alert: NotificationsMetricsCollectorSilent
+        expr: absent(notifications_metrics_last_success_timestamp_seconds) or (time() - notifications_metrics_last_success_timestamp_seconds > 300)
+        for: 5m
+        labels: {severity: critical, service: notifications}
+        annotations:
+          summary: Notifications metrics collection has stopped
+          runbook: docs/NOTIFICATIONS_TESTING_GUIDE.md#notifications-operations-runbook

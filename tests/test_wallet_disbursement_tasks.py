@@ -15,7 +15,7 @@ from loans.utils.time import utcnow
 @pytest.fixture
 def pending_wallet(settings):
     settings.MONGODB = mongomock.MongoClient()["wallet_worker"]
-    settings.BLOCKCHAIN_ENABLED = False
+    settings.BLOCKCHAIN_ENABLED = True
     LoanApplication.create_indexes()
     RepaymentSchedule.create_indexes()
     product = LoanProduct(
@@ -40,6 +40,9 @@ def pending_wallet(settings):
     claimed = LoanApplication.claim_wallet_disbursement(
         application.id, "worker-1", utcnow(), utcnow()
     )
+    # These unit tests exercise the transfer worker itself, not the separate
+    # post-completion contract-sync pipeline.
+    settings.BLOCKCHAIN_ENABLED = False
     return claimed
 
 

@@ -8,10 +8,16 @@ from accounts.authentication import CustomJWTAuthentication
 from accounts.utils.response_helpers import error_response, success_response
 from accounts.utils.validation_utils import sanitize_text
 from analytics.models import AuditLog  # noqa: F401 - existing test patch target
-from loans.models import APPLICATION_STATUSES, LoanApplication, LoanProduct
+from loans.models import (
+    APPLICATION_STATUSES,
+    LoanApplication,
+    LoanProduct,
+    LoanTransitionConflict,
+)
 from loans.serializers import LoanApplicationSerializer
 from loans.services import (
     check_basic_eligibility,
+    check_required_documents,
     qualify_customer,
 )
 from loans.services.audit import record_loan_audit
@@ -21,6 +27,7 @@ from loans.services.product_rules import (
     validate_application_terms,
 )
 from loans.services.related_data import find_models, model_map_by_ids
+from loans.services.settlement_policy import SettlementRailUnavailable
 
 logger = logging.getLogger("loans")
 
@@ -86,12 +93,27 @@ class LoanApplyView(CustomerRoleRequiredMixin, APIView):
                 customer_id,
                 product,
                 requirements_scope="product",
-                require_approved_documents=True,
+                require_approved_documents=False,
             )
             if not basic["can_apply"]:
                 return error_response(
                     message="Cannot apply - requirements not met",
                     errors={"missing": basic["missing_requirements"]},
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                )
+
+            document_check = check_required_documents(
+                customer_id,
+                product,
+                requirements_scope="product",
+                require_approved_documents=False,
+            )
+            if not document_check["requirements_met"]:
+                return error_response(
+                    message="Cannot apply - requirements not met",
+                    errors={
+                        "missing": document_check["missing_requirements"]
+                    },
                     status_code=status.HTTP_400_BAD_REQUEST,
                 )
 
@@ -102,7 +124,7 @@ class LoanApplyView(CustomerRoleRequiredMixin, APIView):
                 requested_amount=requested_amount,
                 term_months=term_months,
                 purpose=data.get("purpose", ""),
-                require_approved_documents=True,
+                require_approved_documents=False,
             )
 
             # Final safety clamp before persisting recommendation.
@@ -131,18 +153,17 @@ class LoanApplyView(CustomerRoleRequiredMixin, APIView):
                 f"Loan application submitted: {application.id} by {customer_id}"
             )
 
-            # Send confirmation email to customer
+            # Persist notification before broker publication. A broker/email
+            # failure is retried without changing the accepted application.
             try:
-                from notifications.services import get_email_sender
+                from loans.services.notifications import queue_customer_loan_notification
 
-                sender = get_email_sender()
-                sender.send_loan_submitted(
-                    customer_email=user.email if hasattr(user, "email") else "",
-                    customer_name=_safe_customer_display_name(user),
+                queue_customer_loan_notification(
                     loan_id=application.id,
-                    product_name=product.name,
-                    amount=data["requested_amount"],
-                    customer_id=customer_id,
+                    event_type="submitted",
+                    event_key=application.last_transition_id,
+                    customer=user,
+                    payload={"product_name": product.name, "amount": data["requested_amount"]},
                 )
             except Exception as e:
                 logger.warning(f"Failed to send loan submitted email: {e}")
@@ -160,15 +181,16 @@ class LoanApplyView(CustomerRoleRequiredMixin, APIView):
                     "product": product.name,
                     "amount": data["requested_amount"],
                     "term": data["term_months"],
+                    "transition_id": application.last_transition_id,
                 },
                 ip_address=request.META.get("REMOTE_ADDR", ""),
             )
 
-            # Blockchain sync (background thread, no Celery needed)
+            # Durable, feature-gated blockchain sync through Celery.
             try:
                 from loans.blockchain.sync import sync_application
 
-                sync_application(application.id)
+                sync_application(application.id, application.last_transition_id)
             except Exception as e:
                 logger.warning(
                     f"Blockchain sync skipped for application {application.id}: {e}"
@@ -459,23 +481,28 @@ class ApplicationDetailView(CustomerRoleRequiredMixin, APIView):
                 app.preferred_disbursement_method = (
                     data["preferred_disbursement_method"] or None
                 )
-            app.submit()
+            try:
+                app.submit()
+            except LoanTransitionConflict:
+                return error_response(
+                    message="The application changed. Refresh and retry.",
+                    code="LOAN_TRANSITION_CONFLICT",
+                    status_code=status.HTTP_409_CONFLICT,
+                )
 
             logger.info(
                 f"Draft application updated and submitted: {app.id} by {customer_id}"
             )
 
             try:
-                from notifications.services import get_email_sender
+                from loans.services.notifications import queue_customer_loan_notification
 
-                sender = get_email_sender()
-                sender.send_loan_submitted(
-                    customer_email=user.email if hasattr(user, "email") else "",
-                    customer_name=_safe_customer_display_name(user),
+                queue_customer_loan_notification(
                     loan_id=app.id,
-                    product_name=product.name,
-                    amount=requested_amount,
-                    customer_id=customer_id,
+                    event_type="submitted",
+                    event_key=app.last_transition_id,
+                    customer=user,
+                    payload={"product_name": product.name, "amount": requested_amount},
                 )
             except Exception as e:
                 logger.warning(f"Failed to send loan submitted email: {e}")
@@ -492,6 +519,7 @@ class ApplicationDetailView(CustomerRoleRequiredMixin, APIView):
                     "product": product.name,
                     "amount": requested_amount,
                     "term": term_months,
+                    "transition_id": app.last_transition_id,
                 },
                 ip_address=request.META.get("REMOTE_ADDR", ""),
             )
@@ -539,7 +567,14 @@ class ResubmitApplicationView(CustomerRoleRequiredMixin, APIView):
                 status_code=status.HTTP_400_BAD_REQUEST,
             )
 
-        app.resubmit(actor_id=customer_id)
+        try:
+            app.resubmit(actor_id=customer_id)
+        except LoanTransitionConflict:
+            return error_response(
+                message="The application changed. Refresh and retry.",
+                code="LOAN_TRANSITION_CONFLICT",
+                status_code=status.HTTP_409_CONFLICT,
+            )
 
         return success_response(
             data={
@@ -630,7 +665,9 @@ class SetDisbursementMethodView(CustomerRoleRequiredMixin, APIView):
     Customer: Set preferred disbursement method after loan approval.
 
     POST /api/loans/applications/<id>/set-disbursement-method/
-    Body: { "disbursement_method": "gcash" | "bank_transfer" }
+    Body: { "disbursement_method": "cash" | "check" | "wallet" }
+
+    Wallet is available only when blockchain support is enabled.
     """
 
     authentication_classes = [CustomJWTAuthentication]
@@ -663,6 +700,12 @@ class SetDisbursementMethodView(CustomerRoleRequiredMixin, APIView):
 
         try:
             app.set_preferred_disbursement_method(disbursement_method)
+        except SettlementRailUnavailable as exc:
+            return error_response(
+                message=str(exc),
+                code=exc.code,
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
         except ValueError as e:
             return error_response(
                 message=str(e), status_code=status.HTTP_400_BAD_REQUEST

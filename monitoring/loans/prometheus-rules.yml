@@ -1,0 +1,75 @@
+groups:
+  - name: loans-recording
+    interval: 30s
+    rules:
+      - record: loans:request_error_ratio_5m
+        expr: sum(rate(loans_requests_total{outcome!="success"}[5m])) / clamp_min(sum(rate(loans_requests_total[5m])), 0.001)
+      - record: loans:request_latency_p95_seconds_5m
+        expr: histogram_quantile(0.95, sum by (le) (rate(loans_request_duration_seconds_bucket[5m])))
+
+  - name: loans-alerts
+    interval: 30s
+    rules:
+      - alert: LoansMetricsMissing
+        expr: absent(loans_backlog)
+        for: 10m
+        labels: {severity: critical, service: loans}
+        annotations:
+          summary: Loans application metrics are missing
+          runbook: docs/LOANS_TESTING_GUIDE.md#loans-operations-runbook
+      - alert: LoansNotificationBacklogOld
+        expr: loans_oldest_backlog_age_seconds{queue="notification"} > 900
+        for: 5m
+        labels: {severity: critical, service: loans}
+        annotations:
+          summary: Loan notification delivery backlog is older than 15 minutes
+          runbook: docs/LOANS_TESTING_GUIDE.md#loans-operations-runbook
+      - alert: LoansDisbursementStuck
+        expr: loans_oldest_backlog_age_seconds{queue="disbursement"} > 1800
+        for: 5m
+        labels: {severity: critical, service: loans}
+        annotations:
+          summary: A loan disbursement has remained pending for over 30 minutes
+          runbook: docs/LOANS_TESTING_GUIDE.md#loans-operations-runbook
+      - alert: LoansAuditRecoveryBacklog
+        expr: loans_backlog{queue="audit",status="unresolved"} > 0
+        for: 10m
+        labels: {severity: critical, service: loans}
+        annotations:
+          summary: Loans audit recovery backlog is not draining
+          runbook: docs/LOANS_TESTING_GUIDE.md#loans-operations-runbook
+      - alert: LoansBlockchainFailureBacklog
+        expr: loans_backlog{queue="blockchain",status="failed"} > 0
+        for: 15m
+        labels: {severity: warning, service: loans}
+        annotations:
+          summary: Failed loan blockchain operations require reconciliation
+          runbook: docs/LOANS_TESTING_GUIDE.md#loans-operations-runbook
+      - alert: LoansOverdueJobSilent
+        expr: absent(loans_job_last_success_timestamp_seconds{job="overdue"}) or (time() - loans_job_last_success_timestamp_seconds{job="overdue"} > 93600)
+        for: 10m
+        labels: {severity: critical, service: loans}
+        annotations:
+          summary: The daily overdue reconciliation job has not completed recently
+          runbook: docs/LOANS_TESTING_GUIDE.md#loans-operations-runbook
+      - alert: LoansReconciliationDrift
+        expr: sum(loans_reconciliation_integrity_gaps) > 0
+        for: 5m
+        labels: {severity: critical, service: loans}
+        annotations:
+          summary: Loan application and repayment schedule state has drifted
+          runbook: docs/LOANS_TESTING_GUIDE.md#loans-operations-runbook
+      - alert: LoansRequestErrorRatioHigh
+        expr: loans:request_error_ratio_5m > 0.05
+        for: 10m
+        labels: {severity: warning, service: loans}
+        annotations:
+          summary: Loans request error ratio is above five percent
+          runbook: docs/LOANS_TESTING_GUIDE.md#loans-operations-runbook
+      - alert: LoansRequestLatencyHigh
+        expr: loans:request_latency_p95_seconds_5m > 2
+        for: 10m
+        labels: {severity: warning, service: loans}
+        annotations:
+          summary: Loans p95 request latency is above two seconds
+          runbook: docs/LOANS_TESTING_GUIDE.md#loans-operations-runbook

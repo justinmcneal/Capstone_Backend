@@ -1,0 +1,18 @@
+{
+  "annotations": {"list": []},
+  "editable": false,
+  "panels": [
+    {"id": 1, "title": "REST outcomes", "type": "timeseries", "targets": [{"expr": "sum by (method, outcome) (rate(notifications_requests_total[5m]))", "refId": "A"}]},
+    {"id": 2, "title": "Delivery and channel outcomes", "type": "timeseries", "targets": [{"expr": "sum by (outcome) (rate(notifications_delivery_outcomes_total[5m]))", "refId": "A"}, {"expr": "sum by (channel, outcome) (rate(notifications_channel_outcomes_total[5m]))", "refId": "B"}]},
+    {"id": 3, "title": "Delivery backlog", "type": "timeseries", "targets": [{"expr": "notifications_delivery_backlog", "refId": "A"}, {"expr": "notifications_delivery_oldest_age_seconds", "refId": "B"}]},
+    {"id": 4, "title": "WebSocket connections and actions", "type": "timeseries", "targets": [{"expr": "notifications_websocket_active_connections", "refId": "A"}, {"expr": "sum by (action, outcome) (rate(notifications_websocket_actions_total[5m]))", "refId": "B"}]},
+    {"id": 5, "title": "WebSocket broadcasts", "type": "timeseries", "targets": [{"expr": "sum by (kind, outcome) (rate(notifications_websocket_broadcasts_total[5m]))", "refId": "A"}]}
+  ],
+  "schemaVersion": 39,
+  "tags": ["notifications", "capstone"],
+  "templating": {"list": []},
+  "time": {"from": "now-6h", "to": "now"},
+  "title": "Capstone Notifications Operations",
+  "uid": "capstone-notifications",
+  "version": 1
+}

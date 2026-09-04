@@ -18,6 +18,34 @@ class WalletReceiptPending(Exception):
     """The transfer was broadcast but does not have a receipt yet."""
 
 
+@shared_task(name="loans.deliver_notification")
+def deliver_loan_notification_task(delivery_id):
+    from loans.services.notifications import deliver_loan_notification
+
+    return deliver_loan_notification(delivery_id)
+
+
+@shared_task(name="loans.reconcile_notification_deliveries")
+def reconcile_loan_notifications_task(limit=100):
+    from loans.services.notifications import reconcile_loan_notifications
+
+    return reconcile_loan_notifications(limit=max(1, min(int(limit), 1000)))
+
+
+@shared_task(name="loans.enforce_retention")
+def enforce_loan_retention_task(limit=100):
+    from loans.services.lifecycle import enforce_loan_retention
+
+    return enforce_loan_retention(limit=max(1, min(int(limit), 1000)))
+
+
+@shared_task(name="loans.collect_operational_metrics")
+def collect_loan_operational_metrics_task():
+    from loans.services.operations import collect_loan_operational_metrics
+
+    return collect_loan_operational_metrics()
+
+
 @shared_task
 def check_overdue_installments_task():
     """Mark overdue installments and sync them to the blockchain."""
@@ -28,14 +56,16 @@ def check_overdue_installments_task():
 
     from loans.blockchain.sync import sync_overdue
     from loans.models import RepaymentSchedule
+    from loans.services.job_control import run_bounded_scan
 
     now = utcnow()
     updated_count = 0
 
-    for doc in db["repayment_schedules"].find({}):
+    def process(doc):
+        nonlocal updated_count
         schedule = RepaymentSchedule.from_dict(doc)
         if not schedule:
-            continue
+            return
 
         overdue_installments = schedule.mark_overdue_installments(as_of=now)
         for installment_number in overdue_installments:
@@ -51,9 +81,18 @@ def check_overdue_installments_task():
 
         updated_count += len(overdue_installments)
 
+    scan = run_bounded_scan(
+        "check_overdue_installments",
+        "repayment_schedules",
+        {"status": "active"},
+        process,
+    )
+
     if updated_count:
         logger.info("Marked %s overdue installments", updated_count)
 
+    if not scan["lease_acquired"]:
+        logger.info("Overdue scan skipped because another worker owns the lease")
     return {"overdue_marked": updated_count}
 
 
@@ -65,18 +104,28 @@ def reconcile_repayment_lifecycle_task():
         return {"paid_off_reconciled": 0}
 
     from loans.models import LoanApplication, RepaymentSchedule
+    from loans.services.job_control import run_bounded_scan
 
     reconciled = 0
-    for document in db["repayment_schedules"].find({"status": {"$ne": "paid_off"}}):
+
+    def process(document):
+        nonlocal reconciled
         schedule = RepaymentSchedule.from_dict(document)
         if not schedule or not schedule.is_paid_off():
-            continue
+            return
         schedule._mark_paid_off_if_complete()
         schedule.save()
         application = LoanApplication.find_by_id(schedule.loan_id)
         if application and application.status == "disbursed":
             application.mark_paid_off(schedule.paid_off_at)
         reconciled += 1
+
+    run_bounded_scan(
+        "reconcile_repayment_lifecycle",
+        "repayment_schedules",
+        {"status": {"$ne": "paid_off"}},
+        process,
+    )
     return {"paid_off_reconciled": reconciled}
 
 
@@ -98,6 +147,7 @@ def _wallet_receipt(w3, tx_hash):
 def _complete_wallet_disbursement(application, owner):
     """Execute or resume one claimed wallet disbursement."""
     from bson import ObjectId
+
     from loans.blockchain.client import (
         get_web3,
         send_eth_transfer,
@@ -137,17 +187,13 @@ def _complete_wallet_disbursement(application, owner):
                 f"Wallet transaction {application.eth_disbursement_tx_hash} is pending"
             )
         elif application.eth_disbursement_raw_transaction:
-            LoanApplication.record_eth_rebroadcast(application.id)
             result = send_prepared_eth_transfer(
                 application.eth_disbursement_raw_transaction,
                 application.eth_disbursement_tx_hash,
                 application.eth_disbursement_recipient,
                 int(application.eth_disbursement_amount_wei),
-                on_broadcast=lambda tx_hash: LoanApplication.update_eth_disbursement(
-                    ObjectId(application.id),
-                    tx_hash=tx_hash,
-                    broadcast_at=utcnow(),
-                    tx_status="broadcast",
+                on_broadcast=lambda tx_hash: LoanApplication.record_eth_rebroadcast(
+                    application.id, tx_hash
                 ),
             )
         else:
@@ -312,16 +358,24 @@ def reconcile_wallet_disbursements_task():
     if db is None:
         return {"enqueued": 0}
 
+    from loans.services.job_control import run_bounded_scan
+
     enqueued = 0
-    cursor = db["loan_applications"].find(
+
+    def process(document):
+        nonlocal enqueued
+        execute_wallet_disbursement_task.delay(str(document["_id"]))
+        enqueued += 1
+
+    run_bounded_scan(
+        "reconcile_wallet_disbursements",
+        "loan_applications",
         {
             "status": "approved",
             "disbursement_status": "pending",
             "disbursement_method": "wallet",
         },
-        {"_id": 1},
+        process,
+        projection={"_id": 1},
     )
-    for doc in cursor:
-        execute_wallet_disbursement_task.delay(str(doc["_id"]))
-        enqueued += 1
     return {"enqueued": enqueued}

@@ -11,6 +11,7 @@ import json
 from django.conf import settings
 from pymongo.errors import DuplicateKeyError
 
+from config.field_encryption import decrypt_fields, encrypt_fields
 from loans.utils.time import utcnow
 
 
@@ -28,6 +29,7 @@ class BlockchainTransaction:
     """
 
     collection_name = "blockchain_transactions"
+    encrypted_fields = ("error",)
 
     STATUS_PENDING = "pending"
     STATUS_CONFIRMED = "confirmed"
@@ -75,7 +77,13 @@ class BlockchainTransaction:
         }
         if self._id:
             data["_id"] = str(self._id)
-        return data
+        return encrypt_fields(data, self.encrypted_fields)
+
+    @classmethod
+    def from_dict(cls, data):
+        if not data:
+            return None
+        return cls(**decrypt_fields(data, cls.encrypted_fields))
 
     def save(self):
         collection = _get_collection()
@@ -111,7 +119,7 @@ class BlockchainTransaction:
         if collection is not None:
             existing = collection.find_one({"idempotency_key": idempotency_key})
             if existing:
-                return cls(**existing)
+                return cls.from_dict(existing)
         tx = cls(
             loan_id=loan_id,
             action=action,
@@ -126,7 +134,7 @@ class BlockchainTransaction:
         except DuplicateKeyError:
             existing = collection.find_one({"idempotency_key": idempotency_key})
             if existing:
-                return cls(**existing)
+                return cls.from_dict(existing)
             raise
 
     @classmethod
@@ -137,6 +145,14 @@ class BlockchainTransaction:
         collection.create_index("loan_id")
         collection.create_index("status")
         collection.create_index("created_at")
+        collection.create_index(
+            [("status", 1), ("created_at", 1), ("_id", 1)],
+            name="blockchain_status_reconcile",
+        )
+        collection.create_index(
+            [("loan_id", 1), ("action", 1), ("status", 1)],
+            name="blockchain_loan_action_status",
+        )
         collection.create_index(
             "idempotency_key",
             unique=True,
@@ -209,7 +225,7 @@ class BlockchainTransaction:
         if collection is None:
             return []
         cursor = collection.find({"loan_id": loan_id}).sort("created_at", 1)
-        return [cls(**doc) for doc in cursor]
+        return [cls.from_dict(doc) for doc in cursor]
 
     @classmethod
     def find_by_loan_and_action(cls, loan_id, action):
@@ -220,7 +236,7 @@ class BlockchainTransaction:
         doc = collection.find_one(
             {"loan_id": loan_id, "action": action, "status": cls.STATUS_CONFIRMED}
         )
-        return cls(**doc) if doc else None
+        return cls.from_dict(doc) if doc else None
 
     @classmethod
     def find_confirmed(cls, loan_id, action, **details):
@@ -236,4 +252,4 @@ class BlockchainTransaction:
         for key, value in details.items():
             query[f"details.{key}"] = value
         doc = collection.find_one(query)
-        return cls(**doc) if doc else None
+        return cls.from_dict(doc) if doc else None

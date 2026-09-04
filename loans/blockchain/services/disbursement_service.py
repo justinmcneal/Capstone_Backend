@@ -8,17 +8,15 @@ import logging
 
 from web3 import Web3
 
-from loans.blockchain.client import get_contract, send_transaction, call_view
+from loans.blockchain.client import call_view, get_contract, send_transaction
 
 logger = logging.getLogger("blockchain")
 
 # DisbursementMethod.Method enum mapping (Django string → Solidity uint)
 DISBURSEMENT_METHOD_MAP = {
-    "bank_transfer": 0,
-    "gcash": 1,
-    "cash": 2,
-    "check": 3,
-    "wallet": 4,
+    "cash": 0,
+    "check": 1,
+    "wallet": 2,
 }
 
 
@@ -35,7 +33,7 @@ def set_method_onchain(loan_id, method, details_hash=""):
 
     Args:
         loan_id: Loan identifier (string, hashed to bytes32)
-        method: Disbursement method string ('cash', 'gcash', 'bank_transfer', 'check', 'wallet')
+        method: Disbursement method string ('cash', 'check', 'wallet')
         details_hash: Hash of account details (string, hashed to bytes32)
 
     Returns:
@@ -44,7 +42,9 @@ def set_method_onchain(loan_id, method, details_hash=""):
     contract = get_contract("disbursementMethod")
     app_contract = get_contract("loanApplication")
     loan_id_bytes = _to_bytes32(loan_id)
-    method_enum = DISBURSEMENT_METHOD_MAP.get(method, 4)  # Default to Other
+    if method not in DISBURSEMENT_METHOD_MAP:
+        raise ValueError("Disbursement method must be one of: cash, check, wallet")
+    method_enum = DISBURSEMENT_METHOD_MAP[method]
 
     # Fail fast with a clear message instead of opaque VM revert from modifier checks.
     if not call_view(app_contract, "exists", loan_id_bytes):

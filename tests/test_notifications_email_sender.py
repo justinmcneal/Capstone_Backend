@@ -1,7 +1,3 @@
-from types import SimpleNamespace
-import pytest
-from unittest.mock import MagicMock
-
 import notifications.services.email_sender as es_module
 
 
@@ -39,8 +35,12 @@ class DummyNotification:
 
 def test_send_success(monkeypatch):
     # Arrange
-    monkeypatch.setattr(es_module, "render_to_string", lambda tpl, ctx: f"rendered:{tpl}")
-    monkeypatch.setattr(es_module, "EmailMultiAlternatives", lambda **kwargs: DummyEmail())
+    monkeypatch.setattr(
+        es_module, "render_to_string", lambda tpl, ctx: f"rendered:{tpl}"
+    )
+    monkeypatch.setattr(
+        es_module, "EmailMultiAlternatives", lambda **kwargs: DummyEmail()
+    )
 
     sender = es_module.EmailSender()
     notif = DummyNotification()
@@ -62,13 +62,17 @@ def test_send_success(monkeypatch):
 
 def test_send_failure_marks_notification(monkeypatch):
     # Arrange
-    monkeypatch.setattr(es_module, "render_to_string", lambda tpl, ctx: f"rendered:{tpl}")
+    monkeypatch.setattr(
+        es_module, "render_to_string", lambda tpl, ctx: f"rendered:{tpl}"
+    )
 
     class BadEmail(DummyEmail):
         def send(self, fail_silently=False):
             raise RuntimeError("SMTP down")
 
-    monkeypatch.setattr(es_module, "EmailMultiAlternatives", lambda **kwargs: BadEmail())
+    monkeypatch.setattr(
+        es_module, "EmailMultiAlternatives", lambda **kwargs: BadEmail()
+    )
 
     sender = es_module.EmailSender()
     notif = DummyNotification()
@@ -86,4 +90,4 @@ def test_send_failure_marks_notification(monkeypatch):
     assert ok is False
     assert notif.sent is False
     assert notif.failed is True
-    assert "SMTP" in notif.error
+    assert notif.error == "email_delivery_failed"

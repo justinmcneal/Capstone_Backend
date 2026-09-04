@@ -25,7 +25,7 @@ describe("PaymentRecording", function () {
   const DAYS_PER_MONTH = 30n;
 
   // PaymentMethod enum
-  const PaymentMethod = { Cash: 0, BankTransfer: 1, GCash: 2, Check: 3, Wallet: 4 };
+  const PaymentMethod = { Cash: 0, Check: 1, Wallet: 2 };
 
   // InstallmentStatus enum (mirrors RepaymentSchedule)
   const InstallmentStatus = { Pending: 0, Paid: 1, Partial: 2, Overdue: 3 };
@@ -185,7 +185,7 @@ describe("PaymentRecording", function () {
       const amount = expectedMonthlyPayment();
       await expect(
         paymentRecording.connect(officer).recordPayment(
-          loanId, 1, amount, PaymentMethod.GCash, refHash("PAY001")
+          loanId, 1, amount, PaymentMethod.Wallet, refHash("PAY001")
         )
       ).to.emit(paymentRecording, "PaymentRecorded");
     });
@@ -540,7 +540,7 @@ describe("PaymentRecording", function () {
           loanId, 1, amount, PaymentMethod.Cash, refHash("HIST1")
         );
         await paymentRecording.connect(officer).recordPayment(
-          loanId, 2, amount, PaymentMethod.GCash, refHash("HIST2")
+          loanId, 2, amount, PaymentMethod.Wallet, refHash("HIST2")
         );
 
         const history = await paymentRecording.getPaymentHistory(loanId);
@@ -553,7 +553,7 @@ describe("PaymentRecording", function () {
         const amount = expectedMonthlyPayment();
         const ref = refHash("GET1");
         const tx = await paymentRecording.connect(officer).recordPayment(
-          loanId, 1, amount, PaymentMethod.BankTransfer, ref
+          loanId, 1, amount, PaymentMethod.Check, ref
         );
         const receipt = await tx.wait();
 
@@ -566,7 +566,7 @@ describe("PaymentRecording", function () {
 
         const payment = await paymentRecording.getPayment(paymentId);
         expect(payment.amount).to.equal(amount);
-        expect(payment.method).to.equal(PaymentMethod.BankTransfer);
+        expect(payment.method).to.equal(PaymentMethod.Check);
       });
 
       it("Should revert for non-existent paymentId", async function () {
@@ -671,7 +671,7 @@ describe("PaymentRecording", function () {
         loanId, 1, half, PaymentMethod.Cash, refHash("MULTI2A")
       );
       await paymentRecording.connect(officer).recordPayment(
-        loanId, 1, half, PaymentMethod.GCash, refHash("MULTI2B")
+        loanId, 1, half, PaymentMethod.Wallet, refHash("MULTI2B")
       );
 
       const history = await paymentRecording.getPaymentHistory(loanId);

@@ -1,5 +1,8 @@
 # Blockchain Integration Analysis & Architecture Plan
 
+> **Current settlement note (2026-08-15):** Settlement is limited to cash,
+> check, and feature-gated wallet-to-wallet.
+
 **Date:** 2026-03-14  
 **Prepared by:** Senior Blockchain Architect  
 **Project:** MSME Loan Platform - Blockchain Integration
@@ -104,7 +107,7 @@ This document provides a comprehensive analysis of the current backend transacti
   - Update loan status
 - **Critical Data:**
   - `disbursed_amount`
-  - `disbursement_method` (bank_transfer, gcash, cash, etc.)
+  - `disbursement_method` (cash/check and enabled wallet)
   - `disbursement_reference` (encrypted transaction reference)
   - `disbursed_at` timestamp
   - `disbursed_by` (officer/admin ID)
@@ -116,7 +119,7 @@ This document provides a comprehensive analysis of the current backend transacti
 - **Status Flow:** No status change (approved remains approved)
 - **Key Operations:**
   - Borrower selects preferred disbursement method
-  - Validates method (bank_transfer or gcash)
+  - Current APIs accept cash/check and feature-gated wallet only
 - **Critical Data:**
   - `preferred_disbursement_method`
 
@@ -165,7 +168,7 @@ This document provides a comprehensive analysis of the current backend transacti
   - `loan_id`, `schedule_id`, `customer_id`
   - `installment_number`
   - `amount`
-  - `payment_method` (cash, bank_transfer, gcash, other)
+  - `payment_method` (cash/check/wallet)
   - `reference` (transaction reference)
   - `recorded_by` (officer ID)
   - `recorded_at` timestamp

@@ -754,7 +754,9 @@ class AlternativeData:
         # Digital Footprint (optional)
         self.has_bank_account = kwargs.get("has_bank_account")
         self.bank_account_duration = kwargs.get("bank_account_duration")  # Years
-        self.has_ewallet = kwargs.get("has_ewallet")  # GCash, Wallet (ETH), etc.
+        self.has_ewallet = kwargs.get(
+            "has_ewallet"
+        )  # Capability signal for ETH wallet settlement when enabled.
         self.ewallet_usage = kwargs.get(
             "ewallet_usage"
         )  # daily, weekly, monthly, rarely

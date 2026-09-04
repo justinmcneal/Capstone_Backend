@@ -21,10 +21,8 @@ describe("Repayment", function () {
   // PaymentMethod enum
   const PaymentMethod = {
     Cash: 0,
-    BankTransfer: 1,
-    GCash: 2,
-    Check: 3,
-    Wallet: 4
+    Check: 1,
+    Wallet: 2
   };
 
   // InstallmentStatus enum - matches backend (no Defaulted)
@@ -244,7 +242,7 @@ describe("Repayment", function () {
           loanId,
           1, // installmentNumber
           paymentAmount,
-          PaymentMethod.GCash,
+          PaymentMethod.Wallet,
           referenceHash
         )
       ).to.emit(repayment, "PaymentRecorded");
@@ -270,7 +268,7 @@ describe("Repayment", function () {
         loanId,
         1,
         paymentAmount,
-        PaymentMethod.BankTransfer,
+        PaymentMethod.Check,
         referenceHash
       );
 
@@ -283,7 +281,7 @@ describe("Repayment", function () {
         loanId,
         1,
         paymentAmount,
-        PaymentMethod.GCash,
+        PaymentMethod.Wallet,
         referenceHash
       );
 
@@ -292,7 +290,7 @@ describe("Repayment", function () {
           loanId,
           2,
           paymentAmount,
-          PaymentMethod.GCash,
+          PaymentMethod.Wallet,
           referenceHash // Same reference
         )
       ).to.be.revertedWithCustomError(repayment, "DuplicatePaymentReference");

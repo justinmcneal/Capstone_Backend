@@ -4,9 +4,9 @@ Purpose
 This file is the exact rollout checklist and environment-variable reference to deploy the backend to Railway (staging → production) and run a repeatable smoke-test sequence. Use this as the single source of truth for infra handoff.
 
 Read first
-- [docs/INFRA_HANDOFF.md](docs/INFRA_HANDOFF.md)
-- [docs/MIGRATION_BACKUP_AND_FAQ.md](docs/MIGRATION_BACKUP_AND_FAQ.md)
-- [docs/PRODUCTION_S3.md](docs/PRODUCTION_S3.md)
+- [Documents module status and operations](../documents/DOCUMENTS_PRODUCTION_READINESS_REVIEW.md)
+- [Documents testing and deployment validation](../documents/DOCUMENTS_TESTING_GUIDE.md)
+- [Migration backup FAQ](MIGRATION_BACKUP_AND_FAQ.md)
 
 Preconditions
 - CI for the target branch is green and the branch has been merged.

@@ -1,41 +1,108 @@
 import logging
+from time import monotonic
 from urllib.parse import parse_qs
 
 from channels.db import database_sync_to_async
 from channels.middleware import BaseMiddleware
+from django.conf import settings
 from django.contrib.auth.models import AnonymousUser
+from django.http import parse_cookie
+from rest_framework.exceptions import APIException
+from rest_framework_simplejwt.exceptions import TokenError
 
-from accounts.authentication import AuthenticatedUser
+from accounts.authentication import CustomJWTAuthentication
+from notifications.metrics import (
+    NOTIFICATION_REQUEST_LATENCY,
+    NOTIFICATION_REQUESTS,
+    increment,
+    observe,
+)
 
 logger = logging.getLogger("notifications")
 
 
 class JWTAuthMiddleware(BaseMiddleware):
     async def __call__(self, scope, receive, send):
-        token = None
+        token, transport = self._get_token(scope)
+        user = await self.get_user_from_token(token)
+
+        # Query/subprotocol tokens are retained only for the customer mobile app.
+        # Staff browser sessions must use the HttpOnly access cookie.
+        if (
+            transport in {"query", "subprotocol"}
+            and getattr(user, "role", None) != "customer"
+        ):
+            user = AnonymousUser()
+
+        scope["user"] = user
+        scope["auth_transport"] = transport
+        return await super().__call__(scope, receive, send)
+
+    @classmethod
+    def _get_token(cls, scope):
+        query_token = cls._get_query_token(scope)
+        if query_token:
+            return query_token, "query"
+
+        subprotocol_token = cls._get_subprotocol_token(scope)
+        if subprotocol_token:
+            return subprotocol_token, "subprotocol"
+
+        cookie_token = cls._get_cookie_token(scope)
+        if cookie_token:
+            return cookie_token, "cookie"
+
+        return None, None
+
+    @staticmethod
+    def _get_query_token(scope):
         query_string = scope.get("query_string", b"").decode()
         if query_string:
             try:
                 parsed = parse_qs(query_string)
                 tokens = parsed.get("token", [])
                 if tokens:
-                    token = tokens[0]
+                    return tokens[0]
             except ValueError:
                 logger.debug("Failed to parse WebSocket query string", exc_info=True)
+        return None
 
-        if not token:
-            headers = dict(scope.get("headers", []))
-            subprotocols = headers.get(b"sec-websocket-protocol", b"").decode()
-            if "access_token" in subprotocols:
-                parts = subprotocols.split(",")
-                for part in parts:
-                    part = part.strip()
-                    if part and "|" not in part:
-                        token = part
-                        break
+    @classmethod
+    def _get_subprotocol_token(cls, scope):
+        protocols = [str(item).strip() for item in scope.get("subprotocols", [])]
+        if not protocols:
+            header_value = cls._get_header(scope, b"sec-websocket-protocol")
+            protocols = [item.strip() for item in header_value.split(",")]
 
-        scope["user"] = await self.get_user_from_token(token)
-        return await super().__call__(scope, receive, send)
+        for protocol in protocols:
+            if protocol.startswith("access_token|"):
+                return protocol.partition("|")[2] or None
+
+        if "access_token" not in protocols:
+            return None
+
+        return next(
+            (protocol for protocol in protocols if protocol != "access_token"),
+            None,
+        )
+
+    @classmethod
+    def _get_cookie_token(cls, scope):
+        raw_cookie = cls._get_header(scope, b"cookie")
+        if not raw_cookie:
+            return None
+        cookie_name = getattr(settings, "AUTH_ACCESS_COOKIE_NAME", "access_token")
+        return parse_cookie(raw_cookie).get(cookie_name)
+
+    @staticmethod
+    def _get_header(scope, header_name):
+        values = [
+            value.decode("latin1")
+            for key, value in scope.get("headers", [])
+            if key.lower() == header_name
+        ]
+        separator = "; " if header_name == b"cookie" else ","
+        return separator.join(values)
 
     @database_sync_to_async
     def get_user_from_token(self, token):
@@ -43,20 +110,50 @@ class JWTAuthMiddleware(BaseMiddleware):
             return AnonymousUser()
 
         try:
-            from rest_framework_simplejwt.exceptions import TokenError
-            from rest_framework_simplejwt.tokens import AccessToken
-
-            access_token = AccessToken(token)
-            customer_id = access_token.get("customer_id")
-            email = access_token.get("email")
-            verified = access_token.get("verified")
-            role = access_token.get("role", "customer")
-
-            if customer_id:
-                return AuthenticatedUser(
-                    customer_id=customer_id, email=email, verified=verified, role=role
-                )
-        except TokenError as exc:
-            logger.warning("JWT authentication failed: %s", exc)
+            authentication = CustomJWTAuthentication()
+            user, validated_token = authentication.authenticate_raw_token(token)
+            authentication.enforce_password_change(user)
+            user.access_token_expires_at = int(validated_token.get("exp") or 0)
+            return user
+        except (APIException, TokenError):
+            logger.warning("WebSocket authentication failed")
 
         return AnonymousUser()
+
+
+class NotificationRequestMetricsMiddleware:
+    """Record low-cardinality outcomes for Notifications REST requests."""
+
+    def __init__(self, get_response):
+        self.get_response = get_response
+
+    def __call__(self, request):
+        if not str(request.path).startswith("/api/notifications/"):
+            return self.get_response(request)
+        started = monotonic()
+        try:
+            response = self.get_response(request)
+        except Exception:
+            increment(
+                NOTIFICATION_REQUESTS,
+                method=request.method,
+                outcome="exception",
+            )
+            observe(
+                NOTIFICATION_REQUEST_LATENCY,
+                monotonic() - started,
+                method=request.method,
+            )
+            raise
+        outcome = (
+            "success"
+            if response.status_code < 400
+            else "client_error" if response.status_code < 500 else "server_error"
+        )
+        increment(NOTIFICATION_REQUESTS, method=request.method, outcome=outcome)
+        observe(
+            NOTIFICATION_REQUEST_LATENCY,
+            monotonic() - started,
+            method=request.method,
+        )
+        return response

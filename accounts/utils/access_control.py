@@ -286,14 +286,12 @@ class AccessControlMixin:
 
         return True, actor_or_response
 
-    def get_officer_scoped_customer_ids(self, request, include_unassigned=True):
+    def get_officer_scoped_customer_ids(self, request):
         """
-        Return customer IDs a loan officer can access for document-level operations.
+        Return customer IDs a loan officer can access through current assignments.
 
         Scope for `loan_officer`:
         - customers with applications assigned to this officer
-        - optionally customers with unassigned submitted/under_review applications
-        - customers whose documents this officer has already approved
 
         Returns:
             (True, None) for admin/super_admin (unrestricted)
@@ -321,7 +319,9 @@ class AccessControlMixin:
 
         applications = db["loan_applications"]
 
-        # Always allow customers currently handled by this officer.
+        # Customer data is visible only through a current application assignment.
+        # Unassigned customers remain admin-only, and historic document reviews do
+        # not preserve access after reassignment.
         customer_ids = set()
         for row in applications.find(
             {"assigned_officer": subject_id}, {"customer_id": 1}
@@ -330,71 +330,12 @@ class AccessControlMixin:
             if customer_id:
                 customer_ids.add(customer_id)
 
-        if include_unassigned:
-            # Allow unassigned pending queues, but do not leak customers
-            # actively assigned to another officer.
-            pending_statuses = {"submitted", "under_review"}
-            unassigned_customers = set()
-            blocked_customers = set()
-
-            for row in applications.find(
-                {
-                    "status": {"$in": list(pending_statuses)},
-                    "$or": [
-                        {"assigned_officer": None},
-                        {"assigned_officer": ""},
-                        {"assigned_officer": {"$exists": False}},
-                    ],
-                },
-                {"customer_id": 1},
-            ):
-                customer_id = str(row.get("customer_id", "") or "").strip()
-                if customer_id:
-                    unassigned_customers.add(customer_id)
-
-            for row in applications.find(
-                {
-                    "status": {"$in": list(pending_statuses)},
-                    "assigned_officer": {"$nin": [None, "", subject_id]},
-                },
-                {"customer_id": 1},
-            ):
-                customer_id = str(row.get("customer_id", "") or "").strip()
-                if customer_id:
-                    blocked_customers.add(customer_id)
-
-            customer_ids.update(unassigned_customers - blocked_customers)
-
-        # Include customers who uploaded documents (e.g. during profile
-        # completion) but don't yet have a submitted loan application.
-        # Pending/needs_review documents are available for review, while
-        # approved documents remain visible to the officer who reviewed them.
-        docs_collection = db["documents"]
-        doc_customer_ids = set()
-        document_scope_filters = [
-            {"status": {"$in": ["pending", "needs_review"]}},
-            {"verified_by": {"$in": self._id_variants(subject_id)}},
-        ]
-        for row in docs_collection.find(
-            {"$or": document_scope_filters},
-            {"customer_id": 1},
-        ):
-            cid = str(row.get("customer_id", "") or "").strip()
-            if cid and cid not in customer_ids:
-                doc_customer_ids.add(cid)
-
-        if doc_customer_ids:
-            # Exclude customers whose documents are already covered
-            # by an application assigned to another officer.
-            customer_ids.update(doc_customer_ids - blocked_customers)
-
         return True, customer_ids
 
     def require_customer_scope_for_officer(
         self,
         request,
         customer_id,
-        include_unassigned=True,
         conceal_existence=True,
     ):
         """
@@ -405,7 +346,6 @@ class AccessControlMixin:
         """
         has_scope, result = self.get_officer_scoped_customer_ids(
             request,
-            include_unassigned=include_unassigned,
         )
         if not has_scope:
             return False, result

@@ -21,7 +21,11 @@ from loans.blockchain.sync_common import (
     _monthly_rate_to_annual_bps,
     _risk_category_to_int,
     _update_application_tx,
+)
+from loans.blockchain.sync_common import (
     sync_payment as _sync_payment_common,
+)
+from loans.blockchain.sync_common import (
     sync_schedule as _sync_schedule_common,
 )
 
@@ -45,7 +49,7 @@ def _confirmed_step_or_run(tx_record, step_name, callback):
     retry_backoff=True,
     name="blockchain.sync_application_to_chain",
 )
-def sync_application_to_chain(self, loan_id):
+def sync_application_to_chain(self, loan_id, transition_id=None):
     """
     Sync a submitted loan application to the blockchain.
 
@@ -67,6 +71,7 @@ def sync_application_to_chain(self, loan_id):
         action="submit",
         contract_name="LoanApplication",
         method="createApplication+submitApplication",
+        details={"transition_id": transition_id} if transition_id else None,
     )
     if tx_record.status == BlockchainTransaction.STATUS_CONFIRMED:
         return {"tx_hash": tx_record.tx_hash, "status": "confirmed", "replayed": True}
@@ -155,7 +160,7 @@ def sync_application_to_chain(self, loan_id):
     retry_backoff=True,
     name="blockchain.sync_approval_to_chain",
 )
-def sync_approval_to_chain(self, loan_id):
+def sync_approval_to_chain(self, loan_id, transition_id=None):
     """
     Sync a loan approval to the blockchain.
 
@@ -174,6 +179,7 @@ def sync_approval_to_chain(self, loan_id):
         action="approve",
         contract_name="LoanApproval",
         method="approveLoan",
+        details={"transition_id": transition_id} if transition_id else None,
     )
     if tx_record.status == BlockchainTransaction.STATUS_CONFIRMED:
         return {"tx_hash": tx_record.tx_hash, "status": "confirmed", "replayed": True}
@@ -400,11 +406,13 @@ def sync_payment_to_chain(self, loan_id, payment_id):
     retry_backoff=True,
     name="blockchain.sync_rejection_to_chain",
 )
-def sync_rejection_to_chain(self, loan_id):
+def sync_rejection_to_chain(self, loan_id, transition_id=None):
     from loans.blockchain.sync import _sync_rejection_impl
 
     try:
-        return _sync_rejection_impl(loan_id, raise_errors=True)
+        return _sync_rejection_impl(
+            loan_id, raise_errors=True, transition_id=transition_id
+        )
     except Exception as exc:
         raise self.retry(exc=exc)
 

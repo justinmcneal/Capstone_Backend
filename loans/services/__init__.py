@@ -47,6 +47,9 @@ from .qualification import (
     check_basic_eligibility as check_basic_eligibility,
 )
 from .qualification import (
+    check_required_documents as check_required_documents,
+)
+from .qualification import (
     qualify_customer as qualify_customer,
 )
 from .qualification import (
@@ -61,6 +64,7 @@ __all__ = [
     "auto_assign_application",
     "begin_disbursement",
     "check_basic_eligibility",
+    "check_required_documents",
     "create_pending_submission",
     "disbursement_idempotency_key",
     "execute_manual_disbursement",

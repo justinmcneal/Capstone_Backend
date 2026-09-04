@@ -1,25 +1,73 @@
-from rest_framework.views import APIView
-from rest_framework.permissions import IsAuthenticated
+import logging
+from datetime import datetime
+
 from bson import ObjectId
+from rest_framework import status
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.views import APIView
 
 from accounts.authentication import CustomJWTAuthentication
-from accounts.utils.response_helpers import success_response, error_response
+from accounts.utils.response_helpers import error_response, success_response
 from accounts.utils.validation_utils import sanitize_text
-from rest_framework import status
-from loans.models import LoanProduct, LoanApplication
+from loans.models import LoanApplication, LoanProduct, LoanTransitionConflict
+from loans.models.application import APPLICATION_STATUSES, get_db
 from loans.serializers import (
+    ApplicationInternalNoteSerializer,
     LoanReviewSerializer,
     MissingDocumentsRequestSerializer,
-    ApplicationInternalNoteSerializer,
 )
+from loans.services import check_required_documents
 from loans.services.audit import record_loan_audit
-from loans.services.related_data import application_related_maps, find_models
-from loans.utils.serialization import serialize_internal_note
+from loans.services.related_data import (
+    application_related_maps,
+    find_models_bounded,
+)
+from loans.utils.serialization import (
+    disbursement_failure_code,
+    serialize_internal_note,
+)
 from loans.views.officer.base import LoanOfficerRequiredMixin, internal_note_summary
-from datetime import datetime
-import logging
 
 logger = logging.getLogger("loans")
+
+
+class OfficerApplicationStatusCountsView(LoanOfficerRequiredMixin, APIView):
+    """Return assignment-scoped application counts for the officer queue."""
+
+    authentication_classes = [CustomJWTAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        has_permission, result = self.check_officer_permission(request)
+        if not has_permission:
+            return result
+
+        user = request.user
+        query = {}
+        if getattr(user, "role", "") == "loan_officer":
+            query["assigned_officer"] = self._actor_id(user)
+
+        counts = {
+            application_status: 0 for application_status in APPLICATION_STATUSES
+        }
+        total = 0
+        collection = get_db()[LoanApplication.collection_name]
+        for row in collection.aggregate(
+            [
+                {"$match": query},
+                {"$group": {"_id": "$status", "count": {"$sum": 1}}},
+            ]
+        ):
+            count = int(row.get("count", 0))
+            total += count
+            application_status = row.get("_id")
+            if application_status in counts:
+                counts[application_status] = count
+
+        return success_response(
+            data={"status_counts": {"all": total, **counts}},
+            message="Application status counts retrieved",
+        )
 
 
 class OfficerApplicationListView(LoanOfficerRequiredMixin, APIView):
@@ -47,6 +95,7 @@ class OfficerApplicationListView(LoanOfficerRequiredMixin, APIView):
 
     def get(self, request):
         import re
+
         from accounts.models import Customer
 
         has_permission, result = self.check_officer_permission(request)
@@ -232,6 +281,7 @@ class OfficerApplicationListView(LoanOfficerRequiredMixin, APIView):
         # Keyword search - need to handle customer name search with multi-word support
         customer_ids = []
         product_ids = []
+        search_truncated = False
         if search_query:
             # Split search query into terms for multi-word search
             search_terms = search_query.strip().split()
@@ -239,7 +289,7 @@ class OfficerApplicationListView(LoanOfficerRequiredMixin, APIView):
             if len(search_terms) == 1:
                 # Single term - simple regex search
                 regex = re.compile(f".*{re.escape(search_terms[0])}.*", re.IGNORECASE)
-                customers = find_models(
+                customers, customers_truncated = find_models_bounded(
                     Customer,
                     {
                         "$or": [
@@ -254,9 +304,10 @@ class OfficerApplicationListView(LoanOfficerRequiredMixin, APIView):
                 customer_ids = [c.id for c in customers if c]
 
                 # Search products
-                products = find_models(
+                products, products_truncated = find_models_bounded(
                     LoanProduct, {"name": regex}, limit=500
                 )
+                search_truncated = customers_truncated or products_truncated
                 product_ids = [p.id for p in products if p]
             else:
                 # Multiple terms - match all terms across customer fields
@@ -274,7 +325,7 @@ class OfficerApplicationListView(LoanOfficerRequiredMixin, APIView):
                         }
                     )
 
-                customers = find_models(
+                customers, customers_truncated = find_models_bounded(
                     Customer, {"$and": customer_and_conditions}, limit=500
                 )
                 customer_ids = [c.id for c in customers if c]
@@ -285,9 +336,10 @@ class OfficerApplicationListView(LoanOfficerRequiredMixin, APIView):
                     term_regex = re.compile(f".*{re.escape(term)}.*", re.IGNORECASE)
                     product_and_conditions.append({"name": term_regex})
 
-                products = find_models(
+                products, products_truncated = find_models_bounded(
                     LoanProduct, {"$and": product_and_conditions}, limit=500
                 )
+                search_truncated = customers_truncated or products_truncated
                 product_ids = [p.id for p in products if p]
 
         # Build final query with customer and product search
@@ -382,6 +434,7 @@ class OfficerApplicationListView(LoanOfficerRequiredMixin, APIView):
                 "page": page,
                 "page_size": page_size,
                 "total_pages": (total_count + page_size - 1) // page_size,
+                "search_truncated": search_truncated,
             },
             message="Applications retrieved",
         )
@@ -424,9 +477,9 @@ class OfficerApplicationDetailView(LoanOfficerRequiredMixin, APIView):
         product = LoanProduct.find_by_id(app.product_id)
 
         # Get complete customer profiles
-        from profiles.models import CustomerProfile, BusinessProfile, AlternativeData
-        from documents.models import Document
         from accounts.models import Customer
+        from documents.models import Document
+        from profiles.models import AlternativeData, BusinessProfile, CustomerProfile
 
         customer = Customer.find_one({"_id": ObjectId(app.customer_id)})
         personal = CustomerProfile.get_or_create(app.customer_id)
@@ -617,7 +670,7 @@ class OfficerApplicationDetailView(LoanOfficerRequiredMixin, APIView):
                     if app.disbursement_requested_at
                     else None
                 ),
-                "disbursement_error": app.disbursement_error,
+                "disbursement_failure_code": disbursement_failure_code(app),
                 "disbursed_at": (
                     app.disbursed_at.isoformat() if app.disbursed_at else None
                 ),
@@ -697,6 +750,12 @@ class OfficerApplicationNotesView(LoanOfficerRequiredMixin, APIView):
                 author_role=getattr(user, "role", "loan_officer"),
                 content=serializer.validated_data["note"],
             )
+        except LoanTransitionConflict:
+            return error_response(
+                message="The application changed. Refresh and retry.",
+                code="LOAN_TRANSITION_CONFLICT",
+                status_code=status.HTTP_409_CONFLICT,
+            )
         except ValueError as e:
             return error_response(
                 message=str(e), status_code=status.HTTP_400_BAD_REQUEST
@@ -713,6 +772,7 @@ class OfficerApplicationNotesView(LoanOfficerRequiredMixin, APIView):
             details={
                 "customer_id": app.customer_id,
                 "note_preview": serializer.validated_data["note"][:120],
+                "transition_id": app.last_transition_id,
             },
             ip_address=request.META.get("REMOTE_ADDR", ""),
         )
@@ -796,6 +856,12 @@ class OfficerRequestMissingDocumentsView(LoanOfficerRequiredMixin, APIView):
                 missing_documents=data["missing_documents"],
                 reason=data.get("reason", ""),
             )
+        except LoanTransitionConflict:
+            return error_response(
+                message="The application changed. Refresh and retry.",
+                code="LOAN_TRANSITION_CONFLICT",
+                status_code=status.HTTP_409_CONFLICT,
+            )
         except ValueError as e:
             return error_response(
                 message=str(e), status_code=status.HTTP_400_BAD_REQUEST
@@ -813,6 +879,7 @@ class OfficerRequestMissingDocumentsView(LoanOfficerRequiredMixin, APIView):
                 "customer_id": app.customer_id,
                 "missing_documents": app.missing_documents_requested,
                 "reason": app.missing_documents_reason,
+                "transition_id": app.last_transition_id,
             },
             ip_address=request.META.get("REMOTE_ADDR", ""),
         )
@@ -829,17 +896,19 @@ class OfficerRequestMissingDocumentsView(LoanOfficerRequiredMixin, APIView):
 
         if customer and customer.email:
             try:
-                from notifications.services import get_email_sender
+                from loans.services.notifications import (
+                    queue_customer_loan_notification,
+                )
 
-                sender = get_email_sender()
-                sender.send_missing_documents_requested(
-                    customer_email=customer.email,
-                    customer_name=f"{customer.first_name} {customer.last_name}".strip()
-                    or "Customer",
+                queue_customer_loan_notification(
                     loan_id=app.id,
-                    missing_documents=app.missing_documents_requested,
-                    reason=app.missing_documents_reason,
-                    customer_id=app.customer_id,
+                    event_type="missing_documents",
+                    event_key=app.last_transition_id,
+                    customer=customer,
+                    payload={
+                        "missing_documents": app.missing_documents_requested,
+                        "reason": app.missing_documents_reason,
+                    },
                 )
             except Exception as e:
                 logger.warning(f"Failed to send missing documents email: {e}")
@@ -921,6 +990,30 @@ class OfficerReviewView(LoanOfficerRequiredMixin, APIView):
         )
 
         if data["action"] == "approve":
+            product = LoanProduct.find_by_id(app.product_id)
+            if not product:
+                return error_response(
+                    message="Loan product not found",
+                    status_code=status.HTTP_404_NOT_FOUND,
+                )
+
+            document_check = check_required_documents(
+                app.customer_id,
+                product,
+                requirements_scope="product",
+                require_approved_documents=True,
+            )
+            if not document_check["requirements_met"]:
+                return error_response(
+                    message=(
+                        "Required documents must be approved before loan approval"
+                    ),
+                    errors={
+                        "missing_documents": document_check["missing_requirements"]
+                    },
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                )
+
             # Validate approved_amount does not exceed requested_amount
             if data["approved_amount"] > float(app.requested_amount):
                 return error_response(
@@ -931,11 +1024,19 @@ class OfficerReviewView(LoanOfficerRequiredMixin, APIView):
                     status_code=status.HTTP_400_BAD_REQUEST,
                 )
 
-            app.approve(
-                officer_id=officer_id,
-                approved_amount=data["approved_amount"],
-                notes=data.get("notes", ""),
-            )
+            try:
+                app.approve(
+                    officer_id=officer_id,
+                    approved_amount=data["approved_amount"],
+                    notes=data.get("notes", ""),
+                    actor_type=self._actor_type(user),
+                )
+            except LoanTransitionConflict:
+                return error_response(
+                    message="The application was already reviewed or changed.",
+                    code="LOAN_TRANSITION_CONFLICT",
+                    status_code=status.HTTP_409_CONFLICT,
+                )
             logger.info(f"Application approved: {app.id} by {officer_id}")
             message = "Application approved"
 
@@ -950,6 +1051,7 @@ class OfficerReviewView(LoanOfficerRequiredMixin, APIView):
                 details={
                     "approved_amount": data["approved_amount"],
                     "customer_id": app.customer_id,
+                    "transition_id": app.last_transition_id,
                 },
                 ip_address=request.META.get("REMOTE_ADDR", ""),
             )
@@ -957,33 +1059,42 @@ class OfficerReviewView(LoanOfficerRequiredMixin, APIView):
             # Send approval email
             if customer_email:
                 try:
-                    from notifications.services import get_email_sender
+                    from loans.services.notifications import (
+                        queue_customer_loan_notification,
+                    )
 
-                    sender = get_email_sender()
-                    sender.send_loan_approved(
-                        customer_email=customer_email,
-                        customer_name=customer_name,
+                    queue_customer_loan_notification(
                         loan_id=app.id,
-                        approved_amount=data["approved_amount"],
-                        customer_id=app.customer_id,
+                        event_type="approved",
+                        event_key=app.last_transition_id,
+                        customer=customer,
+                        payload={"approved_amount": data["approved_amount"]},
                     )
                 except Exception as e:
                     logger.warning(f"Failed to send approval email: {e}")
 
-            # Blockchain sync — approval (background thread, no Celery needed)
+            # Durable, feature-gated approval sync through Celery.
             try:
                 from loans.blockchain.sync import sync_approval
 
-                sync_approval(app.id)
+                sync_approval(app.id, app.last_transition_id)
             except Exception as e:
                 logger.warning(f"Blockchain sync skipped for approval {app.id}: {e}")
 
         else:
-            app.reject(
-                officer_id=officer_id,
-                reason=data["rejection_reason"],
-                notes=data.get("notes", ""),
-            )
+            try:
+                app.reject(
+                    officer_id=officer_id,
+                    reason=data["rejection_reason"],
+                    notes=data.get("notes", ""),
+                    actor_type=self._actor_type(user),
+                )
+            except LoanTransitionConflict:
+                return error_response(
+                    message="The application was already reviewed or changed.",
+                    code="LOAN_TRANSITION_CONFLICT",
+                    status_code=status.HTTP_409_CONFLICT,
+                )
             logger.info(f"Application rejected: {app.id} by {officer_id}")
             message = "Application rejected"
 
@@ -998,6 +1109,7 @@ class OfficerReviewView(LoanOfficerRequiredMixin, APIView):
                 details={
                     "reason": data["rejection_reason"],
                     "customer_id": app.customer_id,
+                    "transition_id": app.last_transition_id,
                 },
                 ip_address=request.META.get("REMOTE_ADDR", ""),
             )
@@ -1005,23 +1117,24 @@ class OfficerReviewView(LoanOfficerRequiredMixin, APIView):
             # Send rejection email
             if customer_email:
                 try:
-                    from notifications.services import get_email_sender
+                    from loans.services.notifications import (
+                        queue_customer_loan_notification,
+                    )
 
-                    sender = get_email_sender()
-                    sender.send_loan_rejected(
-                        customer_email=customer_email,
-                        customer_name=customer_name,
+                    queue_customer_loan_notification(
                         loan_id=app.id,
-                        reason=data["rejection_reason"],
-                        customer_id=app.customer_id,
+                        event_type="rejected",
+                        event_key=app.last_transition_id,
+                        customer=customer,
+                        payload={"reason": data["rejection_reason"]},
                     )
                 except Exception as e:
                     logger.warning(f"Failed to send rejection email: {e}")
-            # Blockchain sync — rejection (background thread, no Celery needed)
+            # Durable, feature-gated rejection sync through Celery.
             try:
                 from loans.blockchain.sync import sync_rejection
 
-                sync_rejection(app.id)
+                sync_rejection(app.id, app.last_transition_id)
             except Exception as e:
                 logger.warning(f"Blockchain sync skipped for rejection {app.id}: {e}")
 

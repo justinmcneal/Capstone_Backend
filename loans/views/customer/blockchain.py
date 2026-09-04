@@ -11,6 +11,11 @@ from accounts.utils.response_helpers import error_response, success_response
 from analytics.models import AuditLog  # noqa: F401 - existing test patch target
 from loans.models import LoanApplication
 from loans.services.audit import record_loan_audit
+from loans.utils.serialization import (
+    serialize_customer_blockchain_transaction,
+    serialize_public_blockchain_audit_entry,
+    serialize_public_blockchain_hashes,
+)
 
 logger = logging.getLogger("loans")
 
@@ -53,8 +58,13 @@ class CustomerBlockchainView(CustomerRoleRequiredMixin, APIView):
             "application_id": app.id,
             "blockchain_enabled": getattr(settings, "BLOCKCHAIN_ENABLED", False),
             "explorer_url": f"{explorer_url}/tx" if explorer_url else "",
-            "tx_hashes": getattr(app, "blockchain_tx_hashes", {}),
+            "tx_hashes": serialize_public_blockchain_hashes(
+                getattr(app, "blockchain_tx_hashes", {})
+            ),
             "transactions": [],
+            "transaction_history_available": False,
+            "audit_trail": [],
+            "audit_trail_available": False,
         }
 
         if getattr(settings, "BLOCKCHAIN_ENABLED", False):
@@ -62,7 +72,10 @@ class CustomerBlockchainView(CustomerRoleRequiredMixin, APIView):
                 from loans.blockchain.models import BlockchainTransaction
 
                 txs = BlockchainTransaction.find_by_loan(application_id)
-                data["transactions"] = [tx.to_dict() for tx in txs]
+                data["transactions"] = [
+                    serialize_customer_blockchain_transaction(tx) for tx in txs
+                ]
+                data["transaction_history_available"] = True
             except Exception as e:
                 logger.warning(f"Failed to fetch blockchain transactions: {e}")
 
@@ -70,7 +83,10 @@ class CustomerBlockchainView(CustomerRoleRequiredMixin, APIView):
                 from loans.blockchain.services.audit_service import get_audit_trail
 
                 trail = get_audit_trail(application_id)
-                data["audit_trail"] = trail
+                data["audit_trail"] = [
+                    serialize_public_blockchain_audit_entry(entry) for entry in trail
+                ]
+                data["audit_trail_available"] = True
             except Exception as e:
                 logger.warning(f"Failed to fetch on-chain audit trail: {e}")
 
@@ -293,11 +309,12 @@ class WalletPaymentView(CustomerRoleRequiredMixin, APIView):
                     status_code=status.HTTP_400_BAD_REQUEST,
                 )
 
-        except Exception as exc:
-            logger.error("Wallet payment verification failed: %s", exc)
+        except Exception:
+            logger.exception("Wallet payment verification failed")
             return error_response(
-                message=f"Failed to verify transaction on-chain: {str(exc)}",
-                status_code=status.HTTP_400_BAD_REQUEST,
+                message="Blockchain payment verification is temporarily unavailable",
+                code="BLOCKCHAIN_VERIFICATION_UNAVAILABLE",
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             )
 
         # Both tolerance bounds were validated above. Apply exactly the remaining
@@ -430,20 +447,18 @@ class SystemWalletInfoView(CustomerRoleRequiredMixin, APIView):
         if not getattr(settings, "BLOCKCHAIN_ENABLED", False):
             return error_response(
                 message="Blockchain is not enabled",
+                code="BLOCKCHAIN_DISABLED",
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             )
 
         try:
             account = get_account()
             get_web3()
-        except Exception as exc:
-            import logging
-
-            logging.getLogger("blockchain").error(
-                f"Blockchain connection failed: {exc}"
-            )
+        except Exception:
+            logger.exception("System wallet blockchain connection failed")
             return error_response(
-                message=f"Blockchain connection unavailable: {str(exc)}",
+                message="Blockchain connection is temporarily unavailable",
+                code="BLOCKCHAIN_CONNECTION_UNAVAILABLE",
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             )
 
@@ -459,6 +474,7 @@ class SystemWalletInfoView(CustomerRoleRequiredMixin, APIView):
             return error_response(
                 message="ETH/PHP exchange rate is currently unavailable. "
                 "Wallet payments are temporarily disabled.",
+                code="EXCHANGE_RATE_UNAVAILABLE",
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             )
 
@@ -468,9 +484,10 @@ class SystemWalletInfoView(CustomerRoleRequiredMixin, APIView):
             data={
                 "wallet_address": account.address,
                 "chain_id": settings.BLOCKCHAIN_CHAIN_ID,
-                "rpc_url": settings.BLOCKCHAIN_RPC_URL,
                 "eth_php_rate": rate_info["rate"],
                 "rate_source": rate_info["source"],
+                "rate_basis": "verification_time",
+                "rate_max_age_seconds": 300,
                 "rate_cached_at": (
                     datetime.fromtimestamp(
                         rate_info["fetched_at"], tz=timezone.utc

@@ -815,12 +815,14 @@ class Document:
         return cls.from_dict(document)
 
     @classmethod
-    def find(cls, query, sort=None):
+    def find(cls, query, sort=None, limit=None, projection=None):
         db = get_db()
         collection = db[cls.collection_name]
-        cursor = collection.find(query)
+        cursor = collection.find(query, projection)
         if sort:
             cursor = cursor.sort(sort)
+        if limit:
+            cursor = cursor.limit(max(1, int(limit)))
         return [cls.from_dict(doc) for doc in cursor]
 
     @classmethod
@@ -867,12 +869,19 @@ class Document:
         return [cls.from_dict(document) for document in cursor], total
 
     @classmethod
-    def find_by_customer(cls, customer_id, document_type=None):
+    def find_by_customer(
+        cls, customer_id, document_type=None, limit=None, projection=None
+    ):
         """Find all documents for a customer, optionally filtered by type"""
         query = cls.available_query(cls._customer_query(customer_id))
         if document_type:
             query["document_type"] = document_type
-        return cls.find(query, sort=[("uploaded_at", -1)])
+        return cls.find(
+            query,
+            sort=[("uploaded_at", -1)],
+            limit=limit,
+            projection=projection,
+        )
 
     @classmethod
     def count_by_customer(cls, customer_id, document_type=None):

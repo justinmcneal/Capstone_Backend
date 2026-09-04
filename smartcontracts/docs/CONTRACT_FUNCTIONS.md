@@ -1,5 +1,8 @@
 # Smart Contract Function Reference
 
+> Settlement enums match the active backend choices: cash, check, and
+> feature-gated wallet.
+
 Complete reference for all functions in the MSME Pathways smart contracts.
 
 ---
@@ -263,10 +266,9 @@ enum DisbursementStatus {
 }
 
 enum DisbursementMethod {
-    BankTransfer,  // 0
-    Cash,          // 1
-    GCash,         // 2
-    Other          // 3
+    Cash,   // 0
+    Check,  // 1
+    Wallet  // 2
 }
 ```
 
@@ -315,10 +317,9 @@ Marks disbursement completed.
 
 ```solidity
 enum PaymentMethod {
-    Cash,          // 0
-    BankTransfer,  // 1
-    GCash,         // 2
-    Other          // 3
+    Cash,   // 0
+    Check,  // 1
+    Wallet  // 2
 }
 
 enum InstallmentStatus {

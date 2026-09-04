@@ -1,5 +1,8 @@
 # ETH Wallet Transfer — Implementation & Testing Guide
 
+> **Settlement availability:** Cash, check, and wallet-to-wallet are the complete
+> settlement set. Wallet is selectable only when blockchain is enabled.
+
 Implement real ETH transfers for the "Wallet (ETH)" disbursement and repayment method using MetaMask + WalletConnect.
 
 **Prerequisites:** Ganache 2.7+, MetaMask (browser extension or mobile), Python 3.9+, Node.js 18+, Flutter 3.x, a WalletConnect Project ID (free at [cloud.walletconnect.com](https://cloud.walletconnect.com))
@@ -40,8 +43,8 @@ Currently the "Wallet (ETH)" option in the app only **records** the choice — n
 
 Loan amounts are in PHP. ETH transfers need a conversion rate.
 
-- **Source:** [CryptoCompare API](https://min-api.cryptocompare.com/data/price?fsym=ETH&tsyms=PHP) — free, no key required, 100k calls/month
-- **No fallback:** If CryptoCompare is unreachable and no cached rate exists, wallet transactions are **blocked** until the rate can be fetched. This prevents disbursing or collecting incorrect ETH amounts due to stale exchange rates.
+- **Source:** [CoinGecko API](https://api.coingecko.com/api/v3/simple/price) using the ETH/PHP pair
+- **No fallback:** If CoinGecko is unreachable and no cached rate exists, wallet transactions are **blocked** until the rate can be fetched. This prevents disbursing or collecting incorrect ETH amounts due to stale exchange rates.
 - **Caching:** Rate is cached for 5 minutes to reduce API calls
 - **Formula:** `eth_amount = php_amount / eth_php_rate`
 - **Caching:** Rate cached for 5 minutes to avoid excessive API calls
@@ -49,7 +52,8 @@ Loan amounts are in PHP. ETH transfers need a conversion rate.
 ### What Does NOT Change
 
 - **Smart contracts** — remain audit/record-keeping only, no redeployment
-- **Existing flows** — cash, gcash, bank_transfer, check still work identically
+- **Existing flows** — cash and check continue unchanged; wallet-to-wallet is
+  the feature covered here and is enabled only by blockchain configuration
 - **On-chain audit trail** — still recorded for all methods including wallet
 
 ---
@@ -841,7 +845,7 @@ After completing all steps:
 | `insufficient funds for gas * price + value` | System wallet doesn't have enough ETH | Check Ganache account balance. Each new workspace starts with 100 ETH |
 | MetaMask not connecting | Wrong network in MetaMask | Ensure MetaMask is on Ganache network (Chain ID 1337, RPC 127.0.0.1:7545) |
 | WalletConnect QR not working | Invalid Project ID | Get a valid Project ID from cloud.walletconnect.com |
-| CryptoCompare returns error | Rate limit or no internet | Wallet transactions are blocked until rate is available. Other disbursement methods (cash, gcash, etc.) still work. |
+| CoinGecko returns error | Rate limit or no internet | Wallet transactions are blocked until rate is available; cash/check remain available. |
 | `Transaction recipient does not match` | Customer sent ETH to wrong address | Ensure mobile app fetches system wallet from `/api/loans/system-wallet/` |
 | `Transaction amount too low` | Rate changed between preview and send | Backend uses a tolerance (±2%) when verifying amounts |
 | Wallet address not showing for officer | Profile not updated | Customer must save wallet address in Profile before applying |

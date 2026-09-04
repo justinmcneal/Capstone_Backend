@@ -1,0 +1,1 @@
+"""Loans management command package."""

@@ -283,33 +283,86 @@ class ConsentAuditView(AccessControlMixin, APIView):
             if not has_permission:
                 return result
 
-            customers = Customer.find({}, sort=[("created_at", -1)])
+            try:
+                page = int(request.query_params.get("page", 1))
+            except (TypeError, ValueError):
+                return error_response(
+                    message="Invalid page parameter",
+                    errors={"page": "page must be an integer"},
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                )
+            try:
+                page_size = min(
+                    int(request.query_params.get("page_size", 20)), 100
+                )
+            except (TypeError, ValueError):
+                return error_response(
+                    message="Invalid page_size parameter",
+                    errors={"page_size": "page_size must be an integer"},
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                )
+            if page < 1:
+                return error_response(
+                    message="Invalid page parameter",
+                    errors={"page": "page must be at least 1"},
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                )
+            if page_size < 1:
+                return error_response(
+                    message="Invalid page_size parameter",
+                    errors={"page_size": "page_size must be at least 1"},
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                )
+
+            customers = Customer.find(
+                {},
+                projection={
+                    "first_name": 1,
+                    "middle_name": 1,
+                    "last_name": 1,
+                    "email": 1,
+                    "verified": 1,
+                    "created_at": 1,
+                },
+                sort=[("created_at", -1)],
+            )
+            consent_statuses = ConsentService.get_consent_statuses(
+                [customer.id for customer in customers], "customer"
+            )
             ai_consent_true = 0
             ai_consent_false = 0
-            rows = []
+            missing_consent_records = 0
 
             for customer in customers:
-                consent_status = ConsentService.get_consent_status(
-                    customer.id, "customer"
-                )
-                has_record = consent_status["has_consent_record"]
+                consent_status = consent_statuses[customer.id]
                 ai_consent = consent_status["ai_consent"]
-                data_consent = consent_status["data_consent"]
-
                 if ai_consent:
                     ai_consent_true += 1
                 else:
                     ai_consent_false += 1
+                if not consent_status["has_consent_record"]:
+                    missing_consent_records += 1
 
+            total_customers = len(customers)
+            total_pages = max(
+                1, (total_customers + page_size - 1) // page_size
+            )
+            start = (page - 1) * page_size
+            page_customers = customers[start : start + page_size]
+            rows = []
+            for customer in page_customers:
+                consent_status = consent_statuses[customer.id]
                 rows.append(
                     {
                         "customer_id": customer.id,
                         "full_name": customer.full_name,
                         "email": customer.email,
                         "verified": customer.verified,
-                        "has_consent_record": has_record,
-                        "data_consent": data_consent,
-                        "ai_consent": ai_consent,
+                        "has_consent_record": consent_status[
+                            "has_consent_record"
+                        ],
+                        "data_consent": consent_status["data_consent"],
+                        "ai_consent": consent_status["ai_consent"],
                         "consent_date": _to_iso(consent_status["consent_date"]),
                         "updated_at": _to_iso(consent_status["updated_at"]),
                         "consent_version": consent_status["consent_version"],
@@ -321,14 +374,20 @@ class ConsentAuditView(AccessControlMixin, APIView):
             return success_response(
                 data={
                     "summary": {
-                        "total_customers": len(customers),
+                        "total_customers": total_customers,
                         "ai_consent_true": ai_consent_true,
                         "ai_consent_false": ai_consent_false,
-                        "missing_consent_records": sum(
-                            1 for item in rows if not item["has_consent_record"]
-                        ),
+                        "missing_consent_records": missing_consent_records,
                     },
                     "customers": rows,
+                    "pagination": {
+                        "page": page,
+                        "page_size": page_size,
+                        "total_items": total_customers,
+                        "total_pages": total_pages,
+                        "has_next": page < total_pages,
+                        "has_previous": page > 1,
+                    },
                 },
                 message="Consent audit retrieved successfully",
             )

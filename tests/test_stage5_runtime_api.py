@@ -6,8 +6,8 @@ from rest_framework.test import APIRequestFactory, force_authenticate
 from accounts.authentication import AuthenticatedUser
 from accounts.models import Customer, LoanOfficer
 from loans.models import LoanApplication, LoanPayment, LoanProduct
-from loans.views.customer_views import ApplicationDetailView
 from loans.views.admin.workload import OfficerWorkloadView
+from loans.views.customer_views import ApplicationDetailView
 from loans.views.officer.payments import OfficerPaymentHistoryView, PaymentSearchView
 
 
@@ -48,6 +48,7 @@ def test_payment_search_default_path_paginates_and_summarizes_full_result(
                 "amount": 100,
                 "installment_number": 1,
                 "payment_status": "posted",
+                "loan_disbursed": True,
                 "recorded_at": datetime(2026, 1, 1, tzinfo=timezone.utc),
             },
             {
@@ -56,6 +57,7 @@ def test_payment_search_default_path_paginates_and_summarizes_full_result(
                 "amount": 250,
                 "installment_number": 2,
                 "payment_status": "posted",
+                "loan_disbursed": True,
                 "recorded_at": datetime(2026, 1, 2, tzinfo=timezone.utc),
             },
         ]
@@ -153,7 +155,7 @@ def test_draft_update_persists_preferred_disbursement_method(monkeypatch):
             "product_id": str(product_id),
             "requested_amount": 10_000,
             "term_months": 12,
-            "preferred_disbursement_method": "wallet",
+            "preferred_disbursement_method": "cash",
         },
         format="json",
     )
@@ -161,8 +163,8 @@ def test_draft_update_persists_preferred_disbursement_method(monkeypatch):
     response = ApplicationDetailView.as_view()(request, application_id=app.id)
 
     assert response.status_code == 200
-    assert app.preferred_disbursement_method == "wallet"
-    assert response.data["data"]["preferred_disbursement_method"] == "wallet"
+    assert app.preferred_disbursement_method == "cash"
+    assert response.data["data"]["preferred_disbursement_method"] == "cash"
 
 
 def test_disbursed_application_blocks_product_mutation(settings):

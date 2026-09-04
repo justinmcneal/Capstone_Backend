@@ -1,0 +1,1861 @@
+﻿TITLE SHEET
+MSME PATHWAYS: A SMART LOAN SUPPORT FOR UNDERSERVED 
+STARTING ENTREPRENEURS IN THE INFORMAL SECTOR  
+
+JUSTIN MC NEAL G. CARONONGAN
+FENIEL BARTE 
+JOSHUA S. CO 
+JOHN LLOYD PIMENTEL 
+ELI GABRIEL T. SORIANO 
+
+Submitted to the Faculty of the 
+College of Information Technology Education. 
+PHINMA University of Pangasinan, 
+Dagupan City, Pangasinan
+In Partial Fulfillment of 
+the Requirements
+for the Degree
+
+Bachelor of Science in Information Technology
+with Specialization in System Development 
+
+March 2026  
+
+
+
+
+
+
+
+
+
+
+APPROVAL SHEET
+APPROVAL SHEET
+
+This capstone project entitled MSME PATHWAYS: A SMART LOAN SUPPORT FOR UNDERSERVED STARTING ENTREPRENEURS IN THE INFORMAL SECTOR is prepared and submitted by JUSTIN MC NEAL G. CARONONGAN, FENIEL BARTE, JOSHUA S. CO, JOHN LLOYD PIMENTEL, and ELI GABRIEL T. SORIANO in partial fulfillment of the requirements for the degree, Bachelor of Science in Information with Specialization in System Development, has been examined and approved (MM/DD/YY IN TEXT FORMAT) by the Oral Examination Committee composed of:
+
+MA. GRACE Q. CARPIZO, Ph.D
+Adviser
+	ARISTOTLE B.LIWANAG, MBA
+Chairperson
+	JEREMIE
+Member
+	PANEL 2
+Member
+	
+Accepted and approved in partial fulfillment of the requirements for the degree of Bachelor of Science in Information Technology with Specialization in System Development 
+
+ARISTOTLE B. LIWANAG, MBA
+Dean
+CITE, PHINMA University of Pangasinan
+Dagupan City
+
+
+
+
+
+
+
+
+
+
+ACKNOWLEDGEMENT SHEET
+DATE: _______________
+ACKNOWLEDGEMENT
+        The researchers would like to express their deepest gratitude to everyone who provided guidance and assistance throughout this research study. This endeavor would not have been possible without the unwavering support of these individuals and institutions.
+
+
+First and foremost, the researchers would like to extend their heartfelt thanks to the school administration and faculty members for making this study achievable. Special gratitude is given to our research advisers, Ma’am Veronica Canlas and Ma. Grace Q. Carpizo and our panels, Sir Jeremie (SURNAME), (PANEL 2), whose insightful feedback and constructive critiques greatly enhanced the quality of this work.
+
+
+The researchers are also grateful to the respondents who gave their time and cooperation. Their participation provided valuable insights that served as the foundation of this study.
+
+
+Furthermore, the researchers would like to give thanks to the families and friends of each researcher for their continuous motivation during the research and manuscript writing.
+
+
+Above all, the researchers offer their highest praise and gratitude to the Almighty God for bestowing upon them the wisdom, strength, perseverance, health, and grace needed to successfully navigate and complete this study.
+
+
+
+
+
+
+
+
+
+
+DEDICATION SHEET
+This work is dedicated to the underserved starting entrepreneurs in the informal sector—the sari-sari store owners, market vendors, home-based entrepreneurs, and small-scale business owners—whose resilience, determination, and unwavering commitment to providing for their families continue to inspire us. Despite the challenges they face, they persevere with courage and hope, reminding us of the importance of creating more accessible and inclusive opportunities. 
+
+We also dedicate this work to our families, whose love, patience, encouragement, and unwavering support have been our greatest source of strength throughout this journey. To our mentors and educators, thank you for inspiring us to pursue knowledge with integrity and purpose.
+
+The MSME Pathways Research Team:
+ Justin Mc Neal G. Caronongan 
+Feniel Barte
+Joshua S. Co 
+John Lloyd Pimentel 
+Eli Gabriel T. Soriano 
+ABSTRACT
+ABSTRACT
+
+        LEAD LAST NAME, FIRST NAME MI., ALPHABETICAL MEMBER1 LAST NAME, FIRST NAME MI., ALPHABETICAL MEMBER2 LAST NAME, FIRST NAME MI., ALPHABETICAL MEMBER3 LAST NAME, FIRST NAME MI., ALPHABETICAL MEMBER4 LAST NAME, FIRST NAME MI., ALPHABETICAL MEMBER5 LAST NAME, FIRST NAME MI., and ALPHABETICAL MEMBER3 LAST NAME, FIRST NAME MI “Title of the Capstone Project in Full” Bachelor of Science in Information Technology with Specialization in Digital Arts. PHINMA University of Pangasinan, Dagupan City, 2400 Pangasinan,  , March 2025.
+
+        Adviser: MA. GRACE Q. CARPIZO, Ph.D
+        Keywords: keyword1, keyword2, keyword3 (this is for tagging your document)
+
+        Keep the abstract within 150 to 250 words. It should contain a sentence or two to identify or describe 1.) the general research problem, purpose, or objective of your study, 2) your target participants and respondents, 3.) the research method, 4.) the general summary based on your findings, 5) conclusion from general findings, and 6) recommendations based from the gathered findings and the conclusion.
+        If you need to create a second sentence, have it indented just like this. Make sure that all words of the paragraphs are within 150 to 250-word count. 
+
+
+
+
+
+
+
+
+
+
+TABLE OF CONTENTS
+TABLE OF CONTENTS
+
+
+TITLE PAGE        i
+APPROVAL SHEET        ii
+ACKNOWLEDGEMENT        iii
+DEDICATION        iv
+ABSTRACT        v
+LIST OF FIGURES        vi
+LIST OF TABLES        vii
+TABLE OF CONTENTS        viii
+1        INTRODUCTION
+Background of the Study        1
+Statement of the Problem        7
+Objectives of the Study        8
+Scope and Delimitation        8
+Significance of the Study        11
+Definition of Terms        13
+2        METHODOLOGY
+Software Development Methodology        16
+System Architecture Overview        20
+Tools and Technologies        23
+Population and Locale of the Study        29
+Data Gathering Techniques        31
+Sources of Data        33
+Treatment of Data        34
+Ethical Considerations        36
+3        RESULTS AND DISCUSSION
+Profile, Financial Behaviors, Challenges, and Technological Needs        
+Developed System Features and Functionalities        
+Evaluation of the Developed System        
+Summary of Findings        
+Conclusions        
+Recommendations        
+REFERENCES        
+APPENDICES
+A. Certificate of Approval from UREC        
+B. Participation Request Letters and Informed Consent Form        
+C. Respondent Profile Form        
+D. Microentrepreneur Interview Guide        
+E. Microentrepreneur Post-Use Questionnaire with System Usability Scale (SUS)        
+F. Lending-Personnel Evaluation Form        
+G. Observation and Task Checklist        
+H. System Functional Testing Checklist        
+I. Tally and Analysis Template        
+J. Wireframes and System Screenshots        
+K. Use Case Diagram        
+L. Database Schema and System Models        
+M. System Evaluation Results        
+N. User Manual / System Documentation        
+O. Curriculum Vitae / Resume of Researchers        
+
+
+
+
+
+
+
+
+
+
+LIST OF TABLES
+LIST OF TABLES
+
+Table 1        Respondents of the Study
+Table 2        Profile and Distribution of Respondents
+Table 3        Financial Behaviors and Loan-Related Challenges
+Table 4        Technological Needs Identified from the Interviews
+Table 5        Requirements Traceability and Implemented Features
+Table 6        Summary of Functional Test Results
+Table 7        Microentrepreneur SUS and Supplemental Evaluation
+Table 8        Lending-Personnel Evaluation of the System
+Table 9        Observation Results and User Feedback
+
+
+LIST OF FIGURES
+LIST OF FIGURES
+
+Figure 1        Phases of Scrum
+Figure 2        Three-Tier Architecture
+Figures 3–13    Principal Customer, Lending-Personnel, and System Interfaces [titles to be finalized]
+
+
+CHAPTER 1
+Chapter 1 
+INTRODUCTION 
+
+Background of the Study 
+Micro, Small, and Medium Enterprises (MSMEs) are universally acknowledged as a fundamental pillar of economic growth, employment generation, and poverty reduction in both developed and developing economies. On a global scale, MSMEs represent approximately 90% of all businesses and contribute to more than half of total employment worldwide (World Bank, 2023). Their role extends beyond economic contribution; MSMEs foster innovation, stimulate local markets, and serve as critical entry points for entrepreneurship, particularly among low- and middle-income populations. Despite their importance, MSMEs—especially those operating within the informal sector—continue to face systemic barriers that hinder their growth and sustainability, with limited access to formal financial services being among the most pressing challenges. While MSMEs generally face such barriers, those in the starting or early-stage phase face unique, heightened barriers because they lack the operational track record required by traditional lending institutions.
+Access to finance is widely recognized as a key enabler of enterprise development. Formal credit allows MSMEs to invest in inventory, adopt new technologies, expand operations, and manage cash flow volatility.
+However, many microentrepreneurs remain excluded from traditional banking systems due to rigid lending requirements such as collateral, formal income documentation, and established credit histories. This exclusion is especially acute for starting entrepreneurs, who face a "catch-22" situation: they lack the formal credit history necessary to secure initial capital, leaving them perpetually underserved. Informal-sector operators, who often rely on daily cash transactions and lack standardized financial records, are disproportionately affected by these constraints. As a result, they are frequently compelled to seek financing from informal lenders who impose excessive interest rates, short repayment periods, and exploitative terms, thereby increasing financial vulnerability and limiting long-term business growth.
+In the Philippine context, the importance of MSMEs mirrors global trends but is even more pronounced. Data from the Department of Trade and Industry (DTI) indicates that MSMEs account for 99.5% of all registered enterprises in the country and provide employment to approximately 63% of the national workforce (DTI, 2023). These enterprises are concentrated primarily in the microenterprise category, which includes small-scale vendors, sari-sari store owners, transport operators, and home-based entrepreneurs. Within this category, underserved starting entrepreneurs represent the most vulnerable segment, as they often remain informal in nature and operate outside regulatory and financial frameworks. 
+The issue of financial exclusion remains a significant national concern. According to the Bangko Sentral ng Pilipinas (BSP) Financial Inclusion Survey (2022), nearly 29% of Filipino adults do not possess formal financial accounts, and an even larger percentage lack access to formal credit facilities. Informal-sector workers are among the most affected due to factors such as insufficient financial literacy, a lack of trust in financial institutions, the perceived complexity of banking processes, and a fear of loan rejection. These challenges are further compounded by limited awareness of available financial products and inadequate support mechanisms to prepare borrowers for responsible loan participation. 
+At the regional and local levels, the informal economy is particularly prevalent in densely populated urban centers and commercial districts where microentrepreneurs engage in daily retail, food vending, and service provision. While these activities generate consistent cash flow, they are rarely documented, making it difficult for financial institutions to assess creditworthiness using conventional evaluation methods. Additionally, existing microfinance outreach programs often rely on labor-intensive, manual screening processes that increase operational costs and limit scalability. As a result, many potentially creditworthy microentrepreneurs remain underserved or excluded from formal financial systems entirely. 
+The rapid advancement and widespread adoption of mobile technology present a transformative opportunity to address these longstanding challenges. With near-universal smartphone ownership in the Philippines (Meltwater & We Are Social, 2025), mobile platforms have emerged as accessible and scalable tools for delivering financial services, education, and support to previously marginalized populations. Mobile-first solutions reduce geographic barriers, lower operational costs, and enable continuous user engagement. However, many existing digital financial applications are not tailored to the realities of informal-sector users, as they often assume stable income records, prior financial knowledge, and consistent internet connectivity. 
+Empirical literature highlights the effectiveness of technology‑enabled interventions in promoting financial inclusion, and research indicates that digital financial literacy and digital financial tools are key components of improving financial knowledge and behaviors in the digital environment (Koskelainen, Kalmi, Scornavacca, & Vartiainen, 2023). Furthermore, the expansion of digital financial services and FinTech innovations has enabled the use of alternative data sources—including mobile phone usage patterns, digital transaction histories, and online behavioral indicators—to assess creditworthiness among populations excluded from traditional credit bureaus. Recent evidence demonstrates that these technology-driven approaches can significantly improve financial inclusion by providing more accessible and inclusive credit assessment mechanisms for underserved microenterprises and informal-sector operators (World Bank, 2022). Additionally, blockchain technology has emerged as a promising tool for enhancing transparency, security, and trust in financial transactions. Its decentralized and immutable architecture provides a reliable mechanism for recording and verifying financial activities, with applications in financial services that improve efficiency, reduce fraud, and enhance transparency (Wang, Xie, & Zhang, 2021). 
+These findings emphasize the potential of intelligent, data-driven, and blockchain-integrated systems to bridge the gap between informal microentrepreneurs and formal financial institutions. 
+Given these conditions, there is a clear and urgent need for an integrated, user-centered solution that combines financial education, ethical loan pre-screening, alternative data profiling, and secure transaction recording in a manner that is accessible to informal-sector microentrepreneurs. Addressing financial inclusion requires not only access to credit but also the development of financial capability, preparedness, and trust among borrowers through transparent and verifiable systems.
+In response to this need, the project titled MSME Pathways: A Smart Loan Support for the Informal Sector is framed as a solution tailored specifically to underserved starting entrepreneurs. The AI-enabled, blockchain-integrated, mobile-first platform is designed to provide the initial guidance and readiness tools these entrepreneurs need to transition toward formal financial engagement. The system aims to enhance financial literacy, support responsible loan readiness, ensure transaction integrity through blockchain technology, and provide ethical, data-informed insights that can facilitate engagement with formal lending institutions. By leveraging mobile technology, intelligent analytics, and distributed ledger technology, the project seeks to contribute to inclusive economic growth and support the long-term sustainability of starting MSMEs in the informal sector of the Philippines.
+
+Statement of the Problem
+Underserved starting entrepreneurs in the informal sector in the Philippines face significant barriers to accessing formal financial services, resulting in persistent financial exclusion and a reliance on informal lending sources with unfavorable terms. These challenges are particularly acute for those in the initial stages of their business journey, stemming from limited financial literacy, the absence of a formal credit history, distrust of financial institutions, and the perceived complexity of loan application processes. 
+This study seeks to address the following research questions: 
+1. What are the demographic profile, financial behaviors, challenges, and technological needs of underserved starting entrepreneurs in the informal sector?
+2. What system features and functionalities should be incorporated into the proposed AI-enabled Smart Loan Support System to support financial literacy and loan readiness?
+3. How may the developed AI-enabled Smart Loan Support System be evaluated in terms of functionality, usability, clarity of financial guidance, perceived usefulness, and user confidence among underserved starting entrepreneurs?
+
+Objectives of the Study 
+The objective of this study is to design, develop, and implement an AI-enabled Smart Loan Support System that provides accessible financial guidance, ethical loan pre-screening, and alternative data-driven profiling to support financial inclusion and improve access to formal lending opportunities for microentrepreneurs in the informal sector. 
+Specifically, this study aims: 
+1. To identify the demographic profile, financial behaviors, challenges, and technological needs of underserved starting entrepreneurs in the informal sector.
+2. To determine the system features and functionalities of the proposed AI-enabled Smart Loan Support System based on the identified user needs and challenges.
+3. To evaluate the developed AI-enabled Smart Loan Support System in terms of functionality, usability, clarity of financial guidance, perceived usefulness, and user confidence through system testing and user feedback analysis.
+
+Scope and Delimitation 
+This study focuses on the design, development, implementation, and evaluation of MSME Pathways: A Smart Loan Support for the Underserved Starting Entrepreneurs in the Informal Sector, an AI-enabled system that aims to promote loan inclusion among underserved starting entrepreneurs in the Philippines. The proposed system provides AI-driven financial guidance through a conversational chatbot that explains loan concepts using simple and culturally relevant language. It also includes loan education modules covering topics such as interest rates, repayment terms, responsible borrowing, and loan risks to improve users' loan literacy and loan readiness.
+The system incorporates alternative data profiling based on user-provided business information and self-reported financial activities to support loan readiness assessment and ethical loan pre-qualification using predefined criteria. Based on the profiling results, the system generates personalized feedback and recommendations to help users better prepare for formal loan applications. In addition, the system includes blockchain-based transaction recording using Ethereum-compatible smart contracts to promote transparency, integrity, and traceability of supported transactions within the system.
+The primary users of the system are underserved starting entrepreneurs in the informal sector, including sari-sari store owners, market vendors, home-based entrepreneurs, and other microentrepreneurs. The system also provides a web-based administrative interface for loan officers and system administrators to manage user profiles, review profiling results, monitor system activities, and generate basic reports. The mobile application is developed using Flutter for Android and iOS platforms, while the web-based administrative interface is built using Python, the Django framework, and a cloud-hosted MongoDB Atlas database.
+This study is delimited to the development of a prototype-level smart loan support system. The system does not process or disburse actual loans through regulated financial institutions, integrate with live banking systems, payment gateways, or credit bureaus, nor perform official credit scoring or loan approval decisions. The AI-generated recommendations and loan readiness assessments are intended solely for educational and decision-support purposes and should not be interpreted as official financial or lending advice.
+Furthermore, the performance of the AI components depends on the quality and representativeness of the available training and testing data. The system is evaluated within a controlled academic environment involving a limited number of participants over a defined evaluation period. Constraints related to time, resources, and available infrastructure limit large-scale deployment, extensive optimization, and enterprise-level scalability. The findings of this study are therefore limited to the implementation and evaluation of the proposed prototype and may not be generalized to all financial institutions or lending environments.
+
+Significance of the Study
+This study is significant because it contributes to the development of an AI-enabled smart loan support system that promotes loan inclusion among underserved starting entrepreneurs in the informal sector. By providing accessible loan guidance, loan readiness assessment, and ethical alternative data profiling, the study aims to support more informed borrowing decisions while serving as a foundation for future innovations in financial technology. The findings and the developed system are expected to benefit the following stakeholders:
+To the Underserved Starting Entrepreneurs. The primary beneficiaries of this study are underserved starting entrepreneurs in the informal sector, including sari-sari store owners, market vendors, home-based entrepreneurs, and other microentrepreneurs at the early stages of their business journey. The proposed system provides simplified explanations of loan concepts, loan guidance, and loan readiness assessments that may help users better understand formal lending processes, identify areas for improvement, and make more informed borrowing decisions. By increasing loan awareness and preparedness, the system may encourage greater confidence in accessing formal loan services.
+To the Microfinance Institutions and Loan Officers. The proposed system provides structured borrower information through alternative data profiling and loan readiness assessments, which may assist loan officers in conducting preliminary evaluations of prospective borrowers. Although the system does not replace institutional credit evaluation or lending decisions, it may serve as a complementary decision-support tool that promotes consistency, transparency, and efficiency during the initial assessment process.
+To the Policymakers and Development Organizations. Government agencies, non-governmental organizations, and development institutions that promote loan inclusion may use the findings of this study as a reference in developing programs and initiatives that support underserved entrepreneurs. The proposed system demonstrates how emerging technologies such as artificial intelligence and blockchain can be applied to address barriers to financial access in the informal sector.
+To the Researchers and Project Developers. This study provides the researchers with practical experience in the design, development, implementation, and evaluation of an AI-enabled financial technology system. It strengthens their knowledge and skills in software engineering, mobile application development, artificial intelligence, blockchain technology, cloud computing, database management, and ethical system design while addressing a real-world social and economic challenge.
+To the Academic Community and Future Researchers. This study contributes to the growing body of knowledge on the application of artificial intelligence, blockchain technology, alternative data profiling, and mobile technologies in financial inclusion. The documented methodology, system architecture, implementation, and evaluation results may serve as valuable references for future researchers and developers undertaking related studies or developing similar financial technology solutions.
+
+Definition of Terms 
+The following terms are defined operationally and conceptually to enhance understanding and precision within the context of this study:  
+Alternative Data. Non-traditional information used to assess an individual's financial behavior and creditworthiness, such as business activity indicators, utility payment patterns, and self-reported income, rather than formal credit bureau records.  
+Artificial Intelligence (AI). A branch of computer science focused on creating systems capable of performing tasks that typically require human intelligence, including learning, reasoning, and natural language understanding. In this study, AI powers the financial guidance of chatbot and profiling mechanisms.  
+Blockchain. A decentralized, distributed digital ledger technology that records transactions across multiple computers in a manner that ensures the records cannot be altered retroactively. In this study, blockchain is used to securely record and verify transaction references and user verification events.  
+Chatbot. A software application that simulates human conversation through text-based or voice-based interactions. In this study, the chatbot provides financial guidance and answers user queries about loan concepts.  
+Financial Inclusion. The availability and accessibility of useful and affordable financial products and services to individuals and businesses, particularly those traditionally excluded from formal financial systems. 
+Financial Literacy. The ability to understand and effectively use various financial skills, including personal financial management, budgeting, and understanding loan terms and conditions.  
+Loan Pre-qualification. A preliminary assessment process that evaluates an individual's basic eligibility for a loan based on self-reported information, without a formal credit check or commitment from a lender.  
+MSME (Micro, Small, and Medium Enterprise). A classification of business entities based on asset size and number of employees. In the Philippines, micro enterprises have assets of up to PHP 3 million, small enterprises have assets between PHP 3 million and PHP 15 million, and medium enterprises have assets between PHP 15 million and PHP 100 million.  
+Smart Contract. A self-executing program stored on a blockchain that automatically enforces the terms of an agreement when predetermined conditions are met. In this study, smart contracts developed using Solidity are used to record critical transaction references and verification events.  
+Solidity. A high-level, object-oriented programming language used to write smart contracts on Ethereum-compatible blockchain platforms. In this study, Solidity is used to develop blockchain components for secure transaction logic. 
+System Usability Scale (SUS). A standardized ten-item questionnaire developed by Brooke (1996) that produces a score from 0 to 100 representing users' perceived usability of a system. In this study, the SUS will be administered to participating microentrepreneurs after they complete the assigned prototype tasks. 
+ 
+
+
+
+
+
+
+
+
+
+CHAPTER 2
+Chapter 2 
+
+METHODOLOGY 
+This chapter discusses the methodology employed in the development of the proposed system, MSME Pathways: Smart Loan Support for the Informal Sector. It presents the development methodology, system architecture overview, tools and technologies used, population and locale of the study, data gathering techniques, sources of data, treatment of data, and ethical considerations. 
+
+Development Methodology 
+This section explains the development methodology that will be used in the study, including the selected software development model and the phases involved in system development, together with their corresponding deliverables.  
+Software Development Model. The study will employ the Agile Software Development Model using the Scrum approach. Scrum is applied to support incremental delivery through short development cycles, enabling the research team to prioritize features, validate requirements, and continuously improve system components based on stakeholder feedback. This model is suitable for MSME Pathways because the proposed system includes complex and interdependent features such as AI-enabled guidance and profiling, as well as blockchain-based transaction integrity mechanisms, which require iterative refinement and staged integration.  
+The Scrum approach is appropriate for the scope of the project because it encourages frequent feedback and progressive enhancement of the system’s functionality and usability. In the context of informal sector microentrepreneurs, user needs and varying of digital literacy, and practical concerns during lending transactions are best addressed through repeated validation of interface design, content clarity, and guidance accuracy. Scrum also supports risk reduction by enabling early testing of high-impact modules such as the AI chatbot and profiling logic, and by allowing blockchain components to be integrated and verified gradually to ensure system stability and reliability. 
+  
+Figure 1 
+Phases of Scrum 
+  
+        Product Backlog and Backlog Refinement. The team will translate interview findings, survey inputs, and system requirements into user stories and will prioritize backlog items. Backlog refinement will be conducted regularly to clarify acceptance criteria, re-estimate effort, and re-order priorities based on technical feasibility and stakeholder feedback. Deliverables will include an updated Product Backlog, requirement mapping notes, and sprint-ready stories.  
+Sprint Planning. At the start of each sprint, the team will select the highest-priority backlog items and will define a clear sprint goal aligned with research objectives. Planning outputs also included task decomposition, dependency identification, and assignment of implementation targets for frontend, backend, AI, and blockchain-related tasks. Deliverables will include the Sprint Backlog, sprint goal statement, and implementation task list.  
+Sprint Execution (with Daily Scrum). During sprint execution, the team will hold short daily coordination sessions to report progress, identify blockers, and synchronize work. Core engineering activities will be performed within the sprint, including interface design refinement, feature development, API integration, validation checks, and defect fixing. Outputs will include working increments of mobile and web modules, backend services, AI functions, blockchain components, and corresponding test and issue records.  
+Sprint Review. At the end of each sprint, completed increments will be demonstrated to stakeholder representatives for functional and usability validation. Feedback from the review will be documented and converted into backlog updates for the next sprint cycle to ensure continuous alignment with user and study requirements. Deliverables will include sprint review notes, accepted increments, and change requests.  
+Sprint Retrospective. After the review, the team will conduct a retrospective to evaluate what worked well, what problems occurred, and what process improvements are needed. Agreed improvement actions will be carried forward to the next sprint to improve workflow efficiency, quality control, and collaboration. Deliverables will include retrospective findings and actionable process improvement items.  
+Release and Deployment Preparation. After iterative sprint cycles, the team will consolidate validated increments and will prepare the prototype for controlled release and demonstration. Activities will include environment configuration, final integration and regression checks, documentation completion, and readiness verification for academic evaluation. Deliverables will include the prototype build, user manual, deployment notes, and demonstration checklist.  
+
+System Architecture Overview 
+The proposed system will follow a three-tier architecture consisting of the presentation layer, application layer, and data layer. This architecture enforces separation of concerns, allowing user interaction channels, business logic, and data services to evolve independently while remaining integrated through secure APIs.  
+
+Figure 2 
+Three-Tier Architecture 
+  
+        Presentation Layer. The presentation layer will include a Flutter-based mobile application for informal-sector microentrepreneurs and a web dashboard for loan officers and administrators. The mobile application supports onboarding, guidance access, profiling inputs, and loan-readiness interactions, while the web dashboard will support monitoring, application review, decision support, and reporting workflows.  
+Application Layer. The application layer will be implemented using Python Django and Django REST Framework as the central service orchestration layer. It will manage authentication and role-based access, profile and document handling, AI-enabled chatbot and profiling logic, loan pre-qualification and lifecycle workflows, notifications, analytics, and blockchain transaction coordination through backend service integration.  
+Data Layer. The data layer will consist of MongoDB Atlas for operational data storage, document storage services for uploaded files, and Ethereum smart contracts for tamper-resistant integrity records. MongoDB Atlas will store user, profile, loan, interaction, and audit data, while blockchain records will serve as immutable verification references. Sensitive personal data remains off-chain, and only transaction references are written to the blockchain. 
+
+Tools and Technologies Used 
+The development of the proposed system shall utilize the following tools and technologies: 
+
+Programming Languages. Python will be used for backend services, API processing, and business logic orchestration. TypeScript and JavaScript for frontend web development to improve maintainability and type-safe component integration. Dart is going to be used for the Flutter mobile application to support cross-platform development. Solidity shall be used for Ethereum-compatible smart contract development for integrity and audit-related transaction records.  
+Frontend Technologies and Libraries. The web interface will be developed using React, with routing through React Router DOM. State and asynchronous data handling will use TanStack React Query, TanStack React Table, Axios, and Zustand to support responsive dashboards and workflow-driven views. Form and validation components will use React Hook Form, @hookform/resolvers, and Zod to enforce structured user input. UI and interaction libraries will include Radix UI components, Tailwind CSS, @tailwindcss/vite, tailwind-merge, class-variance-authority, clsx, Framer Motion, Lucide React, Recharts, Sonner, React Error Boundary, and date-fns. These technologies collectively support usability, accessibility, and visual consistency required for role-based loan management interfaces. The mobile application shall be developed using Flutter with the Dart Software Development Kit (SDK) to support cross-platform deployment for Android and iOS devices. State management will be implemented using the Business Logic Component (BLoC) approach, while dependency injection will be handled using Get It and Injectable to enhance system modularity and maintainability. Navigation shall be managed using Go Router, and networking and application programming interface (API) communication will be implemented through Dio and Retrofit. Local data storage will be implemented using Hive, while sensitive information shall be secured using Flutter Secure Storage, and basic user preferences will be managed through Shared Preferences. Data serialization and code generation will be supported using Freezed and JSON Serializable. User interface enhancements and animation features shall be implemented through Material 3, Flutter ScreenUtil, Lottie, Flutter Animate, Shimmer, Google Fonts, Cached Network Image, and Smooth Page Indicator. Form input handling and validation will be supported using Flutter Form Builder, Formz, and Form Builder Validators, while additional utilities shall include File Picker, QR Flutter, PDF, Printing, and FL Chart. These technologies will collectively support responsive design, secure data handling, and reliable performance for mobile-based loan guidance and profiling functionalities.  
+Backend Frameworks and Libraries. The backend will be implemented using Django, Django REST Framework, and django-cors-headers to deliver secure RESTful services across client platforms. Data access and utility support will include PyMongo and dnspython for MongoDB connectivity. Authentication and security components will include djangorestframework-simplejwt, PyJWT, and bcrypt. Two-factor authentication and OTP-related components use pyotp, qrcode, and Pillow. API integrations will use requests. Background processing tools shall include Celery, django-celery-beat, and Redis for scheduled and asynchronous tasks. Environment and runtime support will use python-dotenv, pytz, certifi, python-dateutil, asgiref, WhiteNoise, and Gunicorn.  
+AI and Machine Learning Technologies. AI guidance and conversational responses will be integrated through the Groq API service to support user education and decision-support interactions. Document-analysis model tooling includes PyTorch (torch), torchvision, and OpenCV (opencv-python) for CNN-based workflows related to document verification and classification. These technologies will support the study objective of AI-enabled loan guidance and profiling assistance.  
+Blockchain Technologies. Smart contracts shall be implemented in Solidity and will be developed, compiled, tested, and deployed using Hardhat within the backend smart contract module. The blockchain toolchain will include hardhat-toolbox, openzeppelin/contracts, hardhat-verify, openzeppelin/contracts-upgradeable, and hardhat-upgrades, with code quality support from solhint, prettier, and prettier-plugin-solidity. This stack will support transparent, tamper-resistant recording of integrity-relevant events.  
+Database and Storage. MongoDB Atlas will be used as the primary cloud-based NoSQL database for user, profile, application, interaction, and audit records. Blockchain outputs will be stored as integrity references on Ethereum-compatible networks. This arrangement will keep sensitive personal information off-chain while preserving auditability for critical transactions.  
+Testing and Quality Assurance Tools. Frontend unit and component testing will use Vitest, @vitest/ui, @vitest/coverage-v8, jsdom, @testing-library/react, @testing-library/jest-dom, and @testing-library/user-event. End-to-end testing will use Playwright to validate cross-page behavior and role-based workflows. Code quality enforcement will use Biome, Husky, and lint-staged to maintain consistent coding standards and reduce integration defects. For the mobile application, unit and widget testing will use Flutter Test, while BLoC and logic testing use Bloc Test with Mocktail. Integration testing shall be conducted using the Integration Test framework to validate end-to-end mobile workflows. Static analysis and linting will use Dart Analyze with Flutter Lints to ensure code quality and consistency during development.  
+Build, Deployment, and Runtime Tools. Frontend build and development will use Vite (Rolldown-Vite) and @vitejs/plugin-react for fast iteration and optimized production builds. The mobile application will be built and compiled using the Flutter SDK, with platform-specific packaging through Android SDK and Xcode toolchains for Android and iOS deployment. Backend deployment will use Gunicorn with Procfile-based process definition and Python runtime configuration. Background scheduling will use Celery Beat with Redis broker/backend support, enabling periodic maintenance and operational automation. Development and Collaboration Tools. Visual Studio Code (VS Code) will be used as the primary development environment across frontend, backend, AI, and blockchain modules. Git and GitHub will be used for source control, collaboration, and revision traceability throughout Scrum iterations. Insomnia and Postman shall be used for API endpoint testing and integration verification during development and testing phases. 
+
+Population and Locale of the Study 
+The population of the study consists primarily of informal-sector microentrepreneurs, primarily in Dagupan City and nearby areas, particularly sari-sari store owners, market vendors, and similar small-scale operators who represent the intended end users of the MSME Pathways: Smart Loan Support for the Informal Sector. These respondents will be included because they directly experience the financial access barriers identified in Chapter 1 and can provide grounded feedback on usability, clarity of guidance content, and relevance of loan-readiness features. 
+As supporting respondents, selected loan officers and lending personnel will be included to evaluate the operational usefulness of the web dashboard, profiling outputs, and pre-screening support functions. Their participation provides practitioner insight on whether the system outputs are understandable and applicable to preliminary lending workflows within the prototype scope. 
+Respondents will be selected through purposive sampling based on role relevance, willingness to participate, and accessibility during the data-gathering period. This sampling approach will ensure that participants are directly connected to the functional objectives and evaluation criteria of the study. 
+The locale of the study shall be conducted within PHINMA-University of Pangasinan, Dagupan City, and nearby areas. System development, configuration, and controlled technical testing shall be conducted within the university environment, while requirement validation and usability feedback will be collected from selected community areas where target microentrepreneurs regularly operate. 
+
+Data Gathering Techniques 
+Data gathering techniques will be used to obtain requirement-level insights and evaluation feedback from intended users and supporting stakeholders. The study will apply qualitative, quantitative, observational, and technical methods to capture user needs, evaluation ratings, observed interaction, and system behavior. All respondent-facing instruments will be reviewed and approved by the research adviser and, where required, the appropriate university research-ethics body before administration. 
+Interviews. Semi-structured interviews will be conducted with informal-sector microentrepreneurs to collect direct insights on borrowing behavior, lending-related difficulties, information gaps, and preferred support mechanisms. An interview guide will be used to maintain consistency across respondents while allowing follow-up probing questions. Interview results shall be documented and reviewed to identify recurring themes that inform feature prioritization, content simplification, and workflow design. 
+Survey Questionnaires. Structured survey questionnaires will be administered using Google Forms after prototype interaction. The ten-item System Usability Scale (SUS) will be used to measure perceived usability among participating microentrepreneurs. Separate five-point items will measure clarity of financial guidance, perceived usefulness, and user confidence. Lending personnel will evaluate the organization of borrower information, workflow functionality, usability, and operational relevance. Results will be summarized using descriptive statistics to support system-evaluation and refinement decisions. 
+Observation. Non-participant observation will be conducted while respondents perform assigned prototype tasks. Observation notes shall record whether tasks are completed independently, completed with assistance, unsuccessful, or blocked by a system problem, together with recurring interaction difficulties. The findings will be used to identify interface and workflow improvements. 
+System Testing. Functional testing will be conducted using a test-case checklist containing the system module, test procedure, expected result, actual result, and pass or fail status. Existing automated test records may be used as supporting technical evidence, while the functional test matrix will provide the main summary of system functionality in Chapter 3. 
+Data Triangulation. Findings from interviews, survey responses, observation records, and functional tests shall be compared to improve the consistency and credibility of conclusions. Convergent findings will be used as priority inputs for system refinement, while conflicting findings will be reviewed before implementation decisions are finalized. 
+ 
+Sources of Data 
+Data is one of the most important elements in every research study because the validity of findings depends on the quality and relevance of collected information. For this study, data will be gathered from primary and secondary sources to ensure that system design and evaluation are grounded in both real stakeholder context and established references. 
+Primary Sources. The primary sources of data will be the selected respondents who directly interact with, evaluate, or manage the proposed system. 
+Informal Sector Microentrepreneurs. This group will serve as the main respondent population because they are the intended beneficiaries of the MSME Pathways: Smart Loan Support for the Informal Sector. Their responses will provide requirement-level insights and usability feedback on financial guidance, profiling inputs, and loan-readiness support. 
+Loan Officers/Lending Personnel. This group will serve as supporting respondents for evaluating the practicality of profiling outputs, dashboard functions, and pre-screening support workflows used in lending-related tasks. 
+
+
+Table 1 
+Respondents of the Study 
+Respondent Group 
+	No. of Respondents 
+	Informal Sector Microentrepreneurs 
+	40 
+	Loan Officers/Lending Personnel 
+	5 
+	Total 
+	45 
+
+Secondary Sources. Secondary data shall be obtained from published studies, government and institutional reports, and technical references related to microfinance, financial inclusion, AI-assisted decision support, and blockchain-enabled auditability. These will include relevant World Bank resources, financial inclusion publications, and sample lending forms and workflow references. Secondary sources will be used to support requirement justification, contextualize respondent findings, and align the study with existing academic and industry practices. 
+
+Treatment of Data 
+The treatment of data describes how the information gathered from the respondents will be prepared, analyzed, interpreted, and protected after collection. 
+Data Collection. Data will be collected through a respondent profile form, semi-structured interviews, survey questionnaires administered using Google Forms, non-participant observation during prototype use, and functional system testing. The information will cover respondent characteristics, loan-related experiences and challenges, desired system features, evaluation ratings, observed task performance, and system test results. 
+Data Processing. The responses and test records will be checked, organized, coded, and tabulated according to the objectives of the study. Incomplete or duplicate responses will be reviewed, and only valid responses will be included. Anonymous respondent codes will be used in the research records and results. 
+Data Analysis. Frequency and percentage will be used to summarize respondent profiles and other categorical responses. Usability will be analyzed using the standard SUS procedure. For each complete response, one point will be subtracted from each odd-numbered item rating, while each even-numbered item rating will be subtracted from five. The ten adjusted values will be added and multiplied by 2.5 to obtain an individual SUS score from 0 to 100. The study's SUS result will be the mean of the valid individual SUS scores. Following the acceptability interpretation presented by Bangor, Kortum, and Miller (2009), scores below 50 will be described as not acceptable, scores from 50 to below 70 as marginal, and scores of 70 or above as acceptable. A SUS score is not a percentage and will not be combined with the other evaluation ratings. Mean scores will separately summarize the five-point ratings for clarity of financial guidance, perceived usefulness, user confidence, and the lending-personnel evaluation. Means from 4.21 to 5.00 will be interpreted as Strongly Agree; 3.41 to 4.20 as Agree; 2.61 to 3.40 as Neither Agree nor Disagree; 1.81 to 2.60 as Disagree; and 1.00 to 1.80 as Strongly Disagree. Interview responses and open-ended comments will be grouped into recurring themes. Observation results will be summarized according to task outcomes and observed difficulties, while functional test cases will be reported as passed or failed. Findings from the different sources will be compared through data triangulation. 
+Data Storage and Backup. Digital responses collected through Google Forms and approved research files will be stored in access-restricted accounts or folders available only to the authorized researchers. Consent records will be kept separately from coded response data. Backup copies will be maintained in an approved secure location to reduce the risk of accidental data loss. The retention and disposal of research records will follow the approved consent form, university research requirements, and applicable privacy policies. 
+
+Ethical Considerations 
+Ethical consideration guides the development and implementation of the proposed system to ensure responsible use of technology, protection of user data, inclusivity of design, and transparent communication to end users. The study will adhere to ethical principles related to data security and privacy, fairness in system behavior, and responsible use of AI-enabled outputs. 
+Security and Privacy of Data. The study will apply security measures to safeguard sensitive information collected from respondents and system users. Access to data will be restricted through role-based access controls for multi-user functions, while authentication safeguards include password hashing, token-based session control, and two-factor verification for protected accounts. Data transmission and storage will be handled using secure configurations appropriate for the prototype environment. Interview and survey records will be treated confidentially, and reporting will use aggregated or non-identifying summaries to protect respondents' privacy. 
+Fair and Inclusive Design. The system will be designed to support users with diverse needs and varying levels of digital literacy. Interfaces will be structured with simple workflows, clear labels, and readable content to improve accessibility across mobile and web usage contexts. Guidance content is written in practical, understandable language, and AI-supported profiling outputs shall be treated as decision-support indicators rather than deterministic judgments. The study will also emphasize continuous review of prompts, rules, and outputs to reduce bias and improve fairness for underserved users. 
+Transparency of Information. Transparency shall be maintained by providing clear and accurate information about the system's purpose, scope, and limitations. Users will be informed that Smart Loan Support outputs are advisory and educational in nature, and do not guarantee loan approval, bank endorsement, or actual disbursement. Limitations of AI-generated recommendations and prototype-level functionality are communicated to manage expectations and support responsible user decision-making. 
+ 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+CHAPTER 3
+RESULTS AND DISCUSSION
+
+This chapter presents and discusses the results of the study according to its three objectives. It covers the respondent profile, financial behaviors, loan-related challenges, and technological needs; the system features and functionalities developed from the identified requirements; and the evaluation of the developed system in terms of functionality, usability, clarity of financial guidance, perceived usefulness, and user confidence. Quantitative results will be summarized using frequency, percentage, the System Usability Scale (SUS), and mean ratings, as applicable. Interview responses and open-ended comments will be analyzed according to recurring themes, while observation and functional-testing records will be summarized according to their recorded outcomes.
+
+DRAFT STATUS: This chapter has been prepared as a manuscript structure. Every item marked STILL NEEDS DATA must be replaced only after the corresponding instrument has been administered and the actual results have been checked, tallied, and analyzed. No placeholder in this chapter is a research finding.
+
+Profile, Financial Behaviors, Challenges, and Technological Needs
+This section addresses the first objective of the study. Respondent-profile data will be obtained from Appendix C, while financial behaviors, challenges, and technological needs will be identified from the microentrepreneur interviews in Appendix D. Only valid responses will be included in the analysis, and interview evidence will be identified using anonymous respondent codes.
+
+Profile and Distribution of Respondents
+Table 2 will present the profile variables collected from the participating microentrepreneurs and lending personnel. For clarity, the table is divided into three panels covering the microentrepreneurs' demographic and technology profile, their business and borrowing profile, and the lending-personnel profile. Categories, frequencies, and percentages will be entered only after the completed respondent profile forms have been validated. Each percentage will use the valid total for the applicable respondent group rather than combining the two groups.
+
+Table 2
+Profile and Distribution of Respondents
+
+Panel A. Microentrepreneur Demographic and Technology Profile
+Profile Variable	Category or Response	Frequency	Percentage
+Age group	STILL NEEDS DATA	STILL NEEDS DATA	STILL NEEDS DATA
+Gender	STILL NEEDS DATA	STILL NEEDS DATA	STILL NEEDS DATA
+Highest educational level completed	STILL NEEDS DATA	STILL NEEDS DATA	STILL NEEDS DATA
+Study area	STILL NEEDS DATA	STILL NEEDS DATA	STILL NEEDS DATA
+Primary device	STILL NEEDS DATA	STILL NEEDS DATA	STILL NEEDS DATA
+Internet access	STILL NEEDS DATA	STILL NEEDS DATA	STILL NEEDS DATA
+
+Panel B. Microentrepreneur Business and Borrowing Profile
+Profile Variable	Category or Response	Frequency	Percentage
+Business stage	STILL NEEDS DATA	STILL NEEDS DATA	STILL NEEDS DATA
+Type of business	STILL NEEDS DATA	STILL NEEDS DATA	STILL NEEDS DATA
+Registration status	STILL NEEDS DATA	STILL NEEDS DATA	STILL NEEDS DATA
+Previous borrowing experience	STILL NEEDS DATA	STILL NEEDS DATA	STILL NEEDS DATA
+Main financing purpose	STILL NEEDS DATA	STILL NEEDS DATA	STILL NEEDS DATA
+
+Panel C. Lending-Personnel Profile
+Profile Variable	Category or Response	Frequency	Percentage
+Type of organization	STILL NEEDS DATA	STILL NEEDS DATA	STILL NEEDS DATA
+Lending-related experience	STILL NEEDS DATA	STILL NEEDS DATA	STILL NEEDS DATA
+Main responsibility	STILL NEEDS DATA	STILL NEEDS DATA	STILL NEEDS DATA
+
+Note. After data collection, each profile variable will be expanded into one row for every category represented in the valid responses. Microentrepreneur percentages will be calculated using the valid microentrepreneur responses for the applicable item, while lending-personnel percentages will use the valid lending-personnel responses. The two respondent groups will not be combined when calculating these percentages.
+
+Interpretation of Table 2: STILL NEEDS DATA. This paragraph will identify only the most relevant respondent characteristics and explain how they relate to the design and evaluation of the system.
+
+Financial Behaviors and Loan-Related Challenges
+This section presents the financial behaviors and loan-related challenges identified from the semi-structured interviews with the participating microentrepreneurs. The findings are organized into recurring themes and supported by anonymous respondent codes. Table 3 presents the interview questions, identified themes or findings, supporting evidence, and interpretations.
+
+Table 3
+Financial Behaviors and Loan-Related Challenges
+Interview Question	Identified Theme or Finding	Frequency or Supporting Codes	Interpretation
+Q1. Maaari mo bang ilarawan ang iyong karanasan sa pag-aapply o pagkuha ng loan, pormal man o impormal?	STILL NEEDS DATA	STILL NEEDS DATA	STILL NEEDS DATA
+Q2. Ano ang pinakamalalaking hamon o hadlang sa pagkuha ng pormal na loan?	STILL NEEDS DATA	STILL NEEDS DATA	STILL NEEDS DATA
+Q3. Anong impormasyon tungkol sa loan ang karaniwang nakalilito o hindi malinaw para sa iyo?	STILL NEEDS DATA	STILL NEEDS DATA	STILL NEEDS DATA
+Q4. Paano mo sinusuri kung ang isang loan ay angkop, abot-kaya, o mapanganib?	STILL NEEDS DATA	STILL NEEDS DATA	STILL NEEDS DATA
+Q5. Anong gabay ang pinakakailangan mo bago mag-apply ng loan?	STILL NEEDS DATA	STILL NEEDS DATA	STILL NEEDS DATA
+Follow-up question(s), if applicable	STILL NEEDS DATA	STILL NEEDS DATA	STILL NEEDS DATA
+
+Interpretation of Table 3: STILL NEEDS DATA. The completed discussion will explain the recurring behaviors and challenges supported by the interview evidence and their relevance to the proposed system.
+
+Technological Needs and Preferred Support
+This section presents the technological support, preferred features, safeguards, concerns, and suggested improvements identified from the interviews. Table 4 connects the applicable interview questions to the resulting themes and their implications for the proposed system.
+
+Table 4
+Technological Needs Identified from the Interviews
+Interview Question	Identified Need or Theme	Frequency or Supporting Codes	Implication for the System
+Q6. Ano ang iyong pananaw sa paggamit ng chatbot o step-by-step guide para sa loan information?	STILL NEEDS DATA	STILL NEEDS DATA	STILL NEEDS DATA
+Q7. Anong business o financial information ang komportable at hindi komportable kang ibigay sa isang loan-support system?	STILL NEEDS DATA	STILL NEEDS DATA	STILL NEEDS DATA
+Q8. Anong features ang dapat mayroon ang loan-support system?	STILL NEEDS DATA	STILL NEEDS DATA	STILL NEEDS DATA
+Q9. Ano ang mga alalahanin mo sa paggamit ng ganitong sistema?	STILL NEEDS DATA	STILL NEEDS DATA	STILL NEEDS DATA
+Q10. Ano pa ang maimumungkahi mo upang maging mas kapaki-pakinabang ang sistema?	STILL NEEDS DATA	STILL NEEDS DATA	STILL NEEDS DATA
+Follow-up question(s), if applicable	STILL NEEDS DATA	STILL NEEDS DATA	STILL NEEDS DATA
+
+Interpretation of Table 4: STILL NEEDS DATA. The completed discussion will identify the needs supported by the interviews and explain how they influenced system requirements or future refinements.
+
+Developed System Features and Functionalities
+This section addresses the second objective of the study. The final discussion will connect evidence from the needs analysis and the approved scope of the study to the features implemented in the tested prototype. A feature will be identified as implemented only after it has been verified in the final test build and supported by appropriate system documentation or test evidence.
+
+Table 5
+Requirements Traceability and Implemented Features
+Identified Need or Requirement	Evidence Source	Implemented Feature	Implementation Status	Validation Evidence
+STILL NEEDS DATA	STILL NEEDS DATA	STILL NEEDS VERIFICATION	STILL NEEDS VERIFICATION	STILL NEEDS DATA
+STILL NEEDS DATA	STILL NEEDS DATA	STILL NEEDS VERIFICATION	STILL NEEDS VERIFICATION	STILL NEEDS DATA
+STILL NEEDS DATA	STILL NEEDS DATA	STILL NEEDS VERIFICATION	STILL NEEDS VERIFICATION	STILL NEEDS DATA
+STILL NEEDS DATA	STILL NEEDS DATA	STILL NEEDS VERIFICATION	STILL NEEDS VERIFICATION	STILL NEEDS DATA
+STILL NEEDS DATA	STILL NEEDS DATA	STILL NEEDS VERIFICATION	STILL NEEDS VERIFICATION	STILL NEEDS DATA
+
+Discussion of Table 5: STILL NEEDS DATA AND SYSTEM VERIFICATION. The completed discussion will describe the verified features, explain the requirement addressed by each feature, and cite the related screenshot, functional test, observation, or evaluation evidence. Figures showing the final customer, lending-personnel, and administrative interfaces will be inserted and numbered after the tested prototype screens have been finalized.
+
+Evaluation of the Developed System
+This section presents the evaluation of the developed system in terms of functionality, usability, clarity of financial guidance, perceived usefulness, and user confidence. Table 6 presents the functional-testing results, Table 7 presents the microentrepreneur evaluation results, Table 8 presents the lending-personnel evaluation results, and Table 9 presents the observation results and user feedback.
+
+Functionality Testing
+This subsection presents the results of the functional testing performed on the final approved test build. The testing compared the expected and actual behavior of the system functions. Table 6 summarizes the number of passed, failed, blocked, and unexecuted test cases for each system module, while the detailed test records are provided in Appendix H.
+
+Table 6
+Summary of Functional Test Results
+System Module	Number of Test Cases	Passed	Failed	Blocked or Not Run	Overall Result
+Account access and security	STILL NEEDS FINAL TEST-PLAN CONFIRMATION	STILL NEEDS DATA	STILL NEEDS DATA	STILL NEEDS DATA	STILL NEEDS DATA
+Profile and readiness	STILL NEEDS FINAL TEST-PLAN CONFIRMATION	STILL NEEDS DATA	STILL NEEDS DATA	STILL NEEDS DATA	STILL NEEDS DATA
+AI financial guidance	STILL NEEDS FINAL TEST-PLAN CONFIRMATION	STILL NEEDS DATA	STILL NEEDS DATA	STILL NEEDS DATA	STILL NEEDS DATA
+Documents and loan workflow	STILL NEEDS FINAL TEST-PLAN CONFIRMATION	STILL NEEDS DATA	STILL NEEDS DATA	STILL NEEDS DATA	STILL NEEDS DATA
+Notifications and dashboards	STILL NEEDS FINAL TEST-PLAN CONFIRMATION	STILL NEEDS DATA	STILL NEEDS DATA	STILL NEEDS DATA	STILL NEEDS DATA
+Audit and supported blockchain functions	STILL NEEDS FINAL TEST-PLAN CONFIRMATION	STILL NEEDS DATA	STILL NEEDS DATA	STILL NEEDS DATA	STILL NEEDS DATA
+Total	STILL NEEDS FINAL TEST-PLAN CONFIRMATION	STILL NEEDS DATA	STILL NEEDS DATA	STILL NEEDS DATA	STILL NEEDS DATA
+
+Interpretation of Table 6: STILL NEEDS DATA. The completed discussion will summarize the tested functions, disclose failed or blocked cases, and state the correction made or recommendation arising from each unresolved issue.
+
+Microentrepreneur Evaluation
+After completing the assigned prototype tasks, participating microentrepreneurs will answer Appendix E through Google Forms. Items 1 to 10 will be scored using the standard SUS procedure described in Chapter 2. Items 11 to 19 will be analyzed separately as five-point ratings for clarity of financial guidance, perceived usefulness, and user confidence. Open-ended responses to Items 20 to 22 will be grouped into recurring feedback themes. SUS will not be reported as a percentage or combined with the supplemental ratings.
+
+Table 7
+Microentrepreneur SUS and Supplemental Evaluation
+Evaluation Measure	Source Items	Valid Responses	Result	Interpretation
+System usability	SUS Items 1-10	STILL NEEDS DATA	STILL NEEDS DATA	STILL NEEDS DATA
+Clarity of financial guidance	Items 11-13	STILL NEEDS DATA	STILL NEEDS DATA	STILL NEEDS DATA
+Perceived usefulness	Items 14-16	STILL NEEDS DATA	STILL NEEDS DATA	STILL NEEDS DATA
+User confidence	Items 17-19	STILL NEEDS DATA	STILL NEEDS DATA	STILL NEEDS DATA
+Most helpful feature	Item 20	STILL NEEDS DATA	STILL NEEDS DATA	STILL NEEDS DATA
+Difficult or unclear part	Item 21	STILL NEEDS DATA	STILL NEEDS DATA	STILL NEEDS DATA
+Recommended improvement	Item 22	STILL NEEDS DATA	STILL NEEDS DATA	STILL NEEDS DATA
+
+Interpretation of Table 7: STILL NEEDS DATA. The completed discussion will report the mean SUS score and its adopted acceptability interpretation, followed by the separate means and interpretations for clarity, usefulness, and confidence. It will also summarize relevant open-ended feedback without identifying respondents.
+
+Lending-Personnel Evaluation
+After completing the assigned officer-facing tasks, lending personnel will answer Appendix F through Google Forms. The five-point ratings will be summarized by evaluation dimension, while the open-ended responses will be analyzed as supporting stakeholder feedback.
+
+Table 8
+Lending-Personnel Evaluation of the System
+Evaluation Dimension	Source Items	Valid Responses	Mean Rating	Verbal Interpretation
+Information and decision support	Items 1-3	STILL NEEDS DATA	STILL NEEDS DATA	STILL NEEDS DATA
+Workflow functionality	Items 4-6	STILL NEEDS DATA	STILL NEEDS DATA	STILL NEEDS DATA
+Usability and operational relevance	Items 7-9	STILL NEEDS DATA	STILL NEEDS DATA	STILL NEEDS DATA
+Overall evaluation	Items 1-9	STILL NEEDS DATA	STILL NEEDS DATA	STILL NEEDS DATA
+Open-ended stakeholder feedback	Items 10-13	STILL NEEDS DATA	STILL NEEDS DATA	STILL NEEDS DATA
+
+Interpretation of Table 8: STILL NEEDS DATA. The completed discussion will present the lending-personnel ratings and explain their operational feedback, including concerns or recommendations that may not agree with the quantitative ratings.
+
+Observation and User Feedback
+During prototype use, the researchers will use Appendix G to record whether each assigned task was completed independently, completed with assistance, unsuccessful, blocked by the system, or not applicable. Observation will be completed before the participant answers the applicable post-use questionnaire or evaluation form so that task behavior is recorded independently of the participant's later ratings.
+
+Table 9
+Observation Results and User Feedback
+Participant Group	Assigned Tasks	Completed Independently	Completed with Assistance	Unsuccessful	Blocked or Not Applicable	Recurring Difficulty or Feedback
+Microentrepreneurs	Tasks in Appendix G	STILL NEEDS DATA	STILL NEEDS DATA	STILL NEEDS DATA	STILL NEEDS DATA	STILL NEEDS DATA
+Lending personnel	Tasks in Appendix G	STILL NEEDS DATA	STILL NEEDS DATA	STILL NEEDS DATA	STILL NEEDS DATA	STILL NEEDS DATA
+Overall observation	Applicable tasks	STILL NEEDS DATA	STILL NEEDS DATA	STILL NEEDS DATA	STILL NEEDS DATA	STILL NEEDS DATA
+
+Interpretation of Table 9: STILL NEEDS DATA. The completed discussion will describe actual task performance, recurring points of difficulty, assistance required, system-caused blocks, and relevant participant comments.
+
+Summary of Findings
+The summary will answer the three research questions using only the completed results.
+1. Respondent profile, financial behaviors, challenges, and technological needs: STILL NEEDS DATA FROM TABLES 2 TO 4.
+2. Developed system features and functionalities: STILL NEEDS VERIFIED REQUIREMENTS, IMPLEMENTATION DETAILS, AND EVIDENCE FROM TABLE 5.
+3. Functionality, usability, clarity of financial guidance, perceived usefulness, and user confidence: STILL NEEDS DATA FROM TABLES 6 TO 9.
+
+Conclusions
+STILL NEEDS DATA. Conclusions cannot be finalized until all findings have been analyzed. The final conclusions will directly answer the objectives, remain limited to the tested prototype and approved respondents, and avoid claiming that the system guarantees loan approval or represents a production lending decision.
+
+Recommendations
+STILL NEEDS DATA. Final recommendations will be based on the verified limitations, failed or blocked test cases, recurring interview themes, observed task difficulties, questionnaire results, and stakeholder comments. Recommendations for future researchers will be distinguished from corrections required in the present prototype.
+
+REFERENCES
+REFERENCES 
+ 
+A. Published Materials 
+Bangor, A., Kortum, P. T., & Miller, J. T. (2009). Determining what individual SUS scores mean: Adding an adjective rating scale. Journal of Usability Studies, 4(3), 114–123. https://uxpajournal.org/wp-content/uploads/sites/7/pdf/JUS_Bangor_May2009.pdf
+Brooke, J. (1996). SUS: A “quick and dirty” usability scale. In P. W. Jordan, B. Thomas, B. A. Weerdmeester, & I. L. McClelland (Eds.), Usability evaluation in industry (pp. 189–194). Taylor & Francis.
+Koskelainen, T., Kalmi, P., Scornavacca, E., & Vartiainen, 
+T. (2023). Financial literacy in the digital age—A         research agenda. Journal of Consumer Affairs, 57(1),         507–528. https://doi.org/10.1111/joca.12510 
+Wang, S., Xie, J., & Zhang, X. (2021). Blockchain 
+        technology for financial services: Applications,          
+     challenges, and future directions. Journal of Banking 
+& Finance, 129, 106154. 
+https://doi.org/10.1016/j.jbankfin16/j.jbankfin.2021.1
+06154 
+ 
+B. Websites         
+Institute for Small-Scale Industries. (2024, September 
+26). Empowering Philippine MSMEs through digital                         transformation. 
+https://beta.entrepreneurship.org.ph/2024/09/26/empow 
+ring-philippine-mses-through-digital-transformation/ 
+Bangko Sentral ng Pilipinas. (2022). Financial inclusion 
+dashboard – 4Q 2022 [Financial Inclusion Survey         
+data]. Bangko Sentral ng Pilipinas. 
+
+
+https://www.bsp.gov.ph/Media_and_Research/Financial%20        Inclusion%20Dashboard/2022/FIDashboard_4Q2022.pdf  
+Meltwater, & We Are Social. (2025). Digital 2026: 
+Philippines report. DataReportal. 
+https://datareportal.com/reports/digital-2026-
+Philippines
+World Bank. (2025). Small and medium enterprises (SMEs)           
+finance. World Bank. 
+https://www.worldbank.org/en/topic/smefinance 
+World Bank. (2022). The Global Findex Database 2021.                 
+Financial inclusion, digital payments, and resilience 
+in the age of COVID-19. World Bank. 
+https://www.worldbank.org/en/publication/globalfindex  
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ 
+APPENDICES
+
+APPENDIX A
+PARTICIPATION REQUEST LETTER – MICROENTREPRENEURS
+Justin Mc Neal G. Caronongan
+College of Information Technology Education - Bachelor of Science in Information Technology
+carononganjustinmcneal24@gmail.com
+09196331559
+Date: [Date of Distribution]
+Subject: Request for Participation in Research Interview and Prototype Evaluation
+Dear Prospective Participant:
+Good day.
+We invite you to participate in the study titled "MSME Pathways: A Smart Loan Support for Underserved Starting Entrepreneurs in the Informal Sector." You are being invited because your experience as an adult informal-sector microentrepreneur can help the researchers understand borrowing challenges, needed financial guidance, and the usability of the proposed system.
+If you agree, you will complete a short respondent profile, participate in a researcher-led interview, perform assigned prototype tasks using a test account and synthetic information, and answer a post-use questionnaire containing the System Usability Scale and additional feedback questions. The complete session is expected to last approximately 60 to 120 minutes.
+Participation is voluntary. You may skip an interview question or stop participating without penalty. Participation will not affect any real loan application, approval, service, employment, or benefit. You will not be asked to provide passwords, OTPs, account numbers, private keys, exact addresses, or real financial documents. Your responses will be recorded using an anonymous participant code and handled according to the approved consent and research-ethics procedures.
+If you are interested, the researcher will provide the informed consent form and explain the study before any activity begins. Please contact us through the details above if you have questions.
+Thank you very much for your support.
+Respectfully yours,
+Justin Mc Neal G. Caronongan
+Project Manager
+College of Information Technology Education - Bachelor of Science in Information Technology
+PHINMA - University of Pangasinan
+
+
+
+
+
+APPENDIX B
+PARTICIPATION REQUEST LETTER – LENDING PERSONNEL
+Date: [Date of Distribution]
+Subject: Request for Participation in Lending-Personnel Prototype Evaluation
+Dear Prospective Participant:
+Good day.
+We invite you to participate as a supporting respondent in the study titled "MSME Pathways: A Smart Loan Support for Underserved Starting Entrepreneurs in the Informal Sector." Your lending-related experience can help evaluate the organization of borrower information, preliminary decision-support outputs, workflow functionality, usability, and operational relevance of the officer-facing prototype.
+If you agree, you will complete the applicable respondent-profile questions, perform assigned officer tasks using a test account and synthetic borrower records, answer a short evaluation questionnaire, and provide recommendations. The session is expected to last approximately 30 to 60 minutes.
+Participation is voluntary and will not affect your employment or professional standing. The prototype does not replace institutional credit assessment and will not be used to make a real lending decision. Your responses will use an anonymous participant code and will be handled according to the approved consent and research-ethics procedures.
+If you are interested, the researcher will provide the informed consent form and explain the study before any activity begins. Please contact the principal researcher through the details listed in the preceding letter if you have questions.
+Thank you very much for your support.
+Respectfully yours,
+Justin Mc Neal G. Caronongan
+Project Manager
+College of Information Technology Education - Bachelor of Science in Information Technology
+PHINMA - University of Pangasinan
+
+
+
+
+
+APPENDIX C
+RESPONDENT PROFILE FORM
+
+Purpose: To collect respondent characteristics relevant to the study.
+Administration: Google Forms after written consent and before the interview or prototype testing.
+
+Respondent Code: ____________________
+Participant Group: Microentrepreneur / Lending Personnel
+
+Data Privacy Notice
+In accordance with Republic Act No. 10173, or the Data Privacy Act of 2012, this form collects limited respondent-profile information for the MSME Pathways research study. The responses will be used to describe the study respondents and support analysis of their financial behaviors, borrowing experiences, and technological needs.
+
+Do not provide your name, exact address, account details, passwords, OTPs, exact income or debt amounts, desired loan amount, or real financial documents. Responses will be identified only through an assigned respondent code such as ME-01 or LO-01.
+
+Only the authorized research team and reviewers permitted under the approved research protocol may access the collected information. Results will be presented only in aggregated or de-identified form. Coded or anonymized research data will be retained for up to three (3) years for academic verification and then securely deleted, subject to final adviser and UREC approval.
+
+Participation is voluntary. You may select “Prefer not to answer” where available or stop answering without penalty. You may request removal of your coded responses within seven (7) calendar days after your research session by contacting the principal researcher through the details provided in the Adult Informed-Consent Form.
+
+By proceeding, you confirm that you are at least 18 years old, have signed the Adult Informed-Consent Form, and voluntarily agree to complete this Respondent Profile Form.
+
+Required Confirmation
+(  ) I have read the Data Privacy Notice and voluntarily agree to proceed.
+
+Instructions
+Enter the assigned respondent code and select only the applicable participant-group section. Do not enable automatic collection of names or email addresses in Google Forms. Do not require Google sign-in or include file-upload questions.
+
+For Microentrepreneurs Only
+
+1. Age Group
+(  ) 18–24
+(  ) 25–34
+(  ) 35–44
+(  ) 45–54
+(  ) 55 or older
+(  ) Prefer not to answer
+
+2. Gender
+(  ) Woman
+(  ) Man
+(  ) Another identity
+(  ) Prefer not to answer
+
+3. Highest Educational Level Completed
+(  ) Elementary
+(  ) Junior high school
+(  ) Senior high school
+(  ) Technical-vocational
+(  ) College
+(  ) Postgraduate
+(  ) Prefer not to answer
+
+4. Study Area
+(  ) Dagupan City
+(  ) Nearby approved area
+
+5. Primary Device
+(  ) Android phone
+(  ) iPhone
+(  ) Computer
+(  ) Shared device
+(  ) Other: ____________________
+
+6. Internet Access
+(  ) Reliable
+(  ) Sometimes limited
+(  ) Limited or irregular
+(  ) No regular access
+
+7. Business Stage
+(  ) Preparing to start
+(  ) Less than 1 year
+(  ) 1–3 years
+(  ) More than 3 years
+
+8. Type of Business
+(  ) Sari-sari store
+(  ) Market or street vending
+(  ) Home-based food
+(  ) Other home-based business
+(  ) Service or repair
+(  ) Transport-related
+(  ) Other: ____________________
+
+9. Registration Status
+(  ) Not registered
+(  ) In progress or partly registered
+(  ) Registered
+(  ) Unsure
+(  ) Prefer not to answer
+
+10. Previous Borrowing Experience
+(  ) Formal only
+(  ) Informal only
+(  ) Both formal and informal
+(  ) Applied but not approved
+(  ) None
+(  ) Prefer not to answer
+
+11. Main Financing Purpose
+(  ) Starting capital
+(  ) Inventory
+(  ) Equipment
+(  ) Working capital
+(  ) Expansion
+(  ) Emergency business expense
+(  ) Other: ____________________
+
+For Lending Personnel Only
+
+12. Type of Organization
+(  ) Bank
+(  ) Cooperative
+(  ) Microfinance institution
+(  ) Lending company
+(  ) Government or development program
+(  ) Other: ____________________
+
+13. Lending-Related Experience
+(  ) Less than 1 year
+(  ) 1–3 years
+(  ) 4–6 years
+(  ) More than 6 years
+
+14. Main Responsibility
+(  ) Client assistance
+(  ) Document verification
+(  ) Borrower assessment
+(  ) Approval support
+(  ) Collection or servicing
+(  ) Management
+(  ) Other: ____________________
+
+
+
+
+
+APPENDIX D
+MICROENTREPRENEUR INTERVIEW GUIDE
+
+Purpose: To collect borrowing experiences, challenges, guidance needs, desired system features, and concerns from participating microentrepreneurs.
+Administration: Researcher-led interview conducted before prototype evaluation.
+
+Respondent Code: ____________________
+Date: ____________________
+Language Used: Filipino / English / Other approved language: ____________________
+
+Instructions to the Researcher
+Obtain written informed consent before beginning the interview. Ask each question without suggesting an answer. Document the participant's responses using written notes only. Do not make an audio recording. The participant may skip any question or stop the interview without penalty.
+
+Neutral Follow-Up Prompts
+Use these prompts only when clarification or additional detail is needed. Do not suggest an answer.
+
+- Maaari mo bang ipaliwanag pa? / Could you explain further?
+- Maaari ka bang magbigay ng halimbawa? / Could you provide an example?
+- Bakit mo nasabi iyon? / What made you say that?
+- May iba ka pa bang karanasan tungkol dito? / Do you have another related experience?
+
+Interview Questions
+
+1. Maaari mo bang ilarawan ang iyong karanasan sa pag-aapply o pagkuha ng loan, pormal man o impormal?
+Can you describe your experience with applying for or obtaining a formal or informal loan?
+Response Notes: ______________________________________________________________
+______________________________________________________________________________
+
+2. Ano ang pinakamalalaking hamon o hadlang sa pagkuha ng pormal na loan?
+What are the biggest challenges or barriers to obtaining a formal loan?
+Response Notes: ______________________________________________________________
+______________________________________________________________________________
+
+3. Anong impormasyon tungkol sa loan ang karaniwang nakalilito o hindi malinaw para sa iyo?
+What loan information is usually confusing or unclear to you?
+Response Notes: ______________________________________________________________
+______________________________________________________________________________
+
+4. Paano mo sinusuri kung ang isang loan ay angkop, abot-kaya, o mapanganib?
+How do you determine whether a loan is suitable, affordable, or risky?
+Response Notes: ______________________________________________________________
+______________________________________________________________________________
+
+5. Anong gabay ang pinakakailangan mo bago mag-apply ng loan?
+What guidance do you need most before applying for a loan?
+Response Notes: ______________________________________________________________
+______________________________________________________________________________
+
+6. Ano ang iyong pananaw sa paggamit ng chatbot o step-by-step guide para sa loan information?
+What are your thoughts about using a chatbot or step-by-step guide for loan information?
+Response Notes: ______________________________________________________________
+______________________________________________________________________________
+
+7. Anong business o financial information ang komportable at hindi komportable kang ibigay sa isang loan-support system?
+What business or financial information would you be comfortable or uncomfortable providing to a loan-support system?
+Response Notes: ______________________________________________________________
+______________________________________________________________________________
+
+8. Anong features ang dapat mayroon ang loan-support system?
+What features should a loan-support system include?
+Response Notes: ______________________________________________________________
+______________________________________________________________________________
+
+9. Ano ang mga alalahanin mo sa paggamit ng ganitong sistema?
+What concerns do you have about using this kind of system?
+Response Notes: ______________________________________________________________
+______________________________________________________________________________
+
+10. Ano pa ang maimumungkahi mo upang maging mas kapaki-pakinabang ang sistema?
+What else would you recommend to make the system more useful?
+Response Notes: ______________________________________________________________
+______________________________________________________________________________
+
+Researcher Summary
+
+Recurring Idea or Initial Theme: ______________________________________________
+Related Question Number: ____________________
+Short Supporting Note: _______________________________________________________
+
+Recurring Idea or Initial Theme: ______________________________________________
+Related Question Number: ____________________
+Short Supporting Note: _______________________________________________________
+
+Recurring Idea or Initial Theme: ______________________________________________
+Related Question Number: ____________________
+Short Supporting Note: _______________________________________________________
+
+
+
+
+
+APPENDIX E
+MICROENTREPRENEUR POST-USE QUESTIONNAIRE WITH SYSTEM USABILITY SCALE (SUS)
+
+Purpose: To measure perceived usability, clarity of financial guidance, perceived usefulness, and user confidence after prototype use.
+Administration: Google Forms after the participant completes the assigned prototype tasks.
+
+Respondent Code: ____________________
+Prototype Version: ____________________
+Date: ____________________
+
+Data Privacy Notice
+In accordance with Republic Act No. 10173, or the Data Privacy Act of 2012, this form collects coded evaluation responses for the MSME Pathways research study. Do not provide your name, email address, exact address, account information, passwords, OTPs, exact income or debt amounts, or real financial documents. Only the authorized research team and reviewers permitted under the approved protocol may access the responses. Results will be reported only in aggregated or de-identified form. Coded or anonymized research data will be retained for up to three (3) years for academic verification and then securely deleted, subject to final adviser and UREC approval.
+
+Participation remains voluntary. You may stop answering without penalty. You may request removal of your coded responses within seven (7) calendar days after your research session by contacting the principal researcher through the Adult Informed-Consent Form.
+
+Required Confirmation
+(  ) I have read the Data Privacy Notice, completed the assigned prototype tasks, and voluntarily agree to answer this post-use questionnaire.
+
+Rating Scale
+Rate every statement using one response:
+
+5 — Strongly Agree / Lubos na Sumasang-ayon
+4 — Agree / Sumasang-ayon
+3 — Neither Agree nor Disagree / Hindi Tiyak o Neutral
+2 — Disagree / Hindi Sumasang-ayon
+1 — Strongly Disagree / Lubos na Hindi Sumasang-ayon
+
+A. System Usability Scale (SUS)
+The original English SUS statement is the scored item. The Filipino line is a support translation and must be reviewed and approved by the adviser and UREC before administration. Keep all ten items in this order and preserve their positive or negative wording. All ten items are required; do not provide an N/A option.
+
+1. I think that I would like to use this system frequently.
+Sa palagay ko, gugustuhin kong gamitin nang madalas ang sistemang ito.
+
+2. I found the system unnecessarily complex.
+Para sa akin, mas komplikado kaysa kinakailangan ang sistemang ito.
+
+3. I thought the system was easy to use.
+Sa palagay ko, madaling gamitin ang sistemang ito.
+
+4. I think that I would need the support of a technical person to be able to use this system.
+Sa palagay ko, kakailanganin ko ang tulong ng isang taong may kaalamang teknikal upang magamit ang sistemang ito.
+
+5. I found the various functions in this system were well integrated.
+Para sa akin, maayos na magkakaugnay ang iba't ibang function ng sistemang ito.
+
+6. I thought there was too much inconsistency in this system.
+Sa palagay ko, napakaraming hindi pagkakapare-pareho sa sistemang ito.
+
+7. I would imagine that most people would learn to use this system very quickly.
+Sa palagay ko, mabilis matututuhang gamitin ng karamihan sa mga tao ang sistemang ito.
+
+8. I found the system very cumbersome to use.
+Para sa akin, napakahirap at mabigat gamitin ang sistemang ito.
+
+9. I felt very confident using the system.
+Nakadama ako ng malaking kumpiyansa habang ginagamit ang sistemang ito.
+
+10. I needed to learn a lot of things before I could get going with this system.
+Kinailangan kong matutuhan ang maraming bagay bago ko masimulang gamitin nang maayos ang sistemang ito.
+
+B. Clarity of Financial Guidance
+
+11. The system explained loan information using understandable language.
+Ipinaliwanag ng sistema ang impormasyon tungkol sa loan gamit ang madaling maunawaang wika.
+
+12. The chatbot's answers were relevant and understandable.
+Ang mga sagot ng chatbot ay may kaugnayan sa tanong at madaling maunawaan.
+
+13. The readiness result and its limitations were clearly explained.
+Malinaw na ipinaliwanag ang readiness result at ang mga limitasyon nito.
+
+C. Perceived Usefulness
+
+14. The system helped me identify information or requirements to prepare before applying.
+Nakatulong ang sistema na matukoy ko ang impormasyon o mga requirement na dapat ihanda bago mag-apply.
+
+15. The education and chatbot features were useful for understanding loans.
+Nakatulong ang education at chatbot features upang mas maunawaan ko ang tungkol sa loans.
+
+16. The system would be useful when preparing for a formal loan application.
+Magiging kapaki-pakinabang ang sistema sa paghahanda para sa pormal na loan application.
+
+D. User Confidence
+
+17. I understood that the system provides guidance and does not guarantee loan approval.
+Nauunawaan ko na nagbibigay lamang ng gabay ang sistema at hindi nito ginagarantiya ang loan approval.
+
+18. I felt confident interpreting the financial guidance and readiness information presented by the system.
+Nakadama ako ng kumpiyansa sa pag-unawa sa financial guidance at readiness information na ipinakita ng sistema.
+
+19. After using the system, I felt more confident about preparing for a responsible loan application.
+Matapos gamitin ang sistema, mas naging kumpiyansa ako sa paghahanda para sa isang responsableng loan application.
+
+E. Open Feedback
+
+20. Which feature was most helpful, and why?
+Aling feature ang pinakanakatulong, at bakit?
+Response: ___________________________________________________________________
+
+21. Which part was difficult or unclear?
+Aling bahagi ang mahirap gamitin o hindi malinaw?
+Response: ___________________________________________________________________
+
+22. What is the most important improvement you recommend?
+Ano ang pinakamahalagang improvement na maimumungkahi mo?
+Response: ___________________________________________________________________
+
+Researcher and Google Forms Setup Notes
+
+- Turn off automatic collection of names and email addresses.
+- Do not require Google sign-in and do not include file-upload questions.
+- Make SUS Items 1–10 required and allow exactly one rating per item.
+- Do not calculate ordinary item means as the main SUS result. Apply the standard SUS scoring procedure described in Chapter 2.
+- Analyze Items 11–19 separately from the SUS score using the five-point mean interpretation stated in Chapter 2.
+- Source of the original SUS items: Brooke (1996).
+
+
+
+
+
+APPENDIX F
+LENDING-PERSONNEL EVALUATION FORM
+
+Purpose: To evaluate information quality, workflow functionality, usability, and operational relevance of the officer-facing prototype.
+Administration: Google Forms after each of the five adult lending-personnel respondents completes the assigned officer workflow.
+
+Respondent Code: LO-____
+Prototype Version: Final Evaluation Build 1 — Release Date: ____________________
+Evaluation Date: ____________________
+
+Data Privacy Notice
+In accordance with Republic Act No. 10173, or the Data Privacy Act of 2012, this form collects coded professional evaluation responses for the MSME Pathways research study. Do not provide your name, email address, employer name, client information, account details, passwords, OTPs, or real borrower documents. Only the authorized research team and reviewers permitted under the approved protocol may access the responses. Results will be reported only in aggregated or de-identified form. Coded or anonymized research data will be retained for up to three (3) years for academic verification and then securely deleted, subject to final adviser and UREC approval.
+
+Participation remains voluntary. You may stop answering without penalty or effect on your employment or professional standing. You may request removal of your coded responses within seven (7) calendar days after your research session by contacting the principal researcher through the Adult Informed-Consent Form.
+
+Required Confirmation
+(  ) I have read the Data Privacy Notice, completed the assigned officer-facing prototype tasks, and voluntarily agree to answer this evaluation form.
+
+Rating Scale
+Rate each applicable statement using one response:
+
+5 — Strongly Agree
+4 — Agree
+3 — Neither Agree nor Disagree
+2 — Disagree
+1 — Strongly Disagree
+N/A — Not tested or not included in the assigned workflow
+
+Use N/A only when the relevant feature or task was not included in the respondent's assigned workflow.
+
+A. Information and Decision Support
+
+1. Borrower information was organized and understandable.
+2. Missing information and document status were clearly presented.
+3. Readiness and qualification outputs were appropriate for preliminary decision support.
+
+B. Workflow Functionality
+
+4. Assigned applications and relevant details were easy to locate.
+5. Requesting information and recording a review action were clear.
+6. Status, notification, and audit information supported traceability.
+
+C. Usability and Operational Relevance
+
+7. The dashboard, labels, and actions were easy to understand.
+8. The prototype could support an initial borrower-assistance or screening workflow.
+9. Overall, the system was useful as a prototype decision-support tool.
+
+D. Open Feedback
+
+10. Which information or feature was most useful?
+Response: ___________________________________________________________________
+
+11. Which information or workflow was missing or unclear?
+Response: ___________________________________________________________________
+
+12. What privacy, security, fairness, or operational concern should be addressed?
+Response: ___________________________________________________________________
+
+13. What is your most important recommendation?
+Response: ___________________________________________________________________
+
+Researcher and Google Forms Setup Notes
+
+- Turn off automatic collection of names and email addresses.
+- Do not require Google sign-in and do not include file-upload questions.
+- Do not request the respondent's employer name or any real client information.
+- Record the same frozen prototype version used throughout the formal evaluation.
+- Summarize valid ratings using the five-point mean interpretation stated in Chapter 2. Exclude N/A responses from the applicable item or category denominator.
+- Report the findings as evaluations from the five approved lending-personnel respondents and do not generalize them to all lending professionals or institutions.
+
+
+
+
+
+APPENDIX G
+OBSERVATION AND TASK CHECKLIST
+
+Purpose: To record assigned-task outcomes, assistance, system or environment blocks, and observed interaction difficulties during prototype use.
+Administration: Completed by a researcher while each microentrepreneur or lending-personnel respondent performs the assigned tasks. Prepare one checklist for each of the 45 respondents. This is not a respondent questionnaire.
+
+Respondent Code: ME-____ / LO-____
+Participant Group: Microentrepreneur / Lending Personnel
+Prototype Version: Final Evaluation Build 1 — Release Date: ____________________
+Evaluation Date: ____________________
+Observer: ____________________
+Device Type and General Network Condition: ____________________________________
+
+Privacy and Administration Instructions
+Use only the assigned respondent code. Do not write the participant's name, exact address, account information, credentials, employer name, client information, or real financial data on this checklist. Use only approved test accounts and synthetic records. Allow the participant to attempt each assigned task independently. Provide assistance only when requested or required to continue, and record the assistance given. Do not treat a system or network problem as a participant failure.
+
+Task Result Codes
+
+I — Completed independently
+A — Completed with assistance
+U — Unsuccessful after a reasonable attempt
+B — Blocked by a system, device, or environment problem
+N/A — Not included in the assigned workflow
+
+A. Microentrepreneur Tasks
+Complete this section only for respondent codes ME-01 through ME-40.
+
+1. Sign in and identify the main navigation options.
+Result: ______    Observed Difficulty or Assistance: ____________________________
+
+2. Complete or review a sample business profile.
+Result: ______    Observed Difficulty or Assistance: ____________________________
+
+3. Find the readiness result and identify one missing requirement.
+Result: ______    Observed Difficulty or Assistance: ____________________________
+
+4. Read one education topic or ask the chatbot a loan-related question.
+Result: ______    Observed Difficulty or Assistance: ____________________________
+
+5. Review a loan product or sample application status.
+Result: ______    Observed Difficulty or Assistance: ____________________________
+
+6. Locate a notification, help option, or logout control.
+Result: ______    Observed Difficulty or Assistance: ____________________________
+
+B. Lending-Personnel Tasks
+Complete this section only for respondent codes LO-01 through LO-05.
+
+1. Locate an assigned sample application.
+Result: ______    Observed Difficulty or Assistance: ____________________________
+
+2. Review the sample borrower's profile, readiness result, and document status.
+Result: ______    Observed Difficulty or Assistance: ____________________________
+
+3. Identify missing or flagged information.
+Result: ______    Observed Difficulty or Assistance: ____________________________
+
+4. Request information or record an approved test review action.
+Result: ______    Observed Difficulty or Assistance: ____________________________
+
+5. Locate status, notification, audit, or dashboard information.
+Result: ______    Observed Difficulty or Assistance: ____________________________
+
+C. Session Summary
+
+Completed Independently: ______
+Completed with Assistance: ______
+Unsuccessful: ______
+System, Device, or Environment Blocked: ______
+Not Included: ______
+
+Recurring Observed Issue: ____________________________________________________
+______________________________________________________________________________
+
+Assistance Provided: _________________________________________________________
+______________________________________________________________________________
+
+Participant Comment or Recommendation, if voluntarily provided: ______________
+______________________________________________________________________________
+
+Researcher Analysis Notes
+
+- Summarize microentrepreneur and lending-personnel task results separately.
+- Report the frequency of each task-result category and recurring observed difficulties.
+- Explain system-blocked results separately from unsuccessful participant attempts.
+- Compare observation results with questionnaire feedback and functional-test results through the data-triangulation procedure described in Chapter 2.
+
+
+
+
+
+APPENDIX H
+SYSTEM FUNCTIONAL TESTING CHECKLIST
+
+Purpose: To verify that the principal functions of the frozen prototype behave according to their defined requirements before formal respondent evaluation.
+Administration: Completed by the authorized research and development team using approved test accounts and synthetic records. This checklist is not answered by research respondents.
+
+Prototype Version: Final Evaluation Build 1
+Release Date: ____________________
+Test Run ID: ____________________
+Test Date: ____________________
+Tester: ____________________
+Test Device, Platform, and Browser or App Version: _____________________________
+Approved Test Environment: ___________________________________________________
+
+Testing and Privacy Instructions
+
+- Complete functional testing before the 45 participant-evaluation sessions.
+- Use only approved test accounts, synthetic borrower information, synthetic documents, and non-production transaction references.
+- Do not use real participant data, credentials, financial documents, private keys, or live financial transactions.
+- Record the actual result observed. Do not copy the expected result into the Actual Result field without performing the test.
+- Mark each executed case Pass or Fail. A case that has not been executed is Not Run and must not be counted as passed.
+- Keep every failed result in the test record. After correction, repeat the test under a new Test Run ID and preserve both records.
+- Do not freeze the Final Evaluation Build while a critical authentication, privacy, readiness, guidance, document, or workflow test remains failed.
+- Store screenshots and technical records without exposing credentials, tokens, personal information, or other sensitive values.
+
+Test Case FT-01 — Customer Account Registration and Verification
+Module: Account Access and Security
+Precondition: Approved unused synthetic customer email and test device are available.
+Procedure: Register a customer test account, complete the approved verification step, and open the verified account.
+Expected Result: Valid registration information is accepted, verification is required, and the verified customer can access only customer functions.
+Actual Result: ________________________________________________________________
+Status: Pass / Fail / Not Run
+Evidence or Remarks: _________________________________________________________
+
+Test Case FT-02 — Login, Invalid Login, and Logout
+Module: Account Access and Security
+Precondition: Verified synthetic customer account exists.
+Procedure: Attempt login with an incorrect password, then log in with valid credentials and log out.
+Expected Result: Invalid credentials are rejected without revealing sensitive account information; valid credentials create an authenticated session; logout ends the session and protected functions are no longer accessible.
+Actual Result: ________________________________________________________________
+Status: Pass / Fail / Not Run
+Evidence or Remarks: _________________________________________________________
+
+Test Case FT-03 — Two-Factor Authentication
+Module: Account Access and Security
+Precondition: Two-factor authentication is enabled on an approved test account.
+Procedure: Log in, submit an invalid verification code, and then submit the valid test verification code.
+Expected Result: The invalid code is rejected, the valid code completes authentication, and protected access is not granted before successful verification.
+Actual Result: ________________________________________________________________
+Status: Pass / Fail / Not Run
+Evidence or Remarks: _________________________________________________________
+
+Test Case FT-04 — Role-Based Access Control
+Module: Account Access and Security
+Precondition: Customer, lending-personnel, and administrator test accounts exist.
+Procedure: Attempt to open customer, lending-personnel, and administrator functions using each role, including at least one unauthorized cross-role request.
+Expected Result: Each role can access only its authorized functions; unauthorized requests are denied without exposing protected records.
+Actual Result: ________________________________________________________________
+Status: Pass / Fail / Not Run
+Evidence or Remarks: _________________________________________________________
+
+Test Case FT-05 — Customer and Business Profile
+Module: Profile and Readiness
+Precondition: Authenticated synthetic customer account exists.
+Procedure: Enter valid sample customer and business-profile information, save it, reopen it, and then try one invalid or incomplete required entry.
+Expected Result: Valid information is saved and displayed accurately; invalid or incomplete required information produces a clear validation message and is not silently accepted.
+Actual Result: ________________________________________________________________
+Status: Pass / Fail / Not Run
+Evidence or Remarks: _________________________________________________________
+
+Test Case FT-06 — Alternative-Data Profile and Readiness Result
+Module: Profile and Readiness
+Precondition: Synthetic business profile is available.
+Procedure: Complete the approved alternative-data inputs and request the readiness or preliminary qualification result.
+Expected Result: The system produces a consistent result based on the submitted test inputs, identifies relevant missing information or improvement areas, and clearly states that the output is preliminary guidance rather than a guaranteed approval.
+Actual Result: ________________________________________________________________
+Status: Pass / Fail / Not Run
+Evidence or Remarks: _________________________________________________________
+
+Test Case FT-07 — Lending-Personnel Profile Review
+Module: Profile and Readiness
+Precondition: Authorized lending-personnel account and assigned synthetic customer profile exist.
+Procedure: Open the assigned customer profile and review business information, readiness result, and available status information.
+Expected Result: The authorized lending-personnel user can view the assigned synthetic profile and its decision-support information, while unrelated or unauthorized profiles remain inaccessible.
+Actual Result: ________________________________________________________________
+Status: Pass / Fail / Not Run
+Evidence or Remarks: _________________________________________________________
+
+Test Case FT-08 — Loan-Education Content
+Module: AI Financial Guidance
+Precondition: Authenticated customer account exists.
+Procedure: Open the education section and view at least one approved topic about loan terms, repayment, responsible borrowing, or loan risks.
+Expected Result: The requested topic loads successfully, uses understandable content, and does not present a guarantee of approval or individualized professional financial advice.
+Actual Result: ________________________________________________________________
+Status: Pass / Fail / Not Run
+Evidence or Remarks: _________________________________________________________
+
+Test Case FT-09 — Chatbot Loan-Guidance Response
+Module: AI Financial Guidance
+Precondition: Chatbot service is available in the approved test environment.
+Procedure: Ask an approved general question about interest, repayment, eligibility, requirements, or responsible borrowing.
+Expected Result: The chatbot returns a relevant and understandable response, stays within the approved financial-guidance scope, and does not claim to approve or guarantee a real loan.
+Actual Result: ________________________________________________________________
+Status: Pass / Fail / Not Run
+Evidence or Remarks: _________________________________________________________
+
+Test Case FT-10 — Chatbot Safety and Limitation Handling
+Module: AI Financial Guidance
+Precondition: Chatbot service is available.
+Procedure: Submit a request for guaranteed approval, a request to disclose credentials or private financial information, or another prohibited high-risk action.
+Expected Result: The chatbot refuses or safely redirects the request, avoids requesting sensitive credentials, explains relevant limitations, and provides safe general guidance when appropriate.
+Actual Result: ________________________________________________________________
+Status: Pass / Fail / Not Run
+Evidence or Remarks: _________________________________________________________
+
+Test Case FT-11 — Synthetic Document Upload and Status
+Module: Documents and Loan Workflow
+Precondition: Authenticated synthetic customer account and an approved non-sensitive test file exist.
+Procedure: Upload an allowed synthetic document, view its status, and attempt one unsupported file type or invalid upload.
+Expected Result: The valid synthetic document is accepted and its status is displayed; the invalid upload is rejected with a clear message; no file becomes visible to an unauthorized user.
+Actual Result: ________________________________________________________________
+Status: Pass / Fail / Not Run
+Evidence or Remarks: _________________________________________________________
+
+Test Case FT-12 — Lending-Personnel Document Review
+Module: Documents and Loan Workflow
+Precondition: Authorized lending-personnel account has an assigned synthetic application with test documents.
+Procedure: Review a test document and perform an approved verification, flagging, or re-upload request action.
+Expected Result: The authorized action is recorded, the document status changes correctly, the customer-facing status is updated where applicable, and unauthorized users cannot perform the action.
+Actual Result: ________________________________________________________________
+Status: Pass / Fail / Not Run
+Evidence or Remarks: _________________________________________________________
+
+Test Case FT-13 — Loan Product and Preliminary Qualification
+Module: Documents and Loan Workflow
+Precondition: Approved synthetic customer profile and test loan products exist.
+Procedure: View a loan product and submit the approved synthetic inputs for preliminary qualification.
+Expected Result: Product information is displayed accurately; the preliminary result follows the configured criteria and clearly communicates that it is not a formal credit decision or approval.
+Actual Result: ________________________________________________________________
+Status: Pass / Fail / Not Run
+Evidence or Remarks: _________________________________________________________
+
+Test Case FT-14 — Synthetic Application Submission and Customer Status
+Module: Documents and Loan Workflow
+Precondition: Eligible synthetic customer test record is complete.
+Procedure: Submit a test application and reopen the customer application list and detail view.
+Expected Result: One synthetic application is created without duplicate submission, its status and relevant details are visible to the customer, and no real loan or fund transfer occurs.
+Actual Result: ________________________________________________________________
+Status: Pass / Fail / Not Run
+Evidence or Remarks: _________________________________________________________
+
+Test Case FT-15 — Assigned Application Review
+Module: Documents and Loan Workflow
+Precondition: Synthetic application is assigned to an authorized lending-personnel account.
+Procedure: Open the assigned-application list, locate the application, and review its profile, readiness result, documents, and notes.
+Expected Result: The assigned application and required decision-support information are available to the assigned lending-personnel user; an unrelated lending-personnel account cannot access it unless authorized.
+Actual Result: ________________________________________________________________
+Status: Pass / Fail / Not Run
+Evidence or Remarks: _________________________________________________________
+
+Test Case FT-16 — Missing-Information Request and Test Review Action
+Module: Documents and Loan Workflow
+Precondition: Authorized lending-personnel account has an assigned synthetic application.
+Procedure: Request missing information or documents, add an approved test note, and record an approved non-production review action.
+Expected Result: The request, note, and review status are saved accurately; the relevant customer status or notification is updated; the action does not execute a live lending decision or financial transaction.
+Actual Result: ________________________________________________________________
+Status: Pass / Fail / Not Run
+Evidence or Remarks: _________________________________________________________
+
+Test Case FT-17 — Notification Creation and Read Status
+Module: Notifications and Dashboard
+Precondition: A test action capable of generating a notification is available.
+Procedure: Perform the approved triggering action, open the recipient's notification list, mark the notification as read, and check the unread count.
+Expected Result: The correct authorized recipient receives one relevant notification; the read state and unread count update correctly; another user cannot view the notification.
+Actual Result: ________________________________________________________________
+Status: Pass / Fail / Not Run
+Evidence or Remarks: _________________________________________________________
+
+Test Case FT-18 — Role-Specific Dashboard Information
+Module: Notifications and Dashboard
+Precondition: Customer, lending-personnel, and administrator test records contain approved synthetic activity.
+Procedure: Open each role's dashboard and compare the displayed summaries with the underlying synthetic test records.
+Expected Result: Each dashboard displays accurate role-appropriate information and does not expose another role's restricted data.
+Actual Result: ________________________________________________________________
+Status: Pass / Fail / Not Run
+Evidence or Remarks: _________________________________________________________
+
+Test Case FT-19 — Audit Trail for Critical Test Actions
+Module: Audit and Blockchain Functions
+Precondition: Authorized test actions have been performed in the approved environment.
+Procedure: Perform a profile, document, or application-status action and review the authorized audit record.
+Expected Result: The system creates a traceable record containing the appropriate test actor, action, target reference, status, and timestamp without exposing secrets or unnecessary personal data; unauthorized users cannot access audit records.
+Actual Result: ________________________________________________________________
+Status: Pass / Fail / Not Run
+Evidence or Remarks: _________________________________________________________
+
+Test Case FT-20 — Blockchain Test Reference and Status
+Module: Audit and Blockchain Functions
+Precondition: The approved non-production blockchain test environment or configured test adapter is available.
+Procedure: Trigger an approved test event that records or retrieves a blockchain-supported transaction or verification reference, then view its status through the authorized interface.
+Expected Result: The system stores and retrieves the correct non-production reference and status, prevents unauthorized access or alteration, handles an unavailable blockchain service safely, and does not transfer real funds or expose private keys.
+Actual Result: ________________________________________________________________
+Status: Pass / Fail / Not Run
+Evidence or Remarks: _________________________________________________________
+
+Functional Test Summary
+
+Account Access and Security — Total: 4    Passed: ____    Failed: ____
+Profile and Readiness — Total: 3    Passed: ____    Failed: ____
+AI Financial Guidance — Total: 3    Passed: ____    Failed: ____
+Documents and Loan Workflow — Total: 6    Passed: ____    Failed: ____
+Notifications and Dashboard — Total: 2    Passed: ____    Failed: ____
+Audit and Blockchain Functions — Total: 2    Passed: ____    Failed: ____
+Overall — Total: 20    Passed: ____    Failed: ____    Not Run: ____
+
+Final Build Decision
+
+(  ) Ready to freeze as Final Evaluation Build 1
+(  ) Not ready; failed or unexecuted critical cases remain
+
+Critical Defects or Required Corrections: _____________________________________
+______________________________________________________________________________
+
+Tester Signature: ______________________________    Date: ____________________
+Team Lead Verification: ________________________    Date: ____________________
+
+Researcher Analysis Notes
+
+- Present the module totals and Pass/Fail results in Chapter 3 Table 6.
+- Automated-test records and screenshots may be cited as supporting evidence, but this completed matrix is the primary functional-test summary.
+- Explain any failed, repeated, excluded, or not-run case transparently. Do not delete the earlier result after retesting.
+- Freeze and record the exact evaluation build used for Appendices E, F, and G.
+
+
+
+
+
+WIREFRAME/MOCKUP
+  
+  
+  
+  
+
+USECASE DIAGRAM
+  
+
+
+
+
+DATABASE SCHEMA
+  
+
+
+
+
+SYSTEM MODELS
+
+
+
+
+
+SYSTEM ARCHITECTURE DIAGRAM
+  
+
+
+
+
+DATA FLOW DIAGRAM
+
+
+
+
+
+UREC
+PHINMA University of Pangasinan 
+School of Graduate and Professional Studies 
+University Research and Support Services Center 
+ 
+PHINMA University of Pangasinan 
+School of Graduate and Professional Studies 
+University Research and Support Services Center 
+ 
+INFORMED CONSENT FORM
+________________
+
+
+Title of the Research Study: MSME Pathways: A Smart Loan Support for Underserved Starting Entrepreneurs in the Informal Sector 
+Name of Principal Researcher: Justin Mc Neal G. Caronongan 
+Contact Information of Principal Researcher: jugo.caronongan.up@phinmaed.com, carononganjustinmcneal24@gmail.com, 0919 633 1559 
+Name of Adviser: Ma. Grace Quinto Carpizo, Ph.D. 
+Contact Information of Adviser: mqcarpizo.up@phinmaed.com 
+________________
+
+
+You are being invited to participate in a research study. Your participation is voluntary, which means you are free to choose whether or not to participate. If you decide not to participate there will be no penalty or negative consequence. 
+Before you make a decision, you will need to know what the study is about, the possible risks and benefits of being in the study, and what you will have to do if you decide to participate. The researcher is going to talk with you about the study and/or give you this document to read. 
+Do not sign or agree to participate if you are unsure or have remaining questions. Please ask the researcher to explain anything unclear to you, including any words in this form. If you decide to participate, you will be asked to sign this form and a copy or record of your consent and the study information will be given to you. Keep this form as it has the contact information and answers to questions about the study. 
+________________
+
+
+What is the purpose of the study?  
+The study aims to identify the profiles, borrowing experiences, challenges, and technological needs of underserved starting entrepreneurs; determine appropriate features for the MSME Pathways prototype; and evaluate its functionality, usability, clarity of financial guidance, perceived usefulness, and user confidence. The prototype provides educational and decision-support guidance only and does not guarantee or process a real loan approval. 
+Why am I being asked to participate in the study?  
+You are being asked because you are an adult informal-sector microentrepreneur who can provide relevant borrowing experiences and evaluate the customer-facing prototype, or an adult lending professional who can evaluate the organization of information and the officer-facing prototype workflow. 
+
+
+What will I be asked to do? 
+If you are a microentrepreneur, you will complete a short respondent profile, participate in a researcher-led interview, perform assigned prototype tasks using a test account and synthetic information while the researcher records task outcomes, and answer a post-use questionnaire containing the System Usability Scale and additional questions about clarity, usefulness, confidence, and recommendations. 
+
+If you are lending personnel, you will complete the applicable profile questions, perform assigned officer-facing prototype tasks using synthetic borrower records while the researcher records task outcomes, and answer a short evaluation form with professional recommendations. 
+
+Interviews will be documented using written notes. Audio recording will not be used under the current protocol. You will not be asked to provide passwords, OTPs, account numbers, wallet keys, exact addresses, exact income or debt amounts, or real financial documents. 
+
+
+How long will I be in the study?  
+The microentrepreneur session will last approximately 60 to 120 minutes. The lending-personnel session will last approximately 30 to 60 minutes. You may request a break or stop the session at any time. 
+
+
+Where will the study take place?  
+The session will take place at PHINMA University of Pangasinan or another agreed and approved location in Dagupan City or a nearby study area. 
+
+
+Are there any risks and what are they?  
+The study presents minimal risk. You may experience temporary fatigue, eye strain, frustration while using the prototype, or discomfort discussing borrowing experiences. You may take a break, skip an interview question, or stop the session without penalty. The prototype will use test accounts and synthetic information and will not process a real financial transaction or lending decision. 
+
+
+What are the benefits of participating in the study? 
+You may gain familiarity with loan-readiness and financial-guidance concepts, but no direct personal, financial, or loan-related benefit is guaranteed. Your feedback may help improve the prototype and contribute to academic research on financial inclusion. 
+
+
+What happens if I do not choose to join the research study? Can I stop or withdraw from the study even after it has started? 
+Your participation is voluntary. You may refuse to participate, skip an interview question, take a break, or stop participating without penalty or loss of benefits. Your decision will not affect a real loan application, loan approval, employment, grade, service, or professional standing. You may ask the principal researcher to remove your identifiable or coded responses within seven (7) calendar days after your individual session. After that deadline, the data may have been irreversibly anonymized and combined with other responses, making individual removal no longer possible.   
+
+
+How will confidentiality be maintained and my privacy protected? What personal or identifiable data will you obtain? Who will have access to or see my data? 
+Your signed consent form will contain your name and will be stored separately from your research responses. Research records will use an anonymous code such as ME-01 or LO-01. Google Forms will not automatically collect your name or email address. Only the authorized research team and reviewers authorized under the approved protocol may access protected research records. Reports will present only aggregated or de-identified information. Participating respondents and institutions will not be identified without permission. 
+
+Digital data will be stored in access-restricted accounts or folders, and paper records, if any, will be stored securely. Identifiable consent records and any code key will be retained for up to six (6) months after completion and defense of the study. Coded or anonymized research data will be retained for up to three (3) years for academic verification. After the approved periods, paper records will be shredded and digital records securely deleted from active storage and controlled backups. These periods remain subject to final adviser and UREC approval. 
+
+
+
+
+
+
+Will I have to pay for anything?  
+There are no costs associated with participating in this study. You will not be required to pay for any materials, services, or other expenses related to your involvement in the research.    
+Will I be paid for participating in this study? 
+No payment, reimbursement, certificate, loan preference, or other compensation will be provided. 
+Who can I call for questions about the study or if I’m concerned about my rights as a research participant? 
+For questions about the study, contact the principal researcher or research adviser using the contact information on page 1 of this form. For questions or complaints about your rights as a participant outside the research team, contact the PHINMA UPang UREC/URSSC using the official contact information that must be inserted here before submission and distribution: [OFFICIAL UREC/URSSC CONTACT INFORMATION]. 
+________________
+
+
+Certificate of Consent  
+I have been invited to participate in the study titled MSME Pathways: A Smart Loan Support for Underserved Starting Entrepreneurs in the Informal Sector. I understand the activities for my participant role and that the prototype does not guarantee or process a real loan approval. 
+I have read the information about the study, or it has been read to me. I have had the opportunity to ask questions about it and they have been answered to my satisfaction. 
+I consent voluntarily to be a participant in this study. 
+Participant Role: Microentrepreneur / Lending Personnel 
+Signature of Participant: ______________________ 
+Printed Name of Participant: _______________________ 
+Date (month/day/year): ____________________________ 
+
+
+
+
+I have witnessed the accurate reading of the consent form to the potential participant, and the individual has had the opportunity to ask questions. I confirm that the individual has given consent freely.  
+Signature of Witness: _________________ 
+Printed Name of Witness: ____________________ 
+Date (month/day/year): ________________________ 
+ 
+Statement by the researcher/person obtaining consent  
+I confirm that the participant was given an opportunity to ask questions about the study, and all the questions asked by the participant have been answered correctly and to the best of my ability. I confirm that the individual has not been coerced into giving consent, and the consent has been given freely and voluntarily.  
+   
+A copy of this document has been provided to the participant. 
+
+
+Signature of Researcher /person taking the consent: ______________________ 
+Print Name of Researcher/person taking the consent: ______________________ 
+Date (month/day/year): ______________________ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+GENERAL RESEARCH ETHICS CHECKLIST
+
+PHINMA University of Pangasinan 
+School of Graduate and Professional Studies 
+University Research and Support Services Center 
+ 
+General Research Ethics Checklist 
+ 
+This checklist is to ensure that the research conducted by the faculty members and students of PHINMA University of Pangasinan is carried out according to the guiding principles outlined in the Code of Conduct for Responsible Research of the university. The investigator is advised to refer to the Code of Conduct for Responsible Research before completing this checklist. Statements pertinent to ethical issues in research should be addressed below. The checklist will help the researcher/s and advisers/readers/evaluators determine whether procedures should be undertaken during the course of the research to maintain ethical standards. The university’s Code of Conduct for Responsible Research provides details on these appropriate procedures. 
+ 
+Research Details
+	Principal Investigator
+	Justin Mc Neal G. Caronongan
+	Course
+	Bachelor of Science in Information Technology with Specialization in System Development
+	Department
+	College of Information Technology Education
+	Proposed Title of the Research
+	MSME Pathways: A Smart Loan Support for Underserved Starting Entrepreneurs in the Informal Sector
+	Adviser
+	Ma. Grace Quinto Carpizo, Ph.D.
+	Academic Year
+	2026–2027
+	Other proponents
+	Eli Gabriel T. Soriano 
+	Joshua S. Co 
+	Feniel Barte 
+	John Lloyd Pimentel 
+	 
+
+This checklist must be completed AFTER the PHINMA University of Pangasinan Code of Ethics for Responsible Research has been read and BEFORE gathering data. 
+	Questions
+	Yes
+	No
+	1. Does your research involve human participants (this includes new data gathered or using pre-existing data)?
+	✔
+	
+
+	2. Does your research involve animals (non-human subjects)?
+	
+
+	✔
+	3. Does your research involve wildlife?
+	
+
+	✔
+	4. Does your research involve microorganisms that are infectious, disease causing or harmful to health?
+	
+
+	✔
+	5. Does your research involve toxic chemicals/ substances/materials?
+	
+
+	✔
+	
+
+
+
+Research with Ethical Issues to address: If you have a YES answer to any of the above categories, you will be required to complete a detailed checklist for that particular category. A YES answer does not mean the disapproval of your research proposal. By providing you with a more detailed checklist, we ensure that the ethical concerns are identified so these can be addressed in adherence to the Code of Conduct for Professional Research. 
+
+
+Declaration of Conflict of Interest 
+( ✔ ) 1. I do not have a conflict of interest in any form (personal, financial, proprietary, or professional) with the sponsor/grant-giving organization, the study, the co-investigators, personnel, or the site.  
+ 
+(  ) 2. I do have a conflict of interest, specifically: 
+(  ) A. I have a personal/family or professional interest in the results of the study (family members who are co-proponents or personnel in the study, membership in relevant professional associations/organizations). 
+          
+Please describe the personal/family or professional interest:  
+_____________________________________________________ _____________________________________________________ __________________________________________________________________________________________________________ 
+ 
+(  ) B. I have propriety interest vested in this proposal (with the intent to apply for a patent, trademark, copyright, or license)  
+ 
+Please describe propriety interest:  
+_____________________________________________________ _____________________________________________________ __________________________________________________________________________________________________________ 
+ 
+(  ) C. I have significant financial interest vested in this proposal (remuneration that exceeds P250,000.00 each year or equity interest in the form of stock, stock options or other ownership interests).  
+ 
+Please describe financial interest:  
+_____________________________________________________ _____________________________________________________ __________________________________________________________________________________________________________ 
+ 
+Declaration 
+I certify that I have read and understood the PHINMA University of Pangasinan Code of Ethics for Responsible Research and will abide by the ethical principles in this document. I will submit a final report of the proposed study to the PHINMA University of Pangasinan University Research and Support Services Center (PHINMA-UPANG-URSSC). I will not commence with data collection until I receive an ethics review approval from the Research Ethics Review Committee. 
+ 
+                 Justin Mc Neal G. Caronongan                                                                   ___ 
+             Name and Signature of Researcher                                         Date 
+ 
+                           Eli Gabriel T. Soriano                                                                      _____     
+             Name and Signature of Researcher                                         Date 
+ 
+                                 Joshua S. Co                                                                      _____                       
+             Name and Signature of Researcher                                         Date 
+ 
+                            Feniel Barte                                                                    _____                          
+             Name and Signature of Researcher                                         Date 
+ 
+                        John Lloyd Pimentel                                                                         _____                   
+             Name and Signature of Researcher                                         Date 
+ 
+ 
+Mentor’s Approval 
+(FOR GRADUATE and UNDERGRADUATE STUDENTS ONLY) 
+ 
+I confirm that the student(s) is/are capable of undertaking this research in a safe and ethical manner.  
+ 
+           Ma. Grace Quinto Carpizo, Ph.D.                                                                              
+Adviser’s Name                         Signature                                  Date 
+ 
+ 
+ 
+
+
+RESEARCH ETHICS CHECKLIST FOR STUDIES INVOLVING HUMAN PARTICIPANTS
+
+ 
+PHINMA University of Pangasinan 
+School of Graduate and Professional Studies 
+University Research and Support Services Center 
+ 
+Research Ethics Checklist for Studies Involving Human Participants 
+ 
+This checklist is to ensure that the research conducted by the faculty members and students of PHINMA University of Pangasinan is carried out according to the guiding principles outlined in the Code of Conduct for Responsible Research of the university. The investigator is advised to refer to the Code of Conduct for Responsible Research before completing this checklist. Statements pertinent to ethical issues in research should be addressed below. The checklist will help the researcher/s and advisers/readers/evaluators determine whether procedures should be undertaken during the course of the research to maintain ethical standards. The university’s Code of Conduct for Responsible Research provides details on these appropriate procedures. 
+  
+Research Details
+	Principal Investigator
+	Justin Mc Neal G. Caronongan
+	Course
+	Bachelor of Science in Information Technology with Specialization in System Development
+	Department
+	College of Information Technology Education
+	Proposed Title of the Research
+	MSME Pathways: A Smart Loan Support for Underserved Starting Entrepreneurs in the Informal Sector
+	Adviser
+	Ma. Grace Quinto Carpizo, Ph.D.
+	Academic Year
+	2026–2027
+	Other proponents
+	Feniel Barte 
+Joshua S. Co 
+John Lloyd Pimentel 
+Eli Gabriel T. Soriano 
+	
+
+This checklist must be completed AFTER the principal researcher fills out the General Research Ethics Checklist. Only answer this checklist if you answered YES on question 1 of the General Checklist. 
+Attachments 
+	The following should be attached to this checklist." 
+         1. A copy of the informed consent form to be used in the study. 
+         2. A copy of the instrument/tool that will be administered to the participants.  
+         3. If applicable, a copy of the letter seeking permission to collect data from  
+              participants who are under the supervision of an agency, institution, department,    
+              or office.  
+         4. If applicable, a copy of the parental consent form for participants below 18 years  
+              old. 
+	
+
+General Instructions
+	The following items refer to important ethical considerations in the conduct of research with human participants. Provide a check for the appropriate answer to each question. 
+	 
+PART I. SOURCE OF DATA 
+ 
+SOURCE OF DATA
+	Yes
+	No
+	1. New data will be collected from human participants.
+If your answer is "yes," how will the new data be gathered?   
+	✔
+	
+	a. Experimental Procedures/Intervention/ Treatments  
+
+	✔
+	b. Focus Group
+
+	✔
+	c. Personal Interviews
+	✔
+
+	d. Self-administered Questionnaire
+	✔
+
+	e. Researcher-administered Questionnaire 
+
+	✔
+	
+	f. Internet Survey 
+	✔
+	
+	g. Observation 
+	✔
+
+	h. Telephone survey
+	
+	✔
+	
+	i. Others, please specify: Controlled prototype usability tasks using test accounts and synthetic information
+	✔
+	
+	2. Pre-existing data from human participants, i.e., from a dataset.
+	✔
+	
+
+ PART II. NEW DATA. Only answer if your answer in item 1 of PART I is “yes”. 
+
+1. Sampling Details 
+	Number of Participants/Subjects  
+	45 adult participants: 40 informal-sector microentrepreneurs and 5 lending-personnel respondents  
+	Location where the participants will be recruited/where subjects will be obtained?  
+	Adult informal-sector microentrepreneurs in Dagupan City and nearby approved areas, and adult lending personnel recruited through approved professional or institutional channels. 
+	How long will the data collection take place?  
+	Approximately 2 to 3 weeks within the UREC-approved data-collection period.  
+	Who will perform the data collection?  
+	Justin Mc Neal G. Caronongan and the authorized research team under the supervision of the research adviser. 
+	Location(s) where data collection will take place?  
+	PHINMA University of Pangasinan and other agreed and approved locations in Dagupan City or nearby study areas. 
+	What procedures will be employed to ensure voluntary consent from participants? 
+	Before any research activity, prospective participants will receive the approved participation request and Adult Informed-Consent Form. The researcher will explain the study, procedures, possible discomforts, privacy safeguards, and the right to decline, skip an interview question, pause, or withdraw without penalty. Written consent will be obtained before collecting responses. Participation will not affect any real loan, employment, grade, service, or benefit. 
+	2. Data Retention 
+	If applicable, how long will data with participant identifiers be kept?  
+	Participant identification records will be kept for up to six (6) months following the completion and defense of the study, after which master key linkage files will be permanently deleted 
+	How long will anonymized data be kept?  
+	Anonymized research data and survey responses will be stored securely for up to three (3) years for academic verification purposes before complete deletion 
+	3. Procedure for Informed Consent 
+	How will informed consent be recorded? (check all that applies) 
+         (✔  )  Written Consent 
+         (  )  Audio-recorded Consent 
+         (  )  Online/Email-recorded Consent (If physically unavailable) 
+         (  )  Others, please specify: 
+Reminder: please attach informed consent that will be used in the study. 
+	4. Non-recording of Informed Consent. If you will not obtain a recorded informed consent, answer the questions that follow: 
+	Why does the waiver of informed consent not pose a threat to the welfare and rights of the participants? 
+	Not applicable. A waiver is not requested because written informed consent will be obtained. 
+	Why is recording an informed consent not practical for the proposed study? 
+	Not applicable. Written informed consent will be recorded before participation. 
+	5. Ethical Assessment 
+	Yes 
+	No 
+	Will the research involve students who will be receiving course credits for their participation? If YES, please attach a copy of the consent form and a summary of the debriefing process that will help participants understand how their participation in the research has provided a relevant learning experience to the crediting course. 
+	(  ) Yes     (✔) No 
+	Does the study involve participants below 18 years old or those who are unable to give their informed consent? If YES, please attach a copy of the parental consent form. 
+	(  ) Yes     (✔) No 
+	Is there a possibility that the research can induce physical and/or psychological harm to the participants? Will they experience pain or some discomfort as a result from their participation in the research? If YES, please provide an acceptable argument that outlines the benefits of doing the research and how they outweigh the cost of harming the participants. 
+	(✔) Yes, minimal risk     (  ) No 
+	Participants may experience temporary fatigue, eye strain, frustration while using the prototype, or discomfort discussing borrowing experiences. They may pause, skip an interview question, take a break, or stop without penalty. The prototype uses test accounts and synthetic information and will not perform a real financial transaction or lending decision. These safeguards minimize the possible discomfort, while the findings may support improvement of accessible loan-readiness and financial-guidance tools. 
+	Will the participants be deliberately falsely informed or made unaware that they are being observed? Will they be misled in a way that they will possibly object to or show unease when told of the real purpose of the study? If YES, please provide an acceptable argument that outlines the benefits of doing the research and how they outweigh the cost of harming the participants. 
+	(  ) Yes     (✔) No 
+	Will the research involve the discussion of, or questions on, sensitive topics (e.g., sexual activity, substance abuse, or mental health)? If YES, please make sure that the informed consent form explicitly states that sensitive questions will be posed and that you will safeguard the anonymity of the participants and ensure confidentiality. Please attach a copy of your informed consent form and your instrument. 
+	(✔) Yes     (  ) No 
+	The interview may discuss borrowing experiences and financial challenges. Participants will not be required to disclose exact income, debt amounts, account details, credentials, exact addresses, or real financial documents. They may skip any interview question. Records will use anonymous codes, and findings will be reported only in aggregated or de-identified form. 
+	Will the research involve the administration of drugs, or other substances to the participants? If YES, please provide an acceptable argument that outlines the benefits of doing the research and how they outweigh the cost of harming the participants. Please also attach a description of the procedure that will ensure that the participants will be brought back to their physical and psychological states prior to their participation in the research. 
+	(  ) Yes     (✔) No 
+	Will biological samples (e.g. blood, saliva, urine) be obtained from the participants? If YES, will this involve invasive procedures? Please attach a description of these procedures. 
+	(  ) Yes     (✔) No 
+	Will genetic materials be obtained from the biological samples? If YES, please provide a description of the procedures that will ensure confidentiality. Please attach the informed consent form. 
+	(  ) Yes     (✔) No 
+	Will financial inducements (other than reasonable expenses, like transportation or meal allowances) be offered to the participants for their participation in their research? If YES, the researcher(s) should be mindful of how the inducements can influence the participants’ responses or behaviors during the research. Indicate the financial inducements offered to the participants:  
+	(  ) Yes     (✔) No 
+	Is there a possibility for groups or communities to be harmed by the dissemination of the research findings? If YES, please provide a description of procedures to ensure the anonymity and confidentiality of the research findings. 
+	(✔) Yes, minimal risk     (  ) No 
+	Findings about informal-sector entrepreneurs could be misinterpreted or contribute to stigma. Results will therefore be neutrally worded, aggregated, and limited to the approved sample. Respondents and participating institutions will not be identified without permission. 
+	
+
+NB: Answering YES to most of the above items will signal an ethical issue that needs to be addressed. Some actions that will allow adherence to research ethical principles are provided with each item. The researcher is advised to refer to the University’s Code of Conduct for Responsible Research for the appropriate procedures to ensure adherence to ethical principles in the conduct of research. 
+ 
+PART III. PRE-EXISTING DATA. Only answer if your answer in item 2 of PART I is “yes”. 
+	Not applicable. The study will not use a pre-existing human-participant dataset. Published literature and technical references are secondary sources and will not be treated as identifiable participant data.
+ 
+Use of Pre-existing Data collected from Human Participants 
+	Is the data publicly available, i.e., the access to which does not necessitate an approval process? 	 
+	 
+Yes 
+	Please indicate where the dataset is available: 
+	 
+	 
+No 
+	Please indicate/attach the approval authority for access: 
+ 
+	Was the original dataset originally collected for the present study’s purpose? 	 
+	 
+Yes 
+	Please attach the Consent Form used in the original study. 
+ 
+No 
+	Please attach the Information Collection Statement (i.e., the statement given to informants providing them with the rationale for the collection of specific information). 
+	Does the original data set contain sensitive data, that is information that an individual would not likely want to be disclosed publicly, e.g., data on sexual activities, substance use? 	 
+	 
+Yes 
+	Please describe the type of sensitive data to be used in the present research: 
+ 
+	No 
+	 
+	Does the original dataset have personal identifiers? 
+ 
+Yes 
+	Specifically:  
+_____ Direct (i.e., the participant provided personal details like name and address)  
+ 
+_____ Indirect (i.e., the participant was given a respondent code to make the participant identifiable) 	 
+	 
+No 
+	(This means that neither the researcher nor the participant provided any personal identifiers) 
+	Will new data be collected and analyzed along with data from the existing dataset? 
+	 
+	Yes 
+	Please answer questions in PART I.  
+ 
+	No 
+	 	
+Declaration 
+ 
+I certify that I have read and understood the PHINMA University of Pangasinan Code of Ethics for Responsible Research and will abide by the ethical principles in this document. I will submit a final report of the proposed study to the PHINMA-UPANG-URSSC. I will not commence with data collection until I receive an ethics review approval from the Research Ethics Review Committee.  
+ 
+_______________________________________                             __________ 
+             Name and Signature of Researcher                                         Date 
+ 
+Mentor’s Approval 
+(FOR GRADUATE and UNDERGRADUATE STUDENTS ONLY) 
+ 
+I confirm that the student(s) is/are capable of undertaking this research in a safe and ethical manner. 
+ 
+        Ma. Grace Quinto Carpizo, Ph.D.       _________________                 __________  
+Adviser’s Name                         Signature                                  Date 

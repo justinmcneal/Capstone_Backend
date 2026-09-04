@@ -1,14 +1,15 @@
-from rest_framework.views import APIView
-from rest_framework.permissions import IsAuthenticated
+import logging
+
 from bson import ObjectId
+from rest_framework import status
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.views import APIView
 
 from accounts.authentication import CustomJWTAuthentication
-from accounts.utils.response_helpers import success_response, error_response
+from accounts.utils.response_helpers import error_response, success_response
 from accounts.utils.validation_utils import sanitize_text
-from rest_framework import status
 from accounts.views.admin_views import AdminRequiredMixin
-from loans.models import LoanApplication
-import logging
+from loans.models import LoanApplication, LoanTransitionConflict
 
 logger = logging.getLogger("loans")
 
@@ -67,6 +68,12 @@ class AssignApplicationView(AdminRequiredMixin, APIView):
                     "status": app.status,
                 },
                 message="Application assigned successfully",
+            )
+        except LoanTransitionConflict:
+            return error_response(
+                message="The application assignment changed. Refresh and retry.",
+                code="LOAN_TRANSITION_CONFLICT",
+                status_code=status.HTTP_409_CONFLICT,
             )
         except ValueError as e:
             return error_response(
@@ -128,6 +135,12 @@ class ReassignApplicationView(AdminRequiredMixin, APIView):
                     "status": app.status,
                 },
                 message="Application reassigned successfully",
+            )
+        except LoanTransitionConflict:
+            return error_response(
+                message="The application assignment changed. Refresh and retry.",
+                code="LOAN_TRANSITION_CONFLICT",
+                status_code=status.HTTP_409_CONFLICT,
             )
         except ValueError as e:
             return error_response(

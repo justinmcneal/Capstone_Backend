@@ -175,13 +175,13 @@ class TestLoanApplicationStatusTransitions:
 
         app.disburse(
             amount=18000,
-            method="bank_transfer",
+            method="cash",
             reference="REF-001",
             processed_by="officer123",
         )
         assert app.status == "disbursed"
         assert app.disbursed_amount == 18000
-        assert app.disbursement_method == "bank_transfer"
+        assert app.disbursement_method == "cash"
         assert app.disbursed_at is not None
 
     def test_resubmit_resets_to_draft(self, monkeypatch):
@@ -255,8 +255,8 @@ class TestLoanApplicationStatusTransitions:
         )
         app.save()
 
-        app.set_preferred_disbursement_method("gcash")
-        assert app.preferred_disbursement_method == "gcash"
+        app.set_preferred_disbursement_method("cash")
+        assert app.preferred_disbursement_method == "cash"
 
 
 class TestRepaymentSchedule:
@@ -351,14 +351,14 @@ class TestLoanPayment:
                 customer_id=str(ObjectId()),
                 installment_number=1,
                 amount=5000,
-                payment_method="gcash",
+                payment_method="cash",
             ),
             LoanPayment(
                 loan_id=loan_id,
                 customer_id=str(ObjectId()),
                 installment_number=2,
                 amount=5000,
-                payment_method="bank_transfer",
+                payment_method="check",
             ),
         ]
         for p in payments:
@@ -381,7 +381,7 @@ class TestLoanPayment:
             customer_id=customer_id,
             installment_number=1,
             amount=5000,
-            payment_method="gcash",
+            payment_method="wallet",
         )
         payment.save()
 

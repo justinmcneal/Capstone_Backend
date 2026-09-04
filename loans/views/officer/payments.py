@@ -1,26 +1,26 @@
+import logging
 from collections import OrderedDict
-from rest_framework.views import APIView
-from rest_framework.permissions import IsAuthenticated
+from datetime import datetime
+
 from bson import ObjectId
+from rest_framework import status
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.views import APIView
 
 from accounts.authentication import CustomJWTAuthentication
 from accounts.models import Customer
+from accounts.utils.response_helpers import error_response, success_response
+from accounts.utils.validation_utils import parse_bool, sanitize_text
 from analytics.models import AuditLog  # noqa: F401 - existing test patch target
-from accounts.utils.response_helpers import success_response, error_response
-from accounts.utils.validation_utils import sanitize_text, parse_bool
-from rest_framework import status
 from loans.models import LoanApplication, LoanPayment, RepaymentSchedule
-from loans.views.officer.base import LoanOfficerRequiredMixin
 from loans.services.audit import record_loan_audit
+from loans.services.payment_queries import payment_history_page
 from loans.services.related_data import (
     application_related_maps,
-    find_models,
+    find_models_bounded,
     model_map_by_ids,
 )
-from loans.services.payment_queries import payment_history_page
-from datetime import datetime
-import logging
-from loans.utils.money import from_centavos
+from loans.views.officer.base import LoanOfficerRequiredMixin
 
 logger = logging.getLogger("loans")
 
@@ -214,7 +214,7 @@ class RecordPaymentView(LoanOfficerRequiredMixin, APIView):
         # Send notification email
         try:
             from accounts.models import Customer
-            from notifications.services import get_email_sender
+            from loans.services.notifications import queue_customer_loan_notification
 
             customer = None
             if schedule.customer_id:
@@ -225,20 +225,17 @@ class RecordPaymentView(LoanOfficerRequiredMixin, APIView):
                 except Exception:
                     pass
             if customer and customer.email:
-                sender = get_email_sender()
-                sender.send_payment_received(
-                    customer_email=customer.email,
-                    customer_name=f"{customer.first_name} {customer.last_name}",
+                queue_customer_loan_notification(
                     loan_id=loan_id,
-                    amount=amount,
-                    installment=installment_number,
-                    remaining=schedule.get_remaining_balance(),
-                    customer_id=schedule.customer_id,
+                    event_type="payment_received",
+                    event_key=payment.idempotency_key or payment.id,
+                    customer=customer,
+                    payload={"amount": amount, "installment": installment_number, "remaining": schedule.get_remaining_balance()},
                 )
         except Exception as e:
             logger.warning(f"Failed to send payment email: {e}")
 
-        # Blockchain sync — payment (background thread, no Celery needed)
+        # Durable, feature-gated payment sync through Celery.
         try:
             from loans.blockchain.sync import sync_payment
 
@@ -373,15 +370,7 @@ class RecentPaymentsView(LoanOfficerRequiredMixin, APIView):
         user = request.user
         query = {}
         if getattr(user, "role", "") == "loan_officer":
-            officer_id = self._actor_id(user)
-            assigned_apps = LoanApplication.find_by_officer(officer_id)
-            assigned_loan_ids = [app.id for app in assigned_apps]
-            if not assigned_loan_ids:
-                return success_response(
-                    data={"payments": []},
-                    message="Recent payments retrieved",
-                )
-            query["loan_id"] = {"$in": assigned_loan_ids}
+            query["scope_officer_id"] = self._actor_id(user)
 
         payment_documents = LoanPayment.find(
             query, sort=[("recorded_at", -1)], limit=limit
@@ -427,7 +416,7 @@ class PaymentSearchView(LoanOfficerRequiredMixin, APIView):
         - customer_id: Filter by customer ID
         - disbursed_only: If true (default), only include payments from disbursed loans
         - payment_status: Filter by payment timing status ('on_time', 'late')
-        - payment_method: Filter by payment method ('cash', 'gcash', 'bank_transfer', 'check', 'wallet')
+        - payment_method: Filter by payment method ('cash', 'check', 'wallet')
         - min_amount: Minimum payment amount
         - max_amount: Maximum payment amount
         - start_date: Filter payments recorded on or after this date (YYYY-MM-DD)
@@ -443,6 +432,7 @@ class PaymentSearchView(LoanOfficerRequiredMixin, APIView):
 
     def get(self, request):
         import re
+
         from accounts.models import Customer
 
         has_permission, result = self.check_officer_permission(request)
@@ -529,62 +519,44 @@ class PaymentSearchView(LoanOfficerRequiredMixin, APIView):
                     "page_size": page_size,
                     "total_pages": 0,
                     "summary": {"total_amount": 0, "count": 0},
+                    "search_truncated": False,
                 },
                 message="Payments retrieved",
             )
 
         # Build query
         query = {}
-        allowed_loan_ids = None
 
-        # Restrict to disbursed loans by default
+        # New payments carry indexed lifecycle and event-time officer scope.
         if disbursed_only:
-            if loan_id:
-                app = LoanApplication.find_by_id(loan_id)
-                if not app or app.status not in {
-                    "disbursed",
-                    "completed",
-                    "written_off",
-                }:
-                    return _empty_payment_result()
-                allowed_loan_ids = [loan_id]
-            else:
-                disbursed_apps = LoanApplication.find(
-                    {"status": {"$in": ["disbursed", "completed", "written_off"]}}
-                )
-                allowed_loan_ids = [app.id for app in disbursed_apps]
-                if not allowed_loan_ids:
-                    return _empty_payment_result()
+            query["loan_disbursed"] = True
 
-        # ABAC scope for loan officers: only payments for assigned applications.
+        # Preserve event-time assignment scope without materializing every loan ID.
         if user_role == "loan_officer":
-            officer_assigned_ids = [
-                app.id for app in LoanApplication.find_by_officer(user_id)
-            ]
-            if allowed_loan_ids is None:
-                allowed_loan_ids = officer_assigned_ids
-            else:
-                officer_set = set(officer_assigned_ids)
-                allowed_loan_ids = [
-                    loan for loan in allowed_loan_ids if loan in officer_set
-                ]
-            if not allowed_loan_ids:
-                return _empty_payment_result()
+            query["scope_officer_id"] = user_id
 
-        # Loan scope filter after deriving all constraints.
         if loan_id:
-            if allowed_loan_ids is not None and loan_id not in set(allowed_loan_ids):
+            application = LoanApplication.find_by_id(loan_id)
+            if not application:
+                return _empty_payment_result()
+            if user_role == "loan_officer" and str(
+                application.assigned_officer or ""
+            ) != str(user_id):
+                return _empty_payment_result()
+            if disbursed_only and application.status not in {
+                "disbursed",
+                "completed",
+                "written_off",
+            }:
                 return _empty_payment_result()
             query["loan_id"] = loan_id
-        elif allowed_loan_ids is not None:
-            query["loan_id"] = {"$in": allowed_loan_ids}
 
         # Customer ID filter
         if customer_id:
             query["customer_id"] = customer_id
 
         # Payment method filter
-        valid_methods = ["cash", "gcash", "bank_transfer", "check", "wallet"]
+        valid_methods = ["cash", "check", "wallet"]
         if payment_method:
             if payment_method not in valid_methods:
                 return error_response(
@@ -656,11 +628,12 @@ class PaymentSearchView(LoanOfficerRequiredMixin, APIView):
 
         # Keyword search - find customer IDs matching the search
         customer_ids = []
+        search_truncated = False
         if search_query:
             search_terms = search_query.strip().split()
             if len(search_terms) == 1:
                 regex = re.compile(f".*{re.escape(search_terms[0])}.*", re.IGNORECASE)
-                customers = find_models(
+                customers, search_truncated = find_models_bounded(
                     Customer,
                     {
                         "$or": [
@@ -684,7 +657,7 @@ class PaymentSearchView(LoanOfficerRequiredMixin, APIView):
                             ]
                         }
                     )
-                customers = find_models(
+                customers, search_truncated = find_models_bounded(
                     Customer, {"$and": customer_and_conditions}, limit=500
                 )
             customer_ids = [c.id for c in customers if c]
@@ -695,7 +668,11 @@ class PaymentSearchView(LoanOfficerRequiredMixin, APIView):
             if customer_ids:
                 search_conditions.append({"customer_id": {"$in": customer_ids}})
             search_conditions.append(
-                {"reference": {"$regex": re.escape(search_query), "$options": "i"}}
+                {
+                    "reference_search_index": {
+                        "$in": LoanPayment.reference_search_candidates(search_query)
+                    }
+                }
             )
 
             if query:
@@ -754,36 +731,22 @@ class PaymentSearchView(LoanOfficerRequiredMixin, APIView):
             )
             return status_value, due_date
 
-        # Get filtered + paginated results
+        # Timing is denormalized at posting/backfill time so filtering remains
+        # indexed and bounded rather than scanning every matching payment.
         if payment_status:
-            all_payments = LoanPayment.iter_find(
-                final_query, sort=[(sort_field, sort_direction)]
-            )
-            skip = (page - 1) * page_size
-            payments = []
-            total_count = 0
-            total_centavos = 0
-            for payment in all_payments:
-                status_value, _ = resolve_payment_status(payment)
-                if status_value == payment_status:
-                    if skip <= total_count < skip + page_size:
-                        payments.append(payment)
-                    total_count += 1
-                    total_centavos += payment.amount_centavos
-            summary = {
-                "total_amount": from_centavos(total_centavos),
-                "count": total_count,
-            }
-        else:
-            total_count = LoanPayment.count(final_query)
-            summary = LoanPayment.summarize(final_query)
-            skip = (page - 1) * page_size
-            payments = LoanPayment.find(
-                final_query,
-                sort=[(sort_field, sort_direction)],
-                limit=page_size,
-                skip=skip,
-            )
+            if final_query:
+                final_query = {"$and": [final_query, {"timing_status": payment_status}]}
+            else:
+                final_query = {"timing_status": payment_status}
+        total_count = LoanPayment.count(final_query)
+        summary = LoanPayment.summarize(final_query)
+        skip = (page - 1) * page_size
+        payments = LoanPayment.find(
+            final_query,
+            sort=[(sort_field, sort_direction)],
+            limit=page_size,
+            skip=skip,
+        )
 
         applications = model_map_by_ids(
             LoanApplication, [payment.loan_id for payment in payments]
@@ -841,6 +804,7 @@ class PaymentSearchView(LoanOfficerRequiredMixin, APIView):
                 "page_size": page_size,
                 "total_pages": (total_count + page_size - 1) // page_size,
                 "summary": summary,
+                "search_truncated": search_truncated,
             },
             message="Payments retrieved",
         )

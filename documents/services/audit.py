@@ -1,13 +1,7 @@
 """Allowlisted, recoverable audit writes for sensitive document operations."""
 
-import logging
-from datetime import datetime, timezone
-
-from django.conf import settings
-
 from analytics.models import AuditLog
-
-logger = logging.getLogger("documents.audit")
+from analytics.services.audit_writer import reconcile_audit_failures, record_audit
 
 ALLOWED_DETAIL_KEYS = {
     "action",
@@ -55,66 +49,14 @@ def _allowlisted_payload(kwargs):
 
 def record_document_audit(*, required=False, **kwargs):
     payload = _allowlisted_payload(kwargs)
-    try:
-        return AuditLog.log_action(**payload)
-    except Exception as exc:
-        action = str(payload.get("action") or "unknown")
-        logger.exception("Document audit write failed: action=%s", action)
-        queued = False
-        try:
-            settings.MONGODB["audit_write_failures"].insert_one(
-                {
-                    "domain": "documents",
-                    "action": action,
-                    "payload": payload,
-                    "error_type": type(exc).__name__,
-                    "attempt_count": 0,
-                    "occurred_at": datetime.now(timezone.utc),
-                    "last_attempt_at": None,
-                    "resolved_at": None,
-                }
-            )
-            queued = True
-        except Exception:
-            logger.exception("Document audit failure queue write also failed")
-        if required:
-            message = "Required document audit could not be recorded"
-            if queued:
-                message = "Required document audit was queued for recovery"
-            raise DocumentAuditUnavailable(message) from exc
-        return None
+    return record_audit(
+        domain="documents",
+        required=required,
+        unavailable_error=DocumentAuditUnavailable,
+        writer=AuditLog.log_action,
+        **payload,
+    )
 
 
 def reconcile_document_audit_failures(limit=100):
-    now = datetime.now(timezone.utc)
-    collection = settings.MONGODB["audit_write_failures"]
-    resolved = 0
-    for failure in collection.find(
-        {"domain": "documents", "resolved_at": None},
-        sort=[("occurred_at", 1)],
-        limit=max(1, min(int(limit), 500)),
-    ):
-        try:
-            AuditLog.log_action(**_allowlisted_payload(failure.get("payload", {})))
-        except Exception as exc:
-            collection.update_one(
-                {"_id": failure["_id"], "resolved_at": None},
-                {
-                    "$inc": {"attempt_count": 1},
-                    "$set": {
-                        "last_attempt_at": now,
-                        "error_type": type(exc).__name__,
-                    },
-                },
-            )
-            continue
-        collection.update_one(
-            {"_id": failure["_id"], "resolved_at": None},
-            {
-                "$inc": {"attempt_count": 1},
-                "$set": {"last_attempt_at": now, "resolved_at": now},
-                "$unset": {"payload": ""},
-            },
-        )
-        resolved += 1
-    return resolved
+    return reconcile_audit_failures(domains={"documents"}, limit=limit)["resolved"]

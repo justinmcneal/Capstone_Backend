@@ -15,6 +15,7 @@ from accounts.tasks import finalize_scheduled_customer_deletions_task
 from accounts.utils.email_utils import EmailUtils
 from accounts.utils.token_utils import TokenUtils
 from analytics.models import AuditLog
+from notifications.models.device_token import DeviceToken
 
 
 @pytest.fixture(autouse=True)
@@ -175,14 +176,58 @@ def test_first_new_device_login_emits_security_event():
     assert AuditLog.find_by_action("new_device_login", limit=10)
 
 
+@override_settings(SECURE_SSL_REDIRECT=False, WEBSOCKET_ENABLED=False)
+def test_pending_deletion_login_explains_state_only_after_valid_credentials():
+    customer = _customer("pending-login-stage8@example.com", two_factor=True)
+    pending_customer = AccountLifecycleService.request_deletion(customer)
+    assert pending_customer is not None
+
+    invalid = APIClient().post(
+        reverse("accounts:login"),
+        {"email": customer.email, "password": "WrongPass123!"},
+        format="json",
+    )
+    assert invalid.status_code == 401
+    assert invalid.json() == {
+        "status": "error",
+        "message": "Invalid email/username or password.",
+    }
+
+    valid = APIClient().post(
+        reverse("accounts:login"),
+        {"email": customer.email, "password": "Pass123!"},
+        format="json",
+    )
+    assert valid.status_code == 403
+    assert valid.json() == {
+        "status": "error",
+        "message": (
+            "Account deletion is pending. Cancel the deletion request to restore "
+            "access."
+        ),
+        "code": "account_pending_deletion",
+    }
+    stored_customer = Customer.find_one({"_id": customer._id})
+    assert stored_customer.account_state == "pending_deletion"
+
+
 @override_settings(
     SECURE_SSL_REDIRECT=False,
     WEBSOCKET_ENABLED=False,
     ACCOUNT_DELETION_RETENTION_DAYS=0,
 )
-def test_deletion_can_be_cancelled_with_credentials_and_finalized_after_retention():
+def test_deletion_can_be_cancelled_with_credentials_and_finalized_after_retention(
+    settings,
+):
     customer = _customer("deletion-stage8@example.com")
-    client, _tokens = _customer_client(customer)
+    client, tokens = _customer_client(customer)
+    device_token = DeviceToken.register(
+        user_id=customer.id,
+        user_type="customer",
+        session_id=RefreshToken(tokens["refresh"])["session_id"],
+        token="deletion-device-token-1234567890",
+        platform="android",
+    )
 
     requested = client.post(
         reverse("accounts:account-deletion-request"),
@@ -226,6 +271,12 @@ def test_deletion_can_be_cancelled_with_credentials_and_finalized_after_retentio
     assert deleted.active is False
     assert deleted.password == ""
     assert deleted.email.endswith("@deleted.local")
+    assert (
+        settings.MONGODB[DeviceToken.collection_name].find_one(
+            {"_id": device_token._id}
+        )
+        is None
+    )
 
     cleanup_status = admin_client.get(
         reverse("accounts:admin-customer-detail", kwargs={"customer_id": customer.id})
@@ -234,6 +285,7 @@ def test_deletion_can_be_cancelled_with_credentials_and_finalized_after_retentio
     assert cleanup_status.json()["data"]["profile_cleanup_status"] == "complete"
     assert cleanup_status.json()["data"]["profile_cleanup_attempts"] == 1
     assert cleanup_status.json()["data"]["profile_cleanup_last_error"] == ""
+    assert cleanup_status.json()["data"]["notification_cleanup_status"] == "complete"
 
 
 @override_settings(SECURE_SSL_REDIRECT=False, WEBSOCKET_ENABLED=False)

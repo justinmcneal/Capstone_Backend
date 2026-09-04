@@ -1,14 +1,17 @@
-from rest_framework.views import APIView
-from rest_framework.permissions import IsAuthenticated
-from accounts.authentication import CustomJWTAuthentication
-from accounts.utils.response_helpers import success_response, error_response
-from accounts.utils.validation_utils import sanitize_text
-from rest_framework import status
-from loans.models import LoanApplication, RepaymentSchedule
-from loans.views.officer.base import LoanOfficerRequiredMixin
-from loans.services.audit import record_loan_audit
-from loans.utils.time import utcnow
 import logging
+
+from rest_framework import status
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.views import APIView
+
+from accounts.authentication import CustomJWTAuthentication
+from accounts.utils.response_helpers import error_response, success_response
+from accounts.utils.validation_utils import sanitize_text
+from loans.models import LoanApplication, RepaymentSchedule
+from loans.services.audit import record_loan_audit
+from loans.services.settlement_policy import LOAN_ACCOUNTING_POLICY_VERSION
+from loans.utils.time import utcnow
+from loans.views.officer.base import LoanOfficerRequiredMixin
 
 logger = logging.getLogger("loans")
 
@@ -42,14 +45,19 @@ class OfficerScheduleView(LoanOfficerRequiredMixin, APIView):
         if not has_scope:
             return scope_result
 
-        # Only disbursed loans have schedules
-        if app.status not in {"disbursed", "completed", "written_off"}:
+        schedule = RepaymentSchedule.find_by_loan(application_id)
+
+        # Existing schedules are authoritative for legacy loans whose application
+        # status was not advanced when the schedule was created.
+        if not schedule and app.status not in {
+            "disbursed",
+            "completed",
+            "written_off",
+        }:
             return error_response(
                 message="Repayment schedule is only available for disbursed loans",
                 status_code=status.HTTP_400_BAD_REQUEST,
             )
-
-        schedule = RepaymentSchedule.find_by_loan(application_id)
 
         if not schedule:
             return error_response(
@@ -222,6 +230,12 @@ class ApplyPenaltyView(LoanOfficerRequiredMixin, APIView):
             return error_response(
                 message=str(exc), status_code=status.HTTP_400_BAD_REQUEST
             )
+        except RuntimeError:
+            return error_response(
+                message="The installment changed. Refresh and retry.",
+                code="LOAN_ACCOUNTING_CONFLICT",
+                status_code=status.HTTP_409_CONFLICT,
+            )
         penalty_amount = installment["penalty_amount"]
         now = installment["penalty_applied_at"]
 
@@ -237,11 +251,12 @@ class ApplyPenaltyView(LoanOfficerRequiredMixin, APIView):
                 "installment_number": installment_number,
                 "amount": penalty_amount,
                 "reason": reason,
+                "policy_version": LOAN_ACCOUNTING_POLICY_VERSION,
             },
             ip_address=request.META.get("REMOTE_ADDR", ""),
         )
 
-        # Blockchain sync — penalty apply (background thread, no Celery needed)
+        # Durable, feature-gated penalty sync through Celery.
         try:
             from loans.blockchain.sync import sync_penalty
 
@@ -262,6 +277,7 @@ class ApplyPenaltyView(LoanOfficerRequiredMixin, APIView):
                 "penalty_reason": reason,
                 "penalty_applied_at": now.isoformat(),
                 "penalty_applied_by": actor_id,
+                "policy_version": LOAN_ACCOUNTING_POLICY_VERSION,
             },
             message="Penalty applied successfully",
             status_code=status.HTTP_201_CREATED,
@@ -341,6 +357,12 @@ class WaivePenaltyView(LoanOfficerRequiredMixin, APIView):
             return error_response(
                 message=str(exc), status_code=status.HTTP_400_BAD_REQUEST
             )
+        except RuntimeError:
+            return error_response(
+                message="The installment changed. Refresh and retry.",
+                code="LOAN_ACCOUNTING_CONFLICT",
+                status_code=status.HTTP_409_CONFLICT,
+            )
         penalty_amount = float(installment.get("penalty_amount", 0) or 0)
         now = installment["penalty_waived_at"]
         if schedule.is_paid_off():
@@ -363,11 +385,12 @@ class WaivePenaltyView(LoanOfficerRequiredMixin, APIView):
                 "installment_number": installment_number,
                 "amount": penalty_amount,
                 "reason": reason,
+                "policy_version": LOAN_ACCOUNTING_POLICY_VERSION,
             },
             ip_address=request.META.get("REMOTE_ADDR", ""),
         )
 
-        # Blockchain sync — penalty waive (background thread, no Celery needed)
+        # Durable, feature-gated penalty sync through Celery.
         try:
             from loans.blockchain.sync import sync_penalty
 
@@ -388,6 +411,19 @@ class WaivePenaltyView(LoanOfficerRequiredMixin, APIView):
                 "penalty_waived_at": now.isoformat(),
                 "penalty_waived_by": actor_id,
                 "penalty_waived_reason": reason,
+                "waiver_credit_centavos": installment.get(
+                    "waiver_credit_centavos", 0
+                ),
+                "waiver_credit_applied_centavos": installment.get(
+                    "waiver_credit_applied_centavos", 0
+                ),
+                "waiver_credit_remaining_centavos": installment.get(
+                    "waiver_credit_remaining_centavos", 0
+                ),
+                "waiver_credit_allocations": installment.get(
+                    "waiver_credit_allocations", []
+                ),
+                "policy_version": LOAN_ACCOUNTING_POLICY_VERSION,
             },
             message="Penalty waived successfully",
         )

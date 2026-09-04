@@ -1,5 +1,8 @@
 # MSME Pathways Smart Contract System
 
+> Settlement enums match the backend: cash, check, and feature-gated
+> wallet-to-wallet settlement only.
+
 ## Overview
 
 This smart contract system provides **immutable, auditable** record-keeping for the MSME Pathways Loan Management System. It complements the Django backend by adding blockchain-based verification and tamper-proof records.
@@ -201,7 +204,7 @@ Django Status      →    Smart Contract Status
 ### Payment Methods
 
 ```solidity
-enum PaymentMethod { BankTransfer, Cash, GCash, Other }
+enum PaymentMethod { Cash, Check, Wallet }
 ```
 
 ---

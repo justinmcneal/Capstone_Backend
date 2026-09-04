@@ -1,5 +1,8 @@
 # Blockchain Smart Contracts Guide
 
+> **Rail status:** Settlement enums contain cash, check, and wallet only. Wallet
+> is available when blockchain is enabled.
+
 ## Scope
 This guide covers the on-chain subsystem in `smartcontracts/` and how it maps to backend loan workflows.
 
@@ -52,8 +55,8 @@ Note: `ILoanCore.sol` still contains legacy enum values (`Active`, `Completed`, 
 | `3` | `Overdue` | `overdue` |
 
 ### Method Enums (Ordering Matters)
-- `Repayment.PaymentMethod`: `Cash(0)`, `BankTransfer(1)`, `GCash(2)`, `Other(3)`
-- `Disbursement.DisbursementMethod`: `BankTransfer(0)`, `Cash(1)`, `GCash(2)`, `Other(3)`
+- `Repayment.PaymentMethod`: `Cash(0)`, `Check(1)`, `Wallet(2)`
+- `Disbursement.DisbursementMethod`: `Cash(0)`, `Check(1)`, `Wallet(2)`
 
 ## Local Development and Testing
 ```bash

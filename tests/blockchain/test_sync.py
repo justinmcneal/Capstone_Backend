@@ -305,8 +305,8 @@ class TestSyncDisbursement:
         from loans.blockchain.sync import _sync_disbursement_impl
 
         mock_app = MagicMock()
-        mock_app.disbursement_method = "gcash"
-        mock_app.preferred_disbursement_method = "gcash"
+        mock_app.disbursement_method = "check"
+        mock_app.preferred_disbursement_method = "check"
         mock_app.disbursed_amount = 50000
         mock_app.disbursement_reference = "REF123"
         mock_find.return_value = mock_app
@@ -399,7 +399,7 @@ class TestSyncPayment:
             "loan_id": "loan123",
             "installment_number": 1,
             "amount": 4583,
-            "payment_method": "gcash",
+            "payment_method": "wallet",
             "reference": "PAY_REF_001",
             "recorded_at": datetime.now(timezone.utc),
         }

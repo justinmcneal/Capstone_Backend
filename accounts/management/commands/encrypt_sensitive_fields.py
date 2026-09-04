@@ -2,6 +2,7 @@ from django.conf import settings
 from django.core.management.base import BaseCommand, CommandError
 
 from accounts.models import Admin, Customer, LoanOfficer
+from ai_assistant.models import AIInteraction
 from config.field_encryption import (
     FieldDecryptionError,
     decrypt_value,
@@ -12,6 +13,9 @@ from config.field_encryption import (
 )
 from documents.models import Document
 from loans.models import LoanApplication, LoanPayment, LoanProduct, RepaymentSchedule
+from notifications.models.delivery import NotificationDelivery
+from notifications.models.device_token import DeviceToken
+from notifications.models.notification import Notification
 from profiles.models import (
     AlternativeData,
     BusinessProfile,
@@ -32,14 +36,17 @@ ENCRYPTED_MODELS = (
     LoanPayment,
     LoanProduct,
     RepaymentSchedule,
+    AIInteraction,
+    DeviceToken,
+    Notification,
+    NotificationDelivery,
 )
 
 # Retained as a public constant for operational tooling and tests. Deriving this
 # from model declarations prevents a backfill from encrypting fields that the
 # corresponding model cannot decrypt.
 FIELD_MAP = {
-    model.collection_name: tuple(model.encrypted_fields)
-    for model in ENCRYPTED_MODELS
+    model.collection_name: tuple(model.encrypted_fields) for model in ENCRYPTED_MODELS
 }
 
 
@@ -70,6 +77,16 @@ class Command(BaseCommand):
             action="store_true",
             help="Fail unless every populated supported field decrypts with the primary key.",
         )
+        parser.add_argument(
+            "--collection",
+            action="append",
+            dest="collection_names",
+            choices=tuple(FIELD_MAP),
+            help=(
+                "Limit work to a supported collection. Repeat this option to "
+                "select multiple collections."
+            ),
+        )
 
     def handle(self, *args, **options):
         if not getattr(settings, "FIELD_ENCRYPTION_KEY", ""):
@@ -97,7 +114,13 @@ class Command(BaseCommand):
             "failures": 0,
         }
 
-        for collection_name, fields in FIELD_MAP.items():
+        selected_names = options.get("collection_names") or tuple(FIELD_MAP)
+        selected_fields = {
+            collection_name: FIELD_MAP[collection_name]
+            for collection_name in selected_names
+        }
+
+        for collection_name, fields in selected_fields.items():
             counts = {key: 0 for key in totals}
             projection = {field: 1 for field in fields}
             for document in settings.MONGODB[collection_name].find({}, projection):

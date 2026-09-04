@@ -3,19 +3,21 @@ LoanPayment Model - Records customer payments.
 """
 
 import hashlib
+import hmac
 
 from django.conf import settings
 
-from config.field_encryption import decrypt_fields, encrypt_fields
-from loans.utils.time import utcnow
+from config.field_encryption import decrypt_fields, encrypt_fields, encrypt_value
 from loans.utils.money import from_centavos, to_centavos
+from loans.utils.time import utcnow
 
 
 def get_db():
     return settings.MONGODB
 
 
-PAYMENT_METHODS = ["cash", "gcash", "bank_transfer", "check", "wallet"]
+ACTIVE_PAYMENT_METHODS = ("cash", "check", "wallet")
+PAYMENT_METHODS = list(ACTIVE_PAYMENT_METHODS)
 PAYMENT_STATUSES = [
     "pending_verification",
     "posting",
@@ -31,7 +33,12 @@ class LoanPayment:
     """
 
     collection_name = "loan_payments"
-    encrypted_fields = ("notes", "reference")
+    encrypted_fields = (
+        "notes",
+        "reference",
+        "failure_reason",
+        "blockchain_sync_error",
+    )
 
     def __init__(self, **kwargs):
         self._id = kwargs.get("_id")
@@ -48,6 +55,7 @@ class LoanPayment:
         self.payment_method = kwargs.get("payment_method", "cash")
         self.reference = kwargs.get("reference", "")
         self.reference_fingerprint = kwargs.get("reference_fingerprint", "")
+        self.reference_search_index = kwargs.get("reference_search_index", "")
         self.notes = kwargs.get("notes", "")
         # Existing records predate explicit status and are treated as posted.
         self.payment_status = kwargs.get("payment_status", "posted")
@@ -56,6 +64,10 @@ class LoanPayment:
         self.verified_at = kwargs.get("verified_at")
         self.failure_reason = kwargs.get("failure_reason", "")
         self.allocations = kwargs.get("allocations", [])
+        self.timing_status = kwargs.get("timing_status", "")
+        self.scope_officer_id = kwargs.get("scope_officer_id", "")
+        self._loan_disbursed_explicit = "loan_disbursed" in kwargs
+        self.loan_disbursed = bool(kwargs.get("loan_disbursed", False))
 
         # Recording info
         self.recorded_by = kwargs.get("recorded_by")  # Officer ID
@@ -90,6 +102,8 @@ class LoanPayment:
             "payment_method": self.payment_method,
             "reference": self.reference,
             "reference_fingerprint": self.reference_fingerprint,
+            "reference_search_index": self.reference_search_index
+            or self.blind_index_reference(self.reference),
             "notes": self.notes,
             "payment_status": self.payment_status,
             "idempotency_key": self.idempotency_key,
@@ -97,6 +111,9 @@ class LoanPayment:
             "verified_at": self.verified_at,
             "failure_reason": self.failure_reason,
             "allocations": self.allocations,
+            "timing_status": self.timing_status,
+            "scope_officer_id": self.scope_officer_id,
+            "loan_disbursed": self.loan_disbursed,
             "recorded_by": self.recorded_by,
             "recorded_at": self.recorded_at,
             "blockchain_tx_hash": self.blockchain_tx_hash,
@@ -123,6 +140,39 @@ class LoanPayment:
     def save(self):
         db = get_db()
         collection = db[self.collection_name]
+        if not self.scope_officer_id or not self.timing_status or not self._loan_disbursed_explicit:
+            from loans.models.application import LoanApplication
+            from loans.models.repayment import RepaymentSchedule
+
+            application = LoanApplication.find_by_id(self.loan_id)
+            schedule = RepaymentSchedule.find_by_loan(self.loan_id)
+            if not self.scope_officer_id and application:
+                self.scope_officer_id = str(
+                    getattr(application, "assigned_officer", "") or ""
+                )
+            if not self._loan_disbursed_explicit:
+                self.loan_disbursed = bool(
+                    application
+                    and getattr(application, "status", "")
+                    in {"disbursed", "completed", "written_off"}
+                )
+            if not self.timing_status:
+                if self.installment_number == 0:
+                    self.timing_status = "payoff"
+                else:
+                    installment = (
+                        schedule.get_installment(self.installment_number)
+                        if schedule
+                        else None
+                    )
+                    due_date = installment.get("due_date") if installment else None
+                    self.timing_status = (
+                        "on_time"
+                        if due_date and self.recorded_at.date() <= due_date.date()
+                        else "late"
+                        if due_date
+                        else "unknown"
+                    )
         data = self.to_dict()
 
         if self._id:
@@ -139,6 +189,40 @@ class LoanPayment:
         """Return a non-reversible, normalized external-reference fingerprint."""
         normalized = f"{payment_method}:{str(reference).strip().lower()}"
         return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+
+    @classmethod
+    def _search_keys(cls):
+        configured = [
+            str(getattr(settings, "FIELD_ENCRYPTION_KEY", "") or "").strip(),
+            *[
+                str(value or "").strip()
+                for value in getattr(settings, "FIELD_ENCRYPTION_PREVIOUS_KEYS", ())
+            ],
+        ]
+        keys = []
+        for value in configured:
+            encoded = value.encode("utf-8") if value else None
+            if encoded and encoded not in keys:
+                keys.append(encoded)
+        return keys or [str(settings.SECRET_KEY).encode("utf-8")]
+
+    @staticmethod
+    def _normalized_reference(reference):
+        return " ".join(str(reference or "").strip().lower().split())
+
+    @classmethod
+    def blind_index_reference(cls, reference, key=None):
+        normalized = cls._normalized_reference(reference)
+        if not normalized:
+            return ""
+        active_key = key or cls._search_keys()[0]
+        return hmac.new(active_key, normalized.encode("utf-8"), hashlib.sha256).hexdigest()
+
+    @classmethod
+    def reference_search_candidates(cls, reference):
+        return [
+            cls.blind_index_reference(reference, key=key) for key in cls._search_keys()
+        ]
 
     def mark_posted(self, verification_source):
         self.payment_status = "posted"
@@ -160,12 +244,14 @@ class LoanPayment:
         return [cls.from_dict(doc) for doc in docs]
 
     @classmethod
-    def find_by_customer(cls, customer_id):
+    def find_by_customer(cls, customer_id, limit=None, projection=None):
         db = get_db()
         collection = db[cls.collection_name]
-        docs = collection.find({"customer_id": str(customer_id)}).sort(
-            "recorded_at", -1
-        )
+        docs = collection.find(
+            {"customer_id": str(customer_id)}, projection
+        ).sort("recorded_at", -1)
+        if limit:
+            docs = docs.limit(max(1, int(limit)))
         return [cls.from_dict(doc) for doc in docs]
 
     @classmethod
@@ -251,6 +337,22 @@ class LoanPayment:
         collection.create_index("recorded_at")
         collection.create_index("payment_status")
         collection.create_index(
+            [("reference_search_index", 1), ("recorded_at", -1), ("_id", -1)],
+            name="payment_reference_search",
+        )
+        collection.create_index(
+            [("scope_officer_id", 1), ("recorded_at", -1), ("_id", -1)],
+            name="payment_officer_scope_sort",
+        )
+        collection.create_index(
+            [("loan_disbursed", 1), ("timing_status", 1), ("recorded_at", -1)],
+            name="payment_lifecycle_timing_sort",
+        )
+        collection.create_index(
+            [("loan_id", 1), ("payment_status", 1), ("recorded_at", -1)],
+            name="payment_loan_status_sort",
+        )
+        collection.create_index(
             "idempotency_key",
             unique=True,
             partialFilterExpression={"idempotency_key": {"$type": "string", "$gt": ""}},
@@ -292,7 +394,7 @@ class LoanPayment:
             {
                 "$set": {
                     "blockchain_sync_status": "failed",
-                    "blockchain_sync_error": str(error)[:500],
+                    "blockchain_sync_error": encrypt_value(str(error)[:500]),
                 }
             },
         )

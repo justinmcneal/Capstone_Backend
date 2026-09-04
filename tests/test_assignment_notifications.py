@@ -3,8 +3,8 @@ from types import SimpleNamespace
 import mongomock
 from django.conf import settings
 
-from loans.services import assignment
 from loans.models import LoanApplication
+from loans.services import assignment
 from loans.views.admin_views import AssignApplicationView, ReassignApplicationView
 from notifications.models.notification import Notification
 from notifications.services import assignment_events
@@ -25,8 +25,7 @@ def test_reassignment_creates_distinct_notifications(monkeypatch):
 
     broadcasts = []
     monkeypatch.setattr(
-        assignment_events,
-        "broadcast_notification_to_user",
+        "notifications.services.delivery.broadcast_notification_to_user",
         lambda user_id, user_type, payload: broadcasts.append(
             (str(user_id), user_type, payload)
         ),
@@ -41,7 +40,10 @@ def test_reassignment_creates_distinct_notifications(monkeypatch):
         related_id="loan-1",
     )
 
-    documents = list(database[Notification.collection_name].find())
+    documents = [
+        Notification.from_dict(row).to_plain_dict()
+        for row in database[Notification.collection_name].find()
+    ]
     assert len(documents) == 3
     assert {document["user_id"] for document in documents} == {
         "admin-1",
@@ -61,14 +63,10 @@ def test_reassignment_creates_distinct_notifications(monkeypatch):
         "by Avery Admin."
     )
     assert by_user["officer-1"]["notification_type"] == "application_unassigned"
-    assert by_user["admin-1"]["metadata"]["event_type"] == (
-        "application_reassigned"
-    )
+    assert by_user["admin-1"]["metadata"]["event_type"] == ("application_reassigned")
     assert by_user["admin-1"]["metadata"]["assigned_by"]["id"] == "admin-1"
     assert by_user["admin-1"]["metadata"]["assigned_to"]["id"] == "officer-2"
-    assert by_user["admin-1"]["metadata"]["previous_assignee"]["id"] == (
-        "officer-1"
-    )
+    assert by_user["admin-1"]["metadata"]["previous_assignee"]["id"] == ("officer-1")
     assert len(broadcasts) == 3
     assert all(payload["metadata"] for _, _, payload in broadcasts)
 
@@ -79,7 +77,8 @@ def test_initial_assignment_does_not_create_previous_assignee_notification(
     database = mongomock.MongoClient()["testdb"]
     monkeypatch.setattr(settings, "MONGODB", database)
     monkeypatch.setattr(
-        assignment_events, "broadcast_notification_to_user", lambda *args: None
+        "notifications.services.delivery.broadcast_notification_to_user",
+        lambda *args: None,
     )
 
     assignment_events.publish_assignment_notifications(
@@ -90,7 +89,10 @@ def test_initial_assignment_does_not_create_previous_assignee_notification(
         related_id="loan-1",
     )
 
-    documents = list(database[Notification.collection_name].find())
+    documents = [
+        Notification.from_dict(row).to_plain_dict()
+        for row in database[Notification.collection_name].find()
+    ]
     assert len(documents) == 2
     assert {document["notification_type"] for document in documents} == {
         "application_assigned"
@@ -105,7 +107,8 @@ def test_unassignment_template_notifies_admin_and_previous_officer(monkeypatch):
     database = mongomock.MongoClient()["testdb"]
     monkeypatch.setattr(settings, "MONGODB", database)
     monkeypatch.setattr(
-        assignment_events, "broadcast_notification_to_user", lambda *args: None
+        "notifications.services.delivery.broadcast_notification_to_user",
+        lambda *args: None,
     )
 
     assignment_events.publish_assignment_notifications(
@@ -116,7 +119,10 @@ def test_unassignment_template_notifies_admin_and_previous_officer(monkeypatch):
         related_id="loan-1",
     )
 
-    documents = list(database[Notification.collection_name].find())
+    documents = [
+        Notification.from_dict(row).to_plain_dict()
+        for row in database[Notification.collection_name].find()
+    ]
     assert len(documents) == 2
     assert {document["notification_type"] for document in documents} == {
         "application_unassigned"
@@ -242,9 +248,7 @@ def test_assignment_views_pass_authenticated_admin_to_services(monkeypatch):
     reassign_request = SimpleNamespace(data={"officer_id": officer.id})
 
     assign_response = AssignApplicationView().post(assign_request, application.id)
-    reassign_response = ReassignApplicationView().post(
-        reassign_request, application.id
-    )
+    reassign_response = ReassignApplicationView().post(reassign_request, application.id)
 
     assert assign_response.status_code == 200
     assert reassign_response.status_code == 200

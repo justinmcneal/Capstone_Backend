@@ -39,6 +39,20 @@ def test_email_change_template_has_distinct_security_copy_and_inline_logo():
     assert "654321" in html
 
 
+def test_temporary_password_template_displays_inline_logo():
+    html = render_to_string(
+        "email/loan_officer_temp_password.html",
+        {
+            "first_name": "Josh",
+            "temporary_password": "temporary-secret",
+            "brand_logo_cid": "msme-pathways-logo",
+        },
+    )
+
+    assert 'src="cid:msme-pathways-logo"' in html
+    assert ">MP</div>" not in html
+
+
 def test_template_email_attaches_backend_owned_logo(mailoutbox):
     service = CentralizedEmailService()
 

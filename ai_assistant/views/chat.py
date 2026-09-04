@@ -1,4 +1,5 @@
 import logging
+import time
 import uuid
 
 from django.conf import settings
@@ -17,14 +18,34 @@ from accounts.utils.validation_utils import (
     sanitize_multiline_text,
     sanitize_text,
 )
+from ai_assistant.metrics import (
+    AI_PERSISTENCE_FAILURES,
+    AI_PROVIDER_LATENCY,
+    AI_PROVIDER_REQUESTS,
+    AI_REQUEST_LATENCY,
+    AI_REQUESTS,
+    AI_TOKENS,
+    increment,
+    observe,
+)
 from ai_assistant.models import AIInteraction
 from ai_assistant.services import get_llm_service
 from ai_assistant.services.context_builder import (
     get_context_for_intent,
 )
 from ai_assistant.services.exception_types import NON_FATAL_EXCEPTIONS
+from ai_assistant.services.idempotency import (
+    claim,
+    mark_complete,
+    mark_failed,
+    request_fingerprint,
+)
 from ai_assistant.services.knowledge_base import check_prohibited_content
 from ai_assistant.services.llm_service import SYSTEM_PROMPT, needs_user_context
+from ai_assistant.services.request_limits import (
+    resolve_request_id,
+    validate_chat_message,
+)
 from ai_assistant.services.tools import TOOL_SCHEMAS
 
 logger = logging.getLogger('ai_assistant')
@@ -83,7 +104,26 @@ class ConsentRequiredMixin(AccessControlMixin):
         return True, None
 
 
-class ChatView(ConsentRequiredMixin, APIView):
+class AIRequestMetricsMixin:
+    """Record low-cardinality HTTP outcomes without request/customer content."""
+
+    metrics_endpoint = 'unknown'
+
+    def dispatch(self, request, *args, **kwargs):
+        started = time.monotonic()
+        response = super().dispatch(request, *args, **kwargs)
+        status_code = int(getattr(response, 'status_code', 500))
+        outcome = f'{status_code // 100}xx'
+        increment(AI_REQUESTS, endpoint=self.metrics_endpoint, outcome=outcome)
+        observe(
+            AI_REQUEST_LATENCY,
+            time.monotonic() - started,
+            endpoint=self.metrics_endpoint,
+        )
+        return response
+
+
+class ChatView(AIRequestMetricsMixin, ConsentRequiredMixin, APIView):
     """
     Main chat endpoint for AI assistant.
     
@@ -92,23 +132,30 @@ class ChatView(ConsentRequiredMixin, APIView):
     authentication_classes = (CustomJWTAuthentication,)
     permission_classes = (IsAuthenticated,)
     throttle_classes = (ChatRateThrottle,)
+    metrics_endpoint = 'chat'
     
     def post(self, request):
         """Send a message to the AI assistant"""
         try:
+            if not getattr(settings, 'AI_ASSISTANT_ENABLED', True):
+                return error_response(
+                    message="AI assistant is temporarily disabled",
+                    code="AI_ASSISTANT_DISABLED",
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                )
             has_consent, result = self.check_ai_consent(request)
             if not has_consent:
                 return result
             
             user = request.user
             customer_id = user.customer_id
+            request_id, validation_error = resolve_request_id(request)
+            if validation_error:
+                return validation_error
             
-            message = sanitize_text(request.data.get('message', ''))
-            if not message:
-                return error_response(
-                    message="Message is required",
-                    status_code=status.HTTP_400_BAD_REQUEST
-                )
+            message, validation_error = validate_chat_message(request.data.get('message'), request)
+            if validation_error:
+                return validation_error
             
             raw_conversation_id = request.data.get('conversation_id')
             if raw_conversation_id:
@@ -132,6 +179,37 @@ class ChatView(ConsentRequiredMixin, APIView):
                     status_code=status.HTTP_400_BAD_REQUEST
                 )
             language = requested_language
+
+            request_claim = claim(
+                customer_id,
+                request_id,
+                fingerprint=request_fingerprint(message, raw_conversation_id or '', language),
+            )
+            if request_claim['state'] == 'conflict':
+                return error_response(
+                    message='Idempotency-Key was already used for a different request',
+                    code='AI_IDEMPOTENCY_KEY_REUSED',
+                    status_code=status.HTTP_409_CONFLICT,
+                )
+            if request_claim['state'] == 'in_progress':
+                return error_response(
+                    message='An identical AI request is already processing',
+                    code='AI_REQUEST_IN_PROGRESS',
+                    status_code=status.HTTP_409_CONFLICT,
+                )
+            if request_claim['state'] == 'replay':
+                assistant = request_claim['interactions'][-1]
+                return success_response(
+                    data={
+                        'response': assistant.response,
+                        'conversation_id': assistant.conversation_id,
+                        'model': assistant.model_used,
+                        'response_time_ms': assistant.response_time_ms,
+                        'request_id': request_id,
+                        'replayed': True,
+                    },
+                    message='Response replayed successfully',
+                )
             
             history = AIInteraction.find_by_conversation(
                 conversation_id=conversation_id,
@@ -149,26 +227,28 @@ class ChatView(ConsentRequiredMixin, APIView):
                     message=message,
                     response='',
                     conversation_id=conversation_id,
-                    role='user'
+                    role='user',
+                    request_id=request_id,
                 )
-                user_interaction.save()
-                
                 ai_interaction = AIInteraction(
                     customer_id=customer_id,
-                    message=message,
+                    message='',
                     response=escape_llm_output(redirect_response),
                     conversation_id=conversation_id,
                     role='assistant',
                     model_used='content_filter',
                     response_time_ms=0,
+                    request_id=request_id,
                 )
-                ai_interaction.save()
+                AIInteraction.save_exchange(user_interaction, ai_interaction)
+                mark_complete(customer_id, request_id)
                 
                 return success_response(
                     data={
                         'message': escape_llm_output(redirect_response),
                         'conversation_id': conversation_id,
                         'filtered': True,
+                        'request_id': request_id,
                     },
                     message="Response generated"
                 )
@@ -176,9 +256,15 @@ class ChatView(ConsentRequiredMixin, APIView):
             llm = get_llm_service(use_case='chat')
             
             if not llm.is_available():
+                mark_failed(customer_id, request_id)
+                increment(
+                    AI_PROVIDER_REQUESTS,
+                    provider=str(getattr(llm, 'provider', 'unknown')),
+                    outcome='unavailable',
+                )
                 return error_response(
-                    message="AI service is currently unavailable. Please configure GROQ_API_KEY.",
-                    errors={'hint': 'Get free API key at https://console.groq.com'},
+                    message="AI service is currently unavailable",
+                    code='AI_PROVIDER_UNAVAILABLE',
                     status_code=status.HTTP_503_SERVICE_UNAVAILABLE
                 )
             
@@ -195,16 +281,30 @@ class ChatView(ConsentRequiredMixin, APIView):
                 language=language,
                 system_prompt=contextualized_prompt,
                 tools=TOOL_SCHEMAS,
+                request_id=request_id,
             )
             
             if not result['success']:
+                mark_failed(customer_id, request_id)
+                provider_outcome = {
+                    'AI_PROVIDER_TIMEOUT': 'timeout',
+                    'AI_PROVIDER_BUSY': 'busy',
+                    'AI_PROVIDER_CIRCUIT_OPEN': 'circuit_open',
+                }.get(result.get('code'), 'error')
+                increment(
+                    AI_PROVIDER_REQUESTS,
+                    provider=str(getattr(llm, 'provider', 'unknown')),
+                    outcome=provider_outcome,
+                )
                 return error_response(
-                    message=result.get('error', 'Failed to get AI response'),
-                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
+                    message='AI service is temporarily unavailable',
+                    code=result.get('code', 'AI_PROVIDER_ERROR'),
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE
                 )
 
             ai_response = escape_llm_output(sanitize_multiline_text(result.get('response', '')))
             if not ai_response:
+                mark_failed(customer_id, request_id)
                 return error_response(
                     message="AI returned an empty response",
                     status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
@@ -216,10 +316,9 @@ class ChatView(ConsentRequiredMixin, APIView):
                 response='',
                 language=language,
                 conversation_id=conversation_id,
-                role='user'
+                role='user',
+                request_id=request_id,
             )
-            user_interaction.save()
-            
             ai_interaction = AIInteraction(
                 customer_id=customer_id,
                 message='',
@@ -229,24 +328,59 @@ class ChatView(ConsentRequiredMixin, APIView):
                 role='assistant',
                 model_used=result.get('model', ''),
                 response_time_ms=result.get('response_time_ms'),
-                tokens_used=result.get('tokens_used')
+                tokens_used=result.get('tokens_used'),
+                request_id=request_id,
             )
-            ai_interaction.save()
+            AIInteraction.save_exchange(user_interaction, ai_interaction)
+            mark_complete(customer_id, request_id)
+            provider_name = str(
+                result.get('provider') or getattr(llm, 'provider', 'unknown')
+            )
+            increment(
+                AI_PROVIDER_REQUESTS,
+                provider=provider_name,
+                outcome='success',
+            )
+            observe(
+                AI_PROVIDER_LATENCY,
+                max(0, int(result.get('response_time_ms') or 0)) / 1000,
+                provider=provider_name,
+                operation='chat',
+            )
+            increment(
+                AI_TOKENS,
+                amount=max(0, int(result.get('tokens_used') or 0)),
+                provider=provider_name,
+            )
             
-            logger.info(f"AI chat: customer {customer_id}, {result.get('response_time_ms')}ms")
+            logger.info(
+                "AI chat completed",
+                extra={
+                    'request_id': request_id,
+                    'provider': result.get('provider'),
+                    'response_time_ms': result.get('response_time_ms'),
+                },
+            )
             
             return success_response(
                 data={
                     'response': ai_response,
                     'conversation_id': conversation_id,
                     'model': result.get('model'),
-                    'response_time_ms': result.get('response_time_ms')
+                    'response_time_ms': result.get('response_time_ms'),
+                    'request_id': request_id,
                 },
                 message="Response generated successfully"
             )
             
-        except NON_FATAL_EXCEPTIONS as e:
-            logger.error(f"Chat error: {e!s}")
+        except NON_FATAL_EXCEPTIONS:
+            if 'request_id' in locals() and 'customer_id' in locals():
+                mark_failed(customer_id, request_id)
+            increment(AI_PERSISTENCE_FAILURES, operation='chat_request')
+            logger.error(
+                "AI chat request failed",
+                extra={'request_id': locals().get('request_id')},
+            )
             return error_response(
                 message="Failed to process chat message",
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR

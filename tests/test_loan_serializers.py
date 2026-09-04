@@ -10,8 +10,6 @@ Coverage:
 - ApplicationInternalNoteSerializer: max length validation
 """
 
-import pytest
-from rest_framework import serializers
 
 from loans.serializers import (
     ApplicationInternalNoteSerializer,
@@ -71,7 +69,7 @@ class TestLoanApplicationSerializer:
             "requested_amount": 20000,
             "term_months": 12,
             "purpose": "Working capital",
-            "preferred_disbursement_method": "bank_transfer",
+            "preferred_disbursement_method": "cash",
         }
         serializer = LoanApplicationSerializer(data=data)
         assert serializer.is_valid()

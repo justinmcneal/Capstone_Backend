@@ -11,6 +11,7 @@ from pymongo.errors import DuplicateKeyError
 
 from loans.models import LoanPayment
 from loans.utils.money import from_centavos, to_centavos
+from loans.utils.time import utcnow
 
 
 class PaymentServiceError(ValueError):
@@ -63,6 +64,29 @@ def _find_duplicate(idempotency_key, reference_fingerprint):
     return None
 
 
+def _query_metadata(schedule, installment_number):
+    """Return denormalized, indexed payment scope and timing metadata."""
+    from loans.models import LoanApplication
+
+    application = LoanApplication.find_by_id(schedule.loan_id)
+    timing_status = "payoff" if installment_number == 0 else "unknown"
+    installment = schedule.get_installment(installment_number)
+    due_date = installment.get("due_date") if installment else None
+    if due_date and installment_number:
+        timing_status = "on_time" if utcnow().date() <= due_date.date() else "late"
+    return {
+        "timing_status": timing_status,
+        "scope_officer_id": str(getattr(application, "assigned_officer", "") or "")
+        if application
+        else "",
+        "loan_disbursed": bool(
+            application
+            and getattr(application, "status", "")
+            in {"disbursed", "completed", "written_off"}
+        ),
+    }
+
+
 def create_pending_submission(
     *,
     schedule,
@@ -104,6 +128,7 @@ def create_pending_submission(
         idempotency_key=key,
         verification_source="customer_submission",
         blockchain_sync_status="not_started",
+        **_query_metadata(schedule, installment_number),
     )
     try:
         payment.save()
@@ -163,7 +188,7 @@ def post_verified_payment(
             )
         payment = existing
     else:
-        fields = dict(extra_fields or {})
+        fields = {**_query_metadata(schedule, installment_number), **(extra_fields or {})}
         payment = LoanPayment(
             loan_id=schedule.loan_id,
             schedule_id=schedule.id,
@@ -232,6 +257,7 @@ def _sync_paid_off_application(schedule, actor_id=None, actor_type="system"):
             actor_id=actor_id,
             actor_type=actor_type,
             source="verified_payment",
+            allow_legacy_schedule=True,
         )
 
 
@@ -307,6 +333,7 @@ def post_verified_early_payoff(
             verification_source=verification_source,
             blockchain_sync_status="not_applicable",
             allocations=prepared_allocations,
+            **_query_metadata(schedule, 0),
         )
         try:
             payment.save()

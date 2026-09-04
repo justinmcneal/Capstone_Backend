@@ -1,7 +1,7 @@
 """
 ETH/PHP exchange rate service.
 
-Primary: CryptoCompare API (free, no key required, cached 5 min)
+Primary: CoinGecko API (cached 5 min)
 If the rate cannot be fetched, wallet transactions are blocked.
 """
 
@@ -21,12 +21,10 @@ _CACHE_TTL = 300  # 5 minutes
 class ExchangeRateUnavailableError(Exception):
     """Raised when the ETH/PHP exchange rate cannot be fetched."""
 
-    pass
-
 
 def get_eth_php_rate():
     """
-    Return the current ETH/PHP exchange rate from CryptoCompare.
+    Return the current ETH/PHP exchange rate from CoinGecko.
 
     Rate is cached for 5 minutes. If the API is unreachable and no
     valid cached rate exists, raises ExchangeRateUnavailableError

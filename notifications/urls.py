@@ -33,9 +33,9 @@ urlpatterns = [
     # Delete all notifications
     path('clear-all/', NotificationClearAllView.as_view(), name='notification-clear-all'),
 
+    # Register FCM token. Keep this static route before the notification-ID route.
+    path('register-token/', RegisterDeviceTokenView.as_view(), name='notification-register-token'),
+
     # Delete single notification
     path('<str:notification_id>/', NotificationDeleteView.as_view(), name='notification-delete'),
-
-    # Register FCM token
-    path('register-token/', RegisterDeviceTokenView.as_view(), name='notification-register-token'),
 ]

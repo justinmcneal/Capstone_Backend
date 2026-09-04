@@ -157,3 +157,7 @@ class LoanProduct:
         collection.create_index("code", unique=True)
         collection.create_index("active")
         collection.create_index("name")
+        collection.create_index(
+            [("active", 1), ("name", 1), ("_id", 1)],
+            name="product_active_name_page",
+        )

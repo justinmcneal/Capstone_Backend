@@ -1,9 +1,9 @@
 {
   "registry_schema_version": 1,
-  "model_version": "document-classifier-development-v0",
+  "model_version": "document-classifier-20260903T040432Z",
   "approval_status": "not_approved",
-  "artifact_sha256": null,
-  "dataset_manifest_sha256": null,
+  "artifact_sha256": "2481be08258fc011e616ba118cb0cb4c95033ec083f843404ea3e59894dcf108",
+  "dataset_manifest_sha256": "02edf7028ee4acb7c683ff008de3b80ddf03e635baeac8ee6b724f8d5ffde054",
   "code_version": "documents-cnn-mobilenetv2-v1",
   "preprocessing_version": "document-photo-letterbox-v2",
   "threshold_policy_version": "document-type-thresholds-v1",
@@ -30,8 +30,8 @@
     "valid_id": 6
   },
   "num_classes": 7,
-  "best_val_accuracy": 90.12345679012346,
-  "epochs_trained": 6,
+  "best_val_accuracy": 91.35802469135803,
+  "epochs_trained": 1,
   "model_type": "MobileNetV2",
   "input_size": [
     224,
@@ -39,44 +39,19 @@
   ],
   "history": {
     "train_loss": [
-      1.5472848577932878,
-      1.0380768477916718,
-      0.7731142829764973,
-      0.49779545718973334,
-      0.40056691521948035,
-      0.4287535927512429
+      1.3826895253289313
     ],
     "val_loss": [
-      1.6676422357559204,
-      1.0305983424186707,
-      0.8016319473584493,
-      0.6866173247496287,
-      0.7353458255529404,
-      0.7273093710343043
+      0.9431636917094389
     ],
     "train_acc": [
-      57.89473684210526,
-      82.6625386996904,
-      85.75851393188854,
-      88.85448916408669,
-      89.16408668730651,
-      90.40247678018576
+      69.3498452012384
     ],
     "val_acc": [
-      90.12345679012346,
-      86.41975308641975,
-      90.12345679012346,
-      90.12345679012346,
-      90.12345679012346,
-      90.12345679012346
+      91.35802469135803
     ],
     "lr": [
-      0.001,
-      0.001,
-      0.001,
-      0.001,
-      0.001,
-      0.0005
+      0.001
     ]
   }
 }

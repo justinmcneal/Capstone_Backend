@@ -14,19 +14,60 @@ from rest_framework.views import APIView
 
 from accounts.authentication import CustomJWTAuthentication
 from accounts.utils.response_helpers import error_response, success_response
-from accounts.utils.validation_utils import sanitize_text
 from accounts.views.admin_views import AdminRequiredMixin
 from analytics.models import AuditLog
+from analytics.services.access_audit import (
+    AnalyticsAccessAuditError,
+    record_privileged_read,
+)
 from analytics.services.audit_queries import (
+    AnalyticsQueryError,
     build_paginated_response,
-    parse_date_range,
+    parse_audit_filters,
+    parse_limit,
     parse_pagination,
+    serialize_admin_log_detail,
+    serialize_dashboard_activity,
+    validate_query_params,
+)
+from analytics.services.dashboard_metrics import (
+    DOCUMENT_PENDING_STATUSES,
+    LOAN_APPROVED_OUTCOME_STATUSES,
+    LOAN_DISBURSED_STATUSES,
+    LOAN_PENDING_STATUSES,
+    METRIC_DEFINITION_VERSION,
+    approval_rate,
+    current_document_query,
+    identity_query,
+    status_query,
+)
+from analytics.services.operations import (
+    AnalyticsOperationalMixin,
+    bounded_aggregate,
+    bounded_count,
+    bounded_cursor,
+    db_count,
 )
 
 logger = logging.getLogger("analytics")
 
 
-class AdminDashboardView(AdminRequiredMixin, APIView):
+def _audit_admin_read(request, admin, endpoint):
+    try:
+        record_privileged_read(
+            actor=admin,
+            actor_type=str(getattr(request.user, "role", "admin") or "admin"),
+            endpoint=endpoint,
+        )
+    except AnalyticsAccessAuditError:
+        return error_response(
+            message="Analytics access could not be audited",
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        )
+    return None
+
+
+class AdminDashboardView(AnalyticsOperationalMixin, AdminRequiredMixin, APIView):
     """
     Admin dashboard with system-wide statistics.
 
@@ -46,102 +87,155 @@ class AdminDashboardView(AdminRequiredMixin, APIView):
 
         db = settings.MONGODB
 
-        now = datetime.now(timezone.utc)
-        week_ago = now - timedelta(days=7)
-        month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        as_of = datetime.now(timezone.utc)
+        week_ago = as_of - timedelta(days=7)
+        month_start = as_of.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
 
         # User counts - use correct collection names from models
-        total_customers = db["customer"].count_documents(
-            {}
-        )  # Customer model uses 'customer'
-        total_officers = db["loan_officers"].count_documents({})
-        total_admins = db["admins"].count_documents({})
-        new_customers_this_week = db["customer"].count_documents(
+        total_customers = db_count(db, "customer", {})
+        total_officers = db_count(db, "loan_officers", {})
+        total_admins = db_count(db, "admins", {})
+        new_customers_this_week = db_count(db, "customer",
             {"created_at": {"$gte": week_ago}}
         )
-        new_officers_this_month = db["loan_officers"].count_documents(
+        new_officers_this_month = db_count(db, "loan_officers",
             {"created_at": {"$gte": month_start}}
         )
 
-        # Loan stats - include ALL statuses for complete visibility
+        loans = db["loan_applications"]
+        approved_outcomes = bounded_count(loans,
+            {"status": {"$in": sorted(LOAN_APPROVED_OUTCOME_STATUSES)}}
+        )
+        rejected_outcomes = bounded_count(loans, {"status": "rejected"})
+        # Outcome fields remain meaningful after disbursement/closure. `pending`
+        # is the published aggregate of submitted plus under-review records.
         loan_stats = {
-            "total": db["loan_applications"].count_documents({}),
-            "draft": db["loan_applications"].count_documents({"status": "draft"}),
-            "pending": db["loan_applications"].count_documents({"status": "submitted"}),
-            "under_review": db["loan_applications"].count_documents(
-                {"status": "under_review"}
+            "total": bounded_count(loans, {}),
+            "draft": bounded_count(loans, {"status": "draft"}),
+            "submitted": bounded_count(loans, {"status": "submitted"}),
+            "pending": bounded_count(loans,
+                {"status": {"$in": sorted(LOAN_PENDING_STATUSES)}}
             ),
-            "approved": db["loan_applications"].count_documents({"status": "approved"}),
-            "rejected": db["loan_applications"].count_documents({"status": "rejected"}),
-            "disbursed": db["loan_applications"].count_documents(
-                {"status": "disbursed"}
+            "under_review": bounded_count(loans, {"status": "under_review"}),
+            "approved": approved_outcomes,
+            "rejected": rejected_outcomes,
+            "reviewed": approved_outcomes + rejected_outcomes,
+            "disbursed": bounded_count(loans,
+                {"status": {"$in": sorted(LOAN_DISBURSED_STATUSES)}}
             ),
-            "cancelled": db["loan_applications"].count_documents(
-                {"status": "cancelled"}
-            ),
+            "completed": bounded_count(loans, {"status": "completed"}),
+            "written_off": bounded_count(loans, {"status": "written_off"}),
+            "cancelled": bounded_count(loans, {"status": "cancelled"}),
         }
 
-        # Document stats
+        # Document metrics cover only the current metadata version whose object
+        # remains available. Canonical status, not the legacy boolean, is used.
+        current_documents = current_document_query()
         doc_stats = {
-            "total": db["documents"].count_documents({}),
-            "pending": db["documents"].count_documents({"status": "pending"}),
-            "verified": db["documents"].count_documents({"verified": True}),
+            "total": db_count(db, "documents", current_documents),
+            "pending": db_count(db, "documents",
+                status_query(current_documents, DOCUMENT_PENDING_STATUSES)
+            ),
+            "needs_review": db_count(db, "documents",
+                status_query(current_documents, {"needs_review"})
+            ),
+            "approved": db_count(db, "documents",
+                status_query(current_documents, {"approved"})
+            ),
+            "verified": db_count(db, "documents",
+                status_query(current_documents, {"approved"})
+            ),
+            "rejected": db_count(db, "documents",
+                status_query(current_documents, {"rejected"})
+            ),
+            "expired": db_count(db, "documents",
+                status_query(current_documents, {"expired"})
+            ),
         }
 
         # AI usage (last 7 days)
-        ai_sessions = db["ai_interactions"].count_documents(
+        ai_sessions = db_count(db, "ai_interactions",
             {"created_at": {"$gte": week_ago}}
         )
 
-        # Recent activity (last 10 audit logs, excluding standard noise)
-        recent_logs = AuditLog.find(
-            query={
-                "action": {
-                    "$nin": [
-                        "user_login",
-                        "user_logout",
-                        "user_login_failed",
-                        "loan_submitted",
-                        "document_uploaded",
-                    ]
-                }
-            },
-            sort=[("timestamp", -1)],
-            limit=10,
-        )
-        recent_activity = [
-            {
-                "action": log.action,
-                "user_type": log.user_type,
-                "description": log.description,
-                "timestamp": log.timestamp.isoformat(),
-            }
-            for log in recent_logs
-        ]
+        # Audit-derived content is a separate permission boundary from metrics.
+        can_view_logs = result.has_all_permissions(["view_logs"])
+        recent_activity = []
+        if can_view_logs:
+            recent_logs = AuditLog.find(
+                query={
+                    "action": {
+                        "$nin": [
+                            "user_login",
+                            "user_logout",
+                            "user_login_failed",
+                            "loan_submitted",
+                            "document_uploaded",
+                        ]
+                    }
+                },
+                sort=[("timestamp", -1), ("_id", -1)],
+                limit=10,
+            )
+            recent_activity = [serialize_dashboard_activity(log) for log in recent_logs]
 
         # Loan products performance
-        products = list(db["loan_products"].find({"active": True}))
+        products = list(
+            bounded_cursor(db["loan_products"].find({"active": True}))
+            .sort([("name", 1), ("_id", 1)])
+            .limit(int(getattr(settings, "ANALYTICS_MAX_ACTIVE_PRODUCTS", 100)))
+        )
+        product_ids = []
+        for product in products:
+            product_ids.extend(identity_query("product_id", product["_id"])["product_id"].get("$in", [str(product["_id"])]))
+        grouped = {}
+        if product_ids:
+            pipeline = [
+                {"$match": {"product_id": {"$in": product_ids}}},
+                {
+                    "$group": {
+                        "_id": {"product_id": "$product_id", "status": "$status"},
+                        "count": {"$sum": 1},
+                    }
+                },
+            ]
+            for row in bounded_aggregate(loans, pipeline):
+                grouped[(str(row["_id"]["product_id"]), row["_id"]["status"])] = int(
+                    row["count"]
+                )
         product_stats = []
         for p in products:
-            approved = db["loan_applications"].count_documents(
-                {"product_id": str(p["_id"]), "status": "approved"}
+            status_counts = {
+                loan_status: grouped.get((str(p["_id"]), loan_status), 0)
+                for loan_status in (
+                    LOAN_APPROVED_OUTCOME_STATUSES | {"rejected", "draft", "submitted", "under_review", "cancelled"}
+                )
+            }
+            approved = sum(
+                status_counts.get(loan_status, 0)
+                for loan_status in LOAN_APPROVED_OUTCOME_STATUSES
             )
-            total = db["loan_applications"].count_documents(
-                {"product_id": str(p["_id"])}
-            )
+            rejected = status_counts.get("rejected", 0)
+            reviewed = approved + rejected
+            total = sum(status_counts.values())
             product_stats.append(
                 {
                     "name": p["name"],
                     "applications": total,
+                    "reviewed": reviewed,
                     "approved": approved,
-                    "approval_rate": (
-                        f"{(approved / total * 100):.1f}%" if total > 0 else "0%"
-                    ),
+                    "approval_rate": approval_rate(approved, reviewed),
                 }
             )
 
+        audit_error = _audit_admin_read(request, result, "admin_dashboard")
+        if audit_error:
+            return audit_error
+
         return success_response(
             data={
+                "as_of": as_of.isoformat(),
+                "metric_definition_version": METRIC_DEFINITION_VERSION,
                 "users": {
                     "customers": total_customers,
                     "loan_officers": total_officers,
@@ -155,12 +249,13 @@ class AdminDashboardView(AdminRequiredMixin, APIView):
                 "ai_usage": {"sessions_last_7_days": ai_sessions},
                 "products": product_stats,
                 "recent_activity": recent_activity,
+                "recent_activity_restricted": not can_view_logs,
             },
             message="Admin dashboard data retrieved",
         )
 
 
-class AuditLogsView(AdminRequiredMixin, APIView):
+class AuditLogsView(AnalyticsOperationalMixin, AdminRequiredMixin, APIView):
     """
     View audit logs (admin only).
 
@@ -177,51 +272,56 @@ class AuditLogsView(AdminRequiredMixin, APIView):
             return result
 
         try:
+            validate_query_params(
+                request,
+                {
+                    "page",
+                    "page_size",
+                    "action",
+                    "action_group",
+                    "user_id",
+                    "user_type",
+                    "date_from",
+                    "date_to",
+                    "search",
+                },
+            )
             page, page_size = parse_pagination(request)
-        except ValueError as exc:
+            filters = parse_audit_filters(request, allow_actor_filters=True)
+        except AnalyticsQueryError as exc:
             return error_response(
-                message=str(exc.args[0]),
-                errors=exc.args[1] if len(exc.args) > 1 else {},
+                message=str(exc),
+                errors=exc.errors,
                 status_code=status.HTTP_400_BAD_REQUEST,
             )
 
-        action_filter = sanitize_text(request.query_params.get("action", ""))
-        action_group = sanitize_text(request.query_params.get("action_group", ""))
-        user_id = sanitize_text(request.query_params.get("user_id", ""))
-        user_type = sanitize_text(request.query_params.get("user_type", ""))
-        search = sanitize_text(request.query_params.get("search", ""))
-        date_filters = parse_date_range(request)
+        date_filters = filters.pop("date_range")
 
         logs = AuditLog.find_with_filters(
-            action=action_filter or None,
-            action_group=action_group or None,
-            user_id=user_id or None,
-            user_type=user_type or None,
             date_from=(date_filters or {}).get("$gte"),
             date_to=(date_filters or {}).get("$lte"),
-            search=search or None,
             skip=(page - 1) * page_size,
             limit=page_size,
+            **filters,
         )
 
         total = AuditLog.count_with_filters(
-            action=action_filter or None,
-            action_group=action_group or None,
-            user_id=user_id or None,
-            user_type=user_type or None,
             date_from=(date_filters or {}).get("$gte"),
             date_to=(date_filters or {}).get("$lte"),
-            search=search or None,
+            **filters,
         )
 
         response_data = build_paginated_response(list(logs), total, page, page_size)
+        audit_error = _audit_admin_read(request, result, "audit_log_list")
+        if audit_error:
+            return audit_error
         return success_response(
             data=response_data,
             message="Audit logs retrieved",
         )
 
 
-class AuditLogUsersView(AdminRequiredMixin, APIView):
+class AuditLogUsersView(AnalyticsOperationalMixin, AdminRequiredMixin, APIView):
     """
     List users present in audit logs for user-based filtering.
 
@@ -241,25 +341,27 @@ class AuditLogUsersView(AdminRequiredMixin, APIView):
         if not has_permission:
             return result
 
-        search = sanitize_text(request.query_params.get("search", ""))
         try:
-            limit = min(max(int(request.query_params.get("limit", 200)), 1), 500)
-        except (TypeError, ValueError):
+            validate_query_params(request, {"search", "limit"})
+            limit = parse_limit(request)
+            search = str(request.query_params.get("search", "") or "").strip()
+            if len(search) > 100:
+                raise AnalyticsQueryError(
+                    "Invalid search parameter",
+                    errors={"search": "search must be at most 100 characters"},
+                )
+        except AnalyticsQueryError as exc:
             return error_response(
-                message="Invalid limit parameter",
-                errors={"limit": "limit must be an integer"},
+                message=str(exc),
+                errors=exc.errors,
                 status_code=status.HTTP_400_BAD_REQUEST,
             )
 
         collection = settings.MONGODB["audit_logs"]
         match_stage = {"user_id": {"$nin": [None, ""]}}
         if search:
-            regex = {"$regex": re.escape(search), "$options": "i"}
-            match_stage["$or"] = [
-                {"user_email": regex},
-                {"user_type": regex},
-                {"user_id": regex},
-            ]
+            regex = {"$regex": f"^{re.escape(search)}", "$options": "i"}
+            match_stage["$or"] = [{"user_type": regex}, {"user_id": regex}]
 
         pipeline = [
             {"$match": match_stage},
@@ -269,7 +371,6 @@ class AuditLogUsersView(AdminRequiredMixin, APIView):
                     "_id": "$user_id",
                     "user_id": {"$first": "$user_id"},
                     "user_type": {"$first": "$user_type"},
-                    "user_email": {"$first": "$user_email"},
                     "latest_timestamp": {"$first": "$timestamp"},
                 }
             },
@@ -278,34 +379,31 @@ class AuditLogUsersView(AdminRequiredMixin, APIView):
         ]
 
         users = []
-        for doc in collection.aggregate(pipeline):
-            user_id = doc.get("user_id")
+        for doc in bounded_aggregate(collection, pipeline):
+            user_id = str(doc.get("user_id"))
             user_type = doc.get("user_type") or "unknown"
-            user_email = doc.get("user_email") or ""
-            short_id = f"{user_id[:8]}..." if isinstance(user_id, str) else ""
-            label = (
-                f"{user_email} ({user_type})"
-                if user_email
-                else f"{user_type} ({short_id})"
-            )
+            short_id = f"{user_id[:8]}..."
+            label = f"{user_type} ({short_id})"
             users.append(
                 {
                     "user_id": user_id,
                     "user_type": user_type,
-                    "user_email": user_email,
                     "label": label,
                 }
             )
 
+        audit_error = _audit_admin_read(request, result, "audit_log_actor_directory")
+        if audit_error:
+            return audit_error
         return success_response(
             data={"users": users},
             message="Audit log users retrieved",
         )
 
 
-class AuditLogDetailView(AdminRequiredMixin, APIView):
+class AuditLogDetailView(AnalyticsOperationalMixin, AdminRequiredMixin, APIView):
     """
-    Get full detail for a specific audit log entry.
+    Get minimized privileged detail for a specific audit log entry.
 
     GET /api/analytics/audit-logs/<log_id>/
     """
@@ -320,17 +418,6 @@ class AuditLogDetailView(AdminRequiredMixin, APIView):
         has_permission, result = self.check_admin_permission(request)
         if not has_permission:
             return result
-
-        def serialize_details(value):
-            if isinstance(value, datetime):
-                return value.isoformat()
-            if isinstance(value, ObjectId):
-                return str(value)
-            if isinstance(value, dict):
-                return {k: serialize_details(v) for k, v in value.items()}
-            if isinstance(value, list):
-                return [serialize_details(v) for v in value]
-            return value
 
         try:
             oid = ObjectId(log_id)
@@ -348,19 +435,10 @@ class AuditLogDetailView(AdminRequiredMixin, APIView):
             )
 
         log = AuditLog.from_dict(doc)
+        audit_error = _audit_admin_read(request, result, "audit_log_detail")
+        if audit_error:
+            return audit_error
         return success_response(
-            data={
-                "id": log.id,
-                "user_id": log.user_id,
-                "user_type": log.user_type,
-                "user_email": log.user_email,
-                "action": log.action,
-                "description": log.description,
-                "resource_type": log.resource_type,
-                "resource_id": log.resource_id,
-                "details": serialize_details(log.details or {}),
-                "ip_address": log.ip_address,
-                "timestamp": log.timestamp.isoformat() if log.timestamp else None,
-            },
+            data=serialize_admin_log_detail(log),
             message="Audit log detail retrieved",
         )

@@ -1,5 +1,8 @@
 # Backend & Smart Contract Alignment
 
+> Smart-contract mappings match the backend settlement set: cash/check and,
+> when enabled, wallet-to-wallet settlement.
+
 ## Contracts
 
 | Contract | Backend Model | Purpose |
@@ -51,9 +54,8 @@
 | Django | Smart Contract | Value |
 |--------|---------------|-------|
 | `cash` | `Cash` | 0 |
-| `bank_transfer` | `BankTransfer` | 1 |
-| `gcash` | `GCash` | 2 |
-| `other` | `Other` | 3 |
+| `check` | `Check` | 1 |
+| `wallet` | `Wallet` | 2 |
 
 ---
 

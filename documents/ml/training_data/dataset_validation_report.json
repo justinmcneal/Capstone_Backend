@@ -1,0 +1,60 @@
+{
+  "schema_version": 1,
+  "ready": false,
+  "data_root": "/Users/justinmcnealcaronongan/Documents/GitHub/Capstone_Backend/documents/ml/training_data",
+  "manifest": "/Users/justinmcnealcaronongan/Documents/GitHub/Capstone_Backend/documents/ml/training_data/dataset_manifest.json",
+  "minimum_samples_per_class": 30,
+  "counts": {
+    "business_permit": 2,
+    "business_photo": 54,
+    "income_proof": 4,
+    "invalid": 170,
+    "proof_of_address": 6,
+    "selfie_with_id": 14,
+    "valid_id": 153
+  },
+  "split_counts": {
+    "train": {
+      "business_permit": 1,
+      "business_photo": 43,
+      "income_proof": 3,
+      "invalid": 136,
+      "proof_of_address": 4,
+      "selfie_with_id": 11,
+      "valid_id": 122
+    },
+    "validation": {
+      "business_permit": 1,
+      "business_photo": 11,
+      "income_proof": 1,
+      "invalid": 34,
+      "proof_of_address": 2,
+      "selfie_with_id": 3,
+      "valid_id": 31
+    }
+  },
+  "file_count": 403,
+  "issues": [
+    "class_below_minimum:business_permit:2:30",
+    "class_below_minimum:income_proof:4:30",
+    "class_below_minimum:proof_of_address:6:30",
+    "class_below_minimum:selfie_with_id:14:30",
+    "exact_duplicate:1fcb6a688f2ad6f109cc3cdfb37f030b3fd8a439f34a31b6257c6a19ed8db8fb:business_photo/albertons_street_view_12.jpg|business_photo/google_street_view_12.jpg",
+    "exact_duplicate:279e6333cd67826bc2a4df65851e31acfde6a55bdd4e4c90374150575e33a103:invalid/midv500_TS_TS11_04.jpg|valid_id/midv500_TS_TS11_04.jpg",
+    "exact_duplicate:39bc21415f49d39b35c18734f27571109190a0e39058ec0e8d2c7fbed7a032a7:invalid/postal10_jpg.rf.02f0c85187f188ac958f59acd22a9861.jpg|valid_id/postal10_jpg.rf.02f0c85187f188ac958f59acd22a9861.jpg",
+    "exact_duplicate:61558f1f4bb484a4ec7471f761b441b4957d291d32bf285c9ab363b54838c987:invalid/midv500_TS_TS07_12.jpg|valid_id/midv500_TS_TS07_12.jpg",
+    "exact_duplicate:6f6dbfa34a72fdc0bab8e8427d184c4a8b517f4ae153f91e141a14f979ba43bc:invalid/midv500_TS_TS05_11.jpg|valid_id/midv500_TS_TS05_11.jpg",
+    "exact_duplicate:760cf3c09e812128c02cd6e09094401111e98a58a8719327b0398e557fe378ac:invalid/umid4_jpg.rf.efebe690d0d9ed9c181d4dce6665874f.jpg|valid_id/umid4_jpg.rf.efebe690d0d9ed9c181d4dce6665874f.jpg",
+    "exact_duplicate:82ecf54f88d95e7ef980faf0dd57b919107017c1c3ff457fcb6842c9ccf2f8c8:business_permit/711_street_view_5.jpg|business_photo/711_street_view_5.jpg",
+    "exact_duplicate:84ac6cc40722830fda20b7bd3b4a917debadc12e8d89698d23f55e594bdc5215:invalid/umid13_jpg.rf.37cd52d3ad482363933edfdefceb0b5c.jpg|valid_id/umid13_jpg.rf.37cd52d3ad482363933edfdefceb0b5c.jpg",
+    "exact_duplicate:8e4378435d5d1f2a2ebb42da5d7b5306aed5ac94b0b05465ead9518ef2fa0b66:invalid/midv500_TS_TS15_29.jpg|valid_id/midv500_TS_TS15_29.jpg",
+    "exact_duplicate:956a81a34bfddf847f2ba9a3d6cc9353381563c00069fee43200457f023e46a7:business_permit/placeholder.jpg|business_photo/placeholder.jpg|income_proof/placeholder.jpg|proof_of_address/placeholder.jpg|selfie_with_id/placeholder.jpg|valid_id/driver10_jpg.rf.111da614a23c215a2fdfd7beb1a6864e.jpg",
+    "exact_duplicate:9b0834cdf8d5a777d12a1700826daba1138252d37c2365fe306541fba83f8fce:invalid/midv500_TS_TS21_13.jpg|valid_id/midv500_TS_TS21_13.jpg",
+    "exact_duplicate:d84ff3be6a7b87f920f7ff6eafcb6dab5499e0d3dc9ed52eda81c748697498d1:business_photo/albertons_street_view_13.jpg|business_photo/google_street_view_13.jpg",
+    "exact_duplicate:e7c78dc1dfbba3cb71bc7958e5d1f76d8a03953486f59cd50e36b08383d2d432:invalid/midv500_TS_TS16_11.jpg|valid_id/midv500_TS_TS16_11.jpg",
+    "exact_duplicate:f73f08d6ecdcd2822aedc040af9366363841da08739d00244fbaddf95450c977:invalid/midv500_TS_TS18_14.jpg|valid_id/midv500_TS_TS18_14.jpg",
+    "exact_duplicate:fe83a605909081563ae3ac0b4545e86192ee6ef8cf4b5b557635f11e39a6cd73:business_photo/albertons_street_view_14.jpg|business_photo/google_street_view_14.jpg",
+    "image_undersized:business_photo/ace_street_view_8.jpg:236x132",
+    "image_undersized:selfie_with_id/id6.jpeg:194x259"
+  ]
+}

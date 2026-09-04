@@ -1,13 +1,10 @@
 """Reusable in-app notifications for assignment lifecycle events."""
 
 import logging
+import uuid
 from datetime import datetime, timezone
 
-from notifications.models.notification import Notification
-from notifications.services.websocket_service import (
-    broadcast_notification_to_user,
-    serialize_notification_for_ws,
-)
+from notifications.services.delivery import queue_notification_delivery
 
 logger = logging.getLogger("notifications.assignment")
 
@@ -32,37 +29,23 @@ def _create_notification(
     related_type,
     related_id,
     occurred_at,
+    idempotency_key=None,
 ):
-    """Persist one assignment notification and broadcast it best-effort."""
-    notification = Notification(
-        user_id=str(recipient["id"]),
-        user_type=recipient["user_type"],
-        recipient_email=recipient.get("email", ""),
-        recipient_name=recipient["name"],
-        notification_type=notification_type,
-        subject=subject,
-        message=message,
-        related_type=related_type,
-        related_id=str(related_id),
-        metadata=metadata,
-        channel="in_app",
-        status="sent",
-        created_at=occurred_at,
+    """Persist one assignment intent before background inbox publication."""
+    return queue_notification_delivery(
+        event_key=idempotency_key,
+        event_type=notification_type,
+        recipient=recipient,
+        channels=["in_app"],
+        payload={
+            "subject": subject,
+            "message": message,
+            "related_type": related_type,
+            "related_id": str(related_id),
+            "metadata": metadata,
+            "occurred_at": occurred_at,
+        },
     )
-    notification.save()
-
-    try:
-        broadcast_notification_to_user(
-            recipient["id"],
-            recipient["user_type"],
-            serialize_notification_for_ws(notification),
-        )
-    except Exception:
-        logger.exception(
-            "Failed to broadcast assignment notification %s", notification.id
-        )
-
-    return notification
 
 
 def publish_assignment_notifications(
@@ -75,6 +58,7 @@ def publish_assignment_notifications(
     related_id,
     entity_type="loan_application",
     occurred_at=None,
+    transition_id=None,
 ):
     """
     Persist and broadcast notifications for assign, reassign, or unassign.
@@ -87,6 +71,7 @@ def publish_assignment_notifications(
         raise ValueError("An assignment event requires an assignee")
 
     occurred_at = occurred_at or datetime.now(timezone.utc)
+    transition_id = transition_id or f"assignment_{uuid.uuid4().hex}"
     actor_name = assigned_by["name"] if assigned_by else "System"
 
     if assigned_to and previous_assignee:
@@ -107,6 +92,7 @@ def publish_assignment_notifications(
             "name": entity_name,
         },
         "occurred_at": occurred_at.isoformat(),
+        "transition_id": transition_id,
     }
 
     notification_specs = []
@@ -180,13 +166,14 @@ def publish_assignment_notifications(
                     related_type=related_type,
                     related_id=related_id,
                     occurred_at=occurred_at,
+                    idempotency_key=(f"{transition_id}:{audience}"),
                 )
             )
         except Exception:
             logger.exception(
-                "Failed to create %s notification for %s",
+                "Failed to create assignment notification: event=%s role=%s",
                 event_type,
-                recipient["id"],
+                recipient["user_type"],
             )
 
     return created

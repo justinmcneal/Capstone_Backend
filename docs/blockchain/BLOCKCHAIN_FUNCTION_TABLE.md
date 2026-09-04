@@ -1,4 +1,7 @@
 # Blockchain Function Table
+
+> Settlement mappings contain cash/check and feature-gated wallet-to-wallet
+> only.
 ## MSME Pathways — Smart Contract Integration Reference
 
 This document maps every backend module to its corresponding smart contract transactions.
@@ -77,11 +80,9 @@ MongoDB (off-chain data)                    Blockchain (on-chain immutable recor
 | Complete disbursement | `POST /api/loans/{id}/disburse/` | `Disbursement` | `completeDisbursement(disbursementId, referenceHash)` | Loan Officer | `DisbursementCompleted` |
 
 **Disbursement Methods (on-chain enum):**
-- `0` → Bank Transfer
-- `1` → Cash
-- `2` → GCash
- - `2` → GCash
- - `3` → Other
+- `0` → Cash
+- `1` → Check
+- `2` → Wallet
 
 **Duplicate prevention:** A `referenceHash` mapping prevents the same external transaction reference from being recorded twice.
 
@@ -100,10 +101,8 @@ MongoDB (off-chain data)                    Blockchain (on-chain immutable recor
 
 **Payment Methods (on-chain enum):**
 - `0` → Cash
-- `1` → Bank Transfer
-- `2` → GCash
- - `2` → GCash
- - `3` → Other
+- `1` → Check
+- `2` → Wallet
 
 ---
 

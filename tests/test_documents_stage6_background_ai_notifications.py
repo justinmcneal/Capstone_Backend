@@ -336,6 +336,61 @@ def test_approved_artifact_loader_never_requests_pretrained_weights(
     assert analyzer.health()["model_version"] == "approved-v1"
 
 
+def test_unapproved_artifact_loader_is_development_only(monkeypatch, tmp_path):
+    import torch
+
+    from documents.services import analyzer as analyzer_module
+    from documents.services import cnn_model
+
+    fake_service_file = tmp_path / "documents" / "services" / "analyzer.py"
+    model_dir = tmp_path / "documents" / "ml" / "models"
+    model_dir.mkdir(parents=True)
+    model_path = model_dir / "document_classifier.pth"
+    model_path.write_bytes(b"development-state")
+    config = {
+        "classes": ["valid_id"],
+        "approval_status": "not_approved",
+        "artifact_sha256": hashlib.sha256(b"development-state").hexdigest(),
+        "model_version": "development-v1",
+        "preprocessing_version": "document-photo-letterbox-v2",
+        "threshold_policy_version": "document-type-thresholds-v1",
+    }
+    (model_dir / "model_config.json").write_text(json.dumps(config), encoding="utf-8")
+
+    class FakeClassifier:
+        def __init__(self, *, num_classes, pretrained):
+            assert (num_classes, pretrained) == (1, False)
+
+        def load_state_dict(self, state):
+            assert state == {"state": "ok"}
+
+        def eval(self):
+            return self
+
+    monkeypatch.setattr(analyzer_module, "Path", lambda value: fake_service_file)
+    monkeypatch.setattr(cnn_model, "DocumentClassifier", FakeClassifier)
+    monkeypatch.setattr(torch, "load", lambda *args, **kwargs: {"state": "ok"})
+    monkeypatch.setattr(analyzer_module.settings, "DEBUG", True)
+    monkeypatch.setattr(
+        analyzer_module.settings, "DOCUMENT_AI_REQUIRE_APPROVED_MODEL", False
+    )
+
+    development_analyzer = DocumentAnalyzer()
+
+    assert development_analyzer.model_loaded is True
+    assert development_analyzer.health()["status"] == "available_unapproved_dev"
+
+    monkeypatch.setattr(analyzer_module.settings, "DEBUG", False)
+    monkeypatch.setattr(
+        analyzer_module.settings, "DOCUMENT_AI_REQUIRE_APPROVED_MODEL", True
+    )
+
+    production_analyzer = DocumentAnalyzer()
+
+    assert production_analyzer.model_loaded is False
+    assert production_analyzer.model_error_code == "artifact_not_approved"
+
+
 def test_low_confidence_classification_becomes_unknown_instead_of_forced(
     monkeypatch,
 ):

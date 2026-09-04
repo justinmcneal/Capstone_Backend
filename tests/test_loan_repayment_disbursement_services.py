@@ -25,7 +25,6 @@ from loans.utils.reference_generator import (
     generate_payment_reference,
 )
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -387,14 +386,14 @@ class TestLoanDisbursement:
 
         app.disburse(
             amount=20000,
-            method="bank_transfer",
+            method="cash",
             reference="DSB-001",
             processed_by=str(ObjectId()),
         )
 
         assert app.status == "disbursed"
         assert app.disbursed_amount == 20000
-        assert app.disbursement_method == "bank_transfer"
+        assert app.disbursement_method == "cash"
         assert app.disbursement_reference == "DSB-001"
         assert app.disbursed_at is not None
         assert app.disbursed_by is not None
@@ -404,7 +403,7 @@ class TestLoanDisbursement:
         with pytest.raises(ValueError, match="Only approved loans can be disbursed"):
             app.disburse(
                 amount=20000,
-                method="bank_transfer",
+                method="cash",
                 reference="DSB-001",
                 processed_by=str(ObjectId()),
             )
@@ -414,7 +413,7 @@ class TestLoanDisbursement:
         with pytest.raises(ValueError, match="Only approved loans can be disbursed"):
             app.disburse(
                 amount=20000,
-                method="bank_transfer",
+                method="cash",
                 reference="DSB-001",
                 processed_by=str(ObjectId()),
             )
@@ -437,8 +436,8 @@ class TestPreferredDisbursementMethod:
         app = _make_application(status="approved")
         app.save()
 
-        app.set_preferred_disbursement_method("gcash")
-        assert app.preferred_disbursement_method == "gcash"
+        app.set_preferred_disbursement_method("check")
+        assert app.preferred_disbursement_method == "check"
 
     def test_set_invalid_method_raises(self):
         app = _make_application()
@@ -448,7 +447,7 @@ class TestPreferredDisbursementMethod:
     def test_set_method_raises_for_disbursed(self):
         app = _make_application(status="disbursed")
         with pytest.raises(ValueError, match="Cannot change disbursement method"):
-            app.set_preferred_disbursement_method("gcash")
+            app.set_preferred_disbursement_method("cash")
 
 
 # ---------------------------------------------------------------------------

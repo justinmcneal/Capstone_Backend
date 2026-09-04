@@ -18,6 +18,7 @@ from accounts.serializers.auth_serializers import (
     UpdateLanguageSerializer,
 )
 from accounts.services import AuthService
+from accounts.services.audit import record_account_audit
 from accounts.services.lockout_service import LockoutService
 from accounts.services.session_activity_service import SessionActivityService
 from accounts.utils.auth_cookies import (
@@ -45,10 +46,12 @@ from accounts.utils.throttles import (
     SignUpRateThrottle,
 )
 from accounts.utils.token_utils import TokenUtils
-from analytics.models import AuditLog
 
 logger = logging.getLogger("authentication")
 GENERIC_LOGIN_ERROR_MESSAGE = "Invalid email/username or password."
+PENDING_DELETION_LOGIN_MESSAGE = (
+    "Account deletion is pending. Cancel the deletion request to restore access."
+)
 GENERIC_OTP_VERIFY_ERROR_MESSAGE = "Invalid OTP"
 GENERIC_OTP_RESEND_MESSAGE = "If an unverified account exists, an OTP has been sent."
 
@@ -62,7 +65,7 @@ def _log_customer_login_failure(request, email, reason, user=None):
         ip_address,
     )
     try:
-        AuditLog.log_action(
+        record_account_audit(
             action="user_login_failed",
             user_id=getattr(user, "id", None),
             user_type="customer",
@@ -145,7 +148,7 @@ class SignUpView(APIView):
             )
 
             # Log audit event
-            AuditLog.log_action(
+            record_account_audit(
                 action="user_registered",
                 user_id=customer.id,
                 user_type="customer",
@@ -256,10 +259,12 @@ class LoginView(APIView):
                     GENERIC_LOGIN_ERROR_MESSAGE, status.HTTP_401_UNAUTHORIZED
                 )
 
+            account_state = getattr(customer, "account_state", "active") or "active"
+            is_pending_deletion = account_state == "pending_deletion"
             if (
-                not getattr(customer, "active", True)
-                or getattr(customer, "deleted_at", None)
-                or getattr(customer, "account_state", "active") != "active"
+                getattr(customer, "deleted_at", None)
+                or account_state not in {"active", "pending_deletion"}
+                or (not getattr(customer, "active", True) and not is_pending_deletion)
             ):
                 _log_customer_login_failure(
                     request, email, "account_deactivated", user=customer
@@ -337,6 +342,16 @@ class LoginView(APIView):
             # Reset lockout on successful password verification
             LockoutService.reset_lockout(customer)
 
+            if is_pending_deletion:
+                _log_customer_login_failure(
+                    request, email, "account_pending_deletion", user=customer
+                )
+                return APIResponseHelper.error_response(
+                    PENDING_DELETION_LOGIN_MESSAGE,
+                    status.HTTP_403_FORBIDDEN,
+                    code="account_pending_deletion",
+                )
+
             # Check if 2FA is enabled
             if customer.two_factor_enabled:
                 # Create temporary token for 2FA verification
@@ -368,7 +383,7 @@ class LoginView(APIView):
             )
 
             # Log audit event
-            AuditLog.log_action(
+            record_account_audit(
                 action="user_login",
                 user_id=customer.id,
                 user_type="customer",
@@ -862,7 +877,7 @@ class LogoutView(APIView):
                 )
 
                 # Log audit event
-                AuditLog.log_action(
+                record_account_audit(
                     action="user_logout",
                     user_id=user_id,
                     user_type="customer",

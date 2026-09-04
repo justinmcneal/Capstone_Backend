@@ -1,0 +1,78 @@
+groups:
+  - name: analytics-recording
+    interval: 30s
+    rules:
+      - record: analytics:request_error_ratio_5m
+        expr: |
+          sum(rate(analytics_requests_total{outcome!="success"}[5m]))
+          /
+          clamp_min(sum(rate(analytics_requests_total[5m])), 0.001)
+      - record: analytics:request_latency_p95_seconds_5m
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum by (le) (rate(analytics_request_duration_seconds_bucket[5m]))
+          )
+
+  - name: analytics-alerts
+    interval: 30s
+    rules:
+      - alert: AnalyticsMetricsMissing
+        expr: absent(analytics_audit_failure_backlog)
+        for: 10m
+        labels:
+          severity: critical
+          service: analytics
+        annotations:
+          summary: Analytics application metrics are missing
+          runbook: docs/ANALYTICS_TESTING_GUIDE.md#analytics-operations-runbook
+
+      - alert: AnalyticsAuditRecoveryBacklog
+        expr: analytics_audit_failure_backlog >= 1
+        for: 10m
+        labels:
+          severity: critical
+          service: analytics
+        annotations:
+          summary: Analytics audit recovery backlog is not draining
+          runbook: docs/ANALYTICS_TESTING_GUIDE.md#analytics-operations-runbook
+
+      - alert: AnalyticsAuditRecoveryOldestItem
+        expr: analytics_audit_failure_oldest_age_seconds > 900
+        for: 5m
+        labels:
+          severity: critical
+          service: analytics
+        annotations:
+          summary: Analytics has an old unresolved audit write
+          runbook: docs/ANALYTICS_TESTING_GUIDE.md#analytics-operations-runbook
+
+      - alert: AnalyticsAuditIntegrityFinding
+        expr: sum(analytics_audit_integrity_gaps) > 0
+        for: 1m
+        labels:
+          severity: critical
+          service: analytics
+        annotations:
+          summary: Analytics audit integrity inventory found a gap
+          runbook: docs/ANALYTICS_TESTING_GUIDE.md#analytics-operations-runbook
+
+      - alert: AnalyticsRequestErrorRatioHigh
+        expr: analytics:request_error_ratio_5m > 0.05
+        for: 10m
+        labels:
+          severity: warning
+          service: analytics
+        annotations:
+          summary: Analytics request error ratio is above five percent
+          runbook: docs/ANALYTICS_TESTING_GUIDE.md#analytics-operations-runbook
+
+      - alert: AnalyticsRequestLatencyHigh
+        expr: analytics:request_latency_p95_seconds_5m > 2
+        for: 10m
+        labels:
+          severity: warning
+          service: analytics
+        annotations:
+          summary: Analytics p95 request latency is above two seconds
+          runbook: docs/ANALYTICS_TESTING_GUIDE.md#analytics-operations-runbook

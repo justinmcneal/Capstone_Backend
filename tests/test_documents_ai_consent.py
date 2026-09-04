@@ -164,27 +164,35 @@ def test_consent_audit_returns_customer_ai_consent_report(monkeypatch):
         "require_admin",
         lambda self, request, required_permissions=None, super_admin_only=False: (True, object()),
     )
-    monkeypatch.setattr(consent_views.Customer, "find", classmethod(lambda cls, query, **kwargs: customers))
-    def _consent_status(user_id, user_type="customer"):
-        data_consent, ai_consent = consent_statuses.get(
-            str(user_id), (False, False)
-        )
-        has_record = str(user_id) in consent_statuses
-        return {
-            "data_consent": data_consent,
-            "ai_consent": ai_consent,
-            "has_consent_record": has_record,
-            "consent_date": None,
-            "updated_at": None,
-            "consent_version": "2026-08-01" if has_record else None,
-            "requires_reconsent": False,
-            "can_access_ai": data_consent and ai_consent,
-        }
+    monkeypatch.setattr(
+        consent_views.Customer,
+        "find",
+        classmethod(lambda cls, query, **kwargs: customers),
+    )
+
+    def _consent_statuses(user_ids, user_type="customer"):
+        result = {}
+        for user_id in user_ids:
+            data_consent, ai_consent = consent_statuses.get(
+                str(user_id), (False, False)
+            )
+            has_record = str(user_id) in consent_statuses
+            result[str(user_id)] = {
+                "data_consent": data_consent,
+                "ai_consent": ai_consent,
+                "has_consent_record": has_record,
+                "consent_date": None,
+                "updated_at": None,
+                "consent_version": "2026-08-01" if has_record else None,
+                "requires_reconsent": False,
+                "can_access_ai": data_consent and ai_consent,
+            }
+        return result
 
     monkeypatch.setattr(
         consent_views.ConsentService,
-        "get_consent_status",
-        staticmethod(_consent_status),
+        "get_consent_statuses",
+        staticmethod(_consent_statuses),
     )
 
     factory = APIRequestFactory()
@@ -200,3 +208,4 @@ def test_consent_audit_returns_customer_ai_consent_report(monkeypatch):
     assert response.data["data"]["summary"]["ai_consent_false"] == 2
     assert response.data["data"]["summary"]["missing_consent_records"] == 1
     assert len(response.data["data"]["customers"]) == 3
+    assert response.data["data"]["pagination"]["total_items"] == 3

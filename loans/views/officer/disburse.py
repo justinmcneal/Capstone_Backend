@@ -21,6 +21,11 @@ from loans.services.disbursement import (
     execute_manual_disbursement,
 )
 from loans.services.payment import PaymentServiceError
+from loans.services.settlement_policy import (
+    SettlementRailUnavailable,
+    require_disbursement_method,
+)
+from loans.utils.serialization import disbursement_failure_code
 from loans.views.officer.base import LoanOfficerRequiredMixin
 
 logger = logging.getLogger("loans")
@@ -51,7 +56,7 @@ class DisburseView(LoanOfficerRequiredMixin, APIView):
                 if application.disbursed_at
                 else None
             ),
-            "disbursement_error": application.disbursement_error,
+            "disbursement_failure_code": disbursement_failure_code(application),
             "replayed": replayed,
             "eth_disbursement_tx_hash": application.eth_disbursement_tx_hash,
             "eth_disbursement_amount": application.eth_disbursement_amount,
@@ -104,18 +109,27 @@ class DisburseView(LoanOfficerRequiredMixin, APIView):
 
         stored_method = application.preferred_disbursement_method
         method = stored_method or (
-            sanitize_text(request.data.get("method", "bank_transfer")).lower()
-            or "bank_transfer"
+            sanitize_text(request.data.get("method", "cash")).lower() or "cash"
         )
         if method not in MANUAL_DISBURSEMENT_METHODS | EXTERNAL_DISBURSEMENT_METHODS:
             return error_response(
                 message="Invalid disbursement method",
                 status_code=status.HTTP_400_BAD_REQUEST,
             )
+        try:
+            method = require_disbursement_method(method)
+        except SettlementRailUnavailable as exc:
+            return error_response(
+                message=str(exc),
+                code=exc.code,
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
 
         reference = sanitize_text(request.data.get("reference", ""))
         external_reference = sanitize_text(request.data.get("external_reference", ""))
-        reference = reference or external_reference or f"DSB-{idempotency_key[-16:].upper()}"
+        reference = (
+            reference or external_reference or f"DSB-{idempotency_key[-16:].upper()}"
+        )
 
         if method in EXTERNAL_DISBURSEMENT_METHODS:
             try:
@@ -175,15 +189,16 @@ class DisburseView(LoanOfficerRequiredMixin, APIView):
             return error_response(
                 message=str(exc), status_code=status.HTTP_400_BAD_REQUEST
             )
-        except Exception as exc:
+        except Exception:
             logger.exception("Manual disbursement failed for loan %s", application.id)
             return error_response(
-                message=f"Disbursement failed safely: {exc}",
+                message="Loan disbursement could not be completed",
+                code="DISBURSEMENT_EXECUTION_FAILED",
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
         if not replayed:
-            self._send_disbursement_email(application, amount, method, reference)
+            self._queue_disbursement_notification(application, amount, method, reference)
             try:
                 from loans.blockchain.sync import sync_disbursement
 
@@ -201,25 +216,21 @@ class DisburseView(LoanOfficerRequiredMixin, APIView):
         )
 
     @staticmethod
-    def _send_disbursement_email(application, amount, method, reference):
+    def _queue_disbursement_notification(application, amount, method, reference):
         try:
             from accounts.models import Customer
-            from notifications.services import get_email_sender
+            from loans.services.notifications import queue_customer_loan_notification
 
             customer = None
             if application.customer_id and ObjectId.is_valid(application.customer_id):
-                customer = Customer.find_one(
-                    {"_id": ObjectId(application.customer_id)}
-                )
+                customer = Customer.find_one({"_id": ObjectId(application.customer_id)})
             if customer and customer.email:
-                get_email_sender().send_loan_disbursed(
-                    customer_email=customer.email,
-                    customer_name=f"{customer.first_name} {customer.last_name}",
+                queue_customer_loan_notification(
                     loan_id=application.id,
-                    amount=amount,
-                    method=method,
-                    reference=reference,
-                    customer_id=application.customer_id,
+                    event_type="disbursed",
+                    event_key=application.last_transition_id or application.disbursement_idempotency_key,
+                    customer=customer,
+                    payload={"amount": amount, "method": method, "reference": reference},
                 )
-        except Exception as exc:  # noqa: BLE001 - notification is best effort
-            logger.warning("Failed to send disbursement email: %s", exc)
+        except Exception as exc:  # noqa: BLE001 - durable record/reconciler handles recovery
+            logger.warning("Failed to queue disbursement notification: %s", exc)

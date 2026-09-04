@@ -7,14 +7,15 @@ and successful connect with unread count.
 Uses Django Channels WebsocketCommunicator with an in-memory channel layer
 (no Redis required) — patched in via monkeypatch on channel_layer attribute.
 """
-from unittest.mock import AsyncMock, MagicMock, patch
+
+from unittest.mock import AsyncMock, patch
 
 import pytest
-
 
 # ---------------------------------------------------------------------------
 # Lightweight stubs
 # ---------------------------------------------------------------------------
+
 
 class _FakeUser:
     is_authenticated = True
@@ -33,7 +34,6 @@ class _AnonymousUser:
 # ---------------------------------------------------------------------------
 
 try:
-    from channels.layers import InMemoryChannelLayer
     from channels.routing import URLRouter
     from channels.testing import WebsocketCommunicator
     from django.urls import re_path
@@ -44,14 +44,11 @@ try:
 
     def _make_app():
         """Build ASGI app with InMemoryChannelLayer substituted for Redis."""
-        import django.conf
-        # Temporarily override CHANNEL_LAYERS for in-process tests
-        from channels.routing import URLRouter
-        from django.urls import re_path
-
-        app = URLRouter([
-            re_path(r"ws/notifications/$", NotificationConsumer.as_asgi()),
-        ])
+        app = URLRouter(
+            [
+                re_path(r"ws/notifications/$", NotificationConsumer.as_asgi()),
+            ]
+        )
         return app
 
 except ImportError:
@@ -117,7 +114,37 @@ class TestNotificationConsumerWebSocket:
             await communicator.send_json_to({"action": "ping"})
             response = await communicator.receive_json_from()
             assert response["type"] == "pong"
-            assert "timestamp" in response
+            assert "timestamp" in response["data"]
+
+        await communicator.disconnect()
+
+    @pytest.mark.anyio
+    async def test_actions_are_rate_limited_per_connection(self, settings):
+        settings.NOTIFICATIONS_WS_ACTIONS_PER_MINUTE = 1
+        communicator = WebsocketCommunicator(_make_app(), "/ws/notifications/")
+        communicator.scope["user"] = _FakeUser()
+
+        with patch(
+            "notifications.consumer.NotificationConsumer.get_unread_count",
+            new_callable=AsyncMock,
+            return_value=0,
+        ):
+            connected, _ = await communicator.connect()
+            assert connected
+            await communicator.receive_json_from()
+
+            await communicator.send_json_to({"action": "ping"})
+            assert (await communicator.receive_json_from())["type"] == "pong"
+
+            await communicator.send_json_to({"action": "ping"})
+            response = await communicator.receive_json_from()
+            assert response == {
+                "type": "error",
+                "data": {
+                    "code": "rate_limited",
+                    "message": "Too many WebSocket actions; retry later",
+                },
+            }
 
         await communicator.disconnect()
 
@@ -138,7 +165,36 @@ class TestNotificationConsumerWebSocket:
             await communicator.send_to(text_data="not-valid-json{{{{")
             response = await communicator.receive_json_from()
             assert response["type"] == "error"
-            assert "Invalid JSON" in response["message"]
+            assert response["data"] == {
+                "code": "invalid_json",
+                "message": "Invalid JSON",
+            }
+
+        await communicator.disconnect()
+
+    @pytest.mark.anyio
+    async def test_non_object_message_returns_canonical_error(self):
+        communicator = WebsocketCommunicator(_make_app(), "/ws/notifications/")
+        communicator.scope["user"] = _FakeUser()
+
+        with patch(
+            "notifications.consumer.NotificationConsumer.get_unread_count",
+            new_callable=AsyncMock,
+            return_value=0,
+        ):
+            connected, _ = await communicator.connect()
+            assert connected
+            await communicator.receive_json_from()
+
+            await communicator.send_json_to(["ping"])
+            response = await communicator.receive_json_from()
+            assert response == {
+                "type": "error",
+                "data": {
+                    "code": "invalid_message",
+                    "message": "Message must be a JSON object",
+                },
+            }
 
         await communicator.disconnect()
 
@@ -151,24 +207,28 @@ class TestNotificationConsumerWebSocket:
             "notifications.consumer.NotificationConsumer.get_unread_count",
             new_callable=AsyncMock,
             return_value=1,
+        ), patch(
+            "notifications.consumer.NotificationConsumer.mark_notification_read",
+            new_callable=AsyncMock,
+            return_value={"success": True, "replayed": False},
         ):
-            with patch(
-                "notifications.consumer.NotificationConsumer.mark_notification_read",
-                new_callable=AsyncMock,
-                return_value=True,
-            ):
-                connected, _ = await communicator.connect()
-                assert connected
-                await communicator.receive_json_from()  # consume connection_established
+            connected, _ = await communicator.connect()
+            assert connected
+            await communicator.receive_json_from()  # consume connection_established
 
-                await communicator.send_json_to({
+            await communicator.send_json_to(
+                {
                     "action": "mark_read",
                     "notification_id": "64a1b2c3d4e5f6789abcdef0",
-                })
-                response = await communicator.receive_json_from()
-                assert response["type"] == "mark_read_response"
-                assert response["success"] is True
-                assert response["notification_id"] == "64a1b2c3d4e5f6789abcdef0"
+                }
+            )
+            response = await communicator.receive_json_from()
+            assert response["type"] == "mark_read_response"
+            assert response["data"] == {
+                "success": True,
+                "notification_id": "64a1b2c3d4e5f6789abcdef0",
+                "replayed": False,
+            }
 
         await communicator.disconnect()
 

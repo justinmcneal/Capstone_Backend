@@ -10,21 +10,26 @@ Tests:
 import inspect
 from unittest.mock import MagicMock, patch
 
-from loans.views.customer_views import WalletPaymentView, SystemWalletInfoView
-
+from loans.views.customer_views import SystemWalletInfoView, WalletPaymentView
 
 # ── 3.x  URL routes ───────────────────────────────────────────────
 
+
 class TestPhase3UrlRoutes:
     def test_wallet_payment_route_exists(self):
-        from django.urls import reverse, resolve
-        url = reverse("loans:wallet-payment", kwargs={"application_id": "6650a1b2c3d4e5f6a7b8c9d0"})
+        from django.urls import resolve, reverse
+
+        url = reverse(
+            "loans:wallet-payment",
+            kwargs={"application_id": "6650a1b2c3d4e5f6a7b8c9d0"},
+        )
         assert "wallet-payment" in url
         view = resolve(url)
         assert view.func.view_class is WalletPaymentView
 
     def test_system_wallet_route_exists(self):
-        from django.urls import reverse, resolve
+        from django.urls import resolve, reverse
+
         url = reverse("loans:system-wallet")
         assert "system-wallet" in url
         view = resolve(url)
@@ -33,15 +38,16 @@ class TestPhase3UrlRoutes:
 
 # ── 3.1  WalletPaymentView ────────────────────────────────────────
 
+
 class TestWalletPaymentViewValidation:
     """Input validation tests (no mocking of blockchain needed)."""
 
     def test_view_exists_and_has_post_method(self):
-        assert hasattr(WalletPaymentView, 'post')
+        assert hasattr(WalletPaymentView, "post")
         sig = inspect.signature(WalletPaymentView.post)
         params = list(sig.parameters.keys())
-        assert 'request' in params
-        assert 'application_id' in params
+        assert "request" in params
+        assert "application_id" in params
 
     def test_view_requires_authentication(self):
         assert len(WalletPaymentView.authentication_classes) > 0
@@ -84,7 +90,9 @@ class TestWalletPaymentViewValidation:
     def test_view_records_payment_with_wallet_method(self):
         """Structural: payment_method is set to 'wallet'."""
         source = inspect.getsource(WalletPaymentView)
-        assert "payment_method='wallet'" in source or 'payment_method="wallet"' in source
+        assert (
+            "payment_method='wallet'" in source or 'payment_method="wallet"' in source
+        )
 
     def test_view_triggers_blockchain_sync(self):
         """Structural: sync_payment is called after recording."""
@@ -110,9 +118,16 @@ class TestWalletPaymentViewValidation:
     def test_view_returns_correct_success_fields(self):
         """Structural: response includes required fields."""
         source = inspect.getsource(WalletPaymentView)
-        for field in ['status', 'payment_id', 'installment_number',
-                      'amount_php', 'amount_eth', 'eth_rate',
-                      'tx_hash', 'block_number']:
+        for field in [
+            "status",
+            "payment_id",
+            "installment_number",
+            "amount_php",
+            "amount_eth",
+            "eth_rate",
+            "tx_hash",
+            "block_number",
+        ]:
             assert f"'{field}'" in source or f'"{field}"' in source, (
                 f"Missing field: {field}"
             )
@@ -120,9 +135,10 @@ class TestWalletPaymentViewValidation:
 
 # ── 3.2  SystemWalletInfoView ─────────────────────────────────────
 
+
 class TestSystemWalletInfoView:
     def test_view_exists_and_has_get_method(self):
-        assert hasattr(SystemWalletInfoView, 'get')
+        assert hasattr(SystemWalletInfoView, "get")
 
     def test_view_requires_authentication(self):
         assert len(SystemWalletInfoView.authentication_classes) > 0
@@ -130,11 +146,18 @@ class TestSystemWalletInfoView:
     def test_view_returns_all_required_fields(self):
         """Structural: response includes all required wallet info fields."""
         source = inspect.getsource(SystemWalletInfoView)
-        for field in ['wallet_address', 'chain_id', 'rpc_url',
-                      'eth_php_rate', 'rate_source']:
+        for field in [
+            "wallet_address",
+            "chain_id",
+            "eth_php_rate",
+            "rate_source",
+            "rate_basis",
+            "rate_max_age_seconds",
+        ]:
             assert f"'{field}'" in source or f'"{field}"' in source, (
                 f"Missing field: {field}"
             )
+        assert "rpc_url" not in source
 
     def test_view_handles_blockchain_disabled(self):
         """Structural: returns 503 when blockchain is not enabled."""
@@ -161,6 +184,7 @@ class TestSystemWalletInfoView:
 
 # ── Integration-style tests (mocked dependencies) ─────────────────
 
+
 class TestWalletPaymentVerificationFlow:
     """Test the full verification logic with mocked blockchain."""
 
@@ -172,56 +196,63 @@ class TestWalletPaymentVerificationFlow:
         request.META = {"REMOTE_ADDR": "127.0.0.1"}
         return request
 
-    @patch.object(WalletPaymentView, 'check_customer_permission', return_value=(True, None))
+    @patch.object(
+        WalletPaymentView, "check_customer_permission", return_value=(True, None)
+    )
     def test_rejects_missing_tx_hash(self, mock_perm):
         view = WalletPaymentView()
         request = self._make_request({"installment_number": 1})
         response = view.post(request, "6650a1b2c3d4e5f6a7b8c9d0")
         assert response.status_code == 400
 
-    @patch.object(WalletPaymentView, 'check_customer_permission', return_value=(True, None))
+    @patch.object(
+        WalletPaymentView, "check_customer_permission", return_value=(True, None)
+    )
     def test_rejects_invalid_tx_hash_format(self, mock_perm):
         view = WalletPaymentView()
-        request = self._make_request({
-            "tx_hash": "not_a_valid_hash",
-            "installment_number": 1
-        })
+        request = self._make_request(
+            {"tx_hash": "not_a_valid_hash", "installment_number": 1}
+        )
         response = view.post(request, "6650a1b2c3d4e5f6a7b8c9d0")
         assert response.status_code == 400
 
-    @patch.object(WalletPaymentView, 'check_customer_permission', return_value=(True, None))
+    @patch.object(
+        WalletPaymentView, "check_customer_permission", return_value=(True, None)
+    )
     def test_rejects_missing_installment_number(self, mock_perm):
         view = WalletPaymentView()
-        request = self._make_request({
-            "tx_hash": "0x" + "a" * 64
-        })
+        request = self._make_request({"tx_hash": "0x" + "a" * 64})
         response = view.post(request, "6650a1b2c3d4e5f6a7b8c9d0")
         assert response.status_code == 400
 
-    @patch.object(WalletPaymentView, 'check_customer_permission', return_value=(True, None))
+    @patch.object(
+        WalletPaymentView, "check_customer_permission", return_value=(True, None)
+    )
     def test_rejects_zero_installment_number(self, mock_perm):
         view = WalletPaymentView()
-        request = self._make_request({
-            "tx_hash": "0x" + "a" * 64,
-            "installment_number": 0
-        })
+        request = self._make_request(
+            {"tx_hash": "0x" + "a" * 64, "installment_number": 0}
+        )
         response = view.post(request, "6650a1b2c3d4e5f6a7b8c9d0")
         assert response.status_code == 400
 
     @patch("loans.models.application.LoanApplication.find_by_id")
-    @patch.object(WalletPaymentView, 'check_customer_permission', return_value=(True, None))
+    @patch.object(
+        WalletPaymentView, "check_customer_permission", return_value=(True, None)
+    )
     def test_rejects_if_loan_not_found(self, mock_perm, mock_find):
         mock_find.return_value = None
         view = WalletPaymentView()
-        request = self._make_request({
-            "tx_hash": "0x" + "a" * 64,
-            "installment_number": 1
-        })
+        request = self._make_request(
+            {"tx_hash": "0x" + "a" * 64, "installment_number": 1}
+        )
         response = view.post(request, "6650a1b2c3d4e5f6a7b8c9d0")
         assert response.status_code == 404
 
     @patch("loans.models.application.LoanApplication.find_by_id")
-    @patch.object(WalletPaymentView, 'check_customer_permission', return_value=(True, None))
+    @patch.object(
+        WalletPaymentView, "check_customer_permission", return_value=(True, None)
+    )
     def test_rejects_if_loan_not_disbursed(self, mock_perm, mock_find):
         app = MagicMock()
         app.customer_id = "cust_123"
@@ -229,10 +260,9 @@ class TestWalletPaymentVerificationFlow:
         mock_find.return_value = app
 
         view = WalletPaymentView()
-        request = self._make_request({
-            "tx_hash": "0x" + "a" * 64,
-            "installment_number": 1
-        })
+        request = self._make_request(
+            {"tx_hash": "0x" + "a" * 64, "installment_number": 1}
+        )
         response = view.post(request, "6650a1b2c3d4e5f6a7b8c9d0")
         assert response.status_code == 400
 
@@ -243,7 +273,9 @@ class TestSystemWalletInfoFlow:
     @patch("loans.blockchain.services.eth_price_service.get_eth_php_rate")
     @patch("loans.blockchain.client.get_web3")
     @patch("loans.blockchain.client.get_account")
-    @patch.object(SystemWalletInfoView, 'check_customer_permission', return_value=(True, None))
+    @patch.object(
+        SystemWalletInfoView, "check_customer_permission", return_value=(True, None)
+    )
     def test_returns_wallet_info(self, mock_perm, mock_account, mock_w3, mock_rate):
         mock_acc = MagicMock()
         mock_acc.address = "0x79Af1cD4Ffb33b8D9cbBC53d276e88Fbd05bA163"
@@ -267,13 +299,17 @@ class TestSystemWalletInfoFlow:
             response = view.get(request)
 
         assert response.status_code == 200
-        data = response.data['data']
-        assert data['wallet_address'] == "0x79Af1cD4Ffb33b8D9cbBC53d276e88Fbd05bA163"
-        assert data['chain_id'] == 1337
-        assert data['eth_php_rate'] == 130000.0
-        assert data['rate_source'] == "cryptocompare"
+        data = response.data["data"]
+        assert data["wallet_address"] == "0x79Af1cD4Ffb33b8D9cbBC53d276e88Fbd05bA163"
+        assert data["chain_id"] == 1337
+        assert data["eth_php_rate"] == 130000.0
+        assert data["rate_source"] == "cryptocompare"
+        assert data["rate_basis"] == "verification_time"
+        assert data["rate_max_age_seconds"] == 300
 
-    @patch.object(SystemWalletInfoView, 'check_customer_permission', return_value=(True, None))
+    @patch.object(
+        SystemWalletInfoView, "check_customer_permission", return_value=(True, None)
+    )
     def test_returns_503_when_blockchain_disabled(self, mock_perm):
         view = SystemWalletInfoView()
         request = MagicMock()

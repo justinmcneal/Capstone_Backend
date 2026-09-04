@@ -1,13 +1,19 @@
-from rest_framework.views import APIView
-from rest_framework.permissions import IsAuthenticated
+import logging
+
 from bson import ObjectId
+from rest_framework import status
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.views import APIView
 
 from accounts.authentication import CustomJWTAuthentication
-from accounts.utils.response_helpers import success_response, error_response
-from rest_framework import status
+from accounts.utils.response_helpers import error_response, success_response
 from loans.models import LoanApplication
+from loans.utils.serialization import (
+    serialize_officer_blockchain_transaction,
+    serialize_public_blockchain_audit_entry,
+    serialize_public_blockchain_hashes,
+)
 from loans.views.officer.base import LoanOfficerRequiredMixin
-import logging
 
 logger = logging.getLogger("loans")
 
@@ -38,6 +44,11 @@ class BlockchainStatusView(LoanOfficerRequiredMixin, APIView):
             return error_response(
                 message="Application not found", status_code=status.HTTP_404_NOT_FOUND
             )
+        has_scope, scope_result = self.check_application_scope(
+            request, app, allow_unassigned=False
+        )
+        if not has_scope:
+            return scope_result
 
         from django.conf import settings
 
@@ -46,8 +57,13 @@ class BlockchainStatusView(LoanOfficerRequiredMixin, APIView):
             "application_id": app.id,
             "blockchain_enabled": getattr(settings, "BLOCKCHAIN_ENABLED", False),
             "explorer_url": f"{explorer_url}/tx" if explorer_url else "",
-            "tx_hashes": getattr(app, "blockchain_tx_hashes", {}),
+            "tx_hashes": serialize_public_blockchain_hashes(
+                getattr(app, "blockchain_tx_hashes", {})
+            ),
             "transactions": [],
+            "transaction_history_available": False,
+            "audit_trail": [],
+            "audit_trail_available": False,
         }
 
         if getattr(settings, "BLOCKCHAIN_ENABLED", False):
@@ -55,7 +71,10 @@ class BlockchainStatusView(LoanOfficerRequiredMixin, APIView):
                 from loans.blockchain.models import BlockchainTransaction
 
                 txs = BlockchainTransaction.find_by_loan(application_id)
-                data["transactions"] = [tx.to_dict() for tx in txs]
+                data["transactions"] = [
+                    serialize_officer_blockchain_transaction(tx) for tx in txs
+                ]
+                data["transaction_history_available"] = True
             except Exception as e:
                 logger.warning(f"Failed to fetch blockchain transactions: {e}")
 
@@ -63,7 +82,10 @@ class BlockchainStatusView(LoanOfficerRequiredMixin, APIView):
                 from loans.blockchain.services.audit_service import get_audit_trail
 
                 trail = get_audit_trail(application_id)
-                data["audit_trail"] = trail
+                data["audit_trail"] = [
+                    serialize_public_blockchain_audit_entry(entry) for entry in trail
+                ]
+                data["audit_trail_available"] = True
             except Exception as e:
                 logger.warning(f"Failed to fetch on-chain audit trail: {e}")
 
@@ -90,19 +112,22 @@ class ExchangeRateView(LoanOfficerRequiredMixin, APIView):
         if not getattr(settings, "BLOCKCHAIN_ENABLED", False):
             return error_response(
                 message="Blockchain is not enabled",
+                code="BLOCKCHAIN_DISABLED",
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             )
 
         from loans.blockchain.services.eth_price_service import (
-            get_eth_php_rate,
             ExchangeRateUnavailableError,
+            get_eth_php_rate,
         )
 
         try:
             rate_info = get_eth_php_rate()
-        except ExchangeRateUnavailableError as e:
+        except ExchangeRateUnavailableError:
             return error_response(
-                message=str(e), status_code=status.HTTP_503_SERVICE_UNAVAILABLE
+                message="ETH/PHP exchange rate is currently unavailable",
+                code="EXCHANGE_RATE_UNAVAILABLE",
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             )
 
         from datetime import datetime, timezone

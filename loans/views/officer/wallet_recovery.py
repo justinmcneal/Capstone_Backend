@@ -8,12 +8,13 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 
 from accounts.authentication import CustomJWTAuthentication
-from analytics.models import AuditLog  # noqa: F401 - existing test patch target
 from accounts.utils.response_helpers import error_response, success_response
 from accounts.utils.validation_utils import sanitize_text
-from loans.services.audit import record_loan_audit
+from analytics.models import AuditLog  # noqa: F401 - existing test patch target
 from loans.models import LoanApplication
+from loans.services.audit import record_loan_audit
 from loans.tasks import execute_wallet_disbursement_task
+from loans.utils.serialization import disbursement_failure_code
 from loans.views.officer.base import LoanOfficerRequiredMixin
 
 logger = logging.getLogger("loans")
@@ -31,18 +32,14 @@ class WalletDisbursementRecoveryView(LoanOfficerRequiredMixin, APIView):
             "id": application.id,
             "status": application.status,
             "disbursement_status": application.disbursement_status,
-            "disbursement_error": application.disbursement_error,
+            "disbursement_failure_code": disbursement_failure_code(application),
             "tx_hash": application.eth_disbursement_tx_hash,
             "tx_status": application.eth_disbursement_tx_status,
-            "nonce": application.eth_disbursement_nonce,
             "prepared_at": application.eth_disbursement_prepared_at,
             "broadcast_at": application.eth_disbursement_broadcast_at,
             "last_checked_at": application.eth_disbursement_last_checked_at,
             "block_number": application.eth_disbursement_block_number,
             "rebroadcast_count": application.eth_disbursement_rebroadcast_count,
-            "recipient": application.eth_disbursement_recipient,
-            "amount_wei": application.eth_disbursement_amount_wei,
-            "recovery_history": application.eth_disbursement_recovery_history,
         }
 
     def _application(self, request, application_id):
@@ -51,20 +48,28 @@ class WalletDisbursementRecoveryView(LoanOfficerRequiredMixin, APIView):
             return None, actor, None
         application = LoanApplication.find_by_id(application_id)
         if not application:
-            return None, error_response(
-                message="Application not found",
-                status_code=status.HTTP_404_NOT_FOUND,
-            ), None
+            return (
+                None,
+                error_response(
+                    message="Application not found",
+                    status_code=status.HTTP_404_NOT_FOUND,
+                ),
+                None,
+            )
         in_scope, response = self.check_application_scope(
             request, application, allow_unassigned=False
         )
         if not in_scope:
             return None, response, None
         if application.disbursement_method != "wallet":
-            return None, error_response(
-                message="Application is not a wallet disbursement",
-                status_code=status.HTTP_400_BAD_REQUEST,
-            ), None
+            return (
+                None,
+                error_response(
+                    message="Application is not a wallet disbursement",
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                ),
+                None,
+            )
         return application, None, actor
 
     def get(self, request, application_id):
@@ -150,9 +155,7 @@ class WalletDisbursementRecoveryView(LoanOfficerRequiredMixin, APIView):
             record_loan_audit(
                 action=f"wallet_disbursement_{action}",
                 user_id=actor_id,
-                user_type=(
-                    str(getattr(request.user, "role", "") or "system").lower()
-                ),
+                user_type=(str(getattr(request.user, "role", "") or "system").lower()),
                 description=f"Wallet disbursement {action} requested",
                 resource_type="loan",
                 resource_id=application.id,

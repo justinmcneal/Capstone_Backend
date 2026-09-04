@@ -9,17 +9,15 @@ import time
 
 from web3 import Web3
 
-from loans.blockchain.client import get_contract, send_transaction, call_view
+from loans.blockchain.client import call_view, get_contract, send_transaction
 
 logger = logging.getLogger("blockchain")
 
 # PaymentRecording.PaymentMethod enum mapping
 PAYMENT_METHOD_MAP = {
     "cash": 0,
-    "bank_transfer": 1,
-    "gcash": 2,
-    "check": 3,
-    "wallet": 4,
+    "check": 1,
+    "wallet": 2,
 }
 
 
@@ -89,7 +87,7 @@ def record_payment_onchain(
         loan_id: Loan identifier (string, hashed to bytes32)
         installment_number: 1-based installment number (int)
         amount: Payment amount in smallest unit (int)
-        payment_method: Payment method string ('cash', 'gcash', 'bank_transfer', 'check', 'wallet')
+        payment_method: Payment method string ('cash', 'check', 'wallet')
         reference_hash: Unique payment reference (string, hashed to bytes32)
 
     Returns:
@@ -97,7 +95,9 @@ def record_payment_onchain(
     """
     contract = get_contract("paymentRecording")
     loan_id_bytes = _to_bytes32(loan_id)
-    method_enum = PAYMENT_METHOD_MAP.get(payment_method, 4)  # Default to Other
+    if payment_method not in PAYMENT_METHOD_MAP:
+        raise ValueError("Payment method must be one of: cash, check, wallet")
+    method_enum = PAYMENT_METHOD_MAP[payment_method]
     ref_bytes = _to_bytes32(reference_hash)
 
     result = send_transaction(

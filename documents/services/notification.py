@@ -104,45 +104,46 @@ def prepare_reviewer_notification_deliveries(document):
         if row.get("assigned_officer")
     }
 
-    for officer in LoanOfficer.find({"active": True}):
-        if not officer.has_permission("review_documents"):
-            continue
-        if assigned_officer_ids and str(officer.id) not in assigned_officer_ids:
-            continue
-        email = (officer.email or "").strip()
-        if not email:
-            continue
-        email_key = email.lower()
-        if email_key in seen_emails:
-            continue
-        seen_emails.add(email_key)
-        recipients.append(
-            {
-                "email": email,
-                "name": get_display_name(officer, fallback="Loan Officer"),
-                "user_id": officer.id,
-                "user_type": "loan_officer",
-            }
-        )
-
-    for admin in Admin.find({"active": True}):
-        if not admin.has_permission("review_documents"):
-            continue
-        email = (admin.email or "").strip()
-        if not email:
-            continue
-        email_key = email.lower()
-        if email_key in seen_emails:
-            continue
-        seen_emails.add(email_key)
-        recipients.append(
-            {
-                "email": email,
-                "name": get_display_name(admin, fallback="Admin"),
-                "user_id": admin.id,
-                "user_type": "admin",
-            }
-        )
+    if assigned_officer_ids:
+        for officer in LoanOfficer.find({"active": True}):
+            if not officer.has_permission("review_documents"):
+                continue
+            if str(officer.id) not in assigned_officer_ids:
+                continue
+            email = (officer.email or "").strip()
+            if not email:
+                continue
+            email_key = email.lower()
+            if email_key in seen_emails:
+                continue
+            seen_emails.add(email_key)
+            recipients.append(
+                {
+                    "email": email,
+                    "name": get_display_name(officer, fallback="Loan Officer"),
+                    "user_id": officer.id,
+                    "user_type": "loan_officer",
+                }
+            )
+    else:
+        for admin in Admin.find({"active": True}):
+            if not admin.has_permission("review_documents"):
+                continue
+            email = (admin.email or "").strip()
+            if not email:
+                continue
+            email_key = email.lower()
+            if email_key in seen_emails:
+                continue
+            seen_emails.add(email_key)
+            recipients.append(
+                {
+                    "email": email,
+                    "name": get_display_name(admin, fallback="Admin"),
+                    "user_id": admin.id,
+                    "user_type": "admin",
+                }
+            )
 
     if not recipients:
         logger.warning(

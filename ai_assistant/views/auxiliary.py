@@ -1,6 +1,7 @@
 import logging
 from typing import ClassVar
 
+from django.conf import settings
 from django.core.cache import cache
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
@@ -100,16 +101,50 @@ class AIStatusView(AccessControlMixin, APIView):
         if not has_permission:
             return result
 
+        if not getattr(settings, 'AI_ASSISTANT_ENABLED', True):
+            return success_response(
+                data={
+                    'available': False,
+                    'provider': settings.LLM_PROVIDER,
+                    'current_model': None,
+                    'api_configured': False,
+                    'reachable': False,
+                    'authenticated': False,
+                    'model_available': False,
+                    'state': 'disabled',
+                    'circuit': 'disabled',
+                },
+                message="AI status retrieved",
+            )
+
         llm = get_llm_service(use_case='chat')
         
-        is_available = llm.is_available()
+        if hasattr(llm, 'readiness'):
+            readiness = llm.readiness()
+        else:
+            available = llm.is_available()
+            readiness = {
+                'available': available,
+                'configured': bool(llm.api_key),
+                'reachable': available,
+                'authenticated': available,
+                'model_available': available,
+                'state': 'available' if available else 'unavailable',
+                'circuit': 'unknown',
+            }
+        is_available = readiness['available']
         
         return success_response(
             data={
                 'available': is_available,
                 'provider': llm.provider,
                 'current_model': llm.model if is_available else None,
-                'api_configured': bool(llm.api_key)
+                'api_configured': readiness['configured'],
+                'reachable': readiness['reachable'],
+                'authenticated': readiness['authenticated'],
+                'model_available': readiness['model_available'],
+                'state': readiness['state'],
+                'circuit': readiness['circuit'],
             },
             message="AI status retrieved"
         )
@@ -184,11 +219,9 @@ class EducationView(AccessControlMixin, APIView):
         },
         'payment_methods': {
             'title': 'Payment Methods',
-            'content': 'MSME Pathways supports 5 payment methods in two categories: automatic and manual.',
+            'content': 'MSME Pathways supports cash, check, and ETH wallet-to-wallet settlement.',
             'key_points': [
-                'AUTOMATIC — recorded instantly when you pay:',
-                '  • GCash — pay using your GCash mobile wallet',
-                '  • Bank Transfer — pay via electronic bank transfer',
+                'WALLET-TO-WALLET — available when blockchain is enabled:',
                 '  • Wallet (ETH) — pay using your Ethereum cryptocurrency wallet',
                 'MANUAL — your loan officer records the payment for you:',
                 '  • Cash — pay at a partner location',
@@ -223,7 +256,7 @@ class EducationView(AccessControlMixin, APIView):
             'content': 'Once approved, here\'s what happens next and what you need to know about managing your loan.',
             'key_points': [
                 'You\'ll receive a notification with your approved loan amount',
-                'Set your preferred disbursement method (GCash, bank transfer, cash, check, or wallet)',
+                'Set an available preferred disbursement method (cash, check, or wallet when blockchain is enabled)',
                 'The loan officer processes the disbursement',
                 'A repayment schedule is automatically created after disbursement',
                 'Make monthly payments on time to maintain good standing',
@@ -234,7 +267,7 @@ class EducationView(AccessControlMixin, APIView):
             'title': 'Using the ETH Wallet',
             'content': 'MSME Pathways supports Ethereum (ETH) wallet payments for both disbursement and repayment. This is a cryptocurrency-based payment option.',
             'key_points': [
-                'Wallet (ETH) is one of the 5 accepted payment methods',
+                'Wallet (ETH) is the currently supported customer-initiated electronic payment method',
                 'Payments via ETH wallet are automatically recorded in the system',
                 'You can also choose to receive your loan disbursement via ETH wallet',
                 'All wallet transactions are verified on the Ethereum blockchain'
@@ -315,7 +348,7 @@ class FAQsView(AccessControlMixin, APIView):
         {
             'category': 'Loan Payments',
             'question': 'How do I make payments?',
-            'answer': 'If you are paying yourself, use GCash, bank transfer, or Wallet (ETH). Cash and check payments are recorded by a loan officer at the office or partner location.'
+            'answer': 'You can use Wallet (ETH) when blockchain is enabled. Cash and check payments are recorded by a loan officer at the office or partner location.'
         },
         {
             'category': 'Loan Payments',

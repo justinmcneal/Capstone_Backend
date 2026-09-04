@@ -12,8 +12,12 @@ https://docs.djangoproject.com/en/4.2/ref/settings/
 
 import json
 import os
+import re
 from pathlib import Path
+from urllib.parse import urlparse
 
+import certifi
+from corsheaders.defaults import default_headers
 from cryptography.fernet import Fernet
 from django.core.exceptions import ImproperlyConfigured
 from django.core.management.utils import get_random_secret_key
@@ -22,6 +26,15 @@ from dotenv import load_dotenv
 from config.mongodb import LazyMongoDatabase
 
 load_dotenv()
+
+# Python installations such as the macOS framework build may not expose a
+# usable OpenSSL CA path. Django's SMTP backend relies on that path for STARTTLS
+# certificate verification, so use the project dependency as a fallback while
+# preserving any deployment-provided SSL_CERT_FILE value.
+if not os.getenv("SSL_CERT_FILE"):
+    _certifi_ca_bundle = Path(certifi.where())
+    if _certifi_ca_bundle.is_file():
+        os.environ["SSL_CERT_FILE"] = str(_certifi_ca_bundle)
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -83,6 +96,8 @@ MIDDLEWARE = [
     'config.middleware.SecurityHeadersMiddleware',
     'django.middleware.common.CommonMiddleware',
     'config.middleware.NoSQLInjectionGuardMiddleware',
+    'loans.middleware.LoanRequestMetricsMiddleware',
+    'notifications.middleware.NotificationRequestMetricsMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
     'config.middleware.CSRFSameSiteTokenMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
@@ -117,6 +132,180 @@ ASGI_APPLICATION = "config.asgi.application"
 # WebSocket settings
 WEBSOCKET_ENABLED = env_bool("WEBSOCKET_ENABLED", True)
 
+# Notifications inbox bounds and authenticated abuse controls.
+NOTIFICATIONS_MAX_OFFSET = int(os.getenv("NOTIFICATIONS_MAX_OFFSET", "10000"))
+NOTIFICATIONS_BULK_MUTATION_LIMIT = int(
+    os.getenv("NOTIFICATIONS_BULK_MUTATION_LIMIT", "1000")
+)
+NOTIFICATIONS_READ_RATE = os.getenv("NOTIFICATIONS_READ_RATE", "600/hour")
+NOTIFICATIONS_WRITE_RATE = os.getenv("NOTIFICATIONS_WRITE_RATE", "300/hour")
+NOTIFICATIONS_DEVICE_TOKEN_RATE = os.getenv(
+    "NOTIFICATIONS_DEVICE_TOKEN_RATE", "60/hour"
+)
+NOTIFICATIONS_DEVICE_TOKEN_TTL_DAYS = int(
+    os.getenv("NOTIFICATIONS_DEVICE_TOKEN_TTL_DAYS", "180")
+)
+NOTIFICATIONS_MAX_ACTIVE_DEVICE_TOKENS = int(
+    os.getenv("NOTIFICATIONS_MAX_ACTIVE_DEVICE_TOKENS", "20")
+)
+NOTIFICATIONS_FCM_BATCH_SIZE = int(os.getenv("NOTIFICATIONS_FCM_BATCH_SIZE", "500"))
+NOTIFICATIONS_DELIVERY_MAX_ATTEMPTS = int(
+    os.getenv("NOTIFICATIONS_DELIVERY_MAX_ATTEMPTS", "5")
+)
+NOTIFICATIONS_DELIVERY_RETRY_BACKOFF_SECONDS = int(
+    os.getenv("NOTIFICATIONS_DELIVERY_RETRY_BACKOFF_SECONDS", "60")
+)
+NOTIFICATIONS_DELIVERY_LEASE_SECONDS = int(
+    os.getenv("NOTIFICATIONS_DELIVERY_LEASE_SECONDS", "300")
+)
+NOTIFICATIONS_PREFERENCE_POLICY_VERSION = os.getenv(
+    "NOTIFICATIONS_PREFERENCE_POLICY_VERSION", "2026-08-28-v1"
+).strip()
+NOTIFICATIONS_RETENTION_DAYS = int(os.getenv("NOTIFICATIONS_RETENTION_DAYS", "365"))
+NOTIFICATIONS_DELIVERY_RETENTION_DAYS = int(
+    os.getenv("NOTIFICATIONS_DELIVERY_RETENTION_DAYS", "90")
+)
+NOTIFICATIONS_INACTIVE_TOKEN_RETENTION_DAYS = int(
+    os.getenv("NOTIFICATIONS_INACTIVE_TOKEN_RETENTION_DAYS", "30")
+)
+NOTIFICATIONS_ACCOUNT_EXPORT_MAX_ROWS = int(
+    os.getenv("NOTIFICATIONS_ACCOUNT_EXPORT_MAX_ROWS", "1000")
+)
+NOTIFICATIONS_WS_ACTIONS_PER_MINUTE = int(
+    os.getenv("NOTIFICATIONS_WS_ACTIONS_PER_MINUTE", "120")
+)
+NOTIFICATIONS_WS_REVALIDATE_SECONDS = int(
+    os.getenv("NOTIFICATIONS_WS_REVALIDATE_SECONDS", "30")
+)
+NOTIFICATIONS_WS_IDLE_TIMEOUT_SECONDS = int(
+    os.getenv("NOTIFICATIONS_WS_IDLE_TIMEOUT_SECONDS", "300")
+)
+NOTIFICATIONS_WS_MAX_MESSAGE_BYTES = int(
+    os.getenv("NOTIFICATIONS_WS_MAX_MESSAGE_BYTES", "16384")
+)
+NOTIFICATIONS_WS_MAX_CONNECTIONS_PER_USER = int(
+    os.getenv("NOTIFICATIONS_WS_MAX_CONNECTIONS_PER_USER", "5")
+)
+NOTIFICATIONS_HEALTH_FAILED_DELIVERY_LIMIT = int(
+    os.getenv("NOTIFICATIONS_HEALTH_FAILED_DELIVERY_LIMIT", "0")
+)
+NOTIFICATIONS_HEALTH_OLDEST_PENDING_SECONDS = int(
+    os.getenv("NOTIFICATIONS_HEALTH_OLDEST_PENDING_SECONDS", "900")
+)
+NOTIFICATIONS_RELEASE_INVENTORY_LIMIT = int(
+    os.getenv("NOTIFICATIONS_RELEASE_INVENTORY_LIMIT", "10000")
+)
+NOTIFICATIONS_RETENTION_POLICY_APPROVED = env_bool(
+    "NOTIFICATIONS_RETENTION_POLICY_APPROVED", False
+)
+NOTIFICATIONS_DEPLOYMENT_MONGODB_VERIFIED = env_bool(
+    "NOTIFICATIONS_DEPLOYMENT_MONGODB_VERIFIED", False
+)
+NOTIFICATIONS_REDIS_CHANNELS_CELERY_VERIFIED = env_bool(
+    "NOTIFICATIONS_REDIS_CHANNELS_CELERY_VERIFIED", False
+)
+NOTIFICATIONS_SMTP_VERIFIED = env_bool("NOTIFICATIONS_SMTP_VERIFIED", False)
+NOTIFICATIONS_FIREBASE_VERIFIED = env_bool("NOTIFICATIONS_FIREBASE_VERIFIED", False)
+NOTIFICATIONS_HTTPS_WSS_LOAD_VERIFIED = env_bool(
+    "NOTIFICATIONS_HTTPS_WSS_LOAD_VERIFIED", False
+)
+NOTIFICATIONS_BACKUP_RESTORE_VERIFIED = env_bool(
+    "NOTIFICATIONS_BACKUP_RESTORE_VERIFIED", False
+)
+NOTIFICATIONS_SECRET_ROTATION_VERIFIED = env_bool(
+    "NOTIFICATIONS_SECRET_ROTATION_VERIFIED", False
+)
+NOTIFICATIONS_INCIDENT_ROLLBACK_APPROVED = env_bool(
+    "NOTIFICATIONS_INCIDENT_ROLLBACK_APPROVED", False
+)
+NOTIFICATIONS_MONITORING_ALERTS_VERIFIED = env_bool(
+    "NOTIFICATIONS_MONITORING_ALERTS_VERIFIED", False
+)
+NOTIFICATIONS_FULL_SUITE_SMOKE_VERIFIED = env_bool(
+    "NOTIFICATIONS_FULL_SUITE_SMOKE_VERIFIED", False
+)
+if not 0 <= NOTIFICATIONS_MAX_OFFSET <= 1_000_000:
+    raise ImproperlyConfigured(
+        "NOTIFICATIONS_MAX_OFFSET must be between 0 and 1000000"
+    )
+if not 1 <= NOTIFICATIONS_BULK_MUTATION_LIMIT <= 10_000:
+    raise ImproperlyConfigured(
+        "NOTIFICATIONS_BULK_MUTATION_LIMIT must be between 1 and 10000"
+    )
+if not 1 <= NOTIFICATIONS_WS_ACTIONS_PER_MINUTE <= 10_000:
+    raise ImproperlyConfigured(
+        "NOTIFICATIONS_WS_ACTIONS_PER_MINUTE must be between 1 and 10000"
+    )
+if not 5 <= NOTIFICATIONS_WS_REVALIDATE_SECONDS <= 300:
+    raise ImproperlyConfigured(
+        "NOTIFICATIONS_WS_REVALIDATE_SECONDS must be between 5 and 300"
+    )
+if not 30 <= NOTIFICATIONS_WS_IDLE_TIMEOUT_SECONDS <= 86_400:
+    raise ImproperlyConfigured(
+        "NOTIFICATIONS_WS_IDLE_TIMEOUT_SECONDS must be between 30 and 86400"
+    )
+if not 1024 <= NOTIFICATIONS_WS_MAX_MESSAGE_BYTES <= 1_048_576:
+    raise ImproperlyConfigured(
+        "NOTIFICATIONS_WS_MAX_MESSAGE_BYTES must be between 1024 and 1048576"
+    )
+if not 1 <= NOTIFICATIONS_WS_MAX_CONNECTIONS_PER_USER <= 100:
+    raise ImproperlyConfigured(
+        "NOTIFICATIONS_WS_MAX_CONNECTIONS_PER_USER must be between 1 and 100"
+    )
+if not 0 <= NOTIFICATIONS_HEALTH_FAILED_DELIVERY_LIMIT <= 1_000_000:
+    raise ImproperlyConfigured(
+        "NOTIFICATIONS_HEALTH_FAILED_DELIVERY_LIMIT must be between 0 and 1000000"
+    )
+if not 60 <= NOTIFICATIONS_HEALTH_OLDEST_PENDING_SECONDS <= 604_800:
+    raise ImproperlyConfigured(
+        "NOTIFICATIONS_HEALTH_OLDEST_PENDING_SECONDS must be between 60 and 604800"
+    )
+if not 1 <= NOTIFICATIONS_RELEASE_INVENTORY_LIMIT <= 1_000_000:
+    raise ImproperlyConfigured(
+        "NOTIFICATIONS_RELEASE_INVENTORY_LIMIT must be between 1 and 1000000"
+    )
+if not 1 <= NOTIFICATIONS_DEVICE_TOKEN_TTL_DAYS <= 3650:
+    raise ImproperlyConfigured(
+        "NOTIFICATIONS_DEVICE_TOKEN_TTL_DAYS must be between 1 and 3650"
+    )
+if not 1 <= NOTIFICATIONS_MAX_ACTIVE_DEVICE_TOKENS <= 100:
+    raise ImproperlyConfigured(
+        "NOTIFICATIONS_MAX_ACTIVE_DEVICE_TOKENS must be between 1 and 100"
+    )
+if not 1 <= NOTIFICATIONS_FCM_BATCH_SIZE <= 500:
+    raise ImproperlyConfigured(
+        "NOTIFICATIONS_FCM_BATCH_SIZE must be between 1 and 500"
+    )
+if not 1 <= NOTIFICATIONS_DELIVERY_MAX_ATTEMPTS <= 10:
+    raise ImproperlyConfigured(
+        "NOTIFICATIONS_DELIVERY_MAX_ATTEMPTS must be between 1 and 10"
+    )
+if not 1 <= NOTIFICATIONS_DELIVERY_RETRY_BACKOFF_SECONDS <= 3600:
+    raise ImproperlyConfigured(
+        "NOTIFICATIONS_DELIVERY_RETRY_BACKOFF_SECONDS must be between 1 and 3600"
+    )
+if not 30 <= NOTIFICATIONS_DELIVERY_LEASE_SECONDS <= 3600:
+    raise ImproperlyConfigured(
+        "NOTIFICATIONS_DELIVERY_LEASE_SECONDS must be between 30 and 3600"
+    )
+if not NOTIFICATIONS_PREFERENCE_POLICY_VERSION:
+    raise ImproperlyConfigured(
+        "NOTIFICATIONS_PREFERENCE_POLICY_VERSION must not be blank"
+    )
+for _notification_retention_name in (
+    "NOTIFICATIONS_RETENTION_DAYS",
+    "NOTIFICATIONS_DELIVERY_RETENTION_DAYS",
+    "NOTIFICATIONS_INACTIVE_TOKEN_RETENTION_DAYS",
+):
+    if not 1 <= globals()[_notification_retention_name] <= 3650:
+        raise ImproperlyConfigured(
+            f"{_notification_retention_name} must be between 1 and 3650"
+        )
+if not 1 <= NOTIFICATIONS_ACCOUNT_EXPORT_MAX_ROWS <= 10000:
+    raise ImproperlyConfigured(
+        "NOTIFICATIONS_ACCOUNT_EXPORT_MAX_ROWS must be between 1 and 10000"
+    )
+
 # Channel Layers Configuration
 CHANNEL_LAYERS = {
     "default": {
@@ -147,6 +336,102 @@ FIELD_ENCRYPTION_PREVIOUS_KEYS = tuple(
 FIELD_ENCRYPTION_STRICT_DECRYPTION = env_bool(
     'FIELD_ENCRYPTION_STRICT_DECRYPTION', not DEBUG
 )
+AI_ASSISTANT_RETENTION_DAYS = int(
+    os.getenv('AI_ASSISTANT_RETENTION_DAYS') or '365'
+)
+if not 1 <= AI_ASSISTANT_RETENTION_DAYS <= 3650:
+    raise ImproperlyConfigured(
+        'AI_ASSISTANT_RETENTION_DAYS must be between 1 and 3650'
+    )
+AI_ASSISTANT_AUDIT_RETENTION_DAYS = int(
+    os.getenv('AI_ASSISTANT_AUDIT_RETENTION_DAYS') or '90'
+)
+if not 1 <= AI_ASSISTANT_AUDIT_RETENTION_DAYS <= 3650:
+    raise ImproperlyConfigured(
+        'AI_ASSISTANT_AUDIT_RETENTION_DAYS must be between 1 and 3650'
+    )
+AI_ASSISTANT_RETENTION_POLICY_VERSION = (
+    os.getenv('AI_ASSISTANT_RETENTION_POLICY_VERSION') or '2026-08-14-v1'
+)
+if not AI_ASSISTANT_RETENTION_POLICY_VERSION.strip():
+    raise ImproperlyConfigured(
+        'AI_ASSISTANT_RETENTION_POLICY_VERSION must not be blank'
+    )
+ANALYTICS_AUDIT_RETENTION_DAYS = int(
+    os.getenv('ANALYTICS_AUDIT_RETENTION_DAYS') or '2555'
+)
+if not 1 <= ANALYTICS_AUDIT_RETENTION_DAYS <= 3650:
+    raise ImproperlyConfigured(
+        'ANALYTICS_AUDIT_RETENTION_DAYS must be between 1 and 3650'
+    )
+ANALYTICS_AUDIT_RETENTION_POLICY_VERSION = (
+    os.getenv('ANALYTICS_AUDIT_RETENTION_POLICY_VERSION') or '2026-08-12-v1'
+)
+ANALYTICS_AUDIT_MAX_DETAILS_BYTES = int(
+    os.getenv('ANALYTICS_AUDIT_MAX_DETAILS_BYTES') or '16384'
+)
+ANALYTICS_AUDIT_MAX_DETAILS_DEPTH = int(
+    os.getenv('ANALYTICS_AUDIT_MAX_DETAILS_DEPTH') or '4'
+)
+ANALYTICS_QUERY_TIMEOUT_MS = int(os.getenv('ANALYTICS_QUERY_TIMEOUT_MS') or '3000')
+ANALYTICS_READ_RATE = os.getenv('ANALYTICS_READ_RATE') or '300/hour'
+ANALYTICS_MAX_PAGE_OFFSET = int(os.getenv('ANALYTICS_MAX_PAGE_OFFSET') or '10000')
+ANALYTICS_MAX_ACTIVE_PRODUCTS = int(
+    os.getenv('ANALYTICS_MAX_ACTIVE_PRODUCTS') or '100'
+)
+ANALYTICS_AUDIT_BACKLOG_ALERT_THRESHOLD = int(
+    os.getenv('ANALYTICS_AUDIT_BACKLOG_ALERT_THRESHOLD') or '1'
+)
+ANALYTICS_INTEGRITY_INVENTORY_MAX_AGE_SECONDS = int(
+    os.getenv('ANALYTICS_INTEGRITY_INVENTORY_MAX_AGE_SECONDS') or '90000'
+)
+PROMETHEUS_METRICS_ENABLED = env_bool('PROMETHEUS_METRICS_ENABLED', False)
+PROMETHEUS_METRICS_HTTP_SERVER_ENABLED = env_bool(
+    'PROMETHEUS_METRICS_HTTP_SERVER_ENABLED', False
+)
+PROMETHEUS_METRICS_HTTP_SERVER_PORT = int(
+    os.getenv('PROMETHEUS_METRICS_HTTP_SERVER_PORT') or '8001'
+)
+PROMETHEUS_METRICS_URL = (os.getenv('PROMETHEUS_METRICS_URL') or '').strip()
+PROMETHEUS_METRICS_BASE_URL = (
+    os.getenv('PROMETHEUS_METRICS_BASE_URL') or ''
+).strip()
+if not 1024 <= ANALYTICS_AUDIT_MAX_DETAILS_BYTES <= 65536:
+    raise ImproperlyConfigured(
+        'ANALYTICS_AUDIT_MAX_DETAILS_BYTES must be between 1024 and 65536'
+    )
+if not 1 <= ANALYTICS_AUDIT_MAX_DETAILS_DEPTH <= 8:
+    raise ImproperlyConfigured(
+        'ANALYTICS_AUDIT_MAX_DETAILS_DEPTH must be between 1 and 8'
+    )
+if not 100 <= ANALYTICS_QUERY_TIMEOUT_MS <= 30000:
+    raise ImproperlyConfigured(
+        'ANALYTICS_QUERY_TIMEOUT_MS must be between 100 and 30000'
+    )
+if not re.fullmatch(r"[1-9][0-9]*/(s|sec|m|min|h|hour|d|day)", ANALYTICS_READ_RATE):
+    raise ImproperlyConfigured(
+        'ANALYTICS_READ_RATE must use a positive DRF rate such as 300/hour'
+    )
+if not 100 <= ANALYTICS_MAX_PAGE_OFFSET <= 100000:
+    raise ImproperlyConfigured(
+        'ANALYTICS_MAX_PAGE_OFFSET must be between 100 and 100000'
+    )
+if not 1 <= ANALYTICS_MAX_ACTIVE_PRODUCTS <= 1000:
+    raise ImproperlyConfigured(
+        'ANALYTICS_MAX_ACTIVE_PRODUCTS must be between 1 and 1000'
+    )
+if not 1 <= ANALYTICS_AUDIT_BACKLOG_ALERT_THRESHOLD <= 100000:
+    raise ImproperlyConfigured(
+        'ANALYTICS_AUDIT_BACKLOG_ALERT_THRESHOLD must be between 1 and 100000'
+    )
+if not 300 <= ANALYTICS_INTEGRITY_INVENTORY_MAX_AGE_SECONDS <= 604800:
+    raise ImproperlyConfigured(
+        'ANALYTICS_INTEGRITY_INVENTORY_MAX_AGE_SECONDS must be between 300 and 604800'
+    )
+if not 1024 <= PROMETHEUS_METRICS_HTTP_SERVER_PORT <= 65535:
+    raise ImproperlyConfigured(
+        'PROMETHEUS_METRICS_HTTP_SERVER_PORT must be between 1024 and 65535'
+    )
 
 # Production must never store sensitive fields as plaintext.
 # In DEBUG/development, allow plaintext pass-through so local setups do not require key management.
@@ -622,6 +907,10 @@ if env_bool('CORS_ALLOW_ALL_ORIGINS', False):
 else:
     CORS_ALLOWED_ORIGINS = os.getenv('CORS_ALLOWED_ORIGINS', 'http://localhost:3000,http://localhost:5173').split(',')
 CORS_ALLOW_CREDENTIALS = True
+CORS_ALLOW_HEADERS = (
+    *default_headers,
+    'idempotency-key',
+)
 
 # CSRF / SameSite policy
 SESSION_COOKIE_SAMESITE = os.getenv('SESSION_COOKIE_SAMESITE', 'Lax')
@@ -636,7 +925,7 @@ AUTH_COOKIE_SECURE = env_bool('AUTH_COOKIE_SECURE', not DEBUG)
 AUTH_COOKIE_HTTPONLY = env_bool('AUTH_COOKIE_HTTPONLY', True)
 AUTH_COOKIE_SAMESITE = os.getenv('AUTH_COOKIE_SAMESITE', 'Lax')
 AUTH_COOKIE_PATH = os.getenv('AUTH_COOKIE_PATH', '/')
-AUTH_ACCESS_COOKIE_PATH = os.getenv('AUTH_ACCESS_COOKIE_PATH', '/api/')
+AUTH_ACCESS_COOKIE_PATH = os.getenv('AUTH_ACCESS_COOKIE_PATH', '/')
 AUTH_REFRESH_COOKIE_PATH = os.getenv('AUTH_REFRESH_COOKIE_PATH', '/api/auth/')
 CSRF_TRUSTED_ORIGINS = [
     origin.strip()
@@ -715,12 +1004,116 @@ CELERY_TIMEZONE = 'UTC'
 CELERY_TASK_ROUTES = {
     'blockchain.*': {'queue': 'blockchain'},
     'loans.execute_wallet_disbursement_task': {'queue': 'blockchain'},
+    'loans.tasks.check_overdue_installments_task': {'queue': 'loans'},
+    'loans.reconcile_repayment_lifecycle': {'queue': 'loans'},
+    'loans.reconcile_wallet_disbursements_task': {'queue': 'loans'},
+    'loans.reconcile_notification_deliveries': {'queue': 'loans'},
+    'loans.deliver_notification': {'queue': 'loans'},
+    'loans.enforce_retention': {'queue': 'loans'},
+    'loans.collect_operational_metrics': {'queue': 'loans'},
+    'notifications.deliver': {'queue': 'notifications'},
+    'notifications.reconcile_deliveries': {'queue': 'notifications'},
+    'notifications.enforce_retention': {'queue': 'notifications'},
+    'notifications.collect_operational_metrics': {'queue': 'notifications'},
 }
 
 # MongoDB-backed leases coordinate the single configured blockchain sender.
 BLOCKCHAIN_NONCE_LOCK_WAIT_SECONDS = 15
 BLOCKCHAIN_NONCE_LEASE_SECONDS = 180
 BLOCKCHAIN_RECONCILIATION_BATCH_SIZE = 250
+
+# Loans persistence and bounded synchronous/background execution.
+LOAN_EXPORT_MAX_ROWS = int(os.getenv("LOAN_EXPORT_MAX_ROWS", "10000"))
+LOAN_ACCOUNT_EXPORT_MAX_ROWS = int(os.getenv("LOAN_ACCOUNT_EXPORT_MAX_ROWS", "5000"))
+LOAN_OPERATIONAL_INTEGRITY_SCAN_LIMIT = int(
+    os.getenv("LOAN_OPERATIONAL_INTEGRITY_SCAN_LIMIT", "1000")
+)
+LOAN_RETENTION_DAYS = int(os.getenv("LOAN_RETENTION_DAYS", "2555"))
+LOAN_RETENTION_POLICY_VERSION = os.getenv(
+    "LOAN_RETENTION_POLICY_VERSION", "2026-08-15-v1"
+)
+LOAN_NOTIFICATION_MAX_ATTEMPTS = int(os.getenv("LOAN_NOTIFICATION_MAX_ATTEMPTS", "5"))
+LOAN_NOTIFICATION_RETRY_BACKOFF_SECONDS = int(
+    os.getenv("LOAN_NOTIFICATION_RETRY_BACKOFF_SECONDS", "60")
+)
+LOAN_NOTIFICATION_LEASE_SECONDS = int(os.getenv("LOAN_NOTIFICATION_LEASE_SECONDS", "300"))
+LOAN_JOB_BATCH_SIZE = int(os.getenv("LOAN_JOB_BATCH_SIZE", "200"))
+LOAN_JOB_MAX_BATCHES = int(os.getenv("LOAN_JOB_MAX_BATCHES", "10"))
+LOAN_JOB_LEASE_SECONDS = int(os.getenv("LOAN_JOB_LEASE_SECONDS", "900"))
+LOAN_TASK_SOFT_TIME_LIMIT = int(os.getenv("LOAN_TASK_SOFT_TIME_LIMIT", "840"))
+LOAN_TASK_TIME_LIMIT = int(os.getenv("LOAN_TASK_TIME_LIMIT", "900"))
+LOANS_RELEASE_INVENTORY_LIMIT = int(
+    os.getenv("LOANS_RELEASE_INVENTORY_LIMIT", "10000")
+)
+LOANS_RETENTION_POLICY_APPROVED = env_bool("LOANS_RETENTION_POLICY_APPROVED", False)
+LOANS_DEPLOYMENT_MONGODB_VERIFIED = env_bool(
+    "LOANS_DEPLOYMENT_MONGODB_VERIFIED", False
+)
+LOANS_REDIS_CELERY_VERIFIED = env_bool("LOANS_REDIS_CELERY_VERIFIED", False)
+LOANS_BLOCKCHAIN_VERIFIED = env_bool("LOANS_BLOCKCHAIN_VERIFIED", False)
+LOANS_HTTPS_API_LOAD_VERIFIED = env_bool("LOANS_HTTPS_API_LOAD_VERIFIED", False)
+LOANS_BACKUP_RESTORE_VERIFIED = env_bool("LOANS_BACKUP_RESTORE_VERIFIED", False)
+LOANS_SECRET_ROTATION_VERIFIED = env_bool("LOANS_SECRET_ROTATION_VERIFIED", False)
+LOANS_INCIDENT_ROLLBACK_APPROVED = env_bool(
+    "LOANS_INCIDENT_ROLLBACK_APPROVED", False
+)
+LOANS_MONITORING_ALERTS_VERIFIED = env_bool(
+    "LOANS_MONITORING_ALERTS_VERIFIED", False
+)
+LOANS_FULL_SUITE_SMOKE_VERIFIED = env_bool(
+    "LOANS_FULL_SUITE_SMOKE_VERIFIED", False
+)
+if not 1 <= LOAN_ACCOUNT_EXPORT_MAX_ROWS <= 10_000:
+    raise ImproperlyConfigured("LOAN_ACCOUNT_EXPORT_MAX_ROWS must be between 1 and 10000")
+if not 1 <= LOAN_OPERATIONAL_INTEGRITY_SCAN_LIMIT <= 10_000:
+    raise ImproperlyConfigured(
+        "LOAN_OPERATIONAL_INTEGRITY_SCAN_LIMIT must be between 1 and 10000"
+    )
+if not 1 <= LOAN_RETENTION_DAYS <= 36500:
+    raise ImproperlyConfigured("LOAN_RETENTION_DAYS must be between 1 and 36500")
+if not 1 <= LOAN_NOTIFICATION_MAX_ATTEMPTS <= 10:
+    raise ImproperlyConfigured("LOAN_NOTIFICATION_MAX_ATTEMPTS must be between 1 and 10")
+if not 1 <= LOAN_NOTIFICATION_RETRY_BACKOFF_SECONDS <= 3600:
+    raise ImproperlyConfigured("LOAN_NOTIFICATION_RETRY_BACKOFF_SECONDS must be between 1 and 3600")
+if not 30 <= LOAN_NOTIFICATION_LEASE_SECONDS <= 3600:
+    raise ImproperlyConfigured("LOAN_NOTIFICATION_LEASE_SECONDS must be between 30 and 3600")
+if not 1 <= LOANS_RELEASE_INVENTORY_LIMIT <= 1_000_000:
+    raise ImproperlyConfigured(
+        "LOANS_RELEASE_INVENTORY_LIMIT must be between 1 and 1000000"
+    )
+CELERY_TASK_ANNOTATIONS = {
+    task_name: {
+        "acks_late": True,
+        "reject_on_worker_lost": True,
+        "soft_time_limit": LOAN_TASK_SOFT_TIME_LIMIT,
+        "time_limit": LOAN_TASK_TIME_LIMIT,
+    }
+    for task_name in (
+        "loans.tasks.check_overdue_installments_task",
+        "loans.reconcile_repayment_lifecycle",
+        "loans.reconcile_wallet_disbursements_task",
+        "loans.reconcile_notification_deliveries",
+        "loans.deliver_notification",
+        "loans.enforce_retention",
+        "loans.collect_operational_metrics",
+    )
+}
+CELERY_TASK_ANNOTATIONS.update(
+    {
+        task_name: {
+            "acks_late": True,
+            "reject_on_worker_lost": True,
+            "soft_time_limit": 90,
+            "time_limit": 120,
+        }
+        for task_name in (
+            "notifications.deliver",
+            "notifications.reconcile_deliveries",
+            "notifications.enforce_retention",
+            "notifications.collect_operational_metrics",
+        )
+    }
+)
 
 # Logging Configuration
 LOGGING = {
@@ -822,10 +1215,138 @@ CONSENT_POLICY_CONTENT_SHA256 = os.getenv(
 GROQ_QUALIFICATION_MODEL = os.getenv('GROQ_QUALIFICATION_MODEL', GROQ_MODEL)
 
 # LLM Provider Configuration
-# Set LLM_PROVIDER to 'groq' or 'ollama' to switch AI backends
-LLM_PROVIDER = os.getenv('LLM_PROVIDER', 'groq')
-OLLAMA_BASE_URL = os.getenv('OLLAMA_BASE_URL', 'http://localhost:11434')
-OLLAMA_MODEL = os.getenv('OLLAMA_MODEL', 'llama3.1')
+AI_ASSISTANT_ENABLED = env_bool('AI_ASSISTANT_ENABLED', True)
+LLM_PROVIDER = (os.getenv('LLM_PROVIDER') or 'groq').strip().lower()
+if LLM_PROVIDER not in {'groq', 'ollama'}:
+    raise ImproperlyConfigured('LLM_PROVIDER must be groq or ollama')
+
+OLLAMA_BASE_URL = (os.getenv('OLLAMA_BASE_URL') or 'http://localhost:11434').strip().rstrip('/')
+_ollama_url = urlparse(OLLAMA_BASE_URL)
+if _ollama_url.scheme not in {'http', 'https'} or not _ollama_url.netloc:
+    raise ImproperlyConfigured('OLLAMA_BASE_URL must be an absolute HTTP(S) URL')
+
+OLLAMA_MODEL = (os.getenv('OLLAMA_MODEL') or 'llama3.1').strip()
+if not OLLAMA_MODEL:
+    raise ImproperlyConfigured('OLLAMA_MODEL must not be blank')
+
+for _groq_model_setting in ('GROQ_MODEL', 'GROQ_CHAT_MODEL', 'GROQ_QUALIFICATION_MODEL'):
+    if not str(globals().get(_groq_model_setting, '')).strip():
+        raise ImproperlyConfigured(f'{_groq_model_setting} must not be blank')
+
+AI_ASSISTANT_MESSAGE_MAX_CHARS = int(os.getenv('AI_ASSISTANT_MESSAGE_MAX_CHARS') or '4000')
+AI_ASSISTANT_MESSAGE_MAX_BYTES = int(os.getenv('AI_ASSISTANT_MESSAGE_MAX_BYTES') or '16000')
+AI_ASSISTANT_REQUEST_MAX_BYTES = int(os.getenv('AI_ASSISTANT_REQUEST_MAX_BYTES') or '20000')
+AI_ASSISTANT_HISTORY_SEARCH_MAX_CHARS = int(
+    os.getenv('AI_ASSISTANT_HISTORY_SEARCH_MAX_CHARS') or '200'
+)
+AI_ASSISTANT_HISTORY_MAX_PAGE = int(os.getenv('AI_ASSISTANT_HISTORY_MAX_PAGE') or '200')
+AI_ASSISTANT_IDEMPOTENCY_LEASE_SECONDS = int(
+    os.getenv('AI_ASSISTANT_IDEMPOTENCY_LEASE_SECONDS') or '900'
+)
+AI_ASSISTANT_CHAT_RATE = (os.getenv('AI_ASSISTANT_CHAT_RATE') or '100/hour').strip()
+AI_ASSISTANT_MAX_OUTPUT_TOKENS = int(os.getenv('AI_ASSISTANT_MAX_OUTPUT_TOKENS') or '512')
+AI_ASSISTANT_MAX_TOOL_ROUNDS = int(os.getenv('AI_ASSISTANT_MAX_TOOL_ROUNDS') or '3')
+AI_ASSISTANT_MAX_TOOL_CALLS_PER_REQUEST = int(
+    os.getenv('AI_ASSISTANT_MAX_TOOL_CALLS_PER_REQUEST') or '6'
+)
+AI_ASSISTANT_TOOL_COST_PER_MINUTE = int(
+    os.getenv('AI_ASSISTANT_TOOL_COST_PER_MINUTE') or '30'
+)
+AI_ASSISTANT_TOOL_COST_PER_HOUR = int(
+    os.getenv('AI_ASSISTANT_TOOL_COST_PER_HOUR') or '200'
+)
+AI_ASSISTANT_MAX_CONCURRENT_REQUESTS = int(
+    os.getenv('AI_ASSISTANT_MAX_CONCURRENT_REQUESTS') or '8'
+)
+AI_ASSISTANT_CONNECT_TIMEOUT_SECONDS = float(
+    os.getenv('AI_ASSISTANT_CONNECT_TIMEOUT_SECONDS') or '5'
+)
+AI_ASSISTANT_READ_TIMEOUT_SECONDS = float(
+    os.getenv('AI_ASSISTANT_READ_TIMEOUT_SECONDS') or '120'
+)
+AI_ASSISTANT_PROVIDER_RETRY_ATTEMPTS = int(
+    os.getenv('AI_ASSISTANT_PROVIDER_RETRY_ATTEMPTS') or '2'
+)
+AI_ASSISTANT_PROVIDER_RETRY_BACKOFF_SECONDS = float(
+    os.getenv('AI_ASSISTANT_PROVIDER_RETRY_BACKOFF_SECONDS') or '0.25'
+)
+AI_ASSISTANT_CIRCUIT_FAILURE_THRESHOLD = int(
+    os.getenv('AI_ASSISTANT_CIRCUIT_FAILURE_THRESHOLD') or '5'
+)
+AI_ASSISTANT_CIRCUIT_RECOVERY_SECONDS = float(
+    os.getenv('AI_ASSISTANT_CIRCUIT_RECOVERY_SECONDS') or '30'
+)
+# Stage 6 release evidence. These remain fail-closed until an operator validates
+# the selected deployment and records the approved evidence there.
+AI_ASSISTANT_QUALITY_REPORT_PATH = (
+    os.getenv('AI_ASSISTANT_QUALITY_REPORT_PATH') or ''
+).strip()
+AI_ASSISTANT_PROVIDER_PRIVACY_APPROVED = env_bool(
+    'AI_ASSISTANT_PROVIDER_PRIVACY_APPROVED', False
+)
+AI_ASSISTANT_PROVIDER_CONTRACT_VERIFIED = env_bool(
+    'AI_ASSISTANT_PROVIDER_CONTRACT_VERIFIED', False
+)
+AI_ASSISTANT_REDIS_VERIFIED = env_bool('AI_ASSISTANT_REDIS_VERIFIED', False)
+AI_ASSISTANT_PROXY_STREAMING_VERIFIED = env_bool(
+    'AI_ASSISTANT_PROXY_STREAMING_VERIFIED', False
+)
+AI_ASSISTANT_LOAD_TEST_VERIFIED = env_bool(
+    'AI_ASSISTANT_LOAD_TEST_VERIFIED', False
+)
+AI_ASSISTANT_BACKUP_RESTORE_VERIFIED = env_bool(
+    'AI_ASSISTANT_BACKUP_RESTORE_VERIFIED', False
+)
+AI_ASSISTANT_SECRET_ROTATION_VERIFIED = env_bool(
+    'AI_ASSISTANT_SECRET_ROTATION_VERIFIED', False
+)
+AI_ASSISTANT_INCIDENT_ROLLBACK_APPROVED = env_bool(
+    'AI_ASSISTANT_INCIDENT_ROLLBACK_APPROVED', False
+)
+
+_ai_integer_bounds = {
+    'AI_ASSISTANT_MESSAGE_MAX_CHARS': (1, 20000),
+    'AI_ASSISTANT_MESSAGE_MAX_BYTES': (1, 80000),
+    'AI_ASSISTANT_REQUEST_MAX_BYTES': (1, 100000),
+    'AI_ASSISTANT_HISTORY_SEARCH_MAX_CHARS': (1, 1000),
+    'AI_ASSISTANT_HISTORY_MAX_PAGE': (1, 10000),
+    'AI_ASSISTANT_IDEMPOTENCY_LEASE_SECONDS': (60, 3600),
+    'AI_ASSISTANT_MAX_OUTPUT_TOKENS': (1, 4096),
+    'AI_ASSISTANT_MAX_TOOL_ROUNDS': (0, 10),
+    'AI_ASSISTANT_MAX_TOOL_CALLS_PER_REQUEST': (1, 25),
+    'AI_ASSISTANT_TOOL_COST_PER_MINUTE': (1, 1000),
+    'AI_ASSISTANT_TOOL_COST_PER_HOUR': (1, 10000),
+    'AI_ASSISTANT_MAX_CONCURRENT_REQUESTS': (1, 100),
+    'AI_ASSISTANT_PROVIDER_RETRY_ATTEMPTS': (1, 5),
+    'AI_ASSISTANT_CIRCUIT_FAILURE_THRESHOLD': (1, 100),
+}
+for _name, (_minimum, _maximum) in _ai_integer_bounds.items():
+    if not _minimum <= globals()[_name] <= _maximum:
+        raise ImproperlyConfigured(f'{_name} must be between {_minimum} and {_maximum}')
+
+if AI_ASSISTANT_MESSAGE_MAX_BYTES < AI_ASSISTANT_MESSAGE_MAX_CHARS:
+    raise ImproperlyConfigured(
+        'AI_ASSISTANT_MESSAGE_MAX_BYTES must be at least AI_ASSISTANT_MESSAGE_MAX_CHARS'
+    )
+if AI_ASSISTANT_REQUEST_MAX_BYTES < AI_ASSISTANT_MESSAGE_MAX_BYTES:
+    raise ImproperlyConfigured(
+        'AI_ASSISTANT_REQUEST_MAX_BYTES must be at least AI_ASSISTANT_MESSAGE_MAX_BYTES'
+    )
+if AI_ASSISTANT_TOOL_COST_PER_HOUR < AI_ASSISTANT_TOOL_COST_PER_MINUTE:
+    raise ImproperlyConfigured(
+        'AI_ASSISTANT_TOOL_COST_PER_HOUR must be at least '
+        'AI_ASSISTANT_TOOL_COST_PER_MINUTE'
+    )
+if not re.fullmatch(r'[1-9][0-9]*/(second|minute|hour|day)', AI_ASSISTANT_CHAT_RATE):
+    raise ImproperlyConfigured('AI_ASSISTANT_CHAT_RATE must use DRF format, for example 100/hour')
+for _name, _minimum, _maximum in (
+    ('AI_ASSISTANT_CONNECT_TIMEOUT_SECONDS', 0.1, 30),
+    ('AI_ASSISTANT_READ_TIMEOUT_SECONDS', 1, 300),
+    ('AI_ASSISTANT_PROVIDER_RETRY_BACKOFF_SECONDS', 0, 10),
+    ('AI_ASSISTANT_CIRCUIT_RECOVERY_SECONDS', 1, 600),
+):
+    if not _minimum <= globals()[_name] <= _maximum:
+        raise ImproperlyConfigured(f'{_name} must be between {_minimum} and {_maximum}')
 
 # =============================================================================
 # BLOCKCHAIN INTEGRATION (Smart Contracts via web3.py)
