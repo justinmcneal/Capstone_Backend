@@ -20,13 +20,20 @@ from analytics.services.access_audit import (
     AnalyticsAccessAuditError,
     record_privileged_read,
 )
+from analytics.services.audit_exports import (
+    AuditExportLimitError,
+    build_audit_export_response,
+    collect_audit_export_rows,
+)
 from analytics.services.audit_queries import (
     AnalyticsQueryError,
+    build_admin_audit_query,
     build_paginated_response,
     parse_audit_filters,
     parse_limit,
     parse_pagination,
     serialize_admin_log_detail,
+    serialize_admin_log_summary,
     serialize_dashboard_activity,
     validate_query_params,
 )
@@ -95,16 +102,16 @@ class AdminDashboardView(AnalyticsOperationalMixin, AdminRequiredMixin, APIView)
         total_customers = db_count(db, "customer", {})
         total_officers = db_count(db, "loan_officers", {})
         total_admins = db_count(db, "admins", {})
-        new_customers_this_week = db_count(db, "customer",
-            {"created_at": {"$gte": week_ago}}
+        new_customers_this_week = db_count(
+            db, "customer", {"created_at": {"$gte": week_ago}}
         )
-        new_officers_this_month = db_count(db, "loan_officers",
-            {"created_at": {"$gte": month_start}}
+        new_officers_this_month = db_count(
+            db, "loan_officers", {"created_at": {"$gte": month_start}}
         )
 
         loans = db["loan_applications"]
-        approved_outcomes = bounded_count(loans,
-            {"status": {"$in": sorted(LOAN_APPROVED_OUTCOME_STATUSES)}}
+        approved_outcomes = bounded_count(
+            loans, {"status": {"$in": sorted(LOAN_APPROVED_OUTCOME_STATUSES)}}
         )
         rejected_outcomes = bounded_count(loans, {"status": "rejected"})
         # Outcome fields remain meaningful after disbursement/closure. `pending`
@@ -113,15 +120,15 @@ class AdminDashboardView(AnalyticsOperationalMixin, AdminRequiredMixin, APIView)
             "total": bounded_count(loans, {}),
             "draft": bounded_count(loans, {"status": "draft"}),
             "submitted": bounded_count(loans, {"status": "submitted"}),
-            "pending": bounded_count(loans,
-                {"status": {"$in": sorted(LOAN_PENDING_STATUSES)}}
+            "pending": bounded_count(
+                loans, {"status": {"$in": sorted(LOAN_PENDING_STATUSES)}}
             ),
             "under_review": bounded_count(loans, {"status": "under_review"}),
             "approved": approved_outcomes,
             "rejected": rejected_outcomes,
             "reviewed": approved_outcomes + rejected_outcomes,
-            "disbursed": bounded_count(loans,
-                {"status": {"$in": sorted(LOAN_DISBURSED_STATUSES)}}
+            "disbursed": bounded_count(
+                loans, {"status": {"$in": sorted(LOAN_DISBURSED_STATUSES)}}
             ),
             "completed": bounded_count(loans, {"status": "completed"}),
             "written_off": bounded_count(loans, {"status": "written_off"}),
@@ -133,29 +140,31 @@ class AdminDashboardView(AnalyticsOperationalMixin, AdminRequiredMixin, APIView)
         current_documents = current_document_query()
         doc_stats = {
             "total": db_count(db, "documents", current_documents),
-            "pending": db_count(db, "documents",
-                status_query(current_documents, DOCUMENT_PENDING_STATUSES)
+            "pending": db_count(
+                db,
+                "documents",
+                status_query(current_documents, DOCUMENT_PENDING_STATUSES),
             ),
-            "needs_review": db_count(db, "documents",
-                status_query(current_documents, {"needs_review"})
+            "needs_review": db_count(
+                db, "documents", status_query(current_documents, {"needs_review"})
             ),
-            "approved": db_count(db, "documents",
-                status_query(current_documents, {"approved"})
+            "approved": db_count(
+                db, "documents", status_query(current_documents, {"approved"})
             ),
-            "verified": db_count(db, "documents",
-                status_query(current_documents, {"approved"})
+            "verified": db_count(
+                db, "documents", status_query(current_documents, {"approved"})
             ),
-            "rejected": db_count(db, "documents",
-                status_query(current_documents, {"rejected"})
+            "rejected": db_count(
+                db, "documents", status_query(current_documents, {"rejected"})
             ),
-            "expired": db_count(db, "documents",
-                status_query(current_documents, {"expired"})
+            "expired": db_count(
+                db, "documents", status_query(current_documents, {"expired"})
             ),
         }
 
         # AI usage (last 7 days)
-        ai_sessions = db_count(db, "ai_interactions",
-            {"created_at": {"$gte": week_ago}}
+        ai_sessions = db_count(
+            db, "ai_interactions", {"created_at": {"$gte": week_ago}}
         )
 
         # Audit-derived content is a separate permission boundary from metrics.
@@ -187,7 +196,11 @@ class AdminDashboardView(AnalyticsOperationalMixin, AdminRequiredMixin, APIView)
         )
         product_ids = []
         for product in products:
-            product_ids.extend(identity_query("product_id", product["_id"])["product_id"].get("$in", [str(product["_id"])]))
+            product_ids.extend(
+                identity_query("product_id", product["_id"])["product_id"].get(
+                    "$in", [str(product["_id"])]
+                )
+            )
         grouped = {}
         if product_ids:
             pipeline = [
@@ -208,7 +221,8 @@ class AdminDashboardView(AnalyticsOperationalMixin, AdminRequiredMixin, APIView)
             status_counts = {
                 loan_status: grouped.get((str(p["_id"]), loan_status), 0)
                 for loan_status in (
-                    LOAN_APPROVED_OUTCOME_STATUSES | {"rejected", "draft", "submitted", "under_review", "cancelled"}
+                    LOAN_APPROVED_OUTCOME_STATUSES
+                    | {"rejected", "draft", "submitted", "under_review", "cancelled"}
                 )
             }
             approved = sum(
@@ -318,6 +332,78 @@ class AuditLogsView(AnalyticsOperationalMixin, AdminRequiredMixin, APIView):
         return success_response(
             data=response_data,
             message="Audit logs retrieved",
+        )
+
+
+class AuditLogExportView(AnalyticsOperationalMixin, AdminRequiredMixin, APIView):
+    """Export one bounded, server-authored administrator audit snapshot."""
+
+    required_permissions: ClassVar[list[str]] = ["view_logs"]
+    authentication_classes: ClassVar[list[type]] = [CustomJWTAuthentication]
+    permission_classes: ClassVar[list[type]] = [IsAuthenticated]
+
+    def get(self, request):
+        has_permission, result = self.check_admin_permission(request)
+        if not has_permission:
+            return result
+
+        try:
+            validate_query_params(
+                request,
+                {
+                    "export_format",
+                    "action",
+                    "action_group",
+                    "user_id",
+                    "user_type",
+                    "date_from",
+                    "date_to",
+                    "search",
+                },
+            )
+            export_format = str(
+                request.query_params.get("export_format", "csv")
+            ).lower()
+            if export_format not in {"csv", "excel"}:
+                raise AnalyticsQueryError(
+                    "Invalid export_format parameter",
+                    errors={"export_format": "export_format must be csv or excel"},
+                )
+            filters = parse_audit_filters(request, allow_actor_filters=True)
+        except AnalyticsQueryError as exc:
+            return error_response(
+                message=str(exc),
+                errors=exc.errors,
+                status_code=status.HTTP_400_BAD_REQUEST,
+            )
+
+        snapshot_at = datetime.now(timezone.utc)
+        audit_error = _audit_admin_read(request, result, "audit_log_export")
+        if audit_error:
+            return audit_error
+
+        query = build_admin_audit_query(filters, snapshot_at=snapshot_at)
+        try:
+            rows = collect_audit_export_rows(
+                query, serializer=serialize_admin_log_summary
+            )
+        except AuditExportLimitError as exc:
+            return error_response(
+                message=str(exc),
+                errors={"filters": "Use narrower filters before exporting"},
+                status_code=status.HTTP_400_BAD_REQUEST,
+            )
+        if not rows:
+            return error_response(
+                message="No audit logs match the selected filters",
+                status_code=status.HTTP_404_NOT_FOUND,
+            )
+        return build_audit_export_response(
+            rows,
+            export_format=export_format,
+            filename_prefix="audit-logs",
+            snapshot_at=snapshot_at,
+            include_actor_type=True,
         )
 
 

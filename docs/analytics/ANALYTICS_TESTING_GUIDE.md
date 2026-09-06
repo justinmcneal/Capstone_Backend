@@ -40,10 +40,12 @@ Content-Type: application/json
 |----------|--------------|---------------------------|
 | `GET /admin/` | Admin | `view_analytics` |
 | `GET /audit-logs/` | Admin | `view_logs` |
+| `GET /audit-logs/export/` | Admin | `view_logs` |
 | `GET /audit-logs/users/` | Admin | `view_logs` |
 | `GET /audit-logs/<log_id>/` | Admin | `view_logs` |
 | `GET /officer/` | Loan Officer | None |
 | `GET /officer/audit-logs/` | Loan Officer | None |
+| `GET /officer/audit-logs/export/` | Loan Officer | None |
 | `GET /customer/` | Customer | None |
 
 ---
@@ -211,6 +213,17 @@ legacy stored fields.
 
 ---
 
+### 2a. `GET /audit-logs/export/`
+
+Downloads one authoritative, bounded administrator audit snapshot. It accepts
+the list filters except pagination, plus `export_format=csv|excel`. The server
+freezes a UTC boundary, audits the read, and excludes newer events. Results over
+10,200 rows return HTTP 400 and require narrower filters. Successful responses
+include snapshot, row-count, and maximum-row headers and use `Cache-Control:
+no-store`. `excel` is an Excel-compatible HTML `.xls`, not a native workbook.
+
+---
+
 ### 3. `GET /audit-logs/users/`
 
 Distinct users appearing in audit logs (for filter dropdowns).
@@ -339,6 +352,14 @@ The response omits actor identity, email, IP, description, and details.
 | `page` | int |
 | `page_size` | int |
 | `total_pages` | int |
+
+---
+
+### 6a. `GET /officer/audit-logs/export/`
+
+Downloads the same fixed, bounded snapshot format while preserving the list's
+event-time officer scope. It accepts the officer list filters except pagination,
+plus `export_format=csv|excel`. The returned file never includes actor identity.
 
 ---
 

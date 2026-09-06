@@ -16,12 +16,19 @@ from analytics.models.audit_log import (
     AUDIT_EVENT_SCHEMA_VERSION,
 )
 from analytics.services.access_audit import AnalyticsAccessAuditError
+from analytics.services.audit_exports import (
+    AuditExportLimitError,
+    build_audit_export_response,
+    collect_audit_export_rows,
+)
 from analytics.views import (
     AdminDashboardView,
     AuditLogDetailView,
+    AuditLogExportView,
     AuditLogsView,
     AuditLogUsersView,
     CustomerDashboardView,
+    OfficerAuditLogExportView,
     OfficerAuditLogsView,
     OfficerDashboardView,
 )
@@ -60,9 +67,9 @@ def _create_admin(permissions=None, super_admin=False):
         password="hashed",
         first_name="Admin",
         last_name="Test",
-        permissions=permissions
-        if permissions is not None
-        else ["view_analytics", "view_logs"],
+        permissions=(
+            permissions if permissions is not None else ["view_analytics", "view_logs"]
+        ),
         super_admin=super_admin,
     ).save()
     return admin
@@ -361,6 +368,126 @@ class TestAuditLogs:
             assert response.status_code == 403
         finally:
             _restore_auth(AuditLogsView, original_auth, original_perm)
+
+
+class TestAuditLogExports:
+    def test_export_rejects_results_above_the_server_bound(self, monkeypatch):
+        marker = f"bounded-{ObjectId()}"
+        for suffix in ("one", "two"):
+            AuditLog.log_action(
+                action="user_registered",
+                user_type="system",
+                resource_type="customer",
+                resource_id=f"{marker}-{suffix}",
+            )
+        monkeypatch.setattr(
+            "analytics.services.audit_exports.audit_export_max_rows", lambda: 1
+        )
+
+        with pytest.raises(AuditExportLimitError):
+            collect_audit_export_rows(
+                {"resource_id": {"$regex": f"^{marker}"}}, serializer=lambda log: log
+            )
+
+    def test_csv_export_neutralizes_spreadsheet_formulas(self):
+        response = build_audit_export_response(
+            [
+                {
+                    "id": "event-id",
+                    "timestamp": "2026-09-06T00:00:00+00:00",
+                    "actor_type": "admin",
+                    "action": "=RUN()",
+                    "action_group": "read",
+                    "resource_type": "analytics_endpoint",
+                    "resource_id": "export",
+                }
+            ],
+            export_format="csv",
+            filename_prefix="audit-logs",
+            snapshot_at=datetime.now(timezone.utc),
+            include_actor_type=True,
+        )
+
+        assert "'=RUN()" in response.content.decode("utf-8-sig")
+
+    def test_admin_export_is_server_authored_and_uses_visible_filters(self):
+        admin = _create_admin(permissions=["view_logs"])
+        marker = f"export-{ObjectId()}"
+        AuditLog.log_action(
+            action="user_registered",
+            user_id=str(admin.id),
+            user_type="admin",
+            resource_type="customer",
+            resource_id=marker,
+        )
+        user = AuthenticatedUser(
+            customer_id=str(admin.id),
+            email=admin.email,
+            verified=True,
+            role="admin",
+        )
+        request = _auth_get_request(
+            "/api/analytics/audit-logs/export/",
+            user,
+            {"export_format": "csv", "search": marker},
+        )
+        original_auth, original_perm = _bypass_auth(AuditLogExportView)
+        try:
+            response = AuditLogExportView.as_view()(request)
+        finally:
+            _restore_auth(AuditLogExportView, original_auth, original_perm)
+
+        assert response.status_code == 200, getattr(response, "data", None)
+        content = response.content.decode("utf-8-sig")
+        assert response["Content-Type"].startswith("text/csv")
+        assert response["Cache-Control"] == "no-store"
+        assert response["X-Export-Row-Count"] == "1"
+        assert marker in content
+        assert "Actor Type" in content
+
+    def test_officer_export_preserves_event_time_scope(self):
+        officer = _create_officer()
+        other_officer = _create_officer()
+        own_marker = f"own-{ObjectId()}"
+        other_marker = f"other-{ObjectId()}"
+        AuditLog.log_action(
+            action="loan_approved",
+            user_id=str(officer.id),
+            user_type="loan_officer",
+            resource_type="loan_application",
+            resource_id=own_marker,
+        )
+        AuditLog.log_action(
+            action="loan_approved",
+            user_id=str(other_officer.id),
+            user_type="loan_officer",
+            resource_type="loan_application",
+            resource_id=other_marker,
+        )
+        user = AuthenticatedUser(
+            customer_id=str(officer.id),
+            email=officer.email,
+            verified=True,
+            role="loan_officer",
+        )
+        request = _auth_get_request(
+            "/api/analytics/officer/audit-logs/export/",
+            user,
+            {"export_format": "excel", "action": "loan_approved"},
+        )
+        original_auth, original_perm = _bypass_auth(OfficerAuditLogExportView)
+        try:
+            response = OfficerAuditLogExportView.as_view()(request)
+        finally:
+            _restore_auth(OfficerAuditLogExportView, original_auth, original_perm)
+
+        assert response.status_code == 200, getattr(response, "data", None)
+        content = response.content.decode("utf-8")
+        assert response["Content-Type"].startswith("application/vnd.ms-excel")
+        assert own_marker in content
+        assert other_marker not in content
+        assert "Authoritative snapshot as of" in content
+        assert "Actor Type" not in content
 
 
 class TestAuditLogDetail:
@@ -851,9 +978,7 @@ class TestAnalyticsHappyPaths:
 
 
 class TestAnalyticsStage2PrivacyBoundary:
-    sensitive_fields = frozenset(
-        {"user_email", "ip_address", "description", "details"}
-    )
+    sensitive_fields = frozenset({"user_email", "ip_address", "description", "details"})
 
     def test_dashboard_hides_audit_activity_without_view_logs(self):
         AuditLog.log_action(
@@ -1125,9 +1250,7 @@ class TestAnalyticsStage2PrivacyBoundary:
 
         assert response.status_code == 503
 
-    def test_officer_response_fails_closed_when_access_audit_fails(
-        self, monkeypatch
-    ):
+    def test_officer_response_fails_closed_when_access_audit_fails(self, monkeypatch):
         officer = _create_officer()
         user = AuthenticatedUser(
             customer_id=str(officer.id),

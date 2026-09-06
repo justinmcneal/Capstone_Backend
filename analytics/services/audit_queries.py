@@ -209,6 +209,75 @@ def officer_search_conditions(search: str):
     return default_search_conditions(search)
 
 
+def add_snapshot_boundary(query, snapshot_at):
+    """Exclude events created after an export began."""
+    boundary = {"timestamp": {"$lte": snapshot_at}}
+    if not query:
+        return boundary
+    return {"$and": [query, boundary]}
+
+
+def build_admin_audit_query(filters, *, snapshot_at=None):
+    """Build the administrator list/export query from normalized filters."""
+    date_filters = filters.get("date_range") or {}
+    query = AuditLog._build_filter_query(
+        filters.get("action"),
+        filters.get("action_group"),
+        filters.get("user_id"),
+        filters.get("user_type"),
+        date_filters.get("$gte"),
+        date_filters.get("$lte"),
+        filters.get("search"),
+    )
+    return add_snapshot_boundary(query, snapshot_at) if snapshot_at else query
+
+
+def build_officer_audit_query(officer_id, filters, *, snapshot_at=None):
+    """Build the same event-time officer scope for lists and exports."""
+    from analytics.services.dashboard_metrics import identity_query
+
+    actor_query = identity_query("user_id", officer_id)
+    and_filters = [
+        {
+            "$or": [
+                {**actor_query, "user_type": "loan_officer"},
+                {
+                    "scope_officer_index": {
+                        "$in": AuditLog.blind_index_candidates(officer_id)
+                    }
+                },
+            ]
+        }
+    ]
+
+    if filters.get("action"):
+        and_filters.append({"action": filters["action"]})
+    if filters.get("action_group"):
+        action_group = filters["action_group"]
+        group_filter = {"action": {"$in": ACTION_GROUPS[action_group]}}
+        if action_group == "delete":
+            group_filter = {
+                "$or": [
+                    group_filter,
+                    {
+                        "action": "admin_action",
+                        "description": {
+                            "$regex": "(delete|deleted|deactivate|deactivated|remove|removed)",
+                            "$options": "i",
+                        },
+                    },
+                ]
+            }
+        and_filters.append(group_filter)
+    if filters.get("date_range"):
+        and_filters.append({"timestamp": filters["date_range"]})
+    if filters.get("search"):
+        and_filters.append({"$or": officer_search_conditions(filters["search"])})
+
+    query = and_filters[0] if len(and_filters) == 1 else {"$and": and_filters}
+    return add_snapshot_boundary(query, snapshot_at) if snapshot_at else query
+
+
 def _safe_identifier(value):
     return str(value) if value is not None else None
 

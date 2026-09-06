@@ -15,14 +15,18 @@ from accounts.authentication import CustomJWTAuthentication
 from accounts.utils.access_control import AccessControlMixin
 from accounts.utils.response_helpers import error_response, success_response
 from analytics.models import AuditLog
-from analytics.models.audit_log import ACTION_GROUPS
 from analytics.services.access_audit import (
     AnalyticsAccessAuditError,
     record_privileged_read,
 )
+from analytics.services.audit_exports import (
+    AuditExportLimitError,
+    build_audit_export_response,
+    collect_audit_export_rows,
+)
 from analytics.services.audit_queries import (
     AnalyticsQueryError,
-    officer_search_conditions,
+    build_officer_audit_query,
     parse_audit_filters,
     parse_pagination,
     serialize_officer_log_entry,
@@ -91,51 +95,57 @@ class OfficerDashboardView(LoanOfficerRequiredMixin, APIView):
         db = settings.MONGODB
 
         as_of = datetime.now(timezone.utc)
-        today = as_of.replace(
-            hour=0, minute=0, second=0, microsecond=0
-        )
+        today = as_of.replace(hour=0, minute=0, second=0, microsecond=0)
         officer_query = identity_query("assigned_officer", officer_id)
 
         # My reviews - applications I've reviewed
-        my_approved = db_count(db, "loan_applications",
+        my_approved = db_count(
+            db,
+            "loan_applications",
             {
                 **officer_query,
                 "status": {"$in": sorted(LOAN_APPROVED_OUTCOME_STATUSES)},
-            }
+            },
         )
-        my_rejected = db_count(db, "loan_applications",
-            {**officer_query, "status": "rejected"}
+        my_rejected = db_count(
+            db, "loan_applications", {**officer_query, "status": "rejected"}
         )
 
         # Reviews today
-        approved_today = db_count(db, "loan_applications",
+        approved_today = db_count(
+            db,
+            "loan_applications",
             {
                 **officer_query,
                 "status": {"$in": sorted(LOAN_APPROVED_OUTCOME_STATUSES)},
                 "decision_date": {"$gte": today},
-            }
+            },
         )
-        rejected_today = db_count(db, "loan_applications",
+        rejected_today = db_count(
+            db,
+            "loan_applications",
             {
                 **officer_query,
                 "status": "rejected",
                 "decision_date": {"$gte": today},
-            }
+            },
         )
 
         # Active queue assigned to this officer. Unassigned applications and
         # applications owned by another officer must not appear on a personal
         # dashboard.
-        pending_queue = db_count(db, "loan_applications",
+        pending_queue = db_count(
+            db,
+            "loan_applications",
             {
                 **officer_query,
                 "status": {"$in": sorted(LOAN_PENDING_STATUSES)},
-            }
+            },
         )
 
         # Assigned to me
-        my_queue = db_count(db, "loan_applications",
-            {**officer_query, "status": "under_review"}
+        my_queue = db_count(
+            db, "loan_applications", {**officer_query, "status": "under_review"}
         )
 
         # Approval rate
@@ -212,50 +222,7 @@ class OfficerAuditLogsView(LoanOfficerRequiredMixin, APIView):
             )
 
         db = settings.MONGODB
-        action_filter = filters["action"]
-        action_group = filters["action_group"]
-        date_filters = filters["date_range"]
-        search = filters["search"]
-
-        actor_query = identity_query("user_id", officer_id)
-        base_or = [
-            {**actor_query, "user_type": "loan_officer"},
-            {
-                "scope_officer_index": {
-                    "$in": AuditLog.blind_index_candidates(officer_id)
-                }
-            },
-        ]
-
-        and_filters = [{"$or": base_or}]
-
-        if action_filter:
-            and_filters.append({"action": action_filter})
-
-        if action_group:
-            group_filter = {"action": {"$in": ACTION_GROUPS[action_group]}}
-            if action_group == "delete":
-                group_filter = {
-                    "$or": [
-                        group_filter,
-                        {
-                            "action": "admin_action",
-                            "description": {
-                                "$regex": "(delete|deleted|deactivate|deactivated|remove|removed)",
-                                "$options": "i",
-                            },
-                        },
-                    ]
-                }
-            and_filters.append(group_filter)
-
-        if date_filters:
-            and_filters.append({"timestamp": date_filters})
-
-        if search:
-            and_filters.append({"$or": officer_search_conditions(search)})
-
-        query = and_filters[0] if len(and_filters) == 1 else {"$and": and_filters}
+        query = build_officer_audit_query(officer_id, filters)
 
         collection = db["audit_logs"]
         total = bounded_count(collection, query)
@@ -284,4 +251,79 @@ class OfficerAuditLogsView(LoanOfficerRequiredMixin, APIView):
                 "total_pages": (total + page_size - 1) // page_size if total > 0 else 0,
             },
             message="Officer audit logs retrieved",
+        )
+
+
+class OfficerAuditLogExportView(LoanOfficerRequiredMixin, APIView):
+    """Export one bounded, server-authored officer-scoped audit snapshot."""
+
+    authentication_classes: ClassVar[list[type]] = [CustomJWTAuthentication]
+    permission_classes: ClassVar[list[type]] = [IsAuthenticated]
+
+    def get(self, request):
+        has_permission, result = self.check_officer_permission(request)
+        if not has_permission:
+            return result
+
+        officer_id = str(getattr(result, "id", "") or "").strip()
+        if not officer_id:
+            return error_response(
+                message="Authenticated account not found",
+                status_code=status.HTTP_404_NOT_FOUND,
+            )
+        try:
+            validate_query_params(
+                request,
+                {
+                    "export_format",
+                    "action",
+                    "action_group",
+                    "date_from",
+                    "date_to",
+                    "search",
+                },
+            )
+            export_format = str(
+                request.query_params.get("export_format", "csv")
+            ).lower()
+            if export_format not in {"csv", "excel"}:
+                raise AnalyticsQueryError(
+                    "Invalid export_format parameter",
+                    errors={"export_format": "export_format must be csv or excel"},
+                )
+            filters = parse_audit_filters(request, allow_actor_filters=False)
+        except AnalyticsQueryError as exc:
+            return error_response(
+                message=str(exc),
+                errors=exc.errors,
+                status_code=status.HTTP_400_BAD_REQUEST,
+            )
+
+        snapshot_at = datetime.now(timezone.utc)
+        audit_error = self.audit_officer_read(result, "officer_audit_log_export")
+        if audit_error:
+            return audit_error
+
+        query = build_officer_audit_query(officer_id, filters, snapshot_at=snapshot_at)
+        try:
+            rows = collect_audit_export_rows(
+                query, serializer=serialize_officer_log_entry
+            )
+        except AuditExportLimitError as exc:
+            return error_response(
+                message=str(exc),
+                errors={"filters": "Use narrower filters before exporting"},
+                status_code=status.HTTP_400_BAD_REQUEST,
+            )
+        if not rows:
+            return error_response(
+                message="No audit logs match the selected filters",
+                status_code=status.HTTP_404_NOT_FOUND,
+            )
+        return build_audit_export_response(
+            rows,
+            export_format=export_format,
+            filename_prefix="officer-audit-logs",
+            snapshot_at=snapshot_at,
+            include_actor_type=False,
         )
