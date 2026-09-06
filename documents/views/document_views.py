@@ -252,15 +252,18 @@ class DocumentUploadView(AccessControlMixin, APIView):
                 settings, "DOCUMENT_UPLOAD_NOTIFY_REVIEWERS", True
             )
             notify_async = getattr(settings, "DOCUMENT_UPLOAD_NOTIFY_ASYNC", True)
+            notify_result = {"created": 0, "queued": 0, "mode": "disabled"}
             if should_notify_reviewers and document.status in [
                 "pending",
                 "needs_review",
             ]:
                 try:
                     if notify_async:
-                        queue_reviewer_notifications(document)
+                        queue_result = queue_reviewer_notifications(document)
+                        notify_result = {"mode": "async", **queue_result}
                     else:
-                        notify_reviewers_document_pending(document)
+                        sync_result = notify_reviewers_document_pending(document)
+                        notify_result = {"mode": "sync", "queued": 0, **sync_result}
                 except Exception as notify_error:
                     logger.warning(
                         f"Failed to notify reviewers for document {document.id}: {notify_error}"
@@ -269,6 +272,7 @@ class DocumentUploadView(AccessControlMixin, APIView):
             from documents.serializers import DocumentResponseSerializer
 
             response_data = DocumentResponseSerializer(document).data
+            response_data["notification"] = notify_result
             increment(DOCUMENT_OPERATIONS, operation="upload", outcome="completed")
 
             return success_response(

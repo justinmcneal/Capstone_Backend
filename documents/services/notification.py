@@ -11,6 +11,7 @@ from django.conf import settings
 
 from accounts.models import Admin, Customer, LoanOfficer
 from documents.models import DocumentNotificationDelivery
+from documents.services.recipients import resolve_review_recipients
 from notifications.services import get_email_sender
 
 logger = logging.getLogger("documents")
@@ -81,12 +82,13 @@ def get_display_name(user, fallback="User"):
 
 
 def prepare_reviewer_notification_deliveries(document):
-    """Persist one idempotent outbox record for each currently scoped reviewer."""
+    """Persist one idempotent outbox record for each currently scoped reviewer.
+
+    D-014: assigned customers notify only their currently assigned officer(s);
+    unassigned customers fall back to permitted admins.
+    """
     customer = get_customer_by_identifier(document.customer_id)
     customer_name = get_display_name(customer, fallback="Customer")
-
-    recipients = []
-    seen_emails = set()
 
     customer_value = str(document.customer_id or "")
     customer_variants = [customer_value]
@@ -104,62 +106,47 @@ def prepare_reviewer_notification_deliveries(document):
         if row.get("assigned_officer")
     }
 
-    if assigned_officer_ids:
-        for officer in LoanOfficer.find({"active": True}):
-            if not officer.has_permission("review_documents"):
-                continue
-            if str(officer.id) not in assigned_officer_ids:
-                continue
-            email = (officer.email or "").strip()
-            if not email:
-                continue
-            email_key = email.lower()
-            if email_key in seen_emails:
-                continue
-            seen_emails.add(email_key)
-            recipients.append(
-                {
-                    "email": email,
-                    "name": get_display_name(officer, fallback="Loan Officer"),
-                    "user_id": officer.id,
-                    "user_type": "loan_officer",
-                }
-            )
-    else:
-        for admin in Admin.find({"active": True}):
-            if not admin.has_permission("review_documents"):
-                continue
-            email = (admin.email or "").strip()
-            if not email:
-                continue
-            email_key = email.lower()
-            if email_key in seen_emails:
-                continue
-            seen_emails.add(email_key)
-            recipients.append(
-                {
-                    "email": email,
-                    "name": get_display_name(admin, fallback="Admin"),
-                    "user_id": admin.id,
-                    "user_type": "admin",
-                }
-            )
+    resolution = resolve_review_recipients(
+        assigned_officer_ids=assigned_officer_ids,
+        officers=list(LoanOfficer.find({"active": True})),
+        admins=(
+            list(Admin.find({"active": True}))
+            if not assigned_officer_ids
+            else []
+        ),
+        get_display_name=get_display_name,
+    )
+    recipients = resolution["officers"] + resolution["admins"]
 
     if not recipients:
         logger.warning(
-            "No active reviewers found to notify for pending document %s",
+            "No eligible reviewers for pending document %s reason=%s",
             document.id,
+            resolution["reason"],
         )
         return []
 
     delivery_ids = []
     for recipient in recipients:
+        if not recipient.get("user_id"):
+            logger.warning(
+                "Skipping reviewer delivery with missing user id document=%s email=%s",
+                document.id,
+                recipient.get("email", ""),
+            )
+            continue
         delivery = DocumentNotificationDelivery.ensure(
             document=document,
             recipient=recipient,
             customer_name=customer_name,
         )
         delivery_ids.append(delivery.id)
+    logger.info(
+        "Reviewer deliveries document=%s created=%d reason=%s",
+        document.id,
+        len(delivery_ids),
+        resolution["reason"],
+    )
     return delivery_ids
 
 
@@ -187,9 +174,17 @@ def queue_reviewer_notifications(document):
             queued += 1
         except Exception:
             logger.exception(
-                "Reviewer notification remains pending after enqueue failure: %s",
+                "Reviewer notification remains pending after enqueue failure "
+                "document=%s delivery=%s",
+                getattr(document, "id", ""),
                 delivery_id,
             )
+    logger.info(
+        "Reviewer notifications queued document=%s created=%d queued=%d",
+        getattr(document, "id", ""),
+        len(delivery_ids),
+        queued,
+    )
     return {"created": len(delivery_ids), "queued": queued}
 
 
@@ -243,8 +238,13 @@ def deliver_document_notification(delivery_id):
         return "delivered"
     except Exception:  # noqa: BLE001 - persisted as a non-sensitive error code
         logger.exception(
-            "Pending-review notification delivery failed for document %s",
+            "Pending-review notification delivery failed document=%s delivery=%s "
+            "recipient=%s/%s attempt=%d",
             delivery.document_id,
+            delivery_id,
+            delivery.recipient_user_type,
+            delivery.recipient_user_id,
+            delivery.attempt_count,
         )
         delivery.defer(
             "delivery_failed",
