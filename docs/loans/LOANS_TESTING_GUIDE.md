@@ -580,6 +580,8 @@ Customer `status=pending` groups `submitted` and `under_review`.
 | GET | `http://localhost:8000/api/loans/admin/blockchain/transactions/` | `view_logs` |
 
 Product filters: `active=true|false|all`, `search`, `page`, `page_size`.
+`true` returns active products, `false` returns inactive products, and `all`
+returns both.
 
 ### Officer or administrator
 
@@ -623,8 +625,10 @@ Wallet payment body:
 
 Wallet disbursement normally returns `202`. Recovery actions are
 `{"action":"reconcile"}`, `{"action":"retry"}`, and safe pre-preparation
-`{"action":"cancel","reason":"..."}`. Never record private keys, signed raw
-transactions, provider secrets, or wallet/customer data in reports.
+`{"action":"cancel","reason":"..."}`. A non-empty cancellation reason is
+required. The recovery response's `available_actions` is authoritative for the
+current wallet state. Never record private keys, signed raw transactions,
+provider secrets, or wallet/customer data in reports.
 
 ## Negative Tests and HTTP Results
 

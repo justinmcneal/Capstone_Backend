@@ -22,6 +22,7 @@ from loans.services.related_data import (
     application_related_maps,
     find_models_bounded,
 )
+from loans.services.settlement_policy import public_settlement_policy
 from loans.utils.serialization import (
     disbursement_failure_code,
     serialize_internal_note,
@@ -662,6 +663,7 @@ class OfficerApplicationDetailView(LoanOfficerRequiredMixin, APIView):
                 ),
                 "disbursed_amount": app.disbursed_amount,
                 "preferred_disbursement_method": app.preferred_disbursement_method,
+                "settlement_policy": public_settlement_policy(),
                 "disbursement_status": app.disbursement_status,
                 "disbursement_method": app.disbursement_method,
                 "disbursement_reference": app.disbursement_reference,

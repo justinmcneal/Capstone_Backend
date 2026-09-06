@@ -27,6 +27,31 @@ class WalletDisbursementRecoveryView(LoanOfficerRequiredMixin, APIView):
     permission_classes: ClassVar[list] = [IsAuthenticated]
 
     @staticmethod
+    def _available_actions(application):
+        disbursement_status = str(application.disbursement_status or "")
+        tx_status = str(application.eth_disbursement_tx_status or "")
+        if disbursement_status == "pending":
+            actions = ["reconcile"]
+            cancellation_is_safe = not any(
+                (
+                    application.eth_disbursement_tx_hash,
+                    application.eth_disbursement_raw_transaction,
+                    application.eth_disbursement_prepared_at,
+                    application.eth_disbursement_broadcast_at,
+                    getattr(application, "disbursement_worker_owner", None),
+                )
+            ) and tx_status not in {"prepared", "pending", "broadcast", "confirmed"}
+            if cancellation_is_safe:
+                actions.append("cancel")
+            return actions
+        if disbursement_status in {"failed", "cancelled"} and tx_status not in {
+            "pending",
+            "broadcast",
+        }:
+            return ["retry"]
+        return []
+
+    @staticmethod
     def _data(application):
         return {
             "id": application.id,
@@ -40,6 +65,9 @@ class WalletDisbursementRecoveryView(LoanOfficerRequiredMixin, APIView):
             "last_checked_at": application.eth_disbursement_last_checked_at,
             "block_number": application.eth_disbursement_block_number,
             "rebroadcast_count": application.eth_disbursement_rebroadcast_count,
+            "available_actions": WalletDisbursementRecoveryView._available_actions(
+                application
+            ),
         }
 
     def _application(self, request, application_id):
@@ -131,6 +159,12 @@ class WalletDisbursementRecoveryView(LoanOfficerRequiredMixin, APIView):
 
         if action == "cancel":
             reason = sanitize_text(request.data.get("reason", ""))
+            if not reason:
+                return error_response(
+                    message="A cancellation reason is required",
+                    errors={"reason": "Explain why this wallet disbursement is cancelled."},
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                )
             cancelled = LoanApplication.cancel_wallet_disbursement(
                 application.id, actor_id, reason
             )

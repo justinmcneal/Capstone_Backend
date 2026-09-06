@@ -1341,6 +1341,9 @@ class LoanApplication:
                 "disbursement_status": "pending",
                 "eth_disbursement_tx_hash": {"$in": [None, ""]},
                 "eth_disbursement_raw_transaction": {"$in": [None, ""]},
+                "eth_disbursement_prepared_at": {"$in": [None, ""]},
+                "eth_disbursement_broadcast_at": {"$in": [None, ""]},
+                "eth_disbursement_tx_status": {"$in": [None, ""]},
                 "disbursement_worker_owner": {"$in": [None, ""]},
             },
             {

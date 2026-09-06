@@ -30,6 +30,7 @@ from loans.views.customer_views import (
 )
 from loans.views.officer_views import (
     DisburseView,
+    OfficerApplicationDetailView,
     OfficerApplicationListView,
     OfficerReviewView,
 )
@@ -516,6 +517,50 @@ class TestOfficerApplicationListView:
         response = OfficerApplicationListView.as_view()(request)
         assert response.status_code == 200
         assert len(response.data["data"]["applications"]) == 1
+
+
+class TestOfficerApplicationDetailView:
+    def test_get_includes_runtime_settlement_policy(self, monkeypatch, settings):
+        settings.BLOCKCHAIN_ENABLED = False
+        customer = _create_customer()
+        officer = _create_officer()
+        product = LoanProduct(
+            name="Settlement Policy Product",
+            code=f"POL-{str(ObjectId())[-8:]}",
+            min_amount=1000,
+            max_amount=50000,
+            interest_rate=0.015,
+        ).save()
+        app = LoanApplication(
+            customer_id=str(customer.id),
+            product_id=str(product.id),
+            requested_amount=20000,
+            term_months=12,
+            status="approved",
+            assigned_officer=str(officer.id),
+        ).save()
+
+        request = _get(
+            f"/api/loans/officer/applications/{app.id}/", _auth_officer(officer)
+        )
+        monkeypatch.setattr(
+            OfficerApplicationDetailView,
+            "authentication_classes",
+            [],
+            raising=False,
+        )
+        monkeypatch.setattr(
+            OfficerApplicationDetailView, "permission_classes", [], raising=False
+        )
+
+        response = OfficerApplicationDetailView.as_view()(
+            request, application_id=app.id
+        )
+
+        assert response.status_code == 200
+        assert response.data["data"]["settlement_policy"][
+            "available_disbursement_methods"
+        ] == ["cash", "check"]
 
 
 class TestOfficerReviewView:

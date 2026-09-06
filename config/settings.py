@@ -911,6 +911,11 @@ CORS_ALLOW_HEADERS = (
     *default_headers,
     'idempotency-key',
 )
+CORS_EXPOSE_HEADERS = (
+    'content-disposition',
+    'x-export-row-count',
+    'x-export-max-rows',
+)
 
 # CSRF / SameSite policy
 SESSION_COOKIE_SAMESITE = os.getenv('SESSION_COOKIE_SAMESITE', 'Lax')

@@ -42,9 +42,11 @@ class AdminProductListView(AdminRequiredMixin, APIView):
 
         active_param = sanitize_text(request.query_params.get("active", "all")).lower()
         if active_param in {"true", "1", "yes", "on"}:
-            active_only = True
-        elif active_param in {"false", "0", "no", "off", "all", ""}:
-            active_only = False
+            active_filter = True
+        elif active_param in {"false", "0", "no", "off"}:
+            active_filter = False
+        elif active_param in {"all", ""}:
+            active_filter = None
         else:
             return error_response(
                 message="Invalid active filter",
@@ -67,13 +69,15 @@ class AdminProductListView(AdminRequiredMixin, APIView):
                 status_code=status.HTTP_400_BAD_REQUEST,
             )
         query = {}
+        if active_filter is not None:
+            query["active"] = active_filter
         if search:
             search_regex = re.compile(re.escape(search), re.IGNORECASE)
             query["$or"] = [{"name": search_regex}, {"code": search_regex}]
-        total = LoanProduct.count(query, active_only=active_only)
+        total = LoanProduct.count(query, active_only=False)
         products = LoanProduct.find(
             query,
-            active_only=active_only,
+            active_only=False,
             skip=(page - 1) * page_size,
             limit=page_size,
         )
